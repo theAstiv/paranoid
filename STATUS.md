@@ -30,16 +30,20 @@
 - ✅ backend/models/__init__.py — 28 exported symbols
 - ✅ tests/test_models.py — 20 model validation tests
 
-**Test Results:** 35/35 tests passing
+### Phase 4: LLM Provider Protocol
+- ✅ backend/providers/base.py — Protocol + factory + 4 exception classes
+- ✅ backend/providers/anthropic.py — Anthropic implementation (~140 lines)
+- ✅ backend/providers/openai.py — OpenAI implementation (~140 lines)
+- ✅ backend/providers/ollama.py — Ollama implementation (~160 lines)
+- ✅ backend/providers/__init__.py — Package exports
+- ✅ tests/test_providers.py — 16 provider tests with mocks
+- ✅ pyproject.toml — Added httpx>=0.28.0 dependency
+
+**Test Results:** 48/48 tests passing (12 DB + 20 models + 16 providers)
 
 ## In Progress 🚧
 
-### Phase 4: LLM Provider Protocol
-- ⏳ backend/providers/base.py — Protocol definition
-- ⏳ backend/providers/anthropic.py — Anthropic implementation
-- ⏳ backend/providers/openai.py — OpenAI implementation
-- ⏳ backend/providers/ollama.py — Ollama implementation
-- ⏳ tests/test_providers.py — Provider tests with mocks
+Currently no phase in progress.
 
 ## Pending ⏳
 
@@ -88,21 +92,28 @@
 
 ## Statistics
 
-- **Total Files Created:** 22
-- **Lines of Code:** ~3,500
-- **Test Coverage:** 35 tests (database + models)
+- **Total Files Created:** 27
+- **Lines of Code:** ~4,500
+- **Test Coverage:** 48 tests (12 DB + 20 models + 16 providers)
 - **Seed Patterns:** 48 curated threats
 - **Database Tables:** 10 with full relationships
 - **Pydantic Models:** 28 models/enums
+- **LLM Providers:** 3 (Anthropic, OpenAI, Ollama)
 
 ## Next Steps
 
-1. **Phase 4:** Implement LLM provider protocol
-   - Define Protocol in base.py
-   - Create Anthropic provider (~50 lines)
-   - Create OpenAI provider (~50 lines)
-   - Create Ollama provider (~50 lines)
-   - Write provider tests with mocks
+1. **Phase 5:** Port and create prompt templates
+   - Port STRIDE prompts
+   - Create MAESTRO-specific prompts
+   - Attack tree generation prompts
+   - BDD test case generation prompts
 
-2. **Phase 5:** Port and create prompt templates
-3. **Phase 6:** Build core pipeline with iteration logic
+2. **Phase 6:** Build core pipeline with iteration logic
+   - Implement 7 pipeline steps (summarize, extract_assets, extract_flows, etc.)
+   - Build orchestrator with iteration support (1-15 passes)
+   - Add SSE event emission for progress tracking
+
+3. **Phase 7:** Deterministic rule engine
+   - Keyword extraction
+   - Pattern matching
+   - Vector similarity fallback

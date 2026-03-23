@@ -1,4 +1,4 @@
-"""Core Pydantic models ported from threat-designer for state management."""
+"""Core Pydantic models for state management."""
 
 from typing import Annotated
 
