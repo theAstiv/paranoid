@@ -96,6 +96,63 @@ async def update_threat_model_status(
     logger.info(f"Updated threat model {model_id} status to {status}")
 
 
+async def update_threat_model(
+    db_path: str,
+    model_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    framework: str | None = None,
+    status: str | None = None,
+) -> None:
+    """
+    Update threat model details. Only provided fields will be updated.
+
+    Args:
+        db_path: Path to SQLite database
+        model_id: ID of threat model to update
+        title: Model title
+        description: Model description
+        framework: Framework (STRIDE, MAESTRO, etc.)
+        status: Status (pending, in_progress, completed, failed)
+    """
+    update_fields = []
+    params = []
+
+    if title is not None:
+        update_fields.append("title = ?")
+        params.append(title)
+
+    if description is not None:
+        update_fields.append("description = ?")
+        params.append(description)
+
+    if framework is not None:
+        update_fields.append("framework = ?")
+        params.append(framework)
+
+    if status is not None:
+        update_fields.append("status = ?")
+        params.append(status)
+
+    # Always update timestamp
+    update_fields.append("updated_at = ?")
+    params.append(now_iso())
+    params.append(model_id)
+
+    if len(update_fields) == 1:
+        logger.warning(f"No fields provided to update for model {model_id}")
+        return
+
+    query = f"UPDATE threat_models SET {', '.join(update_fields)} WHERE id = ?"
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+        await db.execute(query, params)
+        await db.commit()
+
+    logger.info(f"Updated threat model {model_id}")
+
+
 async def list_threat_models(db_path: str, limit: int = 50) -> list[dict[str, Any]]:
     """List all threat models."""
     async with aiosqlite.connect(db_path) as db:
@@ -221,6 +278,126 @@ async def update_threat_status(
     logger.info(f"Updated threat {threat_id} status to {status}")
 
 
+async def update_threat(
+    db_path: str,
+    threat_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    target: str | None = None,
+    impact: str | None = None,
+    likelihood: str | None = None,
+    mitigations: list[str] | None = None,
+    stride_category: str | None = None,
+    maestro_category: str | None = None,
+    dread_damage: int | None = None,
+    dread_reproducibility: int | None = None,
+    dread_exploitability: int | None = None,
+    dread_affected_users: int | None = None,
+    dread_discoverability: int | None = None,
+    dread_score: float | None = None,
+) -> None:
+    """
+    Update threat details. Only provided fields will be updated.
+
+    Args:
+        db_path: Path to SQLite database
+        threat_id: ID of threat to update
+        name: Threat name
+        description: Threat description
+        target: Threat target
+        impact: Impact assessment
+        likelihood: Likelihood assessment
+        mitigations: List of mitigation strategies
+        stride_category: STRIDE category
+        maestro_category: MAESTRO category
+        dread_damage: DREAD damage score (0-10)
+        dread_reproducibility: DREAD reproducibility score (0-10)
+        dread_exploitability: DREAD exploitability score (0-10)
+        dread_affected_users: DREAD affected users score (0-10)
+        dread_discoverability: DREAD discoverability score (0-10)
+        dread_score: Overall DREAD score
+    """
+    # Build dynamic UPDATE query for only provided fields
+    update_fields = []
+    params = []
+
+    if name is not None:
+        update_fields.append("name = ?")
+        params.append(name)
+
+    if description is not None:
+        update_fields.append("description = ?")
+        params.append(description)
+
+    if target is not None:
+        update_fields.append("target = ?")
+        params.append(target)
+
+    if impact is not None:
+        update_fields.append("impact = ?")
+        params.append(impact)
+
+    if likelihood is not None:
+        update_fields.append("likelihood = ?")
+        params.append(likelihood)
+
+    if mitigations is not None:
+        update_fields.append("mitigations = ?")
+        params.append(json.dumps(mitigations))
+
+    if stride_category is not None:
+        update_fields.append("stride_category = ?")
+        params.append(stride_category)
+
+    if maestro_category is not None:
+        update_fields.append("maestro_category = ?")
+        params.append(maestro_category)
+
+    if dread_damage is not None:
+        update_fields.append("dread_damage = ?")
+        params.append(dread_damage)
+
+    if dread_reproducibility is not None:
+        update_fields.append("dread_reproducibility = ?")
+        params.append(dread_reproducibility)
+
+    if dread_exploitability is not None:
+        update_fields.append("dread_exploitability = ?")
+        params.append(dread_exploitability)
+
+    if dread_affected_users is not None:
+        update_fields.append("dread_affected_users = ?")
+        params.append(dread_affected_users)
+
+    if dread_discoverability is not None:
+        update_fields.append("dread_discoverability = ?")
+        params.append(dread_discoverability)
+
+    if dread_score is not None:
+        update_fields.append("dread_score = ?")
+        params.append(dread_score)
+
+    # Always update the updated_at timestamp
+    update_fields.append("updated_at = ?")
+    params.append(now_iso())
+
+    # Add threat_id as final parameter
+    params.append(threat_id)
+
+    if len(update_fields) == 1:  # Only updated_at, nothing to update
+        logger.warning(f"No fields provided to update for threat {threat_id}")
+        return
+
+    query = f"UPDATE threats SET {', '.join(update_fields)} WHERE id = ?"
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+        await db.execute(query, params)
+        await db.commit()
+
+    logger.info(f"Updated threat {threat_id} with {len(update_fields)} fields")
+
+
 # Assets CRUD
 
 
@@ -254,6 +431,90 @@ async def list_assets(db_path: str, model_id: str) -> list[dict[str, Any]]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def update_asset(
+    db_path: str,
+    asset_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    asset_type: str | None = None,
+) -> None:
+    """
+    Update asset details. Only provided fields will be updated.
+
+    Args:
+        db_path: Path to SQLite database
+        asset_id: ID of asset to update
+        name: Asset name
+        description: Asset description
+        asset_type: Asset type (Asset/Entity)
+    """
+    update_fields = []
+    params = []
+
+    if name is not None:
+        update_fields.append("name = ?")
+        params.append(name)
+
+    if description is not None:
+        update_fields.append("description = ?")
+        params.append(description)
+
+    if asset_type is not None:
+        update_fields.append("type = ?")
+        params.append(asset_type)
+
+    params.append(asset_id)
+
+    if not update_fields:
+        logger.warning(f"No fields provided to update for asset {asset_id}")
+        return
+
+    query = f"UPDATE assets SET {', '.join(update_fields)} WHERE id = ?"
+
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+        await db.execute(query, params)
+        await db.commit()
+
+    logger.info(f"Updated asset {asset_id}")
+
+
+async def delete_threat(db_path: str, threat_id: str) -> None:
+    """
+    Delete a threat and its associated data.
+
+    Args:
+        db_path: Path to SQLite database
+        threat_id: ID of threat to delete
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+
+        # Delete threat (CASCADE will handle related records)
+        await db.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
+        await db.commit()
+
+    logger.info(f"Deleted threat {threat_id}")
+
+
+async def delete_threat_model(db_path: str, model_id: str) -> None:
+    """
+    Delete a threat model and all associated data.
+
+    Args:
+        db_path: Path to SQLite database
+        model_id: ID of threat model to delete
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+
+        # Delete model (CASCADE will handle all related records)
+        await db.execute("DELETE FROM threat_models WHERE id = ?", (model_id,))
+        await db.commit()
+
+    logger.info(f"Deleted threat model {model_id}")
 
 
 # Flows CRUD

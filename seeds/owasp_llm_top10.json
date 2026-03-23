@@ -1,0 +1,152 @@
+[
+  {
+    "name": "LLM01: Prompt Injection",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Attacker crafting malicious prompts can manipulate LLM to ignore system instructions, bypass safety filters, or execute unintended commands, compromising application security.",
+    "target": "LLM Application",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement strict input validation and sanitization",
+      "Use privilege separation between system and user prompts",
+      "Apply output filtering and content moderation",
+      "Employ prompt engineering with clear boundaries"
+    ]
+  },
+  {
+    "name": "LLM02: Insecure Output Handling",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Application trusting LLM output without validation can lead to XSS, SSRF, or command injection when outputs are used in downstream systems.",
+    "target": "Output Processing Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Treat LLM output as untrusted user input",
+      "Implement output encoding and sanitization",
+      "Use sandboxing for code execution",
+      "Apply least privilege principles for downstream actions"
+    ]
+  },
+  {
+    "name": "LLM03: Training Data Poisoning",
+    "stride_category": "Tampering",
+    "maestro_category": "Data Security",
+    "description": "Attacker injecting malicious data into training corpus can cause model to produce biased, harmful, or backdoored outputs.",
+    "target": "Training Pipeline",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement data provenance and validation",
+      "Use anomaly detection on training data",
+      "Apply data sanitization and filtering",
+      "Maintain secure data sourcing practices"
+    ]
+  },
+  {
+    "name": "LLM04: Model Denial of Service",
+    "stride_category": "Denial of Service",
+    "maestro_category": "Resource Abuse",
+    "description": "Attacker sending resource-intensive prompts can exhaust model resources causing service degradation, high costs, or complete unavailability.",
+    "target": "LLM Infrastructure",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement rate limiting per user/API key",
+      "Set input length and complexity limits",
+      "Use request queuing and timeout mechanisms",
+      "Monitor resource usage and costs"
+    ]
+  },
+  {
+    "name": "LLM05: Supply Chain Vulnerabilities",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "Supply Chain",
+    "description": "Using compromised third-party models, datasets, or plugins can introduce vulnerabilities, backdoors, or malicious functionality into LLM applications.",
+    "target": "LLM Dependencies",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Verify checksums and signatures of all components",
+      "Use trusted sources for models and data",
+      "Conduct security audits of dependencies",
+      "Maintain software bill of materials (SBOM)"
+    ]
+  },
+  {
+    "name": "LLM06: Sensitive Information Disclosure",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Privacy",
+    "description": "LLM can leak sensitive information from training data, system prompts, or user conversations through its responses.",
+    "target": "LLM Outputs",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement data loss prevention (DLP) on outputs",
+      "Use data anonymization in training",
+      "Apply output filtering for PII and secrets",
+      "Maintain separate models for sensitive domains"
+    ]
+  },
+  {
+    "name": "LLM07: Insecure Plugin Design",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "LLM Security",
+    "description": "Poorly designed LLM plugins can allow privilege escalation, unauthorized data access, or remote code execution through plugin interfaces.",
+    "target": "LLM Plugins",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement strict plugin authorization",
+      "Use sandboxing for plugin execution",
+      "Validate all plugin inputs and outputs",
+      "Apply principle of least privilege"
+    ]
+  },
+  {
+    "name": "LLM08: Excessive Agency",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "LLM Security",
+    "description": "LLM with excessive permissions or autonomy can perform unintended actions, causing damage through overly broad tool access or decision-making authority.",
+    "target": "LLM Agent System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement human-in-the-loop for critical actions",
+      "Use granular permission controls",
+      "Apply action confirmation mechanisms",
+      "Maintain audit logging of all actions"
+    ]
+  },
+  {
+    "name": "LLM09: Overreliance",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Users or systems trusting LLM outputs without verification can act on hallucinated or incorrect information, leading to poor decisions or security incidents.",
+    "target": "Decision Making Process",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement output verification mechanisms",
+      "Display confidence scores to users",
+      "Require human validation for critical decisions",
+      "Educate users on LLM limitations"
+    ]
+  },
+  {
+    "name": "LLM10: Model Theft",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Model Security",
+    "description": "Attacker through API queries or direct access can extract or replicate proprietary LLM models, stealing intellectual property and enabling derivative attacks.",
+    "target": "LLM Model",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement query rate limiting and monitoring",
+      "Use model watermarking techniques",
+      "Apply API access controls and authentication",
+      "Monitor for systematic model probing"
+    ]
+  }
+]

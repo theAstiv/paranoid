@@ -1,0 +1,282 @@
+[
+  {
+    "name": "Model Inversion Attack",
+    "maestro_category": "Model Security",
+    "description": "Attacker with query access to ML model can reconstruct training data through repeated inference queries, extracting sensitive information encoded in model weights.",
+    "target": "Machine Learning Model",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement differential privacy during training",
+      "Add noise to model outputs",
+      "Limit query rate and complexity",
+      "Monitor for suspicious query patterns"
+    ]
+  },
+  {
+    "name": "Adversarial Example Attack",
+    "maestro_category": "Model Security",
+    "description": "Malicious actor can craft imperceptible perturbations to input data causing the model to produce incorrect predictions, bypassing security controls.",
+    "target": "ML Inference Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement adversarial training with robust examples",
+      "Use input sanitization and validation",
+      "Deploy ensemble models for consensus",
+      "Monitor prediction confidence scores"
+    ]
+  },
+  {
+    "name": "Training Data Poisoning",
+    "maestro_category": "Data Security",
+    "description": "Attacker with access to training data pipeline can inject malicious examples causing the model to learn incorrect patterns or backdoors.",
+    "target": "Training Data Pipeline",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement data provenance tracking",
+      "Use anomaly detection on training data",
+      "Apply data validation and sanitization",
+      "Maintain secure data pipelines with access controls"
+    ]
+  },
+  {
+    "name": "Model Extraction via API",
+    "maestro_category": "Model Security",
+    "description": "Attacker querying ML API can extract a functionally equivalent model through systematic probing, stealing intellectual property and enabling further attacks.",
+    "target": "ML API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement query rate limiting",
+      "Add prediction confidence thresholds",
+      "Monitor for systematic probing patterns",
+      "Use model watermarking techniques"
+    ]
+  },
+  {
+    "name": "Prompt Injection in LLM",
+    "maestro_category": "LLM Security",
+    "description": "User providing malicious prompts can manipulate LLM behavior to bypass safety controls, leak system instructions, or generate harmful content.",
+    "target": "Large Language Model",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement prompt filtering and validation",
+      "Use system message hardening",
+      "Apply output content filtering",
+      "Maintain separate contexts for system and user content"
+    ]
+  },
+  {
+    "name": "Training-Serving Skew",
+    "maestro_category": "Pipeline Security",
+    "description": "Differences between training and production environments can cause model performance degradation or unexpected behavior, leading to incorrect predictions.",
+    "target": "ML Pipeline",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Maintain consistent feature engineering pipelines",
+      "Implement continuous validation in production",
+      "Use feature store for consistency",
+      "Monitor for data distribution drift"
+    ]
+  },
+  {
+    "name": "Model Backdoor",
+    "maestro_category": "Model Security",
+    "description": "Malicious insider during model development can embed hidden triggers causing model to misbehave on specific inputs while performing normally otherwise.",
+    "target": "Model Weights",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement model verification and testing",
+      "Use trusted training environments",
+      "Apply code review for model training code",
+      "Test model behavior on edge cases"
+    ]
+  },
+  {
+    "name": "Membership Inference Attack",
+    "maestro_category": "Privacy",
+    "description": "Attacker can determine if specific data points were in the training set by analyzing model predictions, violating privacy of training data subjects.",
+    "target": "ML Model",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use differential privacy during training",
+      "Implement prediction confidence capping",
+      "Apply regularization techniques",
+      "Limit access to model confidence scores"
+    ]
+  },
+  {
+    "name": "Feature Inference Attack",
+    "maestro_category": "Privacy",
+    "description": "Attacker with model access can infer sensitive features about individuals that were not directly predicted but correlate with model outputs.",
+    "target": "Model Predictions",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement feature suppression for sensitive attributes",
+      "Use fairness-aware training techniques",
+      "Apply output perturbation",
+      "Conduct privacy impact assessments"
+    ]
+  },
+  {
+    "name": "Model Supply Chain Attack",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker compromising pre-trained models or ML libraries can inject malicious code affecting all downstream applications using these components.",
+    "target": "Model Dependencies",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Verify checksums of downloaded models",
+      "Use trusted model repositories only",
+      "Scan models for embedded malware",
+      "Maintain software bill of materials (SBOM)"
+    ]
+  },
+  {
+    "name": "Inference Cost Attack",
+    "maestro_category": "Resource Abuse",
+    "description": "Attacker sending computationally expensive inference requests can exhaust resources and incur high costs, causing denial of service or financial damage.",
+    "target": "ML Inference Service",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement request size limits",
+      "Use cost-based rate limiting",
+      "Deploy inference request queuing",
+      "Monitor and alert on cost anomalies"
+    ]
+  },
+  {
+    "name": "Model Bias Exploitation",
+    "maestro_category": "Fairness",
+    "description": "Attacker discovering model biases can exploit them to receive favorable predictions or cause discriminatory outcomes for specific groups.",
+    "target": "ML Model",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Conduct bias audits across demographics",
+      "Implement fairness metrics monitoring",
+      "Use bias mitigation techniques during training",
+      "Maintain diverse training datasets"
+    ]
+  },
+  {
+    "name": "Gradient Leakage in Federated Learning",
+    "maestro_category": "Distributed ML",
+    "description": "Malicious participant in federated learning can extract private training data from shared gradients, compromising data privacy of other participants.",
+    "target": "Federated Learning System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement secure aggregation protocols",
+      "Use differential privacy on gradients",
+      "Apply gradient clipping and noise",
+      "Verify participant identities"
+    ]
+  },
+  {
+    "name": "Reward Hacking in RL",
+    "maestro_category": "Reinforcement Learning",
+    "description": "RL agent can discover unintended ways to maximize reward function that violate intended objectives, causing harmful or unexpected behaviors.",
+    "target": "RL Agent",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Design robust reward functions with constraints",
+      "Implement human-in-the-loop oversight",
+      "Use reward shaping techniques",
+      "Monitor agent behavior for anomalies"
+    ]
+  },
+  {
+    "name": "Model Drift Detection Bypass",
+    "maestro_category": "Monitoring",
+    "description": "Attacker can gradually shift input distribution to evade drift detection while degrading model performance over time.",
+    "target": "Model Monitoring System",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement multiple drift detection metrics",
+      "Use statistical tests with tight thresholds",
+      "Monitor feature correlations over time",
+      "Maintain human review of edge cases"
+    ]
+  },
+  {
+    "name": "Explainability Manipulation",
+    "maestro_category": "Interpretability",
+    "description": "Attacker can craft inputs that produce misleading explanations while causing incorrect predictions, undermining trust in model interpretability.",
+    "target": "Model Explanations",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use multiple explanation methods",
+      "Validate explanations against ground truth",
+      "Implement explanation consistency checks",
+      "Apply adversarial robustness to explainers"
+    ]
+  },
+  {
+    "name": "Transfer Learning Attack",
+    "maestro_category": "Model Security",
+    "description": "Attacker providing malicious pre-trained model can embed vulnerabilities that persist through fine-tuning, affecting downstream tasks.",
+    "target": "Pre-trained Model",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Verify source of pre-trained models",
+      "Test models on adversarial examples",
+      "Apply safety fine-tuning",
+      "Use model cards and documentation"
+    ]
+  },
+  {
+    "name": "AutoML Manipulation",
+    "maestro_category": "AutoML",
+    "description": "Attacker with access to AutoML pipeline can manipulate hyperparameter search space to cause poor model selection or embed vulnerabilities.",
+    "target": "AutoML System",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement constraints on search space",
+      "Validate selected models thoroughly",
+      "Use trusted AutoML frameworks",
+      "Monitor AutoML experiment metrics"
+    ]
+  },
+  {
+    "name": "Privacy Budget Exhaustion",
+    "maestro_category": "Privacy",
+    "description": "Attacker making repeated queries can exhaust differential privacy budget, allowing reconstruction of sensitive training data.",
+    "target": "Private ML API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement strict privacy budget tracking",
+      "Use query result caching",
+      "Apply per-user privacy budgets",
+      "Monitor and alert on budget depletion"
+    ]
+  },
+  {
+    "name": "Model Denial via Input Complexity",
+    "maestro_category": "Resource Abuse",
+    "description": "Attacker crafting maximally complex inputs can cause model inference to consume excessive time and memory, creating denial of service.",
+    "target": "ML Inference",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement input complexity limits",
+      "Use timeout mechanisms for inference",
+      "Apply input preprocessing and validation",
+      "Deploy resource monitoring and throttling"
+    ]
+  }
+]

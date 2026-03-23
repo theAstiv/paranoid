@@ -1,0 +1,254 @@
+[
+  {
+    "name": "Stolen Authentication Credentials",
+    "stride_category": "Spoofing",
+    "description": "External attacker with network access can steal authentication credentials by intercepting unencrypted communication channels, leading to unauthorized access to user accounts and data.",
+    "target": "Authentication System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement TLS/SSL for all communications",
+      "Use certificate pinning for mobile applications",
+      "Implement multi-factor authentication",
+      "Monitor for suspicious login patterns"
+    ]
+  },
+  {
+    "name": "Session Token Hijacking",
+    "stride_category": "Spoofing",
+    "description": "Malicious user with access to network traffic can hijack active session tokens through man-in-the-middle attacks, leading to session takeover and unauthorized actions.",
+    "target": "Session Management",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use secure, HTTP-only cookies",
+      "Implement short session timeouts",
+      "Regenerate session IDs after authentication",
+      "Use anti-CSRF tokens for state-changing operations"
+    ]
+  },
+  {
+    "name": "API Key Impersonation",
+    "stride_category": "Spoofing",
+    "description": "Internal user with access to configuration files can extract and use API keys to impersonate legitimate services, bypassing authentication controls.",
+    "target": "API Gateway",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Store API keys in secure secret management systems",
+      "Implement API key rotation policies",
+      "Use short-lived tokens instead of long-lived keys",
+      "Monitor API usage patterns for anomalies"
+    ]
+  },
+  {
+    "name": "SQL Injection Attack",
+    "stride_category": "Tampering",
+    "description": "External attacker with application access can inject malicious SQL through input fields, leading to unauthorized data modification or deletion in the database.",
+    "target": "Database",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use parameterized queries or prepared statements",
+      "Implement input validation and sanitization",
+      "Apply principle of least privilege for database accounts",
+      "Conduct regular security code reviews"
+    ]
+  },
+  {
+    "name": "Message Queue Poisoning",
+    "stride_category": "Tampering",
+    "description": "Compromised service with queue access can inject malicious messages into message queues, causing downstream services to process corrupted data or commands.",
+    "target": "Message Queue",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement message signing and verification",
+      "Use authentication for queue access",
+      "Validate all message content before processing",
+      "Implement message schema validation"
+    ]
+  },
+  {
+    "name": "Configuration File Tampering",
+    "stride_category": "Tampering",
+    "description": "Insider with file system access can modify configuration files to alter application behavior, disable security controls, or inject malicious settings.",
+    "target": "Configuration Management",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement file integrity monitoring",
+      "Use read-only file systems where possible",
+      "Digitally sign configuration files",
+      "Apply strict access controls to configuration directories"
+    ]
+  },
+  {
+    "name": "Missing Audit Logs",
+    "stride_category": "Repudiation",
+    "description": "Malicious user performing unauthorized actions can exploit missing or incomplete audit logging to deny their actions, preventing incident response and forensics.",
+    "target": "Audit System",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement comprehensive audit logging for all sensitive operations",
+      "Use tamper-proof logging infrastructure",
+      "Include timestamps, user IDs, and action details in logs",
+      "Regularly review and analyze audit logs"
+    ]
+  },
+  {
+    "name": "Log Injection",
+    "stride_category": "Repudiation",
+    "description": "Attacker with application access can inject false entries into application logs by manipulating input fields, creating false audit trails and hiding malicious activity.",
+    "target": "Logging System",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Sanitize all user input before logging",
+      "Use structured logging formats (JSON)",
+      "Implement log aggregation with centralized storage",
+      "Use digital signatures for log entries"
+    ]
+  },
+  {
+    "name": "Transaction Repudiation",
+    "stride_category": "Repudiation",
+    "description": "User initiating financial transactions can later deny their actions due to weak non-repudiation controls, leading to disputes and potential fraud.",
+    "target": "Transaction System",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement digital signatures for transactions",
+      "Require multi-factor authentication for sensitive operations",
+      "Maintain detailed transaction logs with user verification",
+      "Use blockchain or immutable ledgers for critical transactions"
+    ]
+  },
+  {
+    "name": "Database Credential Exposure",
+    "stride_category": "Information Disclosure",
+    "description": "External attacker with code repository access can extract database credentials from configuration files or environment variables, leading to unauthorized data access.",
+    "target": "Database",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Never store credentials in source code or version control",
+      "Use environment variables or secret management systems",
+      "Rotate credentials regularly",
+      "Implement database encryption at rest"
+    ]
+  },
+  {
+    "name": "API Response Information Leakage",
+    "stride_category": "Information Disclosure",
+    "description": "Unauthenticated user probing API endpoints can extract sensitive information from verbose error messages or detailed API responses, revealing system architecture.",
+    "target": "API",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement generic error messages for external users",
+      "Sanitize API responses to remove sensitive data",
+      "Use API response filtering based on user permissions",
+      "Conduct regular API security testing"
+    ]
+  },
+  {
+    "name": "Backup Data Exposure",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with cloud storage access can download unencrypted backup files containing sensitive customer data, leading to large-scale data breach.",
+    "target": "Backup Storage",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Encrypt all backups with strong encryption",
+      "Implement strict access controls on backup storage",
+      "Use separate encryption keys for backups",
+      "Regularly test backup restoration procedures"
+    ]
+  },
+  {
+    "name": "Resource Exhaustion Attack",
+    "stride_category": "Denial of Service",
+    "description": "External attacker flooding API endpoints can exhaust system resources through excessive requests, causing service degradation or complete outage for legitimate users.",
+    "target": "API Gateway",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement rate limiting per user/IP",
+      "Use API throttling and quotas",
+      "Deploy DDoS protection services",
+      "Implement auto-scaling for high-traffic scenarios"
+    ]
+  },
+  {
+    "name": "Database Connection Pool Exhaustion",
+    "stride_category": "Denial of Service",
+    "description": "Malicious actor sending high-volume database queries can exhaust connection pools, preventing legitimate transactions from accessing the database.",
+    "target": "Database Connection Pool",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement connection pool limits and timeouts",
+      "Use connection pooling with proper configuration",
+      "Monitor database connection usage",
+      "Implement query timeout limits"
+    ]
+  },
+  {
+    "name": "Slowloris Attack",
+    "stride_category": "Denial of Service",
+    "description": "Attacker sending slow, incomplete HTTP requests can keep server connections open, eventually exhausting server capacity and denying service to legitimate users.",
+    "target": "Web Server",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure short request timeouts",
+      "Limit concurrent connections per IP",
+      "Use reverse proxy with connection limits",
+      "Deploy load balancers with request filtering"
+    ]
+  },
+  {
+    "name": "Privilege Escalation via API",
+    "stride_category": "Elevation of Privilege",
+    "description": "Low-privileged user exploiting API parameter manipulation can escalate privileges by modifying role or permission parameters in API requests.",
+    "target": "API Authorization",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement server-side authorization checks",
+      "Never trust client-side role/permission data",
+      "Use role-based access control (RBAC)",
+      "Audit all privilege-related operations"
+    ]
+  },
+  {
+    "name": "Container Escape",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with container access exploiting kernel vulnerabilities can escape container isolation, gaining host system access with elevated privileges.",
+    "target": "Container Runtime",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Run containers with minimal privileges",
+      "Use security profiles (AppArmor, SELinux)",
+      "Keep container runtime updated",
+      "Implement container security scanning"
+    ]
+  },
+  {
+    "name": "JWT Privilege Escalation",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker obtaining valid JWT token can modify claims to elevate privileges due to weak signature verification or missing validation checks.",
+    "target": "JWT Authentication",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use strong signing algorithms (RS256, not HS256)",
+      "Validate all JWT claims on the server side",
+      "Implement short token expiration times",
+      "Use asymmetric keys for JWT signing"
+    ]
+  }
+]
