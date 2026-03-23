@@ -70,6 +70,7 @@ class PipelineConfig:
     max_execution_time_minutes: int = 30
     temperature: float = 0.2
     enable_rag: bool = True  # Enable RAG retrieval for threat generation
+    has_ai_components: bool = False  # Run MAESTRO alongside STRIDE when True
 
 
 @dataclass
@@ -180,8 +181,8 @@ class PipelineRunner:
             yield PipelineEvent(
                 step=PipelineStep.EXTRACT_ASSETS,
                 status="completed",
-                message=f"Identified {len(assets.assets_list)} assets/entities",
-                data={"asset_count": len(assets.assets_list)},
+                message=f"Identified {len(assets.assets)} assets/entities",
+                data={"asset_count": len(assets.assets)},
             )
 
             # Step 3: Extract Flows
@@ -230,37 +231,115 @@ class PipelineRunner:
                     break
 
                 # Generate threats
-                yield PipelineEvent(
-                    step=PipelineStep.GENERATE_THREATS,
-                    status="started",
-                    message=f"Generating threats (iteration {iteration}/{self.config.max_iterations})...",
-                    iteration=iteration,
-                )
+                # If has_ai_components=True and framework=STRIDE, run both STRIDE and MAESTRO
+                if self.config.has_ai_components and framework == Framework.STRIDE:
+                    # Dual framework execution
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="started",
+                        message=f"Generating STRIDE threats (iteration {iteration}/{self.config.max_iterations})...",
+                        iteration=iteration,
+                    )
 
-                # TODO: Phase 6.9 - Integrate RAG retrieval here
-                rag_context = None  # Will be populated in Phase 6.9
+                    # TODO: Phase 6.9 - Integrate RAG retrieval here
+                    rag_context = None  # Will be populated in Phase 6.9
 
-                current_threats = await nodes.generate_threats(
-                    description=description,
-                    architecture_diagram=architecture_diagram,
-                    assumptions=assumptions,
-                    assets=assets,
-                    flows=flows,
-                    framework=framework,
-                    provider=self.provider,
-                    existing_threats=current_threats if iteration > 1 else None,
-                    gap_analysis=gaps[-1] if gaps else None,
-                    rag_context=rag_context,
-                    temperature=self.config.temperature,
-                )
+                    # Generate STRIDE threats
+                    stride_threats = await nodes.generate_threats(
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        assets=assets,
+                        flows=flows,
+                        framework=Framework.STRIDE,
+                        provider=self.provider,
+                        existing_threats=current_threats if iteration > 1 else None,
+                        gap_analysis=gaps[-1] if gaps else None,
+                        rag_context=rag_context,
+                        temperature=self.config.temperature,
+                    )
 
-                yield PipelineEvent(
-                    step=PipelineStep.GENERATE_THREATS,
-                    status="completed",
-                    message=f"Generated {len(current_threats.threat_list)} threats",
-                    iteration=iteration,
-                    data={"threat_count": len(current_threats.threat_list)},
-                )
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="completed",
+                        message=f"Generated {len(stride_threats.threats)} STRIDE threats",
+                        iteration=iteration,
+                        data={"threat_count": len(stride_threats.threats), "framework": "STRIDE"},
+                    )
+
+                    # Generate MAESTRO threats for AI/ML components
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="started",
+                        message=f"Generating MAESTRO threats for AI/ML components (iteration {iteration}/{self.config.max_iterations})...",
+                        iteration=iteration,
+                    )
+
+                    maestro_threats = await nodes.generate_threats(
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        assets=assets,
+                        flows=flows,
+                        framework=Framework.MAESTRO,
+                        provider=self.provider,
+                        existing_threats=None,  # MAESTRO threats are separate
+                        gap_analysis=gaps[-1] if gaps else None,
+                        rag_context=rag_context,
+                        temperature=self.config.temperature,
+                    )
+
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="completed",
+                        message=f"Generated {len(maestro_threats.threats)} MAESTRO threats",
+                        iteration=iteration,
+                        data={"threat_count": len(maestro_threats.threats), "framework": "MAESTRO"},
+                    )
+
+                    # Merge threat lists (STRIDE + MAESTRO)
+                    current_threats = stride_threats + maestro_threats
+
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="info",
+                        message=f"Combined {len(current_threats.threats)} total threats (STRIDE + MAESTRO)",
+                        iteration=iteration,
+                        data={"threat_count": len(current_threats.threats)},
+                    )
+                else:
+                    # Single framework execution
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="started",
+                        message=f"Generating threats (iteration {iteration}/{self.config.max_iterations})...",
+                        iteration=iteration,
+                    )
+
+                    # TODO: Phase 6.9 - Integrate RAG retrieval here
+                    rag_context = None  # Will be populated in Phase 6.9
+
+                    current_threats = await nodes.generate_threats(
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        assets=assets,
+                        flows=flows,
+                        framework=framework,
+                        provider=self.provider,
+                        existing_threats=current_threats if iteration > 1 else None,
+                        gap_analysis=gaps[-1] if gaps else None,
+                        rag_context=rag_context,
+                        temperature=self.config.temperature,
+                    )
+
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="completed",
+                        message=f"Generated {len(current_threats.threats)} threats",
+                        iteration=iteration,
+                        data={"threat_count": len(current_threats.threats)},
+                    )
 
                 # Gap Analysis (only if not final iteration)
                 if iteration < self.config.max_iterations:
@@ -312,10 +391,10 @@ class PipelineRunner:
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,
                 status="completed",
-                message=f"Pipeline complete: {iteration - 1} iterations, {len(current_threats.threat_list)} threats",
+                message=f"Pipeline complete: {iteration - 1} iterations, {len(current_threats.threats)} threats",
                 data={
                     "iterations": iteration - 1,
-                    "threat_count": len(current_threats.threat_list),
+                    "threat_count": len(current_threats.threats),
                     "duration_seconds": total_duration,
                     "stopped_reason": stopped_reason,
                 },
@@ -404,6 +483,7 @@ async def run_pipeline_for_model(
     assumptions: Optional[list[str]] = None,
     code_context: Optional[CodeContext] = None,
     max_iterations: int = 3,
+    has_ai_components: bool = False,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -416,6 +496,7 @@ async def run_pipeline_for_model(
         assumptions: Optional assumptions
         code_context: Optional code context
         max_iterations: Maximum iteration count (1-15)
+        has_ai_components: Whether to run MAESTRO alongside STRIDE
 
     Yields:
         PipelineEvent for progress tracking
@@ -425,6 +506,7 @@ async def run_pipeline_for_model(
         max_execution_time_minutes=30,
         temperature=0.2,
         enable_rag=True,
+        has_ai_components=has_ai_components,
     )
 
     runner = PipelineRunner(

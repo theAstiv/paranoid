@@ -8,7 +8,15 @@ import asyncio
 from typing import Optional
 
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeContext, TestSuite
+from backend.models.extended import (
+    AttackTree,
+    CodeContext,
+    MaestroAssumptions,
+    MaestroComponentDescription,
+    StrideAssumptions,
+    StrideComponentDescription,
+    TestSuite,
+)
 from backend.models.state import (
     AssetsList,
     ContinueThreatModeling,
@@ -16,6 +24,7 @@ from backend.models.state import (
     SummaryState,
     ThreatsList,
 )
+from backend.pipeline import input_parser
 from backend.pipeline.prompts import (
     attack_tree_prompt,
     maestro_asset_prompt,
@@ -45,6 +54,95 @@ def _format_assumptions(assumptions: Optional[list[str]]) -> str:
     if not assumptions:
         return ""
     return "\n".join(f"- {assumption}" for assumption in assumptions)
+
+
+def _parse_structured_input(
+    description: str,
+    framework: Framework,
+) -> tuple[
+    Optional[StrideComponentDescription | MaestroComponentDescription],
+    Optional[StrideAssumptions | MaestroAssumptions],
+    str,
+]:
+    """Parse structured XML-tagged input if present.
+
+    Args:
+        description: Input text that may contain XML-tagged structured data
+        framework: STRIDE or MAESTRO framework
+
+    Returns:
+        Tuple of (component_description, assumptions, plain_description)
+        - component_description: Parsed structured component description if found
+        - assumptions: Parsed structured assumptions if found
+        - plain_description: Original description (for backward compatibility)
+    """
+    input_format = input_parser.detect_input_format(description)
+
+    if input_format == "stride_structured":
+        component_desc = input_parser.parse_stride_component_description(description)
+        assumptions_struct = input_parser.parse_stride_assumptions(description)
+        return component_desc, assumptions_struct, description
+    elif input_format == "maestro_structured":
+        component_desc = input_parser.parse_maestro_component_description(description)
+        assumptions_struct = input_parser.parse_maestro_assumptions(description)
+        return component_desc, assumptions_struct, description
+    else:
+        # Plain text input - no structured parsing
+        return None, None, description
+
+
+def _format_structured_component_for_prompt(
+    component_desc: Optional[StrideComponentDescription | MaestroComponentDescription],
+) -> str:
+    """Format structured component description for prompt inclusion.
+
+    Args:
+        component_desc: Parsed component description
+
+    Returns:
+        Formatted string for prompt, or empty string if None
+    """
+    if component_desc is None:
+        return ""
+    return input_parser.format_structured_description_for_prompt(component_desc)
+
+
+def _format_structured_assumptions_for_prompt(
+    assumptions_struct: Optional[StrideAssumptions | MaestroAssumptions],
+) -> str:
+    """Format structured assumptions for prompt inclusion.
+
+    Args:
+        assumptions_struct: Parsed structured assumptions
+
+    Returns:
+        Formatted string for prompt, or empty string if None
+    """
+    if assumptions_struct is None:
+        return ""
+    return input_parser.format_structured_assumptions_for_prompt(assumptions_struct)
+
+
+def _build_assumptions_section(
+    assumptions: Optional[list[str]],
+    structured_assumptions: Optional[StrideAssumptions | MaestroAssumptions],
+) -> str:
+    """Build assumptions section for prompt.
+
+    Args:
+        assumptions: Legacy list of assumption strings
+        structured_assumptions: Structured assumptions from XML template
+
+    Returns:
+        Formatted assumptions text for prompt inclusion
+    """
+    # Prefer structured assumptions if available
+    if structured_assumptions:
+        return _format_structured_assumptions_for_prompt(structured_assumptions)
+    elif assumptions:
+        return _format_assumptions(assumptions)
+    else:
+        return ""
 
 
 async def summarize(
@@ -114,9 +212,9 @@ async def extract_assets(
 
     Args:
         summary: Generated system summary
-        description: Original system description
+        description: Original system description (may contain structured XML-tagged input)
         architecture_diagram: Optional diagram data
-        assumptions: Optional assumptions
+        assumptions: Optional assumptions (legacy list format)
         framework: STRIDE or MAESTRO framework
         provider: LLM provider
         temperature: Sampling temperature
@@ -124,6 +222,11 @@ async def extract_assets(
     Returns:
         AssetsList with identified assets and entities
     """
+    # Parse structured input if present
+    component_desc, structured_assumptions, plain_description = _parse_structured_input(
+        description, framework
+    )
+
     # Select prompt based on framework
     if framework == Framework.MAESTRO:
         system_prompt = maestro_asset_prompt()
@@ -136,10 +239,16 @@ async def extract_assets(
     if architecture_diagram:
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
-    prompt_parts.append(_build_xml_tag("description", description))
+    # Add component description if structured input was parsed
+    if component_desc:
+        component_text = _format_structured_component_for_prompt(component_desc)
+        prompt_parts.append(_build_xml_tag("component_description", component_text))
 
-    if assumptions:
-        assumptions_text = _format_assumptions(assumptions)
+    prompt_parts.append(_build_xml_tag("description", plain_description))
+
+    # Build assumptions section (prefer structured over legacy list)
+    assumptions_text = _build_assumptions_section(assumptions, structured_assumptions)
+    if assumptions_text:
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
     user_prompt = "".join(prompt_parts)
@@ -168,9 +277,9 @@ async def extract_flows(
 
     Args:
         summary: Generated system summary
-        description: Original system description
+        description: Original system description (may contain structured XML-tagged input)
         architecture_diagram: Optional diagram data
-        assumptions: Optional assumptions
+        assumptions: Optional assumptions (legacy list format)
         assets: Previously extracted assets
         provider: LLM provider
         temperature: Sampling temperature
@@ -178,6 +287,12 @@ async def extract_flows(
     Returns:
         FlowsList with data flows, trust boundaries, and threat sources
     """
+    # Parse structured input if present (use STRIDE framework for flow extraction)
+    from backend.models.enums import Framework
+    component_desc, structured_assumptions, plain_description = _parse_structured_input(
+        description, Framework.STRIDE
+    )
+
     system_prompt = stride_flow_prompt()
 
     # Build prompt
@@ -186,15 +301,21 @@ async def extract_flows(
     if architecture_diagram:
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
-    prompt_parts.append(_build_xml_tag("description", description))
+    # Add component description if structured input was parsed
+    if component_desc:
+        component_text = _format_structured_component_for_prompt(component_desc)
+        prompt_parts.append(_build_xml_tag("component_description", component_text))
 
-    if assumptions:
-        assumptions_text = _format_assumptions(assumptions)
+    prompt_parts.append(_build_xml_tag("description", plain_description))
+
+    # Build assumptions section (prefer structured over legacy list)
+    assumptions_text = _build_assumptions_section(assumptions, structured_assumptions)
+    if assumptions_text:
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
     # Add assets
     assets_text = "## Assets\n"
-    for asset in assets.assets_list:
+    for asset in assets.assets:
         assets_text += f"- **{asset.name}** ({asset.type}): {asset.description}\n"
     prompt_parts.append(_build_xml_tag("identified_assets_and_entities", assets_text))
 
@@ -227,9 +348,9 @@ async def generate_threats(
     """Generate or improve threat catalog.
 
     Args:
-        description: System description
+        description: System description (may contain structured XML-tagged input)
         architecture_diagram: Optional diagram data
-        assumptions: Optional assumptions
+        assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
         framework: STRIDE or MAESTRO framework
@@ -242,6 +363,11 @@ async def generate_threats(
     Returns:
         ThreatsList with generated threats
     """
+    # Parse structured input if present
+    component_desc, structured_assumptions, plain_description = _parse_structured_input(
+        description, framework
+    )
+
     # Select prompt based on framework and iteration
     if existing_threats and gap_analysis:
         # Improvement iteration
@@ -262,31 +388,37 @@ async def generate_threats(
     if architecture_diagram:
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
-    prompt_parts.append(_build_xml_tag("description", description))
+    # Add component description if structured input was parsed
+    if component_desc:
+        component_text = _format_structured_component_for_prompt(component_desc)
+        prompt_parts.append(_build_xml_tag("component_description", component_text))
 
-    if assumptions:
-        assumptions_text = _format_assumptions(assumptions)
+    prompt_parts.append(_build_xml_tag("description", plain_description))
+
+    # Build assumptions section (prefer structured over legacy list)
+    assumptions_text = _build_assumptions_section(assumptions, structured_assumptions)
+    if assumptions_text:
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
     # Add assets
     assets_text = "## Assets\n"
-    for asset in assets.assets_list:
+    for asset in assets.assets:
         assets_text += f"- **{asset.name}** ({asset.type}): {asset.description}\n"
     prompt_parts.append(_build_xml_tag("identified_assets_and_entities", assets_text))
 
     # Add flows
     flows_text = "## Data Flows\n"
     for flow in flows.data_flows:
-        flows_text += f"- {flow.source} → {flow.target}: {flow.description}\n"
+        flows_text += f"- {flow.source_entity} → {flow.target_entity}: {flow.flow_description}\n"
     flows_text += "\n## Trust Boundaries\n"
     for boundary in flows.trust_boundaries:
-        flows_text += f"- {boundary.source} ↔ {boundary.target}: {boundary.description}\n"
+        flows_text += f"- {boundary.source_entity} ↔ {boundary.target_entity}: {boundary.purpose}\n"
     prompt_parts.append(_build_xml_tag("data_flow", flows_text))
 
     # Add existing threats if improvement iteration
     if existing_threats:
         threats_text = "## Existing Threats\n"
-        for threat in existing_threats.threat_list:
+        for threat in existing_threats.threats:
             threats_text += f"### {threat.name}\n"
             threats_text += f"- **Category**: {threat.stride_category}\n"
             threats_text += f"- **Target**: {threat.target}\n"
@@ -335,9 +467,9 @@ async def gap_analysis(
     """Analyze gaps in threat coverage.
 
     Args:
-        description: System description
+        description: System description (may contain structured XML-tagged input)
         architecture_diagram: Optional diagram data
-        assumptions: Optional assumptions
+        assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
         threats: Generated threats
@@ -349,6 +481,11 @@ async def gap_analysis(
     Returns:
         ContinueThreatModeling with stop decision and gap description
     """
+    # Parse structured input if present
+    component_desc, structured_assumptions, plain_description = _parse_structured_input(
+        description, framework
+    )
+
     # Select prompt based on framework
     if framework == Framework.MAESTRO:
         system_prompt = maestro_gap_prompt()
@@ -361,30 +498,36 @@ async def gap_analysis(
     if architecture_diagram:
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
-    prompt_parts.append(_build_xml_tag("description", description))
+    # Add component description if structured input was parsed
+    if component_desc:
+        component_text = _format_structured_component_for_prompt(component_desc)
+        prompt_parts.append(_build_xml_tag("component_description", component_text))
 
-    if assumptions:
-        assumptions_text = _format_assumptions(assumptions)
+    prompt_parts.append(_build_xml_tag("description", plain_description))
+
+    # Build assumptions section (prefer structured over legacy list)
+    assumptions_text = _build_assumptions_section(assumptions, structured_assumptions)
+    if assumptions_text:
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
     # Add assets
     assets_text = "## Assets\n"
-    for asset in assets.assets_list:
+    for asset in assets.assets:
         assets_text += f"- **{asset.name}** ({asset.type}): {asset.description}\n"
     prompt_parts.append(_build_xml_tag("identified_assets_and_entities", assets_text))
 
     # Add flows
     flows_text = "## Data Flows\n"
     for flow in flows.data_flows:
-        flows_text += f"- {flow.source} → {flow.target}: {flow.description}\n"
+        flows_text += f"- {flow.source_entity} → {flow.target_entity}: {flow.flow_description}\n"
     flows_text += "\n## Trust Boundaries\n"
     for boundary in flows.trust_boundaries:
-        flows_text += f"- {boundary.source} ↔ {boundary.target}: {boundary.description}\n"
+        flows_text += f"- {boundary.source_entity} ↔ {boundary.target_entity}: {boundary.purpose}\n"
     prompt_parts.append(_build_xml_tag("data_flow", flows_text))
 
     # Add threats
     threats_text = "## Generated Threats\n"
-    for threat in threats.threat_list:
+    for threat in threats.threats:
         threats_text += f"### {threat.name}\n"
         threats_text += f"- **Category**: {threat.stride_category}\n"
         threats_text += f"- **Target**: {threat.target}\n"

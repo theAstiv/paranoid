@@ -10,6 +10,8 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    run_sync_in_executor,
+    strip_markdown_fences,
 )
 
 
@@ -73,8 +75,9 @@ class OpenAIProvider:
                 f"Respond ONLY with the JSON object."
             )
 
-            # Call OpenAI API with JSON mode
-            response = self._client.chat.completions.create(
+            # Call OpenAI API with JSON mode (async)
+            response = await run_sync_in_executor(
+                self._client.chat.completions.create,
                 model=self._model,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -85,8 +88,9 @@ class OpenAIProvider:
                 ],
             )
 
-            # Extract JSON content
+            # Extract and clean JSON content (defensive fence stripping)
             content = response.choices[0].message.content
+            content = strip_markdown_fences(content)
 
             # Parse and validate
             try:
@@ -126,7 +130,8 @@ class OpenAIProvider:
     ) -> str:
         """Generate plain text output."""
         try:
-            response = self._client.chat.completions.create(
+            response = await run_sync_in_executor(
+                self._client.chat.completions.create,
                 model=self._model,
                 max_tokens=max_tokens,
                 temperature=temperature,

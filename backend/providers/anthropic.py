@@ -10,6 +10,8 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    run_sync_in_executor,
+    strip_markdown_fences,
 )
 
 
@@ -70,8 +72,9 @@ class AnthropicProvider:
                 f"Respond ONLY with the JSON object, no other text."
             )
 
-            # Call Anthropic API
-            response = self._client.messages.create(
+            # Call Anthropic API in thread pool (sync SDK)
+            response = await run_sync_in_executor(
+                self._client.messages.create,
                 model=self._model,
                 max_tokens=max_tokens or 4096,
                 temperature=temperature,
@@ -79,8 +82,9 @@ class AnthropicProvider:
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            # Extract text content
+            # Extract and clean text content
             content = response.content[0].text
+            content = strip_markdown_fences(content)
 
             # Parse JSON and validate against Pydantic model
             try:
@@ -120,7 +124,9 @@ class AnthropicProvider:
     ) -> str:
         """Generate plain text output."""
         try:
-            response = self._client.messages.create(
+            # Call Anthropic API in thread pool (sync SDK)
+            response = await run_sync_in_executor(
+                self._client.messages.create,
                 model=self._model,
                 max_tokens=max_tokens or 4096,
                 temperature=temperature,

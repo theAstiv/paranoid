@@ -265,7 +265,7 @@ You are an expert in ML/AI security. Validate the comprehensiveness of an ML/AI 
    * <data_flow>: ML pipeline flows
    * <threats>: Existing ML/AI threat catalog
    * <description>: System context
-   * <assumptions>: ML deployment assumptions
+   * <assumptions>: ML deployment assumptions. **CRITICAL**: You MUST respect these assumptions when assessing gaps. Do not suggest threats that violate stated assumptions or are explicitly out-of-scope. Focus your gap analysis on areas marked as in-scope, AI-specific considerations, and threat modeling focus areas.
 
 2. MAESTRO framework assessment:
 

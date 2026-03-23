@@ -120,6 +120,173 @@ class TestCase(BaseModel):
     ]
 
 
+class TestSuite(BaseModel):
+    """Model for a complete test suite (collection of test cases)."""
+
+    feature: Annotated[str, Field(description="Feature being tested")]
+    gherkin_source: Annotated[
+        str,
+        Field(description="Complete Gherkin feature file with scenarios"),
+    ]
+
+
+class CodeFile(BaseModel):
+    """Model for a single code file from MCP context."""
+
+    path: Annotated[str, Field(description="File path relative to repository root")]
+    content: Annotated[str, Field(description="File content")]
+    language: Annotated[str | None, Field(description="Programming language")] = None
+
+
+class CodeContext(BaseModel):
+    """Model for code context extracted from MCP server."""
+
+    repository: Annotated[str, Field(description="Repository name or path")]
+    files: Annotated[
+        list[CodeFile],
+        Field(description="List of relevant code files"),
+    ]
+    summary: Annotated[
+        str | None,
+        Field(description="Optional summary of the codebase"),
+    ] = None
+
+
+class StrideComponentDescription(BaseModel):
+    """Structured STRIDE component description from template."""
+
+    name: Annotated[str, Field(description="Name of the component")]
+    purpose: Annotated[str, Field(description="Brief explanation of what the component does")]
+    technology_stack: Annotated[
+        dict[str, list[str]],
+        Field(description="Technology stack details (languages, frameworks, libraries, etc.)"),
+    ]
+    interfaces: Annotated[
+        dict[str, list[str]],
+        Field(description="Inbound and outbound interfaces/protocols"),
+    ]
+    data_handled: Annotated[
+        dict[str, list[str]],
+        Field(description="Sensitive data types and storage mechanisms"),
+    ]
+    trust_level: Annotated[
+        dict[str, str | list[str]],
+        Field(description="Trust level details (internal/external, auth/authz)"),
+    ]
+    dependencies: Annotated[
+        list[str],
+        Field(description="External dependencies"),
+    ]
+
+
+class MaestroComponentDescription(BaseModel):
+    """Structured MAESTRO component description from template."""
+
+    name: Annotated[str, Field(description="Name of the AI component, agent, or pipeline stage")]
+    mission_alignment: Annotated[
+        dict[str, str],
+        Field(description="Operational mission, autonomy level, decision authority"),
+    ]
+    agent_profile: Annotated[
+        dict[str, str | list[str]],
+        Field(description="Model(s) used, hosting, modalities, tool access, memory/state"),
+    ]
+    technology_stack: Annotated[
+        dict[str, list[str]],
+        Field(description="Orchestration framework, languages, infrastructure, supporting services"),
+    ]
+    assets: Annotated[
+        dict[str, list[str]],
+        Field(description="Data assets, model assets, operational assets"),
+    ]
+    actors: Annotated[
+        dict[str, list[str]],
+        Field(description="Human principals, AI agents/sub-agents, external systems"),
+    ]
+    interfaces: Annotated[
+        dict[str, list[str]],
+        Field(description="Inbound and outbound interfaces"),
+    ]
+    trust_boundaries: Annotated[
+        dict[str, str | list[str]],
+        Field(description="Trust level, agent trust chain, human override, auth/authz"),
+    ]
+    dependencies: Annotated[
+        list[str],
+        Field(description="External dependencies"),
+    ]
+
+
+class StrideAssumptions(BaseModel):
+    """Structured STRIDE assumptions from template."""
+
+    security_controls: Annotated[
+        list[str],
+        Field(description="Security controls already in place"),
+    ]
+    in_scope: Annotated[
+        list[str],
+        Field(description="Areas considered in-scope"),
+    ]
+    out_of_scope: Annotated[
+        list[str],
+        Field(description="Areas considered out-of-scope"),
+    ]
+    constraints: Annotated[
+        list[str],
+        Field(description="Known constraints or limitations"),
+    ]
+    operational_considerations: Annotated[
+        list[str],
+        Field(description="Development or operational considerations"),
+    ]
+    focus_areas: Annotated[
+        list[str],
+        Field(description="Threat modeling focus areas"),
+    ]
+
+
+class MaestroAssumptions(BaseModel):
+    """Structured MAESTRO assumptions from template."""
+
+    mission_constraints: Annotated[
+        list[str],
+        Field(description="Mission-level constraints"),
+    ]
+    security_controls: Annotated[
+        list[str],
+        Field(description="Security controls already in place"),
+    ]
+    ai_specific_controls: Annotated[
+        list[str],
+        Field(description="AI-specific controls in place"),
+    ]
+    in_scope: Annotated[
+        list[str],
+        Field(description="Areas considered in-scope"),
+    ]
+    out_of_scope: Annotated[
+        list[str],
+        Field(description="Areas considered out-of-scope"),
+    ]
+    constraints: Annotated[
+        list[str],
+        Field(description="Known constraints or limitations"),
+    ]
+    agentic_considerations: Annotated[
+        list[str],
+        Field(description="Agentic/AI-specific considerations"),
+    ]
+    operational_considerations: Annotated[
+        list[str],
+        Field(description="Development or operational considerations"),
+    ]
+    focus_areas: Annotated[
+        list[str],
+        Field(description="Threat modeling focus areas"),
+    ]
+
+
 class ThreatModelConfig(BaseModel):
     """Configuration for a threat modeling run."""
 
@@ -132,6 +299,10 @@ class ThreatModelConfig(BaseModel):
         Framework,
         Field(description="Threat modeling framework to use"),
     ] = Framework.STRIDE
+    has_ai_components: Annotated[
+        bool,
+        Field(description="Whether the system has AI/ML components (triggers MAESTRO alongside STRIDE)"),
+    ] = False
     provider: Annotated[Provider, Field(description="LLM provider")]
     model: Annotated[str, Field(description="Specific model identifier")]
     iteration_count: Annotated[

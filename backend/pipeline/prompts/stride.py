@@ -202,7 +202,7 @@ You are an expert in all security domains and threat modeling. Your goal is to v
    * <data_flow>: Descriptions of data movements between components.
    * <threats>Threat Catalog</threats>: The existing threat catalog to be assessed.
    * <description>: Contextual overview of the system (if provided).
-   * <assumptions>: Security assumptions and boundary considerations (if provided).
+   * <assumptions>: Security assumptions and boundary considerations (if provided). **CRITICAL**: You MUST respect these assumptions when assessing gaps. Do not suggest threats that violate stated assumptions or are explicitly out-of-scope. Focus your gap analysis on areas marked as in-scope and threat modeling focus areas.
    * <previous_gap>: Previous gap analysis, if available.
 
 2. Assessment framework and criteria:
@@ -257,7 +257,7 @@ You are an expert in all security domains and threat modeling. Your goal is to v
 
    * **Systematic Coverage Review**: For each asset or entity, verify coverage across all relevant STRIDE categories.
    * **Data Flow Analysis**: For each data flow, confirm threats to data in transit and between trust boundaries are addressed.
-   * **Assumption Alignment**: Cross-reference assumptions — ensure threats respect the stated security context and boundaries.
+   * **Assumption Alignment**: Cross-reference assumptions — ensure threats respect the stated security context and boundaries. **CRITICAL**: Only suggest gaps for areas marked as **in-scope** in the assumptions. Do NOT suggest threats for areas marked as **out-of-scope**. Respect stated security controls and constraints. Prioritize threat modeling focus areas listed in assumptions.
    * **Attack Chain Analysis**: Identify missing threat scenarios that could enable attack progression.
    * **Actor-Centric Review**: Verify coverage from each relevant threat actor perspective.
 

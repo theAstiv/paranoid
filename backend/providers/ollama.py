@@ -6,7 +6,11 @@ from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from backend.providers.base import ProviderError, ProviderTimeoutError
+from backend.providers.base import (
+    ProviderError,
+    ProviderTimeoutError,
+    strip_markdown_fences,
+)
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -81,6 +85,9 @@ class OllamaProvider:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "")
+
+            # Clean content (defensive fence stripping)
+            content = strip_markdown_fences(content)
 
             # Parse and validate JSON
             try:

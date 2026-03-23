@@ -149,6 +149,10 @@ class GapAnalysis(BaseModel):
     ] = None
 
 
+# Alias for compatibility with threat-designer naming
+ContinueThreatModeling = GapAnalysis
+
+
 class PipelineState(BaseModel):
     """Container for pipeline state during threat modeling execution."""
 

@@ -1,6 +1,7 @@
 """Base protocol for LLM providers."""
 
-from typing import Any, Protocol, Type, TypeVar
+import asyncio
+from typing import Any, Callable, Protocol, Type, TypeVar
 
 from pydantic import BaseModel
 
@@ -93,6 +94,76 @@ class ProviderAuthError(ProviderError):
     """Raised when provider authentication fails."""
 
     pass
+
+
+# Utility functions for all providers
+
+
+def strip_markdown_fences(content: str) -> str:
+    """Strip markdown code fences from JSON output.
+
+    Many LLMs wrap JSON in markdown code fences like:
+    ```json
+    {"key": "value"}
+    ```
+
+    This function strips those fences to get clean JSON.
+
+    Args:
+        content: Raw text content from LLM (may have fences)
+
+    Returns:
+        Clean content with fences removed
+    """
+    content = content.strip()
+
+    # Remove opening fence
+    if content.startswith("```json"):
+        content = content[7:]  # Remove ```json
+    elif content.startswith("```"):
+        content = content[3:]  # Remove ```
+
+    # Remove closing fence
+    if content.endswith("```"):
+        content = content[:-3]
+
+    return content.strip()
+
+
+async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any:
+    """Run a synchronous function in a thread pool executor.
+
+    This allows sync SDK calls to be used in async functions without
+    blocking the event loop.
+
+    Args:
+        func: Synchronous function to run
+        *args: Positional arguments for func
+        **kwargs: Keyword arguments for func
+
+    Returns:
+        Result from func
+
+    Example:
+        result = await run_sync_in_executor(
+            client.messages.create,
+            model="claude-3",
+            messages=[...],
+        )
+    """
+    loop = asyncio.get_event_loop()
+
+    # If kwargs provided, create a lambda that includes them
+    if kwargs:
+        return await loop.run_in_executor(
+            None,
+            lambda: func(*args, **kwargs)
+        )
+    else:
+        return await loop.run_in_executor(
+            None,
+            lambda: func(*args)
+        )
 
 
 def create_provider(
