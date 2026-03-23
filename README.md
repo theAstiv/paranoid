@@ -14,7 +14,25 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **CI/CD Ready**: CLI + GitHub Action output SARIF for PR annotations
 - **Export Formats**: PDF, JSON, Markdown, SARIF
 
-## Quick Start
+## Quick Start (CLI)
+
+```bash
+# Install
+pip install -e .
+
+# Set API key
+export ANTHROPIC_API_KEY=your-key-here
+
+# Run threat modeling
+paranoid run --description "Web app with user authentication and PostgreSQL database" \
+  --provider anthropic --iterations 3
+
+# View results
+paranoid list
+paranoid show <model-id>
+```
+
+## Quick Start (Docker)
 
 ```bash
 # Clone and run
@@ -22,22 +40,24 @@ git clone https://github.com/yourusername/paranoid
 cd paranoid
 docker compose up
 
-# Open http://localhost:8000
+# Health check: http://localhost:8000/health
 ```
 
 ## Architecture
 
 - **Backend**: FastAPI + SQLite + sqlite-vec
-- **Frontend**: Svelte + Tailwind CSS
+- **Frontend**: Planned for v2.0 (v1.0 is CLI-only)
 - **LLM Providers**: Anthropic / OpenAI / Ollama (protocol-based)
 - **Pipeline**: Plain async functions (no LangChain)
 - **Embeddings**: Local via fastembed (ONNX)
+- **Models**: Pydantic v2
 
 ## Documentation
 
-- [Build Plan](threat-designer-build-plan.md)
-- [Tech Rationale](.claude/rules/tech-decision-rationale.md)
-- [Coding Conventions](.claude/rules/RULES.md)
+- [Build Plan](build-plan.md)
+- [Tech Rationale](tech-decision-rationale.md)
+- [Coding Conventions](RULES.md)
+- [Development Guide](CLAUDE.md)
 
 ## License
 
@@ -45,4 +65,5 @@ Apache 2.0
 
 ---
 
-**Status**: 🚧 Under active development — Phase 1 in progress
+**Status**: 🚧 v1.0 Development — Phases 1-3 complete (Persistence + Models)
+**Next**: Phase 4 — LLM Provider Protocol
