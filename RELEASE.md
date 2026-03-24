@@ -270,5 +270,5 @@ Examples:
 
 ## Questions?
 
-Contact: Astitva / StateCheck Security
-Issues: https://github.com/yourusername/paranoid/issues
+Contact: Astitva
+Issues: https://github.com/theAstiv/paranoid/issues
