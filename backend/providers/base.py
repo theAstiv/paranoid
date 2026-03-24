@@ -1,6 +1,7 @@
 """Base protocol for LLM providers."""
 
 import asyncio
+import functools
 from typing import Any, Callable, Protocol, Type, TypeVar
 
 from pydantic import BaseModel
@@ -150,20 +151,19 @@ async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any
             model="claude-3",
             messages=[...],
         )
-    """
-    loop = asyncio.get_event_loop()
 
-    # If kwargs provided, create a lambda that includes them
-    if kwargs:
-        return await loop.run_in_executor(
-            None,
-            lambda: func(*args, **kwargs)
-        )
-    else:
-        return await loop.run_in_executor(
-            None,
-            lambda: func(*args)
-        )
+    Notes:
+        - Uses get_running_loop() (Python 3.12+) instead of deprecated get_event_loop()
+        - Uses functools.partial for clean args/kwargs handling
+        - Currently uses default ThreadPoolExecutor (None). For production API server,
+          consider creating a named executor with explicit pool size to avoid exhaustion
+          under high concurrent load.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,  # TODO: Use named executor with explicit pool size for API server phase
+        functools.partial(func, *args, **kwargs)
+    )
 
 
 def create_provider(
