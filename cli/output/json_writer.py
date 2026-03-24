@@ -122,7 +122,7 @@ class JSONWriter:
                     self.stopped_reason = event.data["stopped_reason"]
 
     def export_simple(self, output_path: Path) -> None:
-        """Export simple JSON format (events + metadata).
+        """Export simple JSON format (lightweight, no events or full models).
 
         Args:
             output_path: Path to write JSON file
@@ -133,7 +133,7 @@ class JSONWriter:
         end_time = datetime.now()
         duration = (end_time - self.start_time).total_seconds()
 
-        # Build simple JSON structure (lightweight threats, no full Pydantic models)
+        # Build simple JSON structure (lightweight threats, no events, no full Pydantic models)
         simplified_threats = None
         if self.threats:
             simplified_threats = [
@@ -167,16 +167,6 @@ class JSONWriter:
             },
             "summary": self.summary,
             "threats": simplified_threats,
-            "events": [
-                {
-                    "step": event.step.value if isinstance(event.step, PipelineStep) else event.step,
-                    "status": event.status,
-                    "message": event.message,
-                    "iteration": event.iteration,
-                    "timestamp": _format_timestamp(event.timestamp),
-                }
-                for event in self.events
-            ],
         }
 
         # Write to file

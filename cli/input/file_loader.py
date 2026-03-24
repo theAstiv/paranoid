@@ -1,10 +1,20 @@
 """File loading and validation for CLI input.
 
-Loads .txt and .md files, validates size and content.
+Loads .txt and .md files, validates size and content, detects structured templates.
 """
 
 from pathlib import Path
 
+from backend.models.enums import Framework
+from backend.pipeline.input_parser import (
+    detect_input_format,
+    format_structured_assumptions_for_prompt,
+    format_structured_description_for_prompt,
+    parse_maestro_assumptions,
+    parse_maestro_component_description,
+    parse_stride_assumptions,
+    parse_stride_component_description,
+)
 from cli.errors import InputFileError
 
 
@@ -74,3 +84,89 @@ def load_input_file(file_path: Path) -> str:
         )
 
     return content
+
+
+def detect_framework_from_input(content: str) -> Framework:
+    """Detect threat modeling framework from input content.
+
+    Args:
+        content: File content to analyze
+
+    Returns:
+        Framework.STRIDE for STRIDE templates or plain text (default)
+        Framework.MAESTRO for MAESTRO templates
+
+    Note:
+        Plain text files default to STRIDE framework
+    """
+    input_format = detect_input_format(content)
+
+    if input_format == "maestro_structured":
+        return Framework.MAESTRO
+    # Both "stride_structured" and "plain" default to STRIDE
+    return Framework.STRIDE
+
+
+def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
+    """Parse structured XML-tagged input and extract description + assumptions.
+
+    Args:
+        content: File content with potential XML tags
+
+    Returns:
+        Tuple of (description, assumptions_list)
+        - description: Formatted component description for prompts
+        - assumptions_list: List of assumption strings, or None for plain text
+
+    Note:
+        For plain text, returns (content, None)
+        For structured templates, parses XML and formats for prompts
+    """
+    input_format = detect_input_format(content)
+
+    if input_format == "plain":
+        # Plain text - return as-is
+        return (content, None)
+
+    # Parse structured input
+    if input_format == "stride_structured":
+        component_desc = parse_stride_component_description(content)
+        assumptions_obj = parse_stride_assumptions(content)
+
+        if not component_desc:
+            # Fallback to plain text if parsing fails
+            return (content, None)
+
+        # Format description for prompt
+        description = format_structured_description_for_prompt(component_desc)
+
+        # Format assumptions as list of strings
+        assumptions = None
+        if assumptions_obj:
+            formatted = format_structured_assumptions_for_prompt(assumptions_obj)
+            # Convert formatted text back to list (split by section)
+            assumptions = [line.strip() for line in formatted.split("\n") if line.strip()]
+
+        return (description, assumptions)
+
+    elif input_format == "maestro_structured":
+        component_desc = parse_maestro_component_description(content)
+        assumptions_obj = parse_maestro_assumptions(content)
+
+        if not component_desc:
+            # Fallback to plain text if parsing fails
+            return (content, None)
+
+        # Format description for prompt
+        description = format_structured_description_for_prompt(component_desc)
+
+        # Format assumptions as list of strings
+        assumptions = None
+        if assumptions_obj:
+            formatted = format_structured_assumptions_for_prompt(assumptions_obj)
+            assumptions = [line.strip() for line in formatted.split("\n") if line.strip()]
+
+        return (description, assumptions)
+
+    # Should never reach here, but fallback to plain text
+    return (content, None)

@@ -15,7 +15,7 @@ from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_fo
 from backend.providers import create_provider
 from cli.context import config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
-from cli.input.file_loader import load_input_file
+from cli.input.file_loader import detect_framework_from_input, load_input_file, parse_structured_input
 from cli.output.console import ConsoleRenderer
 from cli.output.json_writer import JSONWriter, get_default_output_path
 
@@ -151,30 +151,45 @@ def _load_merged_settings() -> Settings:
     "output_format",
     type=click.Choice(["simple", "full"], case_sensitive=False),
     default="simple",
-    help="JSON output format: simple (events + metadata) or full (complete Pydantic models)",
+    help="JSON output format: simple (lightweight results) or full (complete models + events)",
 )
-def run(input_file: Path, output: Path | None, output_format: str) -> None:
+@click.option(
+    "--maestro",
+    is_flag=True,
+    default=False,
+    help="Force dual framework execution (STRIDE + MAESTRO in parallel)",
+)
+def run(input_file: Path, output: Path | None, output_format: str, maestro: bool) -> None:
     """Execute threat modeling on INPUT_FILE.
 
     INPUT_FILE: Path to .txt or .md file with system description
 
+    Auto-detects framework from XML tags:
+      - <component_description> → STRIDE
+      - <maestro_component_description> → MAESTRO
+      - Plain text → STRIDE (default)
+
     Examples:
 
         \b
-        # Basic usage
+        # Basic usage (auto-detects framework)
         paranoid run system.md
 
         \b
-        # With JSON output
-        paranoid run system.md --output threats.json
-
-        \b
-        # Full format with all Pydantic models
-        paranoid run system.md --format full
-
-        \b
-        # With structured template
+        # STRIDE structured template
         paranoid run examples/stride-example-api-gateway.md
+
+        \b
+        # MAESTRO structured template
+        paranoid run examples/maestro-example-rag-chatbot.md
+
+        \b
+        # Force dual framework (STRIDE + MAESTRO)
+        paranoid run system.md --maestro
+
+        \b
+        # With JSON output
+        paranoid run system.md --output threats.json --format full
     """
     try:
         # Initialize console renderer
@@ -186,11 +201,17 @@ def run(input_file: Path, output: Path | None, output_format: str) -> None:
 
         # Load input file
         try:
-            description = load_input_file(input_file)
+            content = load_input_file(input_file)
         except InputFileError:
             raise  # Re-raise with original message
         except Exception as e:
             raise InputFileError(f"Failed to load input file: {e}") from e
+
+        # Detect framework from input (auto-detection)
+        detected_framework = detect_framework_from_input(content)
+
+        # Parse structured input if present
+        description, assumptions = parse_structured_input(content)
 
         # Create provider
         try:
@@ -217,6 +238,9 @@ def run(input_file: Path, output: Path | None, output_format: str) -> None:
         click.echo(f"  Provider: {settings.default_provider}")
         click.echo(f"  Model: {settings.default_model}")
         click.echo(f"  Iterations: {settings.default_iterations}")
+        click.echo(f"  Framework: {detected_framework.value}")
+        if maestro:
+            click.echo(f"  Mode: Dual framework (STRIDE + MAESTRO)")
         click.echo(f"  Input: {input_file.name}")
         click.echo()
 
@@ -239,6 +263,9 @@ def run(input_file: Path, output: Path | None, output_format: str) -> None:
             _run_pipeline_async(
                 model_id=model_id,
                 description=description,
+                assumptions=assumptions,
+                framework=detected_framework,
+                has_ai_components=maestro,
                 settings=settings,
                 provider=provider,
                 renderer=renderer,
@@ -271,6 +298,9 @@ def run(input_file: Path, output: Path | None, output_format: str) -> None:
 async def _run_pipeline_async(
     model_id: str,
     description: str,
+    assumptions: list[str] | None,
+    framework: Framework,
+    has_ai_components: bool,
     settings: Settings,
     provider,
     renderer: ConsoleRenderer,
@@ -282,7 +312,10 @@ async def _run_pipeline_async(
 
     Args:
         model_id: Unique model identifier
-        description: System description
+        description: System description (formatted from structured template or plain text)
+        assumptions: Optional assumptions list from structured template
+        framework: Detected framework (STRIDE or MAESTRO)
+        has_ai_components: Whether to run dual framework (STRIDE + MAESTRO)
         settings: Application settings
         provider: LLM provider instance
         renderer: Console renderer
@@ -301,7 +334,7 @@ async def _run_pipeline_async(
         json_writer = JSONWriter(
             model_id=model_id,
             input_file=input_file,
-            framework=Framework.STRIDE,  # Default to STRIDE for Phase 3
+            framework=framework,
         )
 
     try:
@@ -309,9 +342,11 @@ async def _run_pipeline_async(
         async for event in run_pipeline_for_model(
             model_id=model_id,
             description=description,
-            framework=Framework.STRIDE,  # Default to STRIDE for Phase 1
+            framework=framework,
             provider=provider,
+            assumptions=assumptions,
             max_iterations=settings.default_iterations,
+            has_ai_components=has_ai_components,
         ):
             # Render event
             renderer.render_event(event)

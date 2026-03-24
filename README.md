@@ -8,13 +8,15 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 
 - **Zero Infrastructure**: SQLite + sqlite-vec. One command to run: `docker compose up`
 - **Multi-Provider LLM**: Anthropic, OpenAI, or Ollama (fully local/air-gapped)
-- **Dual Framework Support**: STRIDE (traditional) + MAESTRO (AI/ML) in parallel
+- **Dual Framework Support**: STRIDE (traditional) + MAESTRO (AI/ML) auto-detected or run in parallel
+- **DREAD Risk Scoring**: Automatic risk assessment with 5 dimensions (0-50 scale) for severity classification
 - **Structured Input Templates**: XML-tagged component descriptions with assumption enforcement
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Deterministic Fallback**: Rule engine ensures known threats aren't missed
 - **MCP Integration**: Pull code context from any MCP server (Antigravity-Link, etc.)
+- **Dual JSON Formats**: Simple (lightweight, ~2KB) or Full (complete models + DREAD, ~45KB)
 - **CI/CD Ready**: CLI + GitHub Action output SARIF for PR annotations
-- **Export Formats**: PDF, JSON, Markdown, SARIF
+- **Export Formats**: PDF, JSON (simple/full), Markdown, SARIF
 
 ## Quick Start
 
@@ -81,11 +83,20 @@ Configuration:
   Provider: anthropic
   Model: claude-sonnet-4-20250514
   Iterations: 3
+  Framework: STRIDE
+  Input: stride-example-api-gateway.md
+
+  Output: stride-example-api-gateway_threats.json
+  Format: simple
 
 [>] summarize: Generating system summary...
-[[OK]] summarize: Summary generated: 157 chars
+[[OK]] summarize: Summary generated: 196 chars
 [>] extract_assets: Identifying assets and entities...
 [[OK]] extract_assets: Identified 14 assets/entities
+[>] extract_flows: Extracting data flows and trust boundaries...
+[[OK]] extract_flows: Identified 12 flows, 6 boundaries
+[>] generate_threats [iter 1]: Generating threats (iteration 1/3)...
+[[OK]] generate_threats [iter 1]: Generated 10 threats
 ...
 [[OK]] complete: Pipeline complete: 2 iterations, 17 threats
 
@@ -95,6 +106,7 @@ THREAT MODEL COMPLETE
 Total Threats:      17
 Iterations:         2
 Duration:           115.0 seconds
+Output:             stride-example-api-gateway_threats.json
 ```
 
 **Test Harness (Development):**
@@ -141,12 +153,21 @@ paranoid config show
 ### Running Threat Models
 
 ```bash
-# Basic usage
+# Basic usage (auto-detects framework from input)
 paranoid run system.md
 
-# With examples
+# Structured templates (auto-detects STRIDE vs MAESTRO)
 paranoid run examples/stride-example-api-gateway.md
 paranoid run examples/maestro-example-rag-chatbot.md
+
+# JSON output (simple format - lightweight, ~2-3 KB)
+paranoid run system.md --output threats.json
+
+# JSON output (full format - complete models + DREAD + events, ~45 KB)
+paranoid run system.md --format full -o complete.json
+
+# Force dual framework (STRIDE + MAESTRO in parallel)
+paranoid run system.md --maestro
 
 # Help
 paranoid --help
@@ -154,21 +175,90 @@ paranoid run --help
 paranoid config --help
 ```
 
-### Coming Soon (Phases 3-5)
+### Coming Soon (Phase 5)
 
 ```bash
-# JSON output (Phase 3)
-paranoid run system.md --output threats.json
+# Advanced options
+paranoid run system.md --quiet          # Suppress real-time output
+paranoid run system.md --verbose        # Show detailed event data
+paranoid run system.md --iterations 7   # Override iteration count
+paranoid version                        # Show version + dependencies
+```
+
+### JSON Output Formats
+
+Paranoid supports two JSON export formats optimized for different use cases:
+
+**Simple Format** (default, ~2-3 KB):
+- Lightweight threat summaries (name, category, target, impact, likelihood, mitigation count)
+- Execution metadata (iterations, duration, threat counts)
+- Perfect for: CI/CD dashboards, quick reviews, status tracking
+- No events, no complete Pydantic models
+
+**Full Format** (~45 KB):
+- Complete Pydantic models (Assets, Flows, Threats with all fields)
+- DREAD risk assessment scores (Damage, Reproducibility, Exploitability, Affected Users, Discoverability)
+- Full pipeline event audit trail
+- Perfect for: Detailed analysis, archival, integration with other tools
+
+```bash
+# Simple format (default)
+paranoid run system.md -o threats.json
+
+# Full format
 paranoid run system.md --format full -o complete.json
+```
 
-# MAESTRO dual framework (Phase 4)
-paranoid run system.md --maestro
+**Example Simple Format:**
+```json
+{
+  "execution": {
+    "total_threats": 17,
+    "iterations_completed": 2,
+    "duration_seconds": 115.0
+  },
+  "threats": [
+    {
+      "name": "JWT Token Forgery",
+      "category": "Spoofing",
+      "target": "API Gateway",
+      "impact": "Complete authentication bypass",
+      "likelihood": "Medium",
+      "mitigation_count": 3
+    }
+  ]
+}
+```
 
-# Advanced options (Phase 5)
-paranoid run system.md --quiet
-paranoid run system.md --verbose
-paranoid run system.md --iterations 7
-paranoid version
+**Example Full Format:**
+```json
+{
+  "threats": [
+    {
+      "name": "JWT Token Forgery",
+      "stride_category": "Spoofing",
+      "description": "Malicious actor can forge JWT tokens...",
+      "target": "API Gateway",
+      "impact": "Complete authentication bypass",
+      "likelihood": "Medium",
+      "dread": {
+        "damage": 10,
+        "reproducibility": 7,
+        "exploitability": 5,
+        "affected_users": 10,
+        "discoverability": 5
+      },
+      "mitigations": [
+        "Implement strict JWT signature validation",
+        "Monitor for suspicious token patterns",
+        "Implement token blacklisting capability"
+      ]
+    }
+  ],
+  "assets": [...],
+  "flows": [...],
+  "events": [...]
+}
 ```
 
 ## Structured Input Templates
