@@ -64,11 +64,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/paranoid"
-Repository = "https://github.com/yourusername/paranoid"
-Documentation = "https://github.com/yourusername/paranoid#readme"
-Changelog = "https://github.com/yourusername/paranoid/blob/main/CHANGELOG.md"
-"Issue Tracker" = "https://github.com/yourusername/paranoid/issues"
+Homepage = "https://github.com/theAstiv/paranoid"
+Repository = "https://github.com/theAstiv/paranoid"
+Documentation = "https://github.com/theAstiv/paranoid#readme"
+Changelog = "https://github.com/theAstiv/paranoid/blob/main/CHANGELOG.md"
+"Issue Tracker" = "https://github.com/theAstiv/paranoid/issues"
 
 [project.optional-dependencies]
 dev = [
