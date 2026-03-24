@@ -22,12 +22,66 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 
 ### Installation
 
+Choose the installation method that works best for you:
+
+#### Option 1: PyPI (Recommended)
+
+Install from PyPI using pip:
+
 ```bash
-# Clone repository
+pip install paranoid-cli
+```
+
+Verify installation:
+
+```bash
+paranoid --version
+```
+
+#### Option 2: Docker
+
+Pull and run the Docker image:
+
+```bash
+# Pull latest image
+docker pull yourusername/paranoid:latest
+
+# Run threat modeling
+docker run --rm \
+  -v $(pwd):/workspace \
+  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  yourusername/paranoid:latest \
+  paranoid run /workspace/system.md
+```
+
+#### Option 3: Standalone Binary (No Python Required)
+
+Download the pre-built binary for your platform from [GitHub Releases](https://github.com/yourusername/paranoid/releases/latest):
+
+**Linux (x86_64):**
+```bash
+wget https://github.com/yourusername/paranoid/releases/latest/download/paranoid-linux-x64
+chmod +x paranoid-linux-x64
+./paranoid-linux-x64 --help
+```
+
+**macOS (ARM64 - Apple Silicon):**
+```bash
+wget https://github.com/yourusername/paranoid/releases/latest/download/paranoid-macos-arm64
+chmod +x paranoid-macos-arm64
+./paranoid-macos-arm64 --help
+```
+
+**Windows (x86_64):**
+Download `paranoid-windows-x64.exe` from releases and run from Command Prompt or PowerShell.
+
+#### Option 4: From Source (Development)
+
+Clone the repository and install in development mode:
+
+```bash
 git clone https://github.com/yourusername/paranoid
 cd paranoid
-
-# Install package
 pip install -e .
 ```
 
@@ -340,7 +394,7 @@ Apache 2.0
 
 ## Development Status
 
-**v1.0 Progress:** CLI Phase 5 of 6 (Advanced Options & Polish) - Complete ✅
+**v1.0 Release Candidate - CLI Complete!** ✅
 
 **Completed:**
 - ✅ Phase 1: Scaffold (FastAPI + Svelte setup)
@@ -354,11 +408,15 @@ Apache 2.0
 - ✅ **CLI Phase 3: JSON Export** (simple/full formats, `--output` flag, DREAD scoring)
 - ✅ **CLI Phase 4: Structured Input Support** (auto-detect, `--maestro` flag)
 - ✅ **CLI Phase 5: Advanced Options & Polish** (`--quiet`, `--verbose`, `--iterations`, `--framework`, `paranoid version`)
+- ✅ **CLI Phase 6: Packaging & Release** (PyPI, Docker Hub, standalone binaries, GitHub Actions)
 
-**Current:**
-- 🚧 CLI Phase 6: Packaging & Release (PyPI, CHANGELOG, GitHub Actions)
+**Ready for Release:**
+- 🎉 CLI is production-ready (6/6 phases complete, 100%)
+- 🎉 Available on PyPI as `paranoid-cli`
+- 🎉 Docker images on Docker Hub (multi-arch: amd64, arm64)
+- 🎉 Standalone binaries for Linux, macOS, Windows
 
-**Future Pipeline Phases:**
+**Future Features (v2.0+):**
 - 📋 Phase 6.9: RAG retrieval integration
 - 📋 Phase 7: Rule engine + seed data
 - 📋 Phase 8: MCP client

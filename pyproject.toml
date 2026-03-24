@@ -3,24 +3,56 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "paranoid"
+name = "paranoid-cli"
 version = "1.0.0"
-description = "Open-source, self-hosted, iterative threat modeling powered by LLMs"
+description = "Open-source iterative threat modeling powered by LLMs - STRIDE + MAESTRO frameworks with DREAD scoring"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Astitva / StateCheck Security"}
 ]
-keywords = ["threat-modeling", "security", "stride", "maestro", "llm", "ai"]
+maintainers = [
+    {name = "Astitva / StateCheck Security"}
+]
+keywords = [
+    "threat-modeling",
+    "security",
+    "stride",
+    "maestro",
+    "llm",
+    "ai",
+    "security-analysis",
+    "dread",
+    "risk-assessment",
+    "cybersecurity",
+    "appsec",
+    "devsecops",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Environment :: Console",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/paranoid"
+Repository = "https://github.com/yourusername/paranoid"
+Documentation = "https://github.com/yourusername/paranoid#readme"
+Changelog = "https://github.com/yourusername/paranoid/blob/main/CHANGELOG.md"
+"Issue Tracker" = "https://github.com/yourusername/paranoid/issues"
 
 dependencies = [
     "fastapi>=0.115.0",
@@ -45,6 +77,11 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "ruff>=0.8.4",
     "httpx>=0.28.0",
+]
+build = [
+    "build>=1.2.0",
+    "twine>=6.0.0",
+    "pyinstaller>=6.11.0",
 ]
 
 [project.scripts]
