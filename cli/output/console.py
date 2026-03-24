@@ -73,9 +73,22 @@ class ConsoleRenderer:
         # Verbose mode: show event data
         if self.verbose and event.data:
             import json
+            from pydantic import BaseModel
 
-            data_str = json.dumps(event.data, indent=2)
-            click.echo(f"    Data: {data_str}")
+            # Convert Pydantic models to dict for JSON serialization
+            data_to_show = {}
+            for key, value in event.data.items():
+                if isinstance(value, BaseModel):
+                    data_to_show[key] = value.model_dump(mode="json")
+                else:
+                    data_to_show[key] = value
+
+            try:
+                data_str = json.dumps(data_to_show, indent=2)
+                click.echo(f"    Data: {data_str}")
+            except (TypeError, ValueError):
+                # Fallback if still can't serialize
+                click.echo(f"    Data: {data_to_show}")
 
     def render_final_summary(
         self,

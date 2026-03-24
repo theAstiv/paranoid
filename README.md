@@ -169,20 +169,29 @@ paranoid run system.md --format full -o complete.json
 # Force dual framework (STRIDE + MAESTRO in parallel)
 paranoid run system.md --maestro
 
+# Override iteration count (1-15)
+paranoid run system.md --iterations 7
+
+# Override framework auto-detection
+paranoid run system.md --framework MAESTRO
+
+# Quiet mode (suppress real-time output, show only summary)
+paranoid run system.md --quiet
+
+# Verbose mode (show detailed event data with complete models)
+paranoid run system.md --verbose
+
 # Help
 paranoid --help
 paranoid run --help
 paranoid config --help
 ```
 
-### Coming Soon (Phase 5)
+### Version Information
 
 ```bash
-# Advanced options
-paranoid run system.md --quiet          # Suppress real-time output
-paranoid run system.md --verbose        # Show detailed event data
-paranoid run system.md --iterations 7   # Override iteration count
-paranoid version                        # Show version + dependencies
+# Show version, Python version, dependencies, and current configuration
+paranoid version
 ```
 
 ### JSON Output Formats
@@ -331,7 +340,7 @@ Apache 2.0
 
 ## Development Status
 
-**v1.0 Progress:** CLI Phase 2 of 6 (Configuration Management) - Complete ✅
+**v1.0 Progress:** CLI Phase 5 of 6 (Advanced Options & Polish) - Complete ✅
 
 **Completed:**
 - ✅ Phase 1: Scaffold (FastAPI + Svelte setup)
@@ -341,15 +350,13 @@ Apache 2.0
 - ✅ Phase 5: STRIDE + MAESTRO prompts
 - ✅ Phase 6: Core pipeline (8 nodes, iteration logic, SSE, dual framework, structured input)
 - ✅ **CLI Phase 1: MVP** (basic `paranoid run` command, console output)
+- ✅ **CLI Phase 2: Configuration Management** (interactive wizard, `~/.paranoid/config.json`)
+- ✅ **CLI Phase 3: JSON Export** (simple/full formats, `--output` flag, DREAD scoring)
+- ✅ **CLI Phase 4: Structured Input Support** (auto-detect, `--maestro` flag)
+- ✅ **CLI Phase 5: Advanced Options & Polish** (`--quiet`, `--verbose`, `--iterations`, `--framework`, `paranoid version`)
 
 **Current:**
-- 🚧 CLI Phase 2: Configuration Management (interactive wizard, `~/.paranoid/config.json`)
-
-**Next CLI Phases:**
-- 📋 CLI Phase 3: JSON Export (simple/full formats, `--output` flag)
-- 📋 CLI Phase 4: Structured Input Support (auto-detect, `--maestro` flag)
-- 📋 CLI Phase 5: Advanced Options & Polish (`--quiet`, `--verbose`, `paranoid version`)
-- 📋 CLI Phase 6: Packaging & Release (PyPI, CHANGELOG, GitHub Actions)
+- 🚧 CLI Phase 6: Packaging & Release (PyPI, CHANGELOG, GitHub Actions)
 
 **Future Pipeline Phases:**
 - 📋 Phase 6.9: RAG retrieval integration

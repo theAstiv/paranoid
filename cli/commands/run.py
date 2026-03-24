@@ -159,7 +159,43 @@ def _load_merged_settings() -> Settings:
     default=False,
     help="Force dual framework execution (STRIDE + MAESTRO in parallel)",
 )
-def run(input_file: Path, output: Path | None, output_format: str, maestro: bool) -> None:
+@click.option(
+    "--iterations",
+    "-n",
+    type=click.IntRange(1, 15),
+    default=None,
+    help="Override iteration count (1-15, default from config)",
+)
+@click.option(
+    "--framework",
+    type=click.Choice(["STRIDE", "MAESTRO"], case_sensitive=False),
+    default=None,
+    help="Override framework auto-detection",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress real-time output (only show final summary)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Show detailed event data (assets, flows, gap analysis)",
+)
+def run(
+    input_file: Path,
+    output: Path | None,
+    output_format: str,
+    maestro: bool,
+    iterations: int | None,
+    framework: str | None,
+    quiet: bool,
+    verbose: bool,
+) -> None:
     """Execute threat modeling on INPUT_FILE.
 
     INPUT_FILE: Path to .txt or .md file with system description
@@ -192,12 +228,20 @@ def run(input_file: Path, output: Path | None, output_format: str, maestro: bool
         paranoid run system.md --output threats.json --format full
     """
     try:
-        # Initialize console renderer
-        renderer = ConsoleRenderer(verbose=False)
+        # Initialize console renderer with verbosity settings
+        # quiet mode suppresses output, verbose shows detailed data
+        renderer = ConsoleRenderer(verbose=verbose)
+        if quiet:
+            # In quiet mode, we'll skip rendering most events
+            renderer = None
 
         # Load configuration from .env and config file
         # Precedence: Environment variables > Config file > Defaults
         settings = _load_merged_settings()
+
+        # Override iterations if specified
+        if iterations is not None:
+            settings.default_iterations = iterations
 
         # Load input file
         try:
@@ -209,6 +253,10 @@ def run(input_file: Path, output: Path | None, output_format: str, maestro: bool
 
         # Detect framework from input (auto-detection)
         detected_framework = detect_framework_from_input(content)
+
+        # Override framework if specified
+        if framework is not None:
+            detected_framework = Framework.STRIDE if framework.upper() == "STRIDE" else Framework.MAESTRO
 
         # Parse structured input if present
         description, assumptions = parse_structured_input(content)
@@ -232,17 +280,24 @@ def run(input_file: Path, output: Path | None, output_format: str, maestro: bool
         except Exception as e:
             raise ConfigurationError(f"Failed to initialize LLM provider: {e}") from e
 
-        # Show configuration
-        click.echo()
-        click.secho("Configuration:", fg="cyan", bold=True)
-        click.echo(f"  Provider: {settings.default_provider}")
-        click.echo(f"  Model: {settings.default_model}")
-        click.echo(f"  Iterations: {settings.default_iterations}")
-        click.echo(f"  Framework: {detected_framework.value}")
-        if maestro:
-            click.echo(f"  Mode: Dual framework (STRIDE + MAESTRO)")
-        click.echo(f"  Input: {input_file.name}")
-        click.echo()
+        # Show configuration (unless quiet mode)
+        if not quiet:
+            click.echo()
+            click.secho("Configuration:", fg="cyan", bold=True)
+            click.echo(f"  Provider: {settings.default_provider}")
+            click.echo(f"  Model: {settings.default_model}")
+            iterations_str = f"{settings.default_iterations}"
+            if iterations is not None:
+                iterations_str += " (overridden)"
+            click.echo(f"  Iterations: {iterations_str}")
+            framework_str = detected_framework.value
+            if framework is not None:
+                framework_str += " (overridden)"
+            click.echo(f"  Framework: {framework_str}")
+            if maestro:
+                click.echo(f"  Mode: Dual framework (STRIDE + MAESTRO)")
+            click.echo(f"  Input: {input_file.name}")
+            click.echo()
 
         # Generate model ID
         from datetime import datetime
@@ -252,8 +307,8 @@ def run(input_file: Path, output: Path | None, output_format: str, maestro: bool
         # Determine output path
         output_path = output if output else get_default_output_path(input_file)
 
-        # Show output configuration
-        if output_path:
+        # Show output configuration (unless quiet mode)
+        if output_path and not quiet:
             click.echo(f"  Output: {output_path}")
             click.echo(f"  Format: {output_format}")
             click.echo()
@@ -272,6 +327,7 @@ def run(input_file: Path, output: Path | None, output_format: str, maestro: bool
                 input_file=input_file,
                 output_path=output_path,
                 output_format=output_format,
+                quiet=quiet,
             )
         )
 
@@ -303,10 +359,11 @@ async def _run_pipeline_async(
     has_ai_components: bool,
     settings: Settings,
     provider,
-    renderer: ConsoleRenderer,
+    renderer: ConsoleRenderer | None,
     input_file: Path,
     output_path: Path | None,
     output_format: str,
+    quiet: bool,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -318,10 +375,11 @@ async def _run_pipeline_async(
         has_ai_components: Whether to run dual framework (STRIDE + MAESTRO)
         settings: Application settings
         provider: LLM provider instance
-        renderer: Console renderer
+        renderer: Console renderer (None in quiet mode)
         input_file: Input file path
         output_path: JSON output file path (if specified)
         output_format: JSON format (simple or full)
+        quiet: Whether to suppress real-time output
     """
     # Track results
     total_threats = 0
@@ -348,8 +406,9 @@ async def _run_pipeline_async(
             max_iterations=settings.default_iterations,
             has_ai_components=has_ai_components,
         ):
-            # Render event
-            renderer.render_event(event)
+            # Render event (unless quiet mode)
+            if renderer:
+                renderer.render_event(event)
 
             # Add to JSON writer if enabled
             if json_writer:
@@ -403,10 +462,21 @@ async def _run_pipeline_async(
             click.secho(f"⚠ Warning: Failed to write JSON output: {e}", fg="yellow")
             click.echo()
 
-    # Render final summary
-    renderer.render_final_summary(
-        total_threats=total_threats,
-        iterations=iterations_completed,
-        duration=duration,
-        output_file=output_file_str,
-    )
+    # Render final summary (always show, even in quiet mode)
+    if renderer:
+        renderer.render_final_summary(
+            total_threats=total_threats,
+            iterations=iterations_completed,
+            duration=duration,
+            output_file=output_file_str,
+        )
+    elif quiet:
+        # In quiet mode, show minimal summary
+        click.echo()
+        click.secho("THREAT MODEL COMPLETE", fg="green", bold=True)
+        click.echo(f"Total Threats:      {total_threats}")
+        click.echo(f"Iterations:         {iterations_completed}")
+        click.echo(f"Duration:           {duration:.1f} seconds")
+        if output_file_str:
+            click.echo(f"Output:             {output_file_str}")
+        click.echo()

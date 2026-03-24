@@ -7,6 +7,7 @@ import click
 
 from cli.commands.config import config
 from cli.commands.run import run
+from cli.commands.version import version
 
 
 @click.group()
@@ -35,6 +36,7 @@ def cli() -> None:
 # Register commands
 cli.add_command(run)
 cli.add_command(config)
+cli.add_command(version)
 
 
 def main() -> None:
