@@ -17,6 +17,7 @@ from cli.context import config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.file_loader import load_input_file
 from cli.output.console import ConsoleRenderer
+from cli.output.json_writer import JSONWriter, get_default_output_path
 
 
 def _load_merged_settings() -> Settings:
@@ -138,7 +139,21 @@ def _load_merged_settings() -> Settings:
 
 @click.command()
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
-def run(input_file: Path) -> None:
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output JSON file path (default: {input_basename}_threats.json)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["simple", "full"], case_sensitive=False),
+    default="simple",
+    help="JSON output format: simple (events + metadata) or full (complete Pydantic models)",
+)
+def run(input_file: Path, output: Path | None, output_format: str) -> None:
     """Execute threat modeling on INPUT_FILE.
 
     INPUT_FILE: Path to .txt or .md file with system description
@@ -148,6 +163,14 @@ def run(input_file: Path) -> None:
         \b
         # Basic usage
         paranoid run system.md
+
+        \b
+        # With JSON output
+        paranoid run system.md --output threats.json
+
+        \b
+        # Full format with all Pydantic models
+        paranoid run system.md --format full
 
         \b
         # With structured template
@@ -202,6 +225,15 @@ def run(input_file: Path) -> None:
 
         model_id = f"{input_file.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
+        # Determine output path
+        output_path = output if output else get_default_output_path(input_file)
+
+        # Show output configuration
+        if output_path:
+            click.echo(f"  Output: {output_path}")
+            click.echo(f"  Format: {output_format}")
+            click.echo()
+
         # Run pipeline (async)
         asyncio.run(
             _run_pipeline_async(
@@ -211,6 +243,8 @@ def run(input_file: Path) -> None:
                 provider=provider,
                 renderer=renderer,
                 input_file=input_file,
+                output_path=output_path,
+                output_format=output_format,
             )
         )
 
@@ -241,6 +275,8 @@ async def _run_pipeline_async(
     provider,
     renderer: ConsoleRenderer,
     input_file: Path,
+    output_path: Path | None,
+    output_format: str,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -251,11 +287,22 @@ async def _run_pipeline_async(
         provider: LLM provider instance
         renderer: Console renderer
         input_file: Input file path
+        output_path: JSON output file path (if specified)
+        output_format: JSON format (simple or full)
     """
     # Track results
     total_threats = 0
     iterations_completed = 0
     start_time = asyncio.get_event_loop().time()
+
+    # Initialize JSON writer if output requested
+    json_writer = None
+    if output_path:
+        json_writer = JSONWriter(
+            model_id=model_id,
+            input_file=input_file,
+            framework=Framework.STRIDE,  # Default to STRIDE for Phase 3
+        )
 
     try:
         # Run pipeline
@@ -268,6 +315,10 @@ async def _run_pipeline_async(
         ):
             # Render event
             renderer.render_event(event)
+
+            # Add to JSON writer if enabled
+            if json_writer:
+                json_writer.add_event(event)
 
             # Track threat generation events
             if event.step == PipelineStep.GENERATE_THREATS and event.status == "completed":
@@ -302,10 +353,25 @@ async def _run_pipeline_async(
     # Calculate duration
     duration = asyncio.get_event_loop().time() - start_time
 
+    # Export JSON if requested
+    output_file_str = None
+    if json_writer and output_path:
+        try:
+            if output_format == "simple":
+                json_writer.export_simple(output_path)
+            else:  # full
+                json_writer.export_full(output_path)
+            output_file_str = str(output_path)
+        except Exception as e:
+            # Non-fatal error - show warning but don't fail
+            click.echo()
+            click.secho(f"⚠ Warning: Failed to write JSON output: {e}", fg="yellow")
+            click.echo()
+
     # Render final summary
     renderer.render_final_summary(
         total_threats=total_threats,
         iterations=iterations_completed,
         duration=duration,
-        output_file=None,  # No JSON export in Phase 1
+        output_file=output_file_str,
     )

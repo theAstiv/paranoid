@@ -14,7 +14,6 @@ from backend.models.enums import (
 )
 from backend.models.extended import (
     AttackTree,
-    DreadScore,
     ExportConfig,
     HybridThreat,
     MaestroThreat,
@@ -26,6 +25,7 @@ from backend.models.state import (
     Asset,
     AssetsList,
     DataFlow,
+    DreadScore,
     FlowsList,
     GapAnalysis,
     PipelineState,

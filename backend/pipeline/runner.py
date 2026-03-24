@@ -182,7 +182,7 @@ class PipelineRunner:
                 step=PipelineStep.EXTRACT_ASSETS,
                 status="completed",
                 message=f"Identified {len(assets.assets)} assets/entities",
-                data={"asset_count": len(assets.assets)},
+                data={"asset_count": len(assets.assets), "assets": assets},
             )
 
             # Step 3: Extract Flows
@@ -209,6 +209,7 @@ class PipelineRunner:
                 data={
                     "flow_count": len(flows.data_flows),
                     "boundary_count": len(flows.trust_boundaries),
+                    "flows": flows,
                 },
             )
 
@@ -264,7 +265,7 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(stride_threats.threats)} STRIDE threats",
                         iteration=iteration,
-                        data={"threat_count": len(stride_threats.threats), "framework": "STRIDE"},
+                        data={"threat_count": len(stride_threats.threats), "framework": "STRIDE", "threats": stride_threats},
                     )
 
                     # Generate MAESTRO threats for AI/ML components
@@ -294,7 +295,7 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(maestro_threats.threats)} MAESTRO threats",
                         iteration=iteration,
-                        data={"threat_count": len(maestro_threats.threats), "framework": "MAESTRO"},
+                        data={"threat_count": len(maestro_threats.threats), "framework": "MAESTRO", "threats": maestro_threats},
                     )
 
                     # Merge threat lists (STRIDE + MAESTRO)
@@ -305,7 +306,7 @@ class PipelineRunner:
                         status="info",
                         message=f"Combined {len(current_threats.threats)} total threats (STRIDE + MAESTRO)",
                         iteration=iteration,
-                        data={"threat_count": len(current_threats.threats)},
+                        data={"threat_count": len(current_threats.threats), "threats": current_threats, "framework": "COMBINED"},
                     )
                 else:
                     # Single framework execution
@@ -338,7 +339,7 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(current_threats.threats)} threats",
                         iteration=iteration,
-                        data={"threat_count": len(current_threats.threats)},
+                        data={"threat_count": len(current_threats.threats), "threats": current_threats},
                     )
 
                 # Gap Analysis (only if not final iteration)
@@ -393,10 +394,11 @@ class PipelineRunner:
                 status="completed",
                 message=f"Pipeline complete: {iteration - 1} iterations, {len(current_threats.threats)} threats",
                 data={
-                    "iterations": iteration - 1,
-                    "threat_count": len(current_threats.threats),
+                    "iterations_completed": iteration - 1,
+                    "total_threats": len(current_threats.threats),
                     "duration_seconds": total_duration,
                     "stopped_reason": stopped_reason,
+                    "threats": current_threats,
                 },
             )
 

@@ -15,6 +15,42 @@ MITIGATION_MIN_ITEMS = 2
 MITIGATION_MAX_ITEMS = 5
 
 
+class DreadScore(BaseModel):
+    """DREAD risk assessment scoring model."""
+
+    damage: Annotated[
+        int,
+        Field(ge=0, le=10, description="Damage potential (0-10)"),
+    ]
+    reproducibility: Annotated[
+        int,
+        Field(ge=0, le=10, description="How easy to reproduce (0-10)"),
+    ]
+    exploitability: Annotated[
+        int,
+        Field(ge=0, le=10, description="How easy to exploit (0-10)"),
+    ]
+    affected_users: Annotated[
+        int,
+        Field(ge=0, le=10, description="Number of affected users (0-10)"),
+    ]
+    discoverability: Annotated[
+        int,
+        Field(ge=0, le=10, description="How easy to discover (0-10)"),
+    ]
+
+    @property
+    def score(self) -> float:
+        """Calculate average DREAD score."""
+        return (
+            self.damage
+            + self.reproducibility
+            + self.exploitability
+            + self.affected_users
+            + self.discoverability
+        ) / 5.0
+
+
 class SummaryState(BaseModel):
     """Model representing the summary of a threat catalog."""
 
@@ -111,6 +147,10 @@ class Threat(BaseModel):
     target: Annotated[str, Field(description="The target of the threat")]
     impact: Annotated[str, Field(description="The impact of the threat")]
     likelihood: Annotated[str, Field(description="The likelihood of the threat")]
+    dread: Annotated[
+        DreadScore | None,
+        Field(description="Optional DREAD risk assessment scoring"),
+    ] = None
     mitigations: Annotated[
         list[str],
         Field(

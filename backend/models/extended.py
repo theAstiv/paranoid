@@ -15,42 +15,7 @@ from backend.models.enums import (
     StrideCategory,
     ThreatStatus,
 )
-
-
-class DreadScore(BaseModel):
-    """DREAD risk assessment scoring model."""
-
-    damage: Annotated[
-        int,
-        Field(ge=0, le=10, description="Damage potential (0-10)"),
-    ]
-    reproducibility: Annotated[
-        int,
-        Field(ge=0, le=10, description="How easy to reproduce (0-10)"),
-    ]
-    exploitability: Annotated[
-        int,
-        Field(ge=0, le=10, description="How easy to exploit (0-10)"),
-    ]
-    affected_users: Annotated[
-        int,
-        Field(ge=0, le=10, description="Number of affected users (0-10)"),
-    ]
-    discoverability: Annotated[
-        int,
-        Field(ge=0, le=10, description="How easy to discover (0-10)"),
-    ]
-
-    @property
-    def score(self) -> float:
-        """Calculate average DREAD score."""
-        return (
-            self.damage
-            + self.reproducibility
-            + self.exploitability
-            + self.affected_users
-            + self.discoverability
-        ) / 5.0
+from backend.models.state import DreadScore
 
 
 class MaestroThreat(BaseModel):
