@@ -149,7 +149,7 @@ class GapAnalysis(BaseModel):
     ] = None
 
 
-# Alias for compatibility with threat-designer naming
+# Alias for compatibility
 ContinueThreatModeling = GapAnalysis
 
 

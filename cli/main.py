@@ -1,0 +1,44 @@
+"""Paranoid CLI - Main entry point.
+
+Command-line interface for iterative threat modeling powered by LLMs.
+"""
+
+import click
+
+from cli.commands.run import run
+
+
+@click.group()
+@click.version_option(version="1.0.0", prog_name="paranoid")
+def cli() -> None:
+    """Paranoid - Open-source iterative threat modeling powered by LLMs.
+
+    Run STRIDE and MAESTRO threat modeling on your system descriptions.
+    Supports plain text and structured XML templates.
+
+    \b
+    Examples:
+      paranoid run system.md                    # Basic usage
+      paranoid run api-gateway.md --maestro     # Dual framework
+      paranoid config init                      # Setup wizard (Phase 2)
+      paranoid version                          # Show version info (Phase 5)
+
+    \b
+    Documentation:
+      GitHub: https://github.com/yourusername/paranoid
+      Docs:   https://github.com/yourusername/paranoid#readme
+    """
+    pass
+
+
+# Register commands
+cli.add_command(run)
+
+
+def main() -> None:
+    """Entry point for CLI (called by pyproject.toml script)."""
+    cli()
+
+
+if __name__ == "__main__":
+    main()
