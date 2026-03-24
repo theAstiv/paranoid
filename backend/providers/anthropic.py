@@ -19,7 +19,15 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AnthropicProvider:
-    """Anthropic Claude provider with structured output support."""
+    """Anthropic Claude provider with structured output support.
+
+    Usage as async context manager (recommended):
+        async with AnthropicProvider(model="claude-sonnet-4", api_key="...") as provider:
+            result = await provider.generate_structured(...)
+
+    The Anthropic sync SDK client doesn't require explicit closing, but the
+    context manager interface is provided for consistency with the Protocol.
+    """
 
     def __init__(
         self,
@@ -153,3 +161,15 @@ class AnthropicProvider:
                 message=f"API error: {str(e)}",
                 original_error=e,
             )
+
+    async def __aenter__(self) -> "AnthropicProvider":
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager.
+
+        The Anthropic sync SDK client doesn't require explicit resource cleanup,
+        but this method is provided for protocol consistency.
+        """
+        pass  # Anthropic sync client doesn't need explicit closing

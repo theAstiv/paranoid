@@ -11,7 +11,14 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMProvider(Protocol):
-    """Protocol for LLM providers supporting structured output."""
+    """Protocol for LLM providers supporting structured output.
+
+    Providers should be used as async context managers to ensure proper
+    resource cleanup:
+
+        async with provider:
+            result = await provider.generate_structured(...)
+    """
 
     async def generate_structured(
         self,
@@ -55,6 +62,21 @@ class LLMProvider(Protocol):
 
         Raises:
             ProviderError: If the LLM request fails
+        """
+        ...
+
+    async def __aenter__(self) -> "LLMProvider":
+        """Enter async context manager.
+
+        Returns:
+            Self for use in async with statement
+        """
+        ...
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager and clean up resources.
+
+        Ensures all connections and resources are properly closed.
         """
         ...
 

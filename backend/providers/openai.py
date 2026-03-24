@@ -19,7 +19,15 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class OpenAIProvider:
-    """OpenAI GPT provider with structured output support."""
+    """OpenAI GPT provider with structured output support.
+
+    Usage as async context manager (recommended):
+        async with OpenAIProvider(model="gpt-4", api_key="...") as provider:
+            result = await provider.generate_structured(...)
+
+    The OpenAI sync SDK client doesn't require explicit closing, but the
+    context manager interface is provided for consistency with the Protocol.
+    """
 
     def __init__(
         self,
@@ -158,3 +166,15 @@ class OpenAIProvider:
                 message=f"API error: {str(e)}",
                 original_error=e,
             )
+
+    async def __aenter__(self) -> "OpenAIProvider":
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager.
+
+        The OpenAI sync SDK client doesn't require explicit resource cleanup,
+        but this method is provided for protocol consistency.
+        """
+        pass  # OpenAI sync client doesn't need explicit closing

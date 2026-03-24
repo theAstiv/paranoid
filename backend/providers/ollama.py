@@ -17,7 +17,14 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class OllamaProvider:
-    """Ollama provider for local/self-hosted models."""
+    """Ollama provider for local/self-hosted models.
+
+    Usage as async context manager (recommended):
+        async with OllamaProvider(model="llama3") as provider:
+            result = await provider.generate_structured(...)
+
+    This ensures the HTTP client is properly closed.
+    """
 
     def __init__(
         self,
@@ -163,6 +170,14 @@ class OllamaProvider:
                 original_error=e,
             )
 
+    async def __aenter__(self) -> "OllamaProvider":
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit async context manager and close HTTP client."""
+        await self.close()
+
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client and release resources."""
         await self._client.aclose()
