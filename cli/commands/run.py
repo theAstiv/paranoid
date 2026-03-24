@@ -4,6 +4,7 @@ Main CLI command that runs the threat modeling pipeline on an input file.
 """
 
 import asyncio
+import os
 from pathlib import Path
 
 import click
@@ -12,9 +13,127 @@ from backend.config import Settings
 from backend.models.enums import Framework
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
 from backend.providers import create_provider
+from cli.context import config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.file_loader import load_input_file
 from cli.output.console import ConsoleRenderer
+
+
+def _load_merged_settings() -> Settings:
+    """Load configuration from .env and config file with proper precedence.
+
+    Precedence: Environment variables > Config file > Defaults
+
+    Returns:
+        Settings object with merged configuration
+
+    Raises:
+        ConfigurationError: If no valid configuration found
+    """
+    # Try loading from .env (uses environment variables)
+    try:
+        settings = Settings()
+    except Exception:
+        # .env doesn't exist or is invalid, create empty settings
+        settings = None
+
+    # If .env doesn't provide API key, try config file
+    if config_exists():
+        config = load_config()
+
+        # Create settings from config file if .env failed
+        if settings is None:
+            # Build environment dict from config file
+            provider = config.get("default_provider", "anthropic")
+            model = config.get("default_model", "claude-sonnet-4-20250514")
+            iterations = config.get("default_iterations", 3)
+
+            # Get provider-specific config
+            provider_config = config.get("providers", {}).get(provider, {})
+
+            # Set environment variables temporarily for Settings initialization
+            env_updates = {
+                "DEFAULT_PROVIDER": provider,
+                "DEFAULT_MODEL": model,
+                "DEFAULT_ITERATIONS": str(iterations),
+            }
+
+            if provider == "anthropic" and provider_config.get("api_key"):
+                env_updates["ANTHROPIC_API_KEY"] = provider_config["api_key"]
+            elif provider == "openai" and provider_config.get("api_key"):
+                env_updates["OPENAI_API_KEY"] = provider_config["api_key"]
+            elif provider == "ollama" and provider_config.get("base_url"):
+                env_updates["OLLAMA_BASE_URL"] = provider_config["base_url"]
+
+            # Update environment and create settings
+            original_env = {}
+            for key, value in env_updates.items():
+                original_env[key] = os.environ.get(key)
+                os.environ[key] = value
+
+            try:
+                settings = Settings()
+            finally:
+                # Restore original environment
+                for key, value in original_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        # If .env exists but doesn't have API key, supplement from config file
+        elif settings:
+            provider = settings.default_provider
+            provider_config = config.get("providers", {}).get(provider, {})
+
+            # Supplement missing API keys from config file
+            if provider == "anthropic" and not settings.anthropic_api_key:
+                if provider_config.get("api_key"):
+                    # Create new settings with supplemented API key
+                    os.environ["ANTHROPIC_API_KEY"] = provider_config["api_key"]
+                    settings = Settings()
+            elif provider == "openai" and not settings.openai_api_key:
+                if provider_config.get("api_key"):
+                    os.environ["OPENAI_API_KEY"] = provider_config["api_key"]
+                    settings = Settings()
+            elif provider == "ollama" and not settings.ollama_base_url:
+                if provider_config.get("base_url"):
+                    os.environ["OLLAMA_BASE_URL"] = provider_config["base_url"]
+                    settings = Settings()
+
+    # Validate we have settings
+    if settings is None:
+        raise ConfigurationError(
+            "No configuration found\n\n"
+            "Run the setup wizard to configure:\n"
+            "  paranoid config init\n\n"
+            "Or create a .env file with:\n"
+            "  ANTHROPIC_API_KEY=sk-ant-xxx\n"
+            "  DEFAULT_PROVIDER=anthropic\n"
+            "  DEFAULT_MODEL=claude-sonnet-4-20250514"
+        )
+
+    # Validate API key is present for the selected provider
+    if settings.default_provider == "anthropic" and not settings.anthropic_api_key:
+        raise ConfigurationError(
+            "Anthropic API key not configured\n\n"
+            "Run the setup wizard:\n"
+            "  paranoid config init\n\n"
+            "Or set ANTHROPIC_API_KEY in your .env file:\n"
+            "  ANTHROPIC_API_KEY=sk-ant-xxx\n\n"
+            "Get an API key at: https://console.anthropic.com/settings/keys"
+        )
+    elif settings.default_provider == "openai" and not settings.openai_api_key:
+        raise ConfigurationError(
+            "OpenAI API key not configured\n\n"
+            "Run the setup wizard:\n"
+            "  paranoid config init\n\n"
+            "Or set OPENAI_API_KEY in your .env file:\n"
+            "  OPENAI_API_KEY=sk-xxx\n\n"
+            "Get an API key at: https://platform.openai.com/api-keys"
+        )
+
+    return settings
 
 
 @click.command()
@@ -38,34 +157,9 @@ def run(input_file: Path) -> None:
         # Initialize console renderer
         renderer = ConsoleRenderer(verbose=False)
 
-        # Load configuration from .env
-        try:
-            settings = Settings()
-        except Exception as e:
-            raise ConfigurationError(
-                f"Failed to load configuration from .env file\n\n"
-                f"Error: {e}\n\n"
-                f"Make sure you have a .env file with required settings:\n"
-                f"  ANTHROPIC_API_KEY=sk-ant-xxx\n"
-                f"  DEFAULT_PROVIDER=anthropic\n"
-                f"  DEFAULT_MODEL=claude-sonnet-4-20250514"
-            ) from e
-
-        # Validate API key is present
-        if settings.default_provider == "anthropic" and not settings.anthropic_api_key:
-            raise ConfigurationError(
-                "Anthropic API key not configured\n\n"
-                "Set ANTHROPIC_API_KEY in your .env file:\n"
-                "  ANTHROPIC_API_KEY=sk-ant-xxx\n\n"
-                "Get an API key at: https://console.anthropic.com/settings/keys"
-            )
-        elif settings.default_provider == "openai" and not settings.openai_api_key:
-            raise ConfigurationError(
-                "OpenAI API key not configured\n\n"
-                "Set OPENAI_API_KEY in your .env file:\n"
-                "  OPENAI_API_KEY=sk-xxx\n\n"
-                "Get an API key at: https://platform.openai.com/api-keys"
-            )
+        # Load configuration from .env and config file
+        # Precedence: Environment variables > Config file > Defaults
+        settings = _load_merged_settings()
 
         # Load input file
         try:

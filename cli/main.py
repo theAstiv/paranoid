@@ -5,6 +5,7 @@ Command-line interface for iterative threat modeling powered by LLMs.
 
 import click
 
+from cli.commands.config import config
 from cli.commands.run import run
 
 
@@ -33,6 +34,7 @@ def cli() -> None:
 
 # Register commands
 cli.add_command(run)
+cli.add_command(config)
 
 
 def main() -> None:

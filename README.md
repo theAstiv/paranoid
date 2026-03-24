@@ -31,6 +31,22 @@ pip install -e .
 
 ### Configuration
 
+**Option 1: Interactive Wizard (Recommended)**
+```bash
+# Run the setup wizard
+paranoid config init
+
+# Follow the prompts to configure:
+#   - LLM Provider (Anthropic/OpenAI/Ollama)
+#   - API Key
+#   - Model name
+#   - Default iterations
+
+# View your configuration
+paranoid config show
+```
+
+**Option 2: Environment Variables**
 ```bash
 # Create .env file
 cp .env.example .env
@@ -105,6 +121,56 @@ async for event in run_pipeline_for_model(
     print(f"[{event.step}] {event.message}")
 ```
 
+## CLI Commands
+
+### Configuration Management
+
+```bash
+# Interactive setup wizard (first-time setup)
+paranoid config init
+
+# Reconfigure (overwrite existing config)
+paranoid config init --force
+
+# Display current configuration
+paranoid config show
+
+# Configuration file location: ~/.paranoid/config.json
+```
+
+### Running Threat Models
+
+```bash
+# Basic usage
+paranoid run system.md
+
+# With examples
+paranoid run examples/stride-example-api-gateway.md
+paranoid run examples/maestro-example-rag-chatbot.md
+
+# Help
+paranoid --help
+paranoid run --help
+paranoid config --help
+```
+
+### Coming Soon (Phases 3-5)
+
+```bash
+# JSON output (Phase 3)
+paranoid run system.md --output threats.json
+paranoid run system.md --format full -o complete.json
+
+# MAESTRO dual framework (Phase 4)
+paranoid run system.md --maestro
+
+# Advanced options (Phase 5)
+paranoid run system.md --quiet
+paranoid run system.md --verbose
+paranoid run system.md --iterations 7
+paranoid version
+```
+
 ## Structured Input Templates
 
 Paranoid supports rich XML-tagged templates for better context and assumption enforcement:
@@ -175,7 +241,7 @@ Apache 2.0
 
 ## Development Status
 
-**v1.0 Progress:** CLI Phase 1 of 6 (MVP) - Complete ✅
+**v1.0 Progress:** CLI Phase 2 of 6 (Configuration Management) - Complete ✅
 
 **Completed:**
 - ✅ Phase 1: Scaffold (FastAPI + Svelte setup)
