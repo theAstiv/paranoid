@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: yourusername/paranoid
+  IMAGE_NAME: theAstiv/paranoid
 
 jobs:
   build-and-push:
