@@ -89,31 +89,14 @@ class JSONWriter:
                 if "flow_count" in event.data:
                     self.flow_count = event.data["flow_count"]
 
-            elif event.step == PipelineStep.GENERATE_THREATS:
-                if "threats" in event.data:
-                    # In dual framework mode, only accumulate the COMBINED event
-                    # to avoid double-counting STRIDE + MAESTRO separately
-                    framework = event.data.get("framework")
-                    if framework in (None, "COMBINED"):
-                        # Accumulate threats from each iteration
-                        if self.threats is None:
-                            self.threats = event.data["threats"]
-                        else:
-                            # Merge threat lists
-                            self.threats.threats.extend(event.data["threats"].threats)
-
-                # Update total count (only count COMBINED or single-framework events)
-                if "threat_count" in event.data:
-                    framework = event.data.get("framework")
-                    if framework in (None, "COMBINED"):
-                        self.total_threats = event.data["threat_count"]
-
             elif event.step == PipelineStep.GAP_ANALYSIS:
                 if event.iteration:
                     self.iterations_completed = event.iteration
 
             elif event.step == PipelineStep.COMPLETE:
-                # Extract final stats
+                # Extract final stats and authoritative threat list
+                if "threats" in event.data:
+                    self.threats = event.data["threats"]
                 if "total_threats" in event.data:
                     self.total_threats = event.data["total_threats"]
                 if "iterations_completed" in event.data:

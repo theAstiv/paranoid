@@ -214,8 +214,17 @@ class PipelineRunner:
             )
 
             # Step 4: Iterative Threat Generation
+            # Iteration semantics:
+            # - Each iteration generates NEW threats (not existing + new)
+            # - The "improve" prompt asks LLM to find threats that were missed
+            # - current_threats = latest iteration's output (NEW threats only)
+            # - cumulative_threats = all threats from all iterations
+            # - existing_threats passed to LLM = cumulative from previous iterations
+            # - Gap analysis uses cumulative to assess full coverage
             current_threats: Optional[ThreatsList] = None
+            cumulative_threats = ThreatsList(threats=[])  # Track all threats across iterations
             iteration = 1
+            iterations_completed = 0  # Track completed iterations (avoids off-by-one on early exit)
             stopped_reason = "max_iterations"
             gaps: list[str] = []
 
@@ -225,7 +234,7 @@ class PipelineRunner:
                     yield PipelineEvent(
                         step=PipelineStep.ITERATE,
                         status="info",
-                        message=f"Time limit reached after {iteration - 1} iterations",
+                        message=f"Time limit reached after {iterations_completed} iterations",
                         iteration=iteration,
                     )
                     stopped_reason = "timeout"
@@ -304,7 +313,7 @@ class PipelineRunner:
                     yield PipelineEvent(
                         step=PipelineStep.GENERATE_THREATS,
                         status="info",
-                        message=f"Combined {len(current_threats.threats)} total threats (STRIDE + MAESTRO)",
+                        message=f"Combined {len(current_threats.threats)} new threats (STRIDE + MAESTRO)",
                         iteration=iteration,
                         data={"threat_count": len(current_threats.threats), "threats": current_threats, "framework": "COMBINED"},
                     )
@@ -337,9 +346,23 @@ class PipelineRunner:
                     yield PipelineEvent(
                         step=PipelineStep.GENERATE_THREATS,
                         status="completed",
-                        message=f"Generated {len(current_threats.threats)} threats",
+                        message=f"Generated {len(current_threats.threats)} new threats",
                         iteration=iteration,
                         data={"threat_count": len(current_threats.threats), "threats": current_threats},
+                    )
+
+                # Accumulate threats from this iteration
+                cumulative_threats.threats.extend(current_threats.threats)
+                iterations_completed = iteration  # Track before potential break in gap analysis
+
+                # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
+                if iteration > 1:
+                    yield PipelineEvent(
+                        step=PipelineStep.GENERATE_THREATS,
+                        status="info",
+                        message=f"Total threats across all iterations: {len(cumulative_threats.threats)}",
+                        iteration=iteration,
+                        data={"cumulative_threat_count": len(cumulative_threats.threats)},
                     )
 
                 # Gap Analysis (only if not final iteration)
@@ -357,7 +380,7 @@ class PipelineRunner:
                         assumptions=assumptions,
                         assets=assets,
                         flows=flows,
-                        threats=current_threats,
+                        threats=cumulative_threats,
                         framework=framework,
                         provider=self.provider,
                         previous_gaps=gaps,
@@ -392,13 +415,13 @@ class PipelineRunner:
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,
                 status="completed",
-                message=f"Pipeline complete: {iteration - 1} iterations, {len(current_threats.threats)} threats",
+                message=f"Pipeline complete: {iterations_completed} iterations, {len(cumulative_threats.threats)} threats",
                 data={
-                    "iterations_completed": iteration - 1,
-                    "total_threats": len(current_threats.threats),
+                    "iterations_completed": iterations_completed,
+                    "total_threats": len(cumulative_threats.threats),
                     "duration_seconds": total_duration,
                     "stopped_reason": stopped_reason,
-                    "threats": current_threats,
+                    "threats": cumulative_threats,
                 },
             )
 
