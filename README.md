@@ -15,8 +15,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Deterministic Fallback**: Rule engine ensures known threats aren't missed
 - **MCP Integration**: Pull code context from any MCP server (Antigravity-Link, etc.)
 - **Dual JSON Formats**: Simple (lightweight, ~2KB) or Full (complete models + DREAD, ~45KB)
-- **CI/CD Ready**: CLI + GitHub Action output SARIF for PR annotations
-- **Export Formats**: PDF, JSON (simple/full), Markdown, SARIF
+- **SARIF Export**: GitHub Security integration with PR annotations and Security tab findings
+- **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
+- **Export Formats**: JSON (simple/full), SARIF, PDF (planned), Markdown (planned)
 
 ## Quick Start
 
@@ -220,6 +221,9 @@ paranoid run system.md --output threats.json
 # JSON output (full format - complete models + DREAD + events, ~45 KB)
 paranoid run system.md --format full -o complete.json
 
+# SARIF export for GitHub Security integration
+paranoid run system.md --format sarif
+
 # Force dual framework (STRIDE + MAESTRO in parallel)
 paranoid run system.md --maestro
 
@@ -248,9 +252,11 @@ paranoid config --help
 paranoid version
 ```
 
-### JSON Output Formats
+### Output Formats
 
-Paranoid supports two JSON export formats optimized for different use cases:
+Paranoid supports multiple export formats optimized for different use cases:
+
+#### JSON Output
 
 **Simple Format** (default, ~2-3 KB):
 - Lightweight threat summaries (name, category, target, impact, likelihood, mitigation count)
@@ -323,6 +329,57 @@ paranoid run system.md --format full -o complete.json
   "events": [...]
 }
 ```
+
+#### SARIF Export (GitHub Security Integration)
+
+**SARIF 2.1.0** format for GitHub Security, GitLab, VS Code, and Azure DevOps integration:
+
+```bash
+# Export to SARIF
+paranoid run system.md --format sarif -o threats.sarif
+```
+
+**Features:**
+- Threats appear in GitHub Security tab
+- PR annotations for each finding
+- Severity mapping from DREAD scores (error/warning/note)
+- Mitigations as actionable fixes (tagged as Preventive/Detective/Containment)
+- Full STRIDE category metadata with mitigation guidance
+
+**GitHub Actions Integration:**
+
+```yaml
+name: Threat Model
+
+on: [push, pull_request]
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run threat modeling
+        run: |
+          pip install paranoid-cli
+          paranoid run system.md --format sarif -o threats.sarif
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: threats.sarif
+```
+
+**Example SARIF Output:**
+
+Threats appear in GitHub with:
+- **Rule ID**: `stride/tampering`, `stride/spoofing`, etc.
+- **Level**: `error` (Critical/High), `warning` (Medium), `note` (Low)
+- **Location**: Source file + logical location (threatened component)
+- **Fixes**: Mitigations with type labels (`[P]` Preventive, `[D]` Detective, `[C]` Containment)
+- **Help Text**: Category-specific guidance with markdown formatting
 
 ## Structured Input Templates
 

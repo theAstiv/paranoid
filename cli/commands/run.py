@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from backend.config import Settings
+from backend.export.sarif import export_sarif
 from backend.models.enums import Framework
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
 from backend.providers import (
@@ -156,9 +157,9 @@ def _get_config_supplement(
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["simple", "full"], case_sensitive=False),
+    type=click.Choice(["simple", "full", "sarif"], case_sensitive=False),
     default="simple",
-    help="JSON output format: simple (lightweight results) or full (complete models + events)",
+    help="Output format: simple/full (JSON) or sarif (GitHub Security)",
 )
 @click.option(
     "--maestro",
@@ -231,7 +232,11 @@ def run(
         paranoid run system.md --maestro
 
         \b
-        # With JSON output
+        # Export to SARIF for GitHub Security
+        paranoid run system.md --format sarif
+
+        \b
+        # With full JSON output
         paranoid run system.md --output threats.json --format full
     """
     try:
@@ -311,8 +316,15 @@ def run(
 
         model_id = f"{input_file.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-        # Determine output path
-        output_path = output if output else get_default_output_path(input_file)
+        # Determine output path with correct extension
+        if output:
+            output_path = output
+        else:
+            # Default path with format-specific extension
+            if output_format == "sarif":
+                output_path = input_file.parent / f"{input_file.stem}_threats.sarif"
+            else:
+                output_path = get_default_output_path(input_file)
 
         # Show output configuration (unless quiet mode)
         if output_path and not quiet:
@@ -486,19 +498,45 @@ async def _run_pipeline_async(
     # Calculate duration
     duration = asyncio.get_event_loop().time() - start_time
 
-    # Export JSON if requested
+    # Export output if requested
     output_file_str = None
-    if json_writer and output_path:
+    if output_path:
         try:
-            if output_format == "simple":
-                json_writer.export_simple(output_path)
-            else:  # full
-                json_writer.export_full(output_path)
-            output_file_str = str(output_path)
+            if output_format == "sarif":
+                # SARIF export
+                if json_writer and json_writer.threats:
+                    import json
+
+                    sarif_data = export_sarif(
+                        threats=json_writer.threats,
+                        model_id=model_id,
+                        framework=framework.value,
+                        source_file=str(input_file),
+                    )
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(sarif_data, f, indent=2, ensure_ascii=False)
+                    output_file_str = str(output_path)
+                else:
+                    click.echo()
+                    click.secho(
+                        "⚠ Warning: No threats to export to SARIF", fg="yellow"
+                    )
+                    click.echo()
+            elif json_writer:
+                # JSON export
+                if output_format == "simple":
+                    json_writer.export_simple(output_path)
+                else:  # full
+                    json_writer.export_full(output_path)
+                output_file_str = str(output_path)
         except Exception as e:
             # Non-fatal error - show warning but don't fail
             click.echo()
-            click.secho(f"⚠ Warning: Failed to write JSON output: {e}", fg="yellow")
+            click.secho(
+                f"⚠ Warning: Failed to write {output_format.upper()} output: {e}",
+                fg="yellow",
+            )
             click.echo()
 
     # Render final summary (always show, even in quiet mode)
