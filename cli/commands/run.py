@@ -11,7 +11,12 @@ import click
 from backend.config import Settings
 from backend.models.enums import Framework
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
-from backend.providers import create_provider
+from backend.providers import (
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    create_provider,
+)
 from cli.context import config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.file_loader import detect_framework_from_input, load_input_file, parse_structured_input
@@ -436,14 +441,46 @@ async def _run_pipeline_async(
                     if "iterations_completed" in event.data:
                         iterations_completed = event.data["iterations_completed"]
 
-    except Exception as e:
+    except ProviderAuthError as e:
         raise PipelineExecutionError(
-            f"Pipeline execution failed: {e}\n\n"
-            f"This may be due to:\n"
-            f"  - LLM API timeout or rate limit\n"
-            f"  - Invalid API key\n"
-            f"  - Network connectivity issues\n\n"
-            f"Check your API key and try again."
+            f"Authentication failed\n\n"
+            f"The API key for {settings.default_provider} is invalid or missing.\n\n"
+            f"To fix:\n"
+            f"  - Check your API key in .env or config file\n"
+            f"  - Run 'paranoid config init' to reconfigure\n\n"
+            f"Error: {e}"
+        ) from e
+    except ProviderRateLimitError as e:
+        raise PipelineExecutionError(
+            f"Rate limit exceeded\n\n"
+            f"The {settings.default_provider} API has rate-limited your requests.\n\n"
+            f"To fix:\n"
+            f"  - Wait a few minutes and try again\n"
+            f"  - Check your API plan limits\n"
+            f"  - Use --iterations with a lower count to reduce API calls\n\n"
+            f"Error: {e}"
+        ) from e
+    except ProviderTimeoutError as e:
+        raise PipelineExecutionError(
+            f"Request timed out\n\n"
+            f"The {settings.default_provider} API did not respond in time.\n\n"
+            f"To fix:\n"
+            f"  - Check your network connection\n"
+            f"  - Try again (API may be experiencing high load)\n"
+            f"  - For Ollama: verify the server is running at {settings.ollama_base_url}\n\n"
+            f"Error: {e}"
+        ) from e
+    except KeyboardInterrupt:
+        # Don't wrap KeyboardInterrupt - let the outer handler catch it
+        raise
+    except Exception as e:
+        # Unexpected errors - provide generic guidance
+        raise PipelineExecutionError(
+            f"Pipeline execution failed\n\n"
+            f"An unexpected error occurred during threat modeling.\n\n"
+            f"Error details: {type(e).__name__}: {e}\n\n"
+            f"If this persists, please report at:\n"
+            f"  https://github.com/theAstiv/paranoid/issues"
         ) from e
 
     # Calculate duration
