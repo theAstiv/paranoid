@@ -4,7 +4,6 @@ Main CLI command that runs the threat modeling pipeline on an input file.
 """
 
 import asyncio
-import os
 from pathlib import Path
 
 import click
@@ -21,9 +20,13 @@ from cli.output.json_writer import JSONWriter, get_default_output_path
 
 
 def _load_merged_settings() -> Settings:
-    """Load configuration from .env and config file with proper precedence.
+    """Load configuration with proper precedence, no environment mutation.
 
-    Precedence: Environment variables > Config file > Defaults
+    Precedence (highest to lowest):
+    1. Environment variables (os.environ)
+    2. .env file (read by pydantic-settings)
+    3. Config file (~/.paranoid/config.toml) — supplements missing values
+    4. Field defaults
 
     Returns:
         Settings object with merged configuration
@@ -31,79 +34,28 @@ def _load_merged_settings() -> Settings:
     Raises:
         ConfigurationError: If no valid configuration found
     """
-    # Try loading from .env (uses environment variables)
+    # First pass: load from env vars + .env file (no config file)
     try:
-        settings = Settings()
+        base_settings = Settings()
     except Exception:
-        # .env doesn't exist or is invalid, create empty settings
-        settings = None
+        base_settings = None
 
-    # If .env doesn't provide API key, try config file
+    # Second pass: supplement gaps from config file
     if config_exists():
         config = load_config()
+        supplement = _get_config_supplement(base_settings, config)
 
-        # Create settings from config file if .env failed
-        if settings is None:
-            # Build environment dict from config file
-            provider = config.get("default_provider", "anthropic")
-            model = config.get("default_model", "claude-sonnet-4-20250514")
-            iterations = config.get("default_iterations", 3)
-
-            # Get provider-specific config
-            provider_config = config.get("providers", {}).get(provider, {})
-
-            # Set environment variables temporarily for Settings initialization
-            env_updates = {
-                "DEFAULT_PROVIDER": provider,
-                "DEFAULT_MODEL": model,
-                "DEFAULT_ITERATIONS": str(iterations),
-            }
-
-            if provider == "anthropic" and provider_config.get("api_key"):
-                env_updates["ANTHROPIC_API_KEY"] = provider_config["api_key"]
-            elif provider == "openai" and provider_config.get("api_key"):
-                env_updates["OPENAI_API_KEY"] = provider_config["api_key"]
-            elif provider == "ollama" and provider_config.get("base_url"):
-                env_updates["OLLAMA_BASE_URL"] = provider_config["base_url"]
-
-            # Update environment and create settings
-            original_env = {}
-            for key, value in env_updates.items():
-                original_env[key] = os.environ.get(key)
-                os.environ[key] = value
-
+        if supplement:
             try:
-                settings = Settings()
-            finally:
-                # Restore original environment
-                for key, value in original_env.items():
-                    if value is None:
-                        os.environ.pop(key, None)
-                    else:
-                        os.environ[key] = value
+                base_settings = Settings(**supplement)
+            except Exception:
+                raise ConfigurationError(
+                    "Invalid configuration\n\n"
+                    "Check your config file and .env for conflicting values.\n"
+                    "Run 'paranoid config init' to reconfigure."
+                )
 
-        # If .env exists but doesn't have API key, supplement from config file
-        elif settings:
-            provider = settings.default_provider
-            provider_config = config.get("providers", {}).get(provider, {})
-
-            # Supplement missing API keys from config file
-            if provider == "anthropic" and not settings.anthropic_api_key:
-                if provider_config.get("api_key"):
-                    # Create new settings with supplemented API key
-                    os.environ["ANTHROPIC_API_KEY"] = provider_config["api_key"]
-                    settings = Settings()
-            elif provider == "openai" and not settings.openai_api_key:
-                if provider_config.get("api_key"):
-                    os.environ["OPENAI_API_KEY"] = provider_config["api_key"]
-                    settings = Settings()
-            elif provider == "ollama" and not settings.ollama_base_url:
-                if provider_config.get("base_url"):
-                    os.environ["OLLAMA_BASE_URL"] = provider_config["base_url"]
-                    settings = Settings()
-
-    # Validate we have settings
-    if settings is None:
+    if base_settings is None:
         raise ConfigurationError(
             "No configuration found\n\n"
             "Run the setup wizard to configure:\n"
@@ -115,7 +67,7 @@ def _load_merged_settings() -> Settings:
         )
 
     # Validate API key is present for the selected provider
-    if settings.default_provider == "anthropic" and not settings.anthropic_api_key:
+    if base_settings.default_provider == "anthropic" and not base_settings.anthropic_api_key:
         raise ConfigurationError(
             "Anthropic API key not configured\n\n"
             "Run the setup wizard:\n"
@@ -124,7 +76,7 @@ def _load_merged_settings() -> Settings:
             "  ANTHROPIC_API_KEY=sk-ant-xxx\n\n"
             "Get an API key at: https://console.anthropic.com/settings/keys"
         )
-    elif settings.default_provider == "openai" and not settings.openai_api_key:
+    elif base_settings.default_provider == "openai" and not base_settings.openai_api_key:
         raise ConfigurationError(
             "OpenAI API key not configured\n\n"
             "Run the setup wizard:\n"
@@ -134,7 +86,57 @@ def _load_merged_settings() -> Settings:
             "Get an API key at: https://platform.openai.com/api-keys"
         )
 
-    return settings
+    return base_settings
+
+
+def _get_config_supplement(
+    base_settings: Settings | None,
+    config: dict,
+) -> dict:
+    """Extract config file values that should supplement (not override) base settings.
+
+    Only includes values for fields that are empty or at default in base_settings.
+    When base_settings is None (.env failed), includes all config file values.
+
+    Args:
+        base_settings: Settings from env vars + .env, or None if loading failed
+        config: Parsed config file dict
+
+    Returns:
+        Dict of field values to pass as Settings constructor kwargs
+    """
+    overrides = {}
+    defaults = Settings.model_fields
+
+    # General settings — only supplement if base didn't provide a non-default value
+    field_map = {
+        "default_provider": "default_provider",
+        "default_model": "default_model",
+        "default_iterations": "default_iterations",
+    }
+    for config_key, field_name in field_map.items():
+        if config_key not in config:
+            continue
+        if base_settings is None or getattr(base_settings, field_name) == defaults[field_name].default:
+            overrides[field_name] = config[config_key]
+
+    # Provider-specific API keys — only supplement if missing (empty string)
+    provider = overrides.get("default_provider") or (
+        base_settings.default_provider if base_settings else "anthropic"
+    )
+    provider_config = config.get("providers", {}).get(provider, {})
+
+    if provider == "anthropic" and provider_config.get("api_key"):
+        if base_settings is None or not base_settings.anthropic_api_key:
+            overrides["anthropic_api_key"] = provider_config["api_key"]
+    elif provider == "openai" and provider_config.get("api_key"):
+        if base_settings is None or not base_settings.openai_api_key:
+            overrides["openai_api_key"] = provider_config["api_key"]
+    elif provider == "ollama" and provider_config.get("base_url"):
+        if base_settings is None or base_settings.ollama_base_url == defaults["ollama_base_url"].default:
+            overrides["ollama_base_url"] = provider_config["base_url"]
+
+    return overrides
 
 
 @click.command()
