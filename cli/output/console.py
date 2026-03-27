@@ -8,6 +8,7 @@ import time
 import click
 
 from backend.pipeline.runner import PipelineEvent, PipelineStep
+from backend.serialization import serialize_event_data
 
 
 class ConsoleRenderer:
@@ -73,21 +74,13 @@ class ConsoleRenderer:
         # Verbose mode: show event data
         if self.verbose and event.data:
             import json
-            from pydantic import BaseModel
 
-            # Convert Pydantic models to dict for JSON serialization
-            data_to_show = {}
-            for key, value in event.data.items():
-                if isinstance(value, BaseModel):
-                    data_to_show[key] = value.model_dump(mode="json")
-                else:
-                    data_to_show[key] = value
+            data_to_show = serialize_event_data(event.data)
 
             try:
                 data_str = json.dumps(data_to_show, indent=2)
                 click.echo(f"    Data: {data_str}")
             except (TypeError, ValueError):
-                # Fallback if still can't serialize
                 click.echo(f"    Data: {data_to_show}")
 
     def render_final_summary(

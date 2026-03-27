@@ -5,6 +5,7 @@ and emits server-sent events for real-time progress tracking.
 """
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ from backend.models.extended import AttackTree, CodeContext, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.providers.base import LLMProvider
+from backend.serialization import serialize_event_data
 
 
 class PipelineStep(str, Enum):
@@ -48,15 +50,13 @@ class PipelineEvent:
             self.timestamp = time.time()
 
     def to_sse_format(self) -> str:
-        """Convert to SSE format string."""
-        import json
-
+        """Convert to SSE format string for Server-Sent Events streaming."""
         event_data = {
             "step": self.step.value if isinstance(self.step, PipelineStep) else self.step,
             "status": self.status,
             "message": self.message,
             "iteration": self.iteration,
-            "data": self.data,
+            "data": serialize_event_data(self.data),
             "timestamp": self.timestamp,
         }
         return f"data: {json.dumps(event_data)}\n\n"
