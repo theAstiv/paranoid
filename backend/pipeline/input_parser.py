@@ -4,8 +4,11 @@ This module parses structured input following the Input-template.md format,
 extracting component descriptions and assumptions for STRIDE and MAESTRO frameworks.
 """
 
+import logging
 import re
 from typing import Optional
+
+from pydantic import ValidationError
 
 from backend.models.extended import (
     MaestroAssumptions,
@@ -13,6 +16,8 @@ from backend.models.extended import (
     StrideAssumptions,
     StrideComponentDescription,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_xml_section(text: str, tag: str) -> Optional[str]:
@@ -175,7 +180,11 @@ def parse_stride_component_description(text: str) -> Optional[StrideComponentDes
             trust_level=trust_level,
             dependencies=dependencies,
         )
-    except Exception:
+    except ValidationError as e:
+        logger.warning("STRIDE component description failed validation: %s", e)
+        return None
+    except (AttributeError, TypeError, KeyError) as e:
+        logger.warning("Failed to parse STRIDE component description: %s", e)
         return None
 
 
@@ -246,7 +255,11 @@ def parse_maestro_component_description(text: str) -> Optional[MaestroComponentD
             trust_boundaries=trust_boundaries,
             dependencies=dependencies,
         )
-    except Exception:
+    except ValidationError as e:
+        logger.warning("MAESTRO component description failed validation: %s", e)
+        return None
+    except (AttributeError, TypeError, KeyError) as e:
+        logger.warning("Failed to parse MAESTRO component description: %s", e)
         return None
 
 
@@ -281,7 +294,11 @@ def parse_stride_assumptions(text: str) -> Optional[StrideAssumptions]:
             operational_considerations=operational_considerations,
             focus_areas=focus_areas,
         )
-    except Exception:
+    except ValidationError as e:
+        logger.warning("STRIDE assumptions failed validation: %s", e)
+        return None
+    except (AttributeError, TypeError, KeyError) as e:
+        logger.warning("Failed to parse STRIDE assumptions: %s", e)
         return None
 
 
@@ -324,7 +341,11 @@ def parse_maestro_assumptions(text: str) -> Optional[MaestroAssumptions]:
             operational_considerations=operational_considerations,
             focus_areas=focus_areas,
         )
-    except Exception:
+    except ValidationError as e:
+        logger.warning("MAESTRO assumptions failed validation: %s", e)
+        return None
+    except (AttributeError, TypeError, KeyError) as e:
+        logger.warning("Failed to parse MAESTRO assumptions: %s", e)
         return None
 
 

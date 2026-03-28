@@ -3,9 +3,12 @@
 Loads .txt and .md files, validates size and content, detects structured templates.
 """
 
+import logging
 from pathlib import Path
 
 from backend.models.enums import Framework
+
+logger = logging.getLogger(__name__)
 from backend.pipeline.input_parser import (
     detect_input_format,
     format_structured_assumptions_for_prompt,
@@ -134,7 +137,10 @@ def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
         assumptions_obj = parse_stride_assumptions(content)
 
         if not component_desc:
-            # Fallback to plain text if parsing fails
+            logger.warning(
+                "STRIDE structured template detected but failed to parse. "
+                "Falling back to plain text input."
+            )
             return (content, None)
 
         # Format description for prompt
@@ -146,6 +152,8 @@ def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
             formatted = format_structured_assumptions_for_prompt(assumptions_obj)
             # Convert formatted text back to list (split by section)
             assumptions = [line.strip() for line in formatted.split("\n") if line.strip()]
+        else:
+            logger.warning("STRIDE assumptions section not found or failed to parse")
 
         return (description, assumptions)
 
@@ -154,7 +162,10 @@ def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
         assumptions_obj = parse_maestro_assumptions(content)
 
         if not component_desc:
-            # Fallback to plain text if parsing fails
+            logger.warning(
+                "MAESTRO structured template detected but failed to parse. "
+                "Falling back to plain text input."
+            )
             return (content, None)
 
         # Format description for prompt
@@ -165,6 +176,8 @@ def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
         if assumptions_obj:
             formatted = format_structured_assumptions_for_prompt(assumptions_obj)
             assumptions = [line.strip() for line in formatted.split("\n") if line.strip()]
+        else:
+            logger.warning("MAESTRO assumptions section not found or failed to parse")
 
         return (description, assumptions)
 
