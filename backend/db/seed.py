@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
 from backend.config import settings
 from backend.db.crud import create_threat, generate_id
 from backend.db.vectors import bulk_insert_seed_vectors, get_vector_stats
@@ -221,9 +223,47 @@ async def import_owasp_patterns(db_path: str) -> int:
     return count
 
 
+def _count_expected_seeds() -> int:
+    """Count total patterns across all seed files."""
+    total = 0
+    for filename in ("stride_patterns.json", "maestro_patterns.json", "owasp_llm_top10.json"):
+        path = SEEDS_DIR / filename
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    total += len(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                pass
+    return total
+
+
+async def _cleanup_seed_data(db_path: str) -> None:
+    """Remove existing seed threat models and their cascaded data."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys = ON;")
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM threat_models WHERE provider = ?", ("seed",)
+        )
+        count = (await cursor.fetchone())[0]
+
+        await db.execute(
+            "DELETE FROM threat_models WHERE provider = ?", ("seed",)
+        )
+
+        # Clean orphaned seed vectors from threat_metadata
+        await db.execute("DELETE FROM threat_metadata WHERE source = ?", ("seed",))
+        await db.commit()
+
+    if count > 0:
+        logger.info(f"Cleaned up {count} existing seed threat models")
+
+
 async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
     """
     Load all seed patterns into the database.
+
+    Detects partial loads by comparing actual seed count against expected
+    count from seed files. If counts don't match, cleans up and reloads.
 
     Args:
         db_path: Path to SQLite database
@@ -234,12 +274,27 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
     """
     logger.info("Loading seed patterns")
 
-    # Check if seeds already loaded
+    expected = _count_expected_seeds()
+
+    # Check if seeds already loaded (and complete)
     if not force:
         stats = await get_vector_stats(db_path)
-        if stats.get("seed", 0) > 0:
-            logger.info(f"Seeds already loaded ({stats['seed']} vectors)")
-            return {"skipped": stats["seed"]}
+        actual = stats.get("seed", 0)
+
+        if actual > 0 and actual >= expected:
+            logger.info(f"Seeds already loaded ({actual} vectors)")
+            return {"skipped": actual}
+
+        if actual > 0 and actual < expected:
+            logger.warning(
+                f"Partial seed load detected ({actual}/{expected} vectors). "
+                "Cleaning up and reloading."
+            )
+            force = True  # Trigger cleanup and reload
+
+    # Clean up existing seed data before reimporting
+    if force:
+        await _cleanup_seed_data(db_path)
 
     results = {}
 
@@ -262,7 +317,13 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
         results["owasp"] = 0
 
     results["total"] = sum(results.values())
-    logger.info(f"Loaded {results['total']} total seed patterns")
+
+    if results["total"] < expected:
+        logger.warning(
+            f"Seed load incomplete: {results['total']}/{expected} patterns imported"
+        )
+    else:
+        logger.info(f"Loaded {results['total']} total seed patterns")
 
     return results
 
@@ -278,14 +339,18 @@ async def check_seeds_status(db_path: str) -> dict[str, Any]:
         Dictionary with seed status information
     """
     stats = await get_vector_stats(db_path)
+    actual = stats.get("seed", 0)
+    expected = _count_expected_seeds()
 
     stride_file = SEEDS_DIR / "stride_patterns.json"
     maestro_file = SEEDS_DIR / "maestro_patterns.json"
     owasp_file = SEEDS_DIR / "owasp_llm_top10.json"
 
     return {
-        "loaded": stats.get("seed", 0) > 0,
-        "seed_count": stats.get("seed", 0),
+        "loaded": actual > 0 and actual >= expected,
+        "partial": actual > 0 and actual < expected,
+        "seed_count": actual,
+        "expected_count": expected,
         "total_vectors": stats.get("total", 0),
         "files_exist": {
             "stride": stride_file.exists(),

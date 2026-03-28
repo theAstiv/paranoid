@@ -278,5 +278,369 @@
       "Apply input preprocessing and validation",
       "Deploy resource monitoring and throttling"
     ]
+  },
+  {
+    "name": "Training Data Exfiltration",
+    "maestro_category": "Data Security",
+    "description": "Attacker with access to ML infrastructure can exfiltrate training datasets containing sensitive personal data, intellectual property, or proprietary business information.",
+    "target": "Training Data Store",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Encrypt training data at rest and in transit",
+      "Implement strict access controls with audit logging",
+      "Use data loss prevention monitoring on storage egress",
+      "Apply data minimization to retain only required features"
+    ]
+  },
+  {
+    "name": "Feature Store Poisoning",
+    "maestro_category": "Data Security",
+    "description": "Attacker with write access to a shared feature store can corrupt feature values, silently degrading model accuracy across all models consuming those features.",
+    "target": "Feature Store",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement feature validation and schema enforcement",
+      "Use version control and immutable snapshots for features",
+      "Monitor feature distributions for unexpected changes",
+      "Require approval workflows for feature store writes"
+    ]
+  },
+  {
+    "name": "Data Label Manipulation",
+    "maestro_category": "Data Security",
+    "description": "Malicious annotator or compromised labeling pipeline can systematically mislabel training examples, causing the model to learn incorrect decision boundaries.",
+    "target": "Data Labeling Pipeline",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement multi-annotator consensus with disagreement detection",
+      "Use automated label quality checks and outlier detection",
+      "Audit annotator accuracy with known ground-truth samples",
+      "Maintain provenance tracking for all label changes"
+    ]
+  },
+  {
+    "name": "Indirect Prompt Injection",
+    "maestro_category": "LLM Security",
+    "description": "Attacker embedding malicious instructions in external data sources (documents, websites, emails) processed by LLM can hijack model behavior when the LLM retrieves and processes that content.",
+    "target": "RAG Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Sanitize all retrieved content before including in prompts",
+      "Implement content provenance verification",
+      "Use separate context windows for system and retrieved content",
+      "Apply output validation against expected behavior patterns"
+    ]
+  },
+  {
+    "name": "LLM Jailbreaking via Role-Play",
+    "maestro_category": "LLM Security",
+    "description": "Attacker using creative role-play scenarios, multi-turn manipulation, or encoding tricks can bypass LLM safety guardrails to extract harmful content or system instructions.",
+    "target": "LLM Safety Controls",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement multi-layer content filtering on inputs and outputs",
+      "Use classifier-based guardrails independent of the LLM itself",
+      "Monitor conversations for known jailbreak patterns",
+      "Regularly red-team and update safety fine-tuning"
+    ]
+  },
+  {
+    "name": "Context Window Manipulation",
+    "maestro_category": "LLM Security",
+    "description": "Attacker can craft inputs that fill or manipulate the context window to push system instructions out of context, causing the LLM to ignore safety directives and constraints.",
+    "target": "LLM Context Management",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Reserve fixed context budget for system instructions",
+      "Implement input length limits with graceful truncation",
+      "Use structured prompting that anchors system directives",
+      "Monitor for abnormally long or padded inputs"
+    ]
+  },
+  {
+    "name": "ML Pipeline Code Injection",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker with access to ML pipeline configuration can inject malicious code into training scripts, data preprocessing steps, or model evaluation hooks, executing arbitrary code in the training environment.",
+    "target": "ML Training Pipeline",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement code review for all pipeline changes",
+      "Use containerized and sandboxed training environments",
+      "Sign and verify all pipeline artifacts",
+      "Restrict write access to pipeline definitions"
+    ]
+  },
+  {
+    "name": "Model Registry Tampering",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker with access to the model registry can replace production models with compromised versions or modify model metadata to redirect inference to malicious models.",
+    "target": "Model Registry",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement model signing and integrity verification",
+      "Use immutable model versions with content-based addressing",
+      "Require multi-party approval for production model promotions",
+      "Audit all model registry operations"
+    ]
+  },
+  {
+    "name": "Experiment Tracking Manipulation",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker modifying experiment tracking records can falsify model performance metrics, leading to promotion of underperforming or compromised models to production.",
+    "target": "Experiment Tracking System",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use append-only experiment logs with tamper detection",
+      "Implement independent model validation before promotion",
+      "Require reproducible training runs with deterministic seeds",
+      "Cross-validate metrics against held-out validation sets"
+    ]
+  },
+  {
+    "name": "Dataset Supply Chain Compromise",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker compromising public dataset repositories or data providers can inject poisoned data that propagates to all downstream models trained on those datasets.",
+    "target": "Dataset Repository",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Verify dataset checksums and signatures before use",
+      "Use trusted and curated dataset sources",
+      "Implement automated data quality scans on ingestion",
+      "Maintain a dataset bill of materials with provenance"
+    ]
+  },
+  {
+    "name": "ML Framework Vulnerability Exploitation",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker exploiting vulnerabilities in ML frameworks (PyTorch, TensorFlow, scikit-learn) can achieve remote code execution or data exfiltration through malicious model files or crafted inputs.",
+    "target": "ML Framework",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Keep ML frameworks updated with security patches",
+      "Use safe model serialization formats (avoid pickle)",
+      "Scan dependencies for known vulnerabilities",
+      "Run model loading in sandboxed environments"
+    ]
+  },
+  {
+    "name": "GPU Side-Channel Attack",
+    "maestro_category": "Resource Abuse",
+    "description": "Co-tenant on shared GPU infrastructure can exploit side-channel leakage to extract model parameters, training data patterns, or inference inputs from adjacent workloads.",
+    "target": "Shared GPU Infrastructure",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use dedicated GPU instances for sensitive workloads",
+      "Implement memory clearing between tenant workloads",
+      "Monitor GPU utilization patterns for anomalies",
+      "Use confidential computing with GPU memory encryption"
+    ]
+  },
+  {
+    "name": "Agentic Tool Abuse",
+    "maestro_category": "LLM Security",
+    "description": "AI agent with tool-calling capabilities can be manipulated through prompt injection to misuse its tools, executing unintended database queries, API calls, or file operations.",
+    "target": "AI Agent Tool Interface",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement tool-level authorization and scope restrictions",
+      "Require human approval for destructive or sensitive tool calls",
+      "Use allowlists for tool parameters and target resources",
+      "Log and audit all tool invocations with full context"
+    ]
+  },
+  {
+    "name": "Model Confidentiality Breach via Distillation",
+    "maestro_category": "Model Security",
+    "description": "Attacker with API access can use knowledge distillation techniques to train a student model that replicates the proprietary model's behavior at a fraction of the cost.",
+    "target": "ML API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement output perturbation to degrade distillation quality",
+      "Monitor for high-volume systematic query patterns",
+      "Use rate limiting with progressive throttling",
+      "Deploy model watermarking for theft detection"
+    ]
+  },
+  {
+    "name": "Discriminatory Output Generation",
+    "maestro_category": "Fairness",
+    "description": "ML model can produce systematically biased outputs that discriminate against protected groups in high-stakes decisions such as hiring, lending, or criminal justice, creating legal and ethical liability.",
+    "target": "ML Decision System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement pre-deployment fairness testing across protected attributes",
+      "Use counterfactual fairness evaluation on test datasets",
+      "Deploy real-time bias monitoring on production predictions",
+      "Establish fairness review boards for high-stakes applications"
+    ]
+  },
+  {
+    "name": "Proxy Discrimination via Correlated Features",
+    "maestro_category": "Fairness",
+    "description": "Model can learn to use seemingly neutral features (zip code, browser language, device type) as proxies for protected attributes, producing discriminatory outcomes while appearing unbiased on surface metrics.",
+    "target": "Feature Engineering Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Conduct proxy feature analysis to identify correlated attributes",
+      "Use causal inference methods to detect indirect discrimination",
+      "Implement feature ablation studies for fairness impact",
+      "Apply adversarial debiasing to remove proxy signal from representations"
+    ]
+  },
+  {
+    "name": "Demographic Parity Violation",
+    "maestro_category": "Fairness",
+    "description": "Model producing significantly different positive prediction rates across demographic groups can violate regulatory requirements and cause disparate impact, even without explicit use of protected attributes.",
+    "target": "ML Classification Model",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Monitor demographic parity, equalized odds, and calibration metrics",
+      "Implement threshold adjustment per group where legally permissible",
+      "Use in-processing fairness constraints during training",
+      "Conduct regular disparate impact analysis with documented thresholds"
+    ]
+  },
+  {
+    "name": "Alert Fatigue Exploitation",
+    "maestro_category": "Monitoring",
+    "description": "Attacker can deliberately trigger high volumes of low-severity alerts to desensitize operators, then execute the actual attack while monitoring teams are overwhelmed or ignoring notifications.",
+    "target": "ML Alerting System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement alert prioritization with severity-based routing",
+      "Use alert correlation to group related events and reduce noise",
+      "Set dynamic alert thresholds that adapt to baseline activity",
+      "Maintain separate high-priority channels for critical security alerts"
+    ]
+  },
+  {
+    "name": "Monitoring Blind Spot Exploitation",
+    "maestro_category": "Monitoring",
+    "description": "Attacker can identify gaps in monitoring coverage — unmonitored model endpoints, unchecked input distributions, or missing output validation — and exploit these blind spots to degrade or manipulate model behavior undetected.",
+    "target": "ML Observability Stack",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Conduct monitoring coverage audits against all model inputs and outputs",
+      "Implement canary inputs with known expected outputs to verify monitoring",
+      "Deploy shadow scoring to detect discrepancies in unmonitored paths",
+      "Use chaos engineering to validate alerting for known failure modes"
+    ]
+  },
+  {
+    "name": "ML Audit Log Tampering",
+    "maestro_category": "Monitoring",
+    "description": "Attacker with access to ML infrastructure can modify or delete training logs, experiment records, and inference audit trails to hide evidence of model tampering or data poisoning.",
+    "target": "ML Audit Infrastructure",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use append-only, immutable storage for all ML audit logs",
+      "Implement cryptographic chaining of log entries for tamper detection",
+      "Replicate audit logs to independent write-once storage",
+      "Restrict log deletion permissions with mandatory approval workflows"
+    ]
+  },
+  {
+    "name": "PII Leakage via Embeddings",
+    "maestro_category": "Privacy",
+    "description": "Embedding vectors generated from text containing personal data can encode recoverable PII, allowing attackers with access to vector databases or embedding APIs to reconstruct names, addresses, or other sensitive information.",
+    "target": "Embedding Store",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Scrub PII from text before embedding generation",
+      "Apply dimensionality reduction to degrade PII recoverability",
+      "Use differential privacy during embedding model training",
+      "Implement access controls on embedding stores equal to source data classification"
+    ]
+  },
+  {
+    "name": "Differential Privacy Bypass via Auxiliary Data",
+    "maestro_category": "Privacy",
+    "description": "Attacker combining differentially private model outputs with external auxiliary datasets can re-identify individuals or infer sensitive attributes that the privacy mechanism was designed to protect.",
+    "target": "Privacy-Preserving ML System",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Account for auxiliary data in privacy budget calculations",
+      "Use composition theorems to track cumulative privacy loss",
+      "Implement group-level differential privacy for correlated records",
+      "Conduct linkage attack simulations with publicly available datasets"
+    ]
+  },
+  {
+    "name": "Data Lineage Corruption",
+    "maestro_category": "Data Security",
+    "description": "Attacker modifying data lineage metadata can obscure the provenance of training data, hiding poisoned sources and making it impossible to trace model behavior back to its data origins.",
+    "target": "Data Lineage System",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use cryptographically signed lineage records at each processing step",
+      "Implement immutable data lineage storage with append-only writes",
+      "Cross-validate lineage metadata against actual data checksums",
+      "Require lineage integrity verification before model training"
+    ]
+  },
+  {
+    "name": "Synthetic Data Re-identification",
+    "maestro_category": "Data Security",
+    "description": "Synthetic datasets generated from real data can retain enough statistical patterns to allow re-identification of individuals when combined with auxiliary information, undermining the privacy guarantees of synthetic data.",
+    "target": "Synthetic Data Generator",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Evaluate synthetic data with membership inference and linkage attack tests",
+      "Apply differential privacy guarantees during synthetic data generation",
+      "Limit the number of synthetic records that closely match rare real records",
+      "Use privacy metrics (k-anonymity, l-diversity) to validate synthetic outputs"
+    ]
+  },
+  {
+    "name": "Byzantine Model Aggregation Attack",
+    "maestro_category": "Distributed ML",
+    "description": "Malicious participants in distributed or federated training can submit corrupted model updates that poison the aggregated global model while evading simple averaging-based detection.",
+    "target": "Model Aggregation Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Byzantine-fault-tolerant aggregation algorithms (Krum, trimmed mean)",
+      "Implement anomaly detection on submitted model updates",
+      "Require reputation scoring and trust levels for participants",
+      "Cross-validate aggregated model against held-out validation data each round"
+    ]
+  },
+  {
+    "name": "Model Shard Poisoning in Distributed Training",
+    "maestro_category": "Distributed ML",
+    "description": "Attacker compromising a single node in distributed training can poison its local model shard, introducing subtle backdoors that propagate during parameter synchronization across the cluster.",
+    "target": "Distributed Training Cluster",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement integrity verification on parameter updates between nodes",
+      "Use redundant training with consensus validation across shards",
+      "Monitor gradient statistics per node for distributional anomalies",
+      "Isolate training nodes with hardware-level attestation"
+    ]
   }
 ]

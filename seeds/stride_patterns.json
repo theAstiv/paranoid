@@ -42,6 +42,48 @@
     ]
   },
   {
+    "name": "DNS Spoofing and Cache Poisoning",
+    "stride_category": "Spoofing",
+    "description": "Attacker with network access can poison DNS caches or forge DNS responses to redirect users to malicious servers, intercepting credentials and sensitive data.",
+    "target": "DNS Resolution",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement DNSSEC validation",
+      "Use DNS-over-HTTPS or DNS-over-TLS",
+      "Configure short DNS TTL values for critical services",
+      "Monitor DNS resolution patterns for anomalies"
+    ]
+  },
+  {
+    "name": "OAuth Token Theft via Redirect Manipulation",
+    "stride_category": "Spoofing",
+    "description": "Attacker can manipulate OAuth redirect URIs to intercept authorization codes or access tokens, gaining unauthorized access to user accounts on the target application.",
+    "target": "OAuth Authorization Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement strict redirect URI validation with exact matching",
+      "Use PKCE for all OAuth flows",
+      "Validate state parameter to prevent CSRF",
+      "Register and whitelist all allowed redirect URIs"
+    ]
+  },
+  {
+    "name": "Service-to-Service Identity Spoofing",
+    "stride_category": "Spoofing",
+    "description": "Compromised microservice can impersonate other internal services due to lack of mutual authentication, accessing sensitive data and performing unauthorized operations.",
+    "target": "Microservice Mesh",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement mutual TLS (mTLS) between services",
+      "Use service mesh with identity-aware routing",
+      "Deploy service-level RBAC with unique identities",
+      "Monitor inter-service communication patterns"
+    ]
+  },
+  {
     "name": "SQL Injection Attack",
     "stride_category": "Tampering",
     "description": "External attacker with application access can inject malicious SQL through input fields, leading to unauthorized data modification or deletion in the database.",
@@ -81,6 +123,48 @@
       "Use read-only file systems where possible",
       "Digitally sign configuration files",
       "Apply strict access controls to configuration directories"
+    ]
+  },
+  {
+    "name": "Cross-Site Request Forgery (CSRF)",
+    "stride_category": "Tampering",
+    "description": "Attacker hosting a malicious website can trick authenticated users into submitting unintended requests to the target application, performing state-changing operations without user consent.",
+    "target": "Web Application",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement anti-CSRF tokens on all state-changing forms",
+      "Use SameSite cookie attribute",
+      "Verify Origin and Referer headers",
+      "Require re-authentication for sensitive operations"
+    ]
+  },
+  {
+    "name": "CI/CD Pipeline Tampering",
+    "stride_category": "Tampering",
+    "description": "Attacker with access to CI/CD configuration can modify build scripts, inject malicious steps, or alter deployment artifacts, compromising the entire software supply chain.",
+    "target": "CI/CD Pipeline",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Require code review for pipeline configuration changes",
+      "Implement pipeline-as-code with version control",
+      "Use signed commits and artifact verification",
+      "Enforce branch protection rules on main branches"
+    ]
+  },
+  {
+    "name": "Insecure Deserialization",
+    "stride_category": "Tampering",
+    "description": "Attacker can supply crafted serialized objects that execute arbitrary code during deserialization, leading to remote code execution or application logic bypass.",
+    "target": "Application Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Avoid deserializing untrusted data",
+      "Use safe serialization formats (JSON) over binary formats",
+      "Implement integrity checks on serialized data",
+      "Apply type constraints during deserialization"
     ]
   },
   {
@@ -126,6 +210,34 @@
     ]
   },
   {
+    "name": "Administrative Action Repudiation",
+    "stride_category": "Repudiation",
+    "description": "Administrator performing privileged operations can deny their actions when shared admin accounts or insufficient logging make it impossible to attribute changes to individuals.",
+    "target": "Admin Console",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Eliminate shared admin accounts with individual credentials",
+      "Log all admin actions with user identity and IP address",
+      "Require approval workflows for destructive operations",
+      "Implement session recording for privileged access"
+    ]
+  },
+  {
+    "name": "Unsigned API Request Repudiation",
+    "stride_category": "Repudiation",
+    "description": "API consumer making malicious or erroneous requests can deny responsibility when requests lack cryptographic signatures or verifiable client identity.",
+    "target": "API Gateway",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement request signing with HMAC or asymmetric keys",
+      "Record complete request/response pairs for sensitive endpoints",
+      "Use mutual TLS for client identity verification",
+      "Include correlation IDs for end-to-end request tracing"
+    ]
+  },
+  {
     "name": "Database Credential Exposure",
     "stride_category": "Information Disclosure",
     "description": "External attacker with code repository access can extract database credentials from configuration files or environment variables, leading to unauthorized data access.",
@@ -165,6 +277,48 @@
       "Implement strict access controls on backup storage",
       "Use separate encryption keys for backups",
       "Regularly test backup restoration procedures"
+    ]
+  },
+  {
+    "name": "Server-Side Request Forgery (SSRF)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker can manipulate server-side URL parameters to force the application to make requests to internal services or cloud metadata endpoints, exposing sensitive infrastructure data.",
+    "target": "Application Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate and whitelist allowed outbound URLs",
+      "Block requests to internal IP ranges and metadata endpoints",
+      "Use a dedicated egress proxy for external requests",
+      "Implement network segmentation to limit internal access"
+    ]
+  },
+  {
+    "name": "Local File Inclusion via Directory Traversal",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker can inject ../ sequences into filesystem operations to read arbitrary files such as /etc/passwd, .env, or database credentials, exfiltrating sensitive data from the server.",
+    "target": "File Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate and canonicalize all file paths",
+      "Use chroot or sandbox environments for file access",
+      "Implement strict allowlists for accessible directories",
+      "Remove directory listing from web servers"
+    ]
+  },
+  {
+    "name": "Side-Channel Information Leakage",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker can extract sensitive data by analyzing timing differences, error messages, or resource consumption patterns in application responses, bypassing direct access controls.",
+    "target": "Application Logic",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement constant-time comparison for secrets",
+      "Normalize response times for sensitive operations",
+      "Use generic error responses that do not vary by input",
+      "Monitor for timing-based enumeration patterns"
     ]
   },
   {
@@ -210,6 +364,48 @@
     ]
   },
   {
+    "name": "Regular Expression Denial of Service (ReDoS)",
+    "stride_category": "Denial of Service",
+    "description": "Attacker supplying crafted input strings can trigger catastrophic backtracking in poorly written regular expressions, causing CPU exhaustion and application hang.",
+    "target": "Input Validation Layer",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Audit regular expressions for catastrophic backtracking",
+      "Use non-backtracking regex engines where available",
+      "Implement input length limits before regex matching",
+      "Set execution timeouts for regex operations"
+    ]
+  },
+  {
+    "name": "XML External Entity (XXE) Bomb",
+    "stride_category": "Denial of Service",
+    "description": "Attacker submitting crafted XML with recursive entity definitions can cause exponential memory consumption during parsing, crashing the application server.",
+    "target": "XML Parser",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Disable external entity processing in XML parsers",
+      "Use JSON instead of XML where possible",
+      "Implement input size limits for XML payloads",
+      "Use safe XML parsing libraries with default-secure settings"
+    ]
+  },
+  {
+    "name": "Memory Exhaustion via Large Payloads",
+    "stride_category": "Denial of Service",
+    "description": "Attacker submitting excessively large file uploads or request bodies can exhaust server memory, causing out-of-memory crashes and service unavailability.",
+    "target": "File Upload Service",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enforce strict request body size limits",
+      "Use streaming parsers for large file processing",
+      "Implement disk-based buffering for uploads",
+      "Monitor memory usage with automatic circuit breakers"
+    ]
+  },
+  {
     "name": "Privilege Escalation via API",
     "stride_category": "Elevation of Privilege",
     "description": "Low-privileged user exploiting API parameter manipulation can escalate privileges by modifying role or permission parameters in API requests.",
@@ -249,6 +445,300 @@
       "Validate all JWT claims on the server side",
       "Implement short token expiration times",
       "Use asymmetric keys for JWT signing"
+    ]
+  },
+  {
+    "name": "Insecure Direct Object Reference (IDOR)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Authenticated user can access or modify other users' resources by manipulating object identifiers in API requests due to missing authorization checks at the object level.",
+    "target": "Resource API",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement object-level authorization checks",
+      "Use indirect references or UUIDs instead of sequential IDs",
+      "Validate resource ownership on every request",
+      "Conduct automated IDOR testing in CI pipeline"
+    ]
+  },
+  {
+    "name": "Forced Browsing to Admin Endpoints",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker can guess or enumerate hidden administrative URLs and API routes that lack proper authorization checks, gaining access to privileged functionality such as user management or configuration panels.",
+    "target": "Web Application Router",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enforce authentication and authorization on all admin routes",
+      "Use non-guessable URL prefixes for administrative interfaces",
+      "Implement framework-level route guards for privileged endpoints",
+      "Block unauthorized access attempts at the web application firewall"
+    ]
+  },
+  {
+    "name": "Dependency Confusion Attack",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker publishing malicious packages with internal package names to public registries can cause build systems to pull the malicious version, executing arbitrary code with build system privileges.",
+    "target": "Package Manager",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Pin all dependencies to exact versions with integrity hashes",
+      "Configure private registry priority over public registries",
+      "Use namespace scoping for internal packages",
+      "Audit dependency resolution during builds"
+    ]
+  },
+  {
+    "name": "Email Spoofing and Phishing",
+    "stride_category": "Spoofing",
+    "description": "Attacker can forge email headers to impersonate trusted senders, delivering phishing payloads that trick users into revealing credentials, clicking malicious links, or executing malware.",
+    "target": "Email System",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement SPF, DKIM, and DMARC email authentication",
+      "Deploy email content filtering and link scanning",
+      "Conduct phishing awareness training for users",
+      "Use email gateway with sender reputation scoring"
+    ]
+  },
+  {
+    "name": "IP Address Spoofing",
+    "stride_category": "Spoofing",
+    "description": "Attacker can forge source IP addresses in network packets to bypass IP-based access controls, evade logging attribution, or amplify reflected denial-of-service attacks.",
+    "target": "Network Firewall",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement ingress filtering (BCP38) at network boundary",
+      "Use application-layer authentication instead of IP-based trust",
+      "Deploy reverse path forwarding verification",
+      "Avoid relying solely on IP addresses for access control"
+    ]
+  },
+  {
+    "name": "TLS Certificate Forgery",
+    "stride_category": "Spoofing",
+    "description": "Attacker with access to a compromised or rogue certificate authority can issue fraudulent TLS certificates, enabling transparent interception of encrypted communications.",
+    "target": "TLS Infrastructure",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement Certificate Transparency log monitoring",
+      "Use certificate pinning for critical connections",
+      "Deploy CAA DNS records to restrict allowed certificate authorities",
+      "Monitor for unauthorized certificates via CT log alerts"
+    ]
+  },
+  {
+    "name": "Cross-Site Scripting (XSS)",
+    "stride_category": "Tampering",
+    "description": "Attacker can inject malicious JavaScript into web pages viewed by other users through unsanitized inputs, enabling session hijacking, credential theft, defacement, and redirection to malicious sites.",
+    "target": "Web Application",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement context-aware output encoding for all user-controlled data",
+      "Use Content Security Policy (CSP) headers to restrict script execution",
+      "Sanitize rich text input with allowlist-based HTML sanitizers",
+      "Enable HTTP-only and Secure flags on session cookies"
+    ]
+  },
+  {
+    "name": "Malicious File Upload",
+    "stride_category": "Tampering",
+    "description": "Attacker can upload files containing executable code, web shells, or malware by bypassing insufficient file type validation, leading to remote code execution on the server.",
+    "target": "File Upload Endpoint",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate file types using content inspection not just extensions",
+      "Store uploaded files outside the web root in isolated storage",
+      "Scan all uploads with antivirus and sandboxing",
+      "Enforce strict file size limits and rename uploaded files"
+    ]
+  },
+  {
+    "name": "HTTP Request Smuggling",
+    "stride_category": "Tampering",
+    "description": "Attacker can exploit discrepancies in how front-end proxies and back-end servers parse HTTP request boundaries, smuggling requests that bypass security controls and access unauthorized resources.",
+    "target": "Reverse Proxy",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Normalize HTTP parsing between proxy and backend servers",
+      "Disable HTTP/1.1 connection reuse where feasible",
+      "Use HTTP/2 end-to-end to eliminate ambiguous framing",
+      "Deploy WAF rules that detect request smuggling patterns"
+    ]
+  },
+  {
+    "name": "Prototype Pollution",
+    "stride_category": "Tampering",
+    "description": "Attacker can manipulate JavaScript object prototypes through unsanitized input merging, causing application-wide behavior changes including authentication bypass and remote code execution.",
+    "target": "Node.js Application",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Object.create(null) for lookup maps instead of plain objects",
+      "Validate and sanitize all keys in recursive merge operations",
+      "Freeze Object.prototype in application initialization",
+      "Use Map instead of plain objects for user-controlled key-value data"
+    ]
+  },
+  {
+    "name": "Timestamp Manipulation for Repudiation",
+    "stride_category": "Repudiation",
+    "description": "Attacker with system access can manipulate local clock or NTP responses to falsify event timestamps, undermining audit trail integrity and forensic timeline reconstruction.",
+    "target": "Time Synchronization Service",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use authenticated NTP sources with NTS protocol",
+      "Implement server-side timestamping for all audit events",
+      "Deploy trusted timestamping services for critical records",
+      "Cross-reference timestamps across multiple independent sources"
+    ]
+  },
+  {
+    "name": "Multi-Party Transaction Denial",
+    "stride_category": "Repudiation",
+    "description": "In multi-party workflows, any participant can deny their involvement or claim different terms were agreed upon when the system lacks cryptographic commitment from each party.",
+    "target": "Multi-Party Workflow System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Require digital signatures from each party at every step",
+      "Implement commitment schemes with verifiable receipts",
+      "Use append-only audit logs with independent witnesses",
+      "Record cryptographic hashes of agreed terms at each stage"
+    ]
+  },
+  {
+    "name": "TLS Downgrade Attack",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with network position can force clients and servers to negotiate weaker TLS versions or cipher suites, enabling decryption of sensitive communications.",
+    "target": "TLS Connection",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Disable TLS 1.0 and 1.1, enforce TLS 1.2+ minimum",
+      "Implement TLS_FALLBACK_SCSV to prevent downgrade attacks",
+      "Configure strong cipher suite ordering with forward secrecy",
+      "Use HSTS headers to prevent HTTP fallback"
+    ]
+  },
+  {
+    "name": "Memory Dump Leakage",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with access to crash dumps, core files, or swap space can extract secrets, session tokens, and encryption keys from unprotected process memory.",
+    "target": "Application Memory",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Disable core dumps in production environments",
+      "Use memory-safe secret storage that zeros on deallocation",
+      "Encrypt swap partitions and hibernation files",
+      "Restrict access to debug and diagnostic endpoints"
+    ]
+  },
+  {
+    "name": "Cloud Metadata Service Exposure",
+    "stride_category": "Information Disclosure",
+    "description": "Application running in cloud environments can inadvertently expose the instance metadata service, allowing attackers to retrieve IAM credentials, instance identity tokens, and infrastructure configuration.",
+    "target": "Cloud Instance Metadata",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use IMDSv2 requiring session tokens for metadata access",
+      "Block metadata endpoint access from application containers",
+      "Implement network policies preventing 169.254.169.254 access",
+      "Use IAM roles with minimum required permissions"
+    ]
+  },
+  {
+    "name": "Hash Collision Denial of Service",
+    "stride_category": "Denial of Service",
+    "description": "Attacker can craft inputs that produce hash collisions in hash table implementations, degrading O(1) lookups to O(n) and causing severe CPU exhaustion in request processing.",
+    "target": "Application Hash Tables",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use randomized hash functions with per-process seeds",
+      "Limit the number of parameters in HTTP requests",
+      "Implement request processing timeouts",
+      "Use hash table implementations with collision-resistant algorithms"
+    ]
+  },
+  {
+    "name": "Disk Space Exhaustion",
+    "stride_category": "Denial of Service",
+    "description": "Attacker can trigger excessive log generation, fill upload storage, or abuse caching mechanisms to exhaust available disk space, causing application crashes and data loss.",
+    "target": "Storage System",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement log rotation with size-based limits",
+      "Set per-user and per-directory storage quotas",
+      "Monitor disk usage with alerts at threshold levels",
+      "Use separate partitions for application logs and data storage"
+    ]
+  },
+  {
+    "name": "WebSocket Flooding",
+    "stride_category": "Denial of Service",
+    "description": "Attacker can open numerous WebSocket connections or send high-volume messages over persistent connections, exhausting server memory and connection handling capacity.",
+    "target": "WebSocket Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement per-client connection limits and message rate throttling",
+      "Set maximum message size and connection idle timeouts",
+      "Use authentication before allowing WebSocket upgrade",
+      "Monitor and alert on abnormal WebSocket connection patterns"
+    ]
+  },
+  {
+    "name": "Kernel Exploit for Privilege Escalation",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with local code execution can exploit unpatched kernel vulnerabilities to escalate from unprivileged user to root, gaining full control over the host system.",
+    "target": "Operating System Kernel",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Apply kernel security patches promptly",
+      "Use kernel hardening features (KASLR, SMEP, SMAP)",
+      "Deploy mandatory access control (SELinux, AppArmor) to limit exploit impact",
+      "Minimize kernel attack surface by disabling unused modules"
+    ]
+  },
+  {
+    "name": "Race Condition Privilege Escalation",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker can exploit time-of-check to time-of-use (TOCTOU) race conditions in authorization checks, performing privileged operations by racing between the permission check and the action.",
+    "target": "Authorization Logic",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use atomic operations for check-then-act authorization patterns",
+      "Implement file locking for filesystem-based access control",
+      "Use database transactions with serializable isolation for critical operations",
+      "Design authorization checks to be idempotent and re-verified at execution"
+    ]
+  },
+  {
+    "name": "Misconfigured IAM Roles and Policies",
+    "stride_category": "Elevation of Privilege",
+    "description": "Overly permissive IAM roles or policies can allow users or services to assume higher privileges than intended, accessing restricted resources or performing administrative actions.",
+    "target": "Cloud IAM",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Apply principle of least privilege to all IAM policies",
+      "Conduct regular IAM access reviews and remove unused permissions",
+      "Use IAM Access Analyzer to detect overly broad policies",
+      "Implement permission boundaries to cap maximum privilege levels"
     ]
   }
 ]
