@@ -7,7 +7,10 @@ import click
 
 from cli.context import (
     CONFIG_FILE,
+    DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_CONFIG,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OPENAI_MODEL,
     config_exists,
     load_config,
     save_config,
@@ -124,7 +127,7 @@ def init(force: bool) -> None:
                 "Model name",
                 type=str,
                 default=config["providers"]["anthropic"].get("model")
-                or "claude-sonnet-4-20250514",
+                or DEFAULT_ANTHROPIC_MODEL,
             )
             config["providers"]["anthropic"]["model"] = model
             config["default_model"] = model
@@ -145,7 +148,8 @@ def init(force: bool) -> None:
             model = click.prompt(
                 "Model name",
                 type=str,
-                default=config["providers"]["openai"].get("model") or "gpt-4",
+                default=config["providers"]["openai"].get("model")
+                or DEFAULT_OPENAI_MODEL,
             )
             config["providers"]["openai"]["model"] = model
             config["default_model"] = model
@@ -166,7 +170,8 @@ def init(force: bool) -> None:
             model = click.prompt(
                 "Model name",
                 type=str,
-                default=config["providers"]["ollama"].get("model") or "llama3",
+                default=config["providers"]["ollama"].get("model")
+                or DEFAULT_OLLAMA_MODEL,
             )
             config["providers"]["ollama"]["model"] = model
             config["default_model"] = model

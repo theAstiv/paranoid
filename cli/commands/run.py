@@ -18,11 +18,12 @@ from backend.providers import (
     ProviderTimeoutError,
     create_provider,
 )
-from cli.context import config_exists, load_config
+from backend.providers.base import LLMProvider
+from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.file_loader import detect_framework_from_input, load_input_file, parse_structured_input
 from cli.output.console import ConsoleRenderer
-from cli.output.json_writer import JSONWriter, get_default_output_path
+from cli.output.json_writer import JSONWriter
 
 
 def _load_merged_settings() -> Settings:
@@ -69,7 +70,7 @@ def _load_merged_settings() -> Settings:
             "Or create a .env file with:\n"
             "  ANTHROPIC_API_KEY=sk-ant-xxx\n"
             "  DEFAULT_PROVIDER=anthropic\n"
-            "  DEFAULT_MODEL=claude-sonnet-4-20250514"
+            f"  DEFAULT_MODEL={DEFAULT_ANTHROPIC_MODEL}"
         )
 
     # Validate API key is present for the selected provider
@@ -316,15 +317,14 @@ def run(
 
         model_id = f"{input_file.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-        # Determine output path with correct extension
+        # Determine output path — only write a file when --output is explicit
         if output:
-            output_path = output
-        else:
-            # Default path with format-specific extension
-            if output_format == "sarif":
-                output_path = input_file.parent / f"{input_file.stem}_threats.sarif"
+            if output_format == "sarif" and not output.suffix:
+                output_path = output.with_suffix(".sarif")
             else:
-                output_path = get_default_output_path(input_file)
+                output_path = output
+        else:
+            output_path = None
 
         # Show output configuration (unless quiet mode)
         if output_path and not quiet:
@@ -377,7 +377,7 @@ async def _run_pipeline_async(
     framework: Framework,
     has_ai_components: bool,
     settings: Settings,
-    provider,
+    provider: LLMProvider,
     renderer: ConsoleRenderer | None,
     input_file: Path,
     output_path: Path | None,

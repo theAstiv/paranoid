@@ -102,7 +102,7 @@ python test_pipeline.py
 ### "Import errors"
 Make sure you're in the project root:
 ```bash
-cd c:\Users\Lenovo\Documents\github\paranoid
+cd /path/to/paranoid
 python test_pipeline.py
 ```
 

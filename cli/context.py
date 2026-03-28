@@ -15,16 +15,21 @@ from cli.errors import ConfigurationError
 CONFIG_DIR = Path.home() / ".paranoid"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+# Default model names — single source of truth for the CLI layer
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_OPENAI_MODEL = "gpt-4"
+DEFAULT_OLLAMA_MODEL = "llama3"
+
 # Default configuration
 DEFAULT_CONFIG = {
     "version": "1.0.0",
     "default_provider": "anthropic",
-    "default_model": "claude-sonnet-4-20250514",
+    "default_model": DEFAULT_ANTHROPIC_MODEL,
     "default_iterations": 3,
     "providers": {
-        "anthropic": {"api_key": None, "model": "claude-sonnet-4-20250514"},
-        "openai": {"api_key": None, "model": "gpt-4"},
-        "ollama": {"base_url": "http://localhost:11434", "model": "llama3"},
+        "anthropic": {"api_key": None, "model": DEFAULT_ANTHROPIC_MODEL},
+        "openai": {"api_key": None, "model": DEFAULT_OPENAI_MODEL},
+        "ollama": {"base_url": "http://localhost:11434", "model": DEFAULT_OLLAMA_MODEL},
     },
 }
 
@@ -129,7 +134,7 @@ def get_provider_config(provider: str) -> dict[str, Any]:
     return config["providers"][provider]
 
 
-def update_provider_config(provider: str, **kwargs) -> None:
+def update_provider_config(provider: str, **kwargs: Any) -> None:
     """Update configuration for a specific provider.
 
     Args:
