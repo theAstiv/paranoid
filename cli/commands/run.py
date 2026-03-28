@@ -424,6 +424,7 @@ async def _run_pipeline_async(
             assumptions=assumptions,
             max_iterations=settings.default_iterations,
             has_ai_components=has_ai_components,
+            similarity_threshold=settings.similarity_threshold,
         ):
             # Render event (unless quiet mode)
             if renderer:

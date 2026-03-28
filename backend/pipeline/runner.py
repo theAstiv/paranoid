@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import AsyncGenerator, Optional
 
+from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
@@ -71,6 +72,7 @@ class PipelineConfig:
     temperature: float = 0.2
     enable_rag: bool = True  # Enable RAG retrieval for threat generation
     has_ai_components: bool = False  # Run MAESTRO alongside STRIDE when True
+    similarity_threshold: float = 0.85  # Dedup threshold for embedding cosine similarity
 
 
 @dataclass
@@ -307,8 +309,21 @@ class PipelineRunner:
                         data={"threat_count": len(maestro_threats.threats), "framework": "MAESTRO", "threats": maestro_threats},
                     )
 
-                    # Merge threat lists (STRIDE + MAESTRO)
-                    current_threats = stride_threats + maestro_threats
+                    # Merge and deduplicate across frameworks
+                    combined = stride_threats + maestro_threats
+                    dedup_result = deduplicate_threats(
+                        combined, threshold=self.config.similarity_threshold,
+                    )
+                    current_threats = dedup_result.threats
+
+                    if dedup_result.removed_count > 0:
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="info",
+                            message=f"Removed {dedup_result.removed_count} cross-framework duplicates",
+                            iteration=iteration,
+                            data={"duplicates_removed": dedup_result.removed_count},
+                        )
 
                     yield PipelineEvent(
                         step=PipelineStep.GENERATE_THREATS,
@@ -351,8 +366,24 @@ class PipelineRunner:
                         data={"threat_count": len(current_threats.threats), "threats": current_threats},
                     )
 
-                # Accumulate threats from this iteration
-                cumulative_threats.threats.extend(current_threats.threats)
+                # Deduplicate against cumulative threats from prior iterations
+                if iteration > 1:
+                    dedup_result = deduplicate_threats(
+                        current_threats,
+                        existing_threats=cumulative_threats,
+                        threshold=self.config.similarity_threshold,
+                    )
+                    cumulative_threats.threats.extend(dedup_result.threats.threats)
+                    if dedup_result.removed_count > 0:
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="info",
+                            message=f"Removed {dedup_result.removed_count} cross-iteration duplicates",
+                            iteration=iteration,
+                            data={"duplicates_removed": dedup_result.removed_count},
+                        )
+                else:
+                    cumulative_threats.threats.extend(current_threats.threats)
                 iterations_completed = iteration  # Track before potential break in gap analysis
 
                 # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
@@ -509,6 +540,7 @@ async def run_pipeline_for_model(
     code_context: Optional[CodeContext] = None,
     max_iterations: int = 3,
     has_ai_components: bool = False,
+    similarity_threshold: float = 0.85,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -522,6 +554,7 @@ async def run_pipeline_for_model(
         code_context: Optional code context
         max_iterations: Maximum iteration count (1-15)
         has_ai_components: Whether to run MAESTRO alongside STRIDE
+        similarity_threshold: Cosine similarity threshold for threat deduplication
 
     Yields:
         PipelineEvent for progress tracking
@@ -532,6 +565,7 @@ async def run_pipeline_for_model(
         temperature=0.2,
         enable_rag=True,
         has_ai_components=has_ai_components,
+        similarity_threshold=similarity_threshold,
     )
 
     runner = PipelineRunner(
