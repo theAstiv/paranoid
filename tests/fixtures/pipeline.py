@@ -7,7 +7,7 @@ All responses satisfy Pydantic validation constraints:
 """
 
 from backend.models.enums import AssetType, StrideCategory
-from backend.models.extended import AttackTree, TestSuite
+from backend.models.extended import AttackTree, CodeContext, CodeFile, CodeSummary, TestSuite
 from backend.models.state import (
     Asset,
     AssetsList,
@@ -21,6 +21,162 @@ from backend.models.state import (
     ThreatsList,
     TrustBoundary,
 )
+
+
+def make_code_context() -> CodeContext:
+    """Realistic code context for the document sharing web application."""
+    return CodeContext(
+        repository="/home/user/document-sharing-app",
+        files=[
+            CodeFile(
+                path="backend/routes/documents.py",
+                language="python",
+                content=(
+                    "from fastapi import APIRouter, Depends, HTTPException, UploadFile\n"
+                    "from sqlalchemy.orm import Session\n"
+                    "from backend.auth import get_current_user\n"
+                    "from backend.models import Document, User\n"
+                    "from backend.database import get_db\n\n"
+                    "router = APIRouter()\n\n"
+                    "@router.post('/api/documents')\n"
+                    "async def upload_document(\n"
+                    "    file: UploadFile,\n"
+                    "    db: Session = Depends(get_db),\n"
+                    "    current_user: User = Depends(get_current_user)\n"
+                    ") -> dict:\n"
+                    "    # No file size validation - potential DoS\n"
+                    "    content = await file.read()\n"
+                    "    doc = Document(owner_id=current_user.id, filename=file.filename, content=content)\n"
+                    "    db.add(doc)\n"
+                    "    db.commit()\n"
+                    "    return {'id': doc.id, 'filename': doc.filename}\n\n"
+                    "@router.get('/api/documents/{doc_id}')\n"
+                    "async def get_document(\n"
+                    "    doc_id: int,\n"
+                    "    db: Session = Depends(get_db),\n"
+                    "    current_user: User = Depends(get_current_user)\n"
+                    ") -> dict:\n"
+                    "    # Missing authorization check - IDOR vulnerability\n"
+                    "    doc = db.query(Document).filter(Document.id == doc_id).first()\n"
+                    "    if not doc:\n"
+                    "        raise HTTPException(status_code=404, detail='Document not found')\n"
+                    "    return {'id': doc.id, 'filename': doc.filename, 'owner_id': doc.owner_id}\n"
+                ),
+            ),
+            CodeFile(
+                path="backend/routes/search.py",
+                language="python",
+                content=(
+                    "from fastapi import APIRouter, Depends, Query\n"
+                    "from sqlalchemy.orm import Session\n"
+                    "from backend.auth import get_current_user\n"
+                    "from backend.models import Document, User\n"
+                    "from backend.database import get_db\n\n"
+                    "router = APIRouter()\n\n"
+                    "@router.get('/api/documents/search')\n"
+                    "async def search_documents(\n"
+                    "    q: str = Query(...),\n"
+                    "    db: Session = Depends(get_db),\n"
+                    "    current_user: User = Depends(get_current_user)\n"
+                    ") -> list[dict]:\n"
+                    "    # SQL injection vulnerability - string concatenation\n"
+                    "    query = f\"SELECT * FROM documents WHERE filename LIKE '%{q}%'\"\n"
+                    "    results = db.execute(query).fetchall()\n"
+                    "    return [{'id': r.id, 'filename': r.filename} for r in results]\n"
+                ),
+            ),
+            CodeFile(
+                path="backend/auth.py",
+                language="python",
+                content=(
+                    "from fastapi import Depends, HTTPException\n"
+                    "from fastapi.security import HTTPBearer\n"
+                    "from jose import jwt, JWTError\n"
+                    "from sqlalchemy.orm import Session\n"
+                    "from backend.models import User\n"
+                    "from backend.database import get_db\n\n"
+                    "SECRET_KEY = 'supersecret123'  # Hardcoded secret\n"
+                    "ALGORITHM = 'HS256'\n"
+                    "security = HTTPBearer()\n\n"
+                    "def get_current_user(\n"
+                    "    token: str = Depends(security),\n"
+                    "    db: Session = Depends(get_db)\n"
+                    ") -> User:\n"
+                    "    try:\n"
+                    "        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])\n"
+                    "        user_id: str = payload.get('sub')\n"
+                    "        if user_id is None:\n"
+                    "            raise HTTPException(status_code=401, detail='Invalid token')\n"
+                    "    except JWTError:\n"
+                    "        raise HTTPException(status_code=401, detail='Invalid token')\n"
+                    "    user = db.query(User).filter(User.id == int(user_id)).first()\n"
+                    "    if user is None:\n"
+                    "        raise HTTPException(status_code=401, detail='User not found')\n"
+                    "    return user\n"
+                ),
+            ),
+        ],
+    )
+
+
+def make_code_summary() -> CodeSummary:
+    """Realistic code summary for the document sharing web application."""
+    return CodeSummary(
+        tech_stack=[
+            "Python 3.11",
+            "FastAPI 0.104.1",
+            "SQLAlchemy 2.0.23",
+            "PostgreSQL 15",
+            "python-jose 3.3.0 (JWT)",
+        ],
+        entry_points=[
+            "POST /api/documents",
+            "GET /api/documents/{doc_id}",
+            "GET /api/documents/search",
+            "POST /api/auth/login",
+            "POST /api/auth/register",
+        ],
+        auth_patterns=[
+            "JWT-based authentication using python-jose with HS256 algorithm",
+            "HTTPBearer token extraction from Authorization header",
+            "Hardcoded SECRET_KEY in backend/auth.py ('supersecret123')",
+            "No token expiration or refresh mechanism visible",
+            "Missing HttpOnly/Secure cookie flags (tokens sent as Bearer)",
+        ],
+        data_stores=[
+            "PostgreSQL database with documents table (id, owner_id, filename, content, created_at)",
+            "PostgreSQL database with users table (id, username, password_hash, created_at)",
+            "No evidence of encryption at rest for document content column",
+        ],
+        external_dependencies=[
+            "No external API calls detected in provided code samples",
+        ],
+        security_observations=[
+            "CRITICAL: SQL injection in backend/routes/search.py - string concatenation of user input",
+            "CRITICAL: Hardcoded JWT secret key in backend/auth.py",
+            "HIGH: Missing authorization check in GET /api/documents/{doc_id} - IDOR vulnerability",
+            "HIGH: No file size validation in document upload endpoint - DoS risk",
+            "MEDIUM: No rate limiting visible on any endpoints",
+            "POSITIVE: Password hashing indicated by password_hash column (implementation not shown)",
+            "POSITIVE: SQLAlchemy ORM used for most queries (except search endpoint)",
+        ],
+        raw_summary=(
+            "The document sharing application uses a modern Python/FastAPI stack with "
+            "PostgreSQL for data persistence and JWT-based authentication. The codebase "
+            "exhibits several critical security vulnerabilities: SQL injection via string "
+            "concatenation in the search endpoint, a hardcoded JWT secret key, missing "
+            "authorization checks enabling insecure direct object reference (IDOR) attacks, "
+            "and absent file size validation allowing denial-of-service via large uploads. "
+            "Authentication relies on JWT tokens passed as Bearer tokens without evidence of "
+            "expiration, refresh mechanisms, or secure cookie attributes. The database schema "
+            "stores document content in a PostgreSQL column with no visible encryption at rest. "
+            "Positive security controls include the use of SQLAlchemy ORM for most database "
+            "operations and apparent password hashing for user credentials. The application "
+            "requires immediate remediation of the SQL injection and IDOR vulnerabilities, "
+            "proper secrets management, comprehensive authorization checks, and file upload "
+            "constraints before production deployment."
+        ),
+    )
 
 
 def make_summary() -> SummaryState:

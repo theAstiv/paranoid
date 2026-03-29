@@ -10,7 +10,10 @@ import click
 
 from backend.config import Settings
 from backend.export.sarif import export_sarif
+from backend.mcp.client import MCPCodeExtractor
+from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
+from backend.models.extended import CodeContext
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
 from backend.providers import (
     ProviderAuthError,
@@ -146,6 +149,78 @@ def _get_config_supplement(
     return overrides
 
 
+async def _extract_code_context(
+    code_path: Path,
+    description: str,
+    settings: Settings,
+    quiet: bool,
+) -> CodeContext | None:
+    """Extract code context from repository using MCP.
+
+    Args:
+        code_path: Path to code repository
+        description: System description for semantic search
+        settings: Application settings
+        quiet: Suppress console output
+
+    Returns:
+        CodeContext if extraction successful, None if MCP unavailable or fails
+    """
+    try:
+        async with MCPCodeExtractor(
+            project_root=str(code_path),
+            binary_path=settings.context_link_binary or None,
+            timeout_seconds=120,
+        ) as extractor:
+            if not quiet:
+                click.echo(f"Code source: {code_path}")
+                click.echo("Extracting code context via context-link MCP server...")
+
+            code_context = await extractor.extract_context(
+                description=description,
+                max_bytes=50_000,
+            )
+
+            if not quiet:
+                click.echo(
+                    f"Extracted {len(code_context.files)} files "
+                    f"({sum(len(f.content.encode('utf-8')) for f in code_context.files)} bytes)"
+                )
+
+            return code_context
+
+    except MCPBinaryNotFoundError as e:
+        if not quiet:
+            click.secho(
+                f"Warning: context-link binary not found: {e}",
+                fg="yellow",
+            )
+            click.secho(
+                "Continuing without code context. "
+                "Set CONTEXT_LINK_BINARY or place binary in ./bin/",
+                fg="yellow",
+            )
+        return None
+
+    except MCPError as e:
+        if not quiet:
+            click.secho(
+                f"Warning: MCP extraction failed: {e}",
+                fg="yellow",
+            )
+            click.secho("Continuing without code context.", fg="yellow")
+        return None
+
+    except Exception as e:
+        if not quiet:
+            click.secho(
+                f"Warning: Unexpected error during code extraction: {e}",
+                fg="yellow",
+            )
+            click.secho("Continuing without code context.", fg="yellow")
+        return None
+
+
 @click.command()
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -195,6 +270,12 @@ def _get_config_supplement(
     default=False,
     help="Show detailed event data (assets, flows, gap analysis)",
 )
+@click.option(
+    "--code",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Path to code repository for MCP-based code context extraction",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -204,6 +285,7 @@ def run(
     framework: str | None,
     quiet: bool,
     verbose: bool,
+    code: Path | None,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -239,6 +321,10 @@ def run(
         \b
         # With full JSON output
         paranoid run system.md --output threats.json --format full
+
+        \b
+        # With code context from repository
+        paranoid run system.md --code /path/to/repo
     """
     try:
         # Initialize console renderer with verbosity settings
@@ -347,6 +433,8 @@ def run(
                 output_path=output_path,
                 output_format=output_format,
                 quiet=quiet,
+                code_path=code,
+                content=content,
             )
         )
 
@@ -383,6 +471,8 @@ async def _run_pipeline_async(
     output_path: Path | None,
     output_format: str,
     quiet: bool,
+    code_path: Path | None,
+    content: str,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -399,7 +489,19 @@ async def _run_pipeline_async(
         output_path: JSON output file path (if specified)
         output_format: JSON format (simple or full)
         quiet: Whether to suppress real-time output
+        code_path: Optional path to code repository for MCP extraction
+        content: Input file content for code context extraction
     """
+    # Extract code context if --code flag provided
+    code_context = None
+    if code_path:
+        code_context = await _extract_code_context(
+            code_path=code_path,
+            description=content,
+            settings=settings,
+            quiet=quiet,
+        )
+
     # Track results
     total_threats = 0
     iterations_completed = 0
@@ -425,6 +527,7 @@ async def _run_pipeline_async(
             max_iterations=settings.default_iterations,
             has_ai_components=has_ai_components,
             similarity_threshold=settings.similarity_threshold,
+            code_context=code_context,
         ):
             # Render event (unless quiet mode)
             if renderer:

@@ -8,7 +8,7 @@ Framework dispatch is explicit via constructor — no prompt string matching.
 from typing import Any, Type
 
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, TestSuite
+from backend.models.extended import AttackTree, CodeSummary, TestSuite
 from backend.models.state import (
     AssetsList,
     FlowsList,
@@ -20,6 +20,7 @@ from backend.providers.base import ProviderError
 from tests.fixtures.pipeline import (
     make_assets,
     make_attack_tree,
+    make_code_summary,
     make_flows,
     make_gap_analysis,
     make_gap_analysis_stop,
@@ -108,6 +109,7 @@ class MockProvider:
             SummaryState: make_summary,
             AssetsList: make_assets,
             FlowsList: make_flows,
+            CodeSummary: make_code_summary,
             AttackTree: make_attack_tree,
             TestSuite: make_test_suite,
         }

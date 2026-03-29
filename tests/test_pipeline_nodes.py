@@ -7,7 +7,7 @@ to trigger ProviderError on specific response models (per RULES.md).
 import pytest
 
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, TestSuite
+from backend.models.extended import AttackTree, CodeSummary, TestSuite
 from backend.models.state import (
     AssetsList,
     FlowsList,
@@ -17,7 +17,13 @@ from backend.models.state import (
 )
 from backend.pipeline import nodes
 from backend.providers.base import ProviderError
-from tests.fixtures.pipeline import make_assets, make_flows, make_stride_threats
+from tests.fixtures.pipeline import (
+    make_assets,
+    make_code_context,
+    make_code_summary,
+    make_flows,
+    make_stride_threats,
+)
 from tests.mock_provider import MockProvider
 
 
@@ -342,3 +348,183 @@ async def test_generate_attack_tree_raises_on_provider_error():
             mitigations=["Parameterized queries"],
             provider=provider,
         )
+
+
+# ---------------------------------------------------------------------------
+# Code context tests (MCP code-as-input)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_summarize_code_with_code_context(mock_provider):
+    """Test code summarization with MockProvider."""
+    code_context = make_code_context()
+    result = await nodes.summarize_code(
+        code_context=code_context,
+        provider=mock_provider,
+    )
+    assert isinstance(result, CodeSummary)
+    assert len(result.tech_stack) > 0
+    assert len(result.entry_points) > 0
+    assert len(result.raw_summary) > 0
+    assert len(mock_provider.calls) == 1
+    assert mock_provider.calls[0]["response_model"] is CodeSummary
+
+
+@pytest.mark.asyncio
+async def test_summarize_code_deterministic_fallback():
+    """Test deterministic fallback when LLM fails."""
+    provider = MockProvider()
+    provider.error_types.add(CodeSummary)
+    code_context = make_code_context()
+
+    # Should not raise - falls back to deterministic extraction
+    result = await nodes.summarize_code(
+        code_context=code_context,
+        provider=provider,
+    )
+
+    assert isinstance(result, CodeSummary)
+    # Deterministic fallback should still extract basic info
+    assert len(result.tech_stack) > 0
+    assert len(result.raw_summary) > 0
+
+
+def test_format_code_context_helper():
+    """Test _format_code_context XML formatting."""
+    code_context = make_code_context()
+    result = nodes._format_code_context(code_context)
+
+    assert "Repository:" in result
+    assert "/home/user/document-sharing-app" in result
+    assert "backend/routes/documents.py" in result
+    # Should escape XML special characters
+    assert "&lt;" in result or "<" not in result  # Either escaped or no raw <
+    assert "##" in result  # Markdown header for file paths
+
+
+def test_format_code_summary_helper():
+    """Test _format_code_summary XML formatting."""
+    code_summary = make_code_summary()
+    result = nodes._format_code_summary(code_summary)
+
+    assert "**Technology Stack:**" in result
+    assert "Python 3.11" in result or "FastAPI" in result
+    assert "**Entry Points:**" in result
+    assert "POST /api/documents" in result or "GET /api/" in result
+    assert "**Authentication" in result
+    assert "**Data Stores:**" in result
+    assert "**Security Observations:**" in result
+    assert "**Summary:**" in result
+
+
+@pytest.mark.asyncio
+async def test_extract_assets_with_code_summary(mock_provider):
+    """Test extract_assets receives and uses code_summary."""
+    code_summary = make_code_summary()
+    result = await nodes.extract_assets(
+        summary="A document sharing web app",
+        description="Users upload and share documents via API",
+        architecture_diagram=None,
+        assumptions=None,
+        framework=Framework.STRIDE,
+        code_summary=code_summary,
+        provider=mock_provider,
+    )
+
+    assert isinstance(result, AssetsList)
+    assert len(result.assets) > 0
+    # Verify the prompt included code summary
+    call = mock_provider.calls[0]
+    assert call["prompt_length"] > 1000  # Longer due to code summary
+
+
+@pytest.mark.asyncio
+async def test_extract_flows_with_code_summary(mock_provider):
+    """Test extract_flows receives and uses code_summary."""
+    code_summary = make_code_summary()
+    assets = make_assets()
+    result = await nodes.extract_flows(
+        summary="A document sharing web app",
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        code_summary=code_summary,
+        provider=mock_provider,
+    )
+
+    assert isinstance(result, FlowsList)
+    assert len(result.data_flows) > 0
+    # Verify code summary was included in prompt
+    call = mock_provider.calls[0]
+    assert call["prompt_length"] > 1000
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_with_code_summary(mock_provider):
+    """Test generate_threats receives and uses code_summary."""
+    code_summary = make_code_summary()
+    assets = make_assets()
+    flows = make_flows()
+    result = await nodes.generate_threats(
+        description="Users upload and share documents via API gateway",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        flows=flows,
+        framework=Framework.STRIDE,
+        code_summary=code_summary,
+        provider=mock_provider,
+    )
+
+    assert isinstance(result, ThreatsList)
+    assert len(result.threats) == 6
+    # Verify code summary was included in prompt
+    call = mock_provider.calls[0]
+    assert call["prompt_length"] > 2000
+
+
+@pytest.mark.asyncio
+async def test_gap_analysis_with_code_summary(mock_provider):
+    """Test gap_analysis receives and uses code_summary."""
+    code_summary = make_code_summary()
+    assets = make_assets()
+    flows = make_flows()
+    threats = make_stride_threats()
+    result = await nodes.gap_analysis(
+        description="Document sharing web app",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        flows=flows,
+        threats=threats,
+        framework=Framework.STRIDE,
+        code_summary=code_summary,
+        provider=mock_provider,
+    )
+
+    assert isinstance(result, GapAnalysis)
+    assert result.stop is False
+    # Verify code summary was included in prompt
+    call = mock_provider.calls[0]
+    assert call["prompt_length"] > 2000
+
+
+def test_deterministic_code_summary_extraction():
+    """Test deterministic extraction of CodeSummary from CodeContext."""
+    code_context = make_code_context()
+    result = nodes._deterministic_code_summary(code_context)
+
+    assert isinstance(result, CodeSummary)
+    # Should detect Python from file extensions
+    assert any("python" in tech.lower() for tech in result.tech_stack)
+    # Should detect FastAPI from imports
+    assert any("fastapi" in tech.lower() for tech in result.tech_stack)
+    # Should detect HTTP routes
+    assert len(result.entry_points) > 0
+    assert any("/api/" in ep for ep in result.entry_points)
+    # Should detect security issues
+    assert len(result.security_observations) > 0
+    # Should have a summary
+    assert len(result.raw_summary) >= 100
