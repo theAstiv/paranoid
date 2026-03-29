@@ -5,12 +5,16 @@ structured output. No classes, no LangChain, no state management — just pure l
 """
 
 import asyncio
+import logging
+import re
+from pathlib import Path
 from typing import Optional
 
 from backend.models.enums import Framework
 from backend.models.extended import (
     AttackTree,
     CodeContext,
+    CodeSummary,
     MaestroAssumptions,
     MaestroComponentDescription,
     StrideAssumptions,
@@ -27,6 +31,7 @@ from backend.models.state import (
 from backend.pipeline import input_parser
 from backend.pipeline.prompts import (
     attack_tree_prompt,
+    code_summary_prompt,
     maestro_asset_prompt,
     maestro_gap_prompt,
     maestro_improve_prompt,
@@ -39,7 +44,9 @@ from backend.pipeline.prompts import (
     stride_threats_prompt,
     test_case_prompt,
 )
-from backend.providers.base import LLMProvider
+from backend.providers.base import LLMProvider, ProviderError
+
+logger = logging.getLogger(__name__)
 
 
 def _build_xml_tag(tag: str, content: str) -> str:
@@ -54,6 +61,64 @@ def _format_assumptions(assumptions: Optional[list[str]]) -> str:
     if not assumptions:
         return ""
     return "\n".join(f"- {assumption}" for assumption in assumptions)
+
+
+def _format_code_context(code_context: CodeContext) -> str:
+    """Format CodeContext as XML-tagged text for inclusion in prompts.
+
+    Extracts file paths and content from CodeContext and formats as a
+    structured XML block for the full code context (used in summarize()).
+
+    Args:
+        code_context: Code context from MCP extraction
+
+    Returns:
+        Formatted XML string with repository and file contents
+    """
+    code_text = f"Repository: {code_context.repository}\n\n"
+    for file in code_context.files:
+        # Escape any XML special characters in content
+        safe_content = file.content.replace("<", "&lt;").replace(">", "&gt;")
+        code_text += f"## {file.path}\n{safe_content}\n\n"
+    return code_text.strip()
+
+
+def _format_code_summary(code_summary: CodeSummary) -> str:
+    """Format CodeSummary as XML-tagged text for downstream nodes.
+
+    Formats the condensed code summary for asset extraction, flow analysis,
+    threat generation, and gap analysis steps.
+
+    Args:
+        code_summary: Condensed security-focused code summary
+
+    Returns:
+        Formatted XML string with structured code summary
+    """
+    sections = []
+
+    if code_summary.tech_stack:
+        sections.append("**Technology Stack:**\n" + "\n".join(f"- {item}" for item in code_summary.tech_stack))
+
+    if code_summary.entry_points:
+        sections.append("**Entry Points:**\n" + "\n".join(f"- {item}" for item in code_summary.entry_points))
+
+    if code_summary.auth_patterns:
+        sections.append("**Authentication & Authorization:**\n" + "\n".join(f"- {item}" for item in code_summary.auth_patterns))
+
+    if code_summary.data_stores:
+        sections.append("**Data Stores:**\n" + "\n".join(f"- {item}" for item in code_summary.data_stores))
+
+    if code_summary.external_dependencies:
+        sections.append("**External Dependencies:**\n" + "\n".join(f"- {item}" for item in code_summary.external_dependencies))
+
+    if code_summary.security_observations:
+        sections.append("**Security Observations:**\n" + "\n".join(f"- {item}" for item in code_summary.security_observations))
+
+    if code_summary.raw_summary:
+        sections.append(f"**Summary:**\n{code_summary.raw_summary}")
+
+    return "\n\n".join(sections)
 
 
 def _parse_structured_input(
@@ -181,9 +246,7 @@ async def summarize(
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
     if code_context:
-        code_text = f"Repository: {code_context.repository}\n\n"
-        for file in code_context.files:
-            code_text += f"## {file.path}\n{file.content}\n\n"
+        code_text = _format_code_context(code_context)
         prompt_parts.append(_build_xml_tag("code_context", code_text))
 
     user_prompt = "".join(prompt_parts)
@@ -199,6 +262,181 @@ async def summarize(
     return response
 
 
+def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
+    """Generate code summary from metadata when LLM unavailable.
+
+    Fallback function that extracts CodeSummary from CodeContext metadata
+    using pattern matching and heuristics. Used when summarize_code() fails.
+
+    Args:
+        code_context: Full code context with file contents
+
+    Returns:
+        CodeSummary extracted from file metadata and content patterns
+    """
+    tech_stack = []
+    entry_points = []
+    auth_patterns = []
+    data_stores = []
+    external_dependencies = []
+    security_observations = []
+
+    # Extract languages from file extensions
+    extensions = set()
+    for file in code_context.files:
+        ext = Path(file.path).suffix.lower()
+        if ext:
+            extensions.add(ext)
+
+    # Map extensions to languages/frameworks
+    ext_map = {
+        ".py": "Python",
+        ".js": "JavaScript",
+        ".ts": "TypeScript",
+        ".go": "Go",
+        ".java": "Java",
+        ".rb": "Ruby",
+        ".php": "PHP",
+        ".rs": "Rust",
+        ".cpp": "C++",
+        ".c": "C",
+        ".cs": "C#",
+    }
+    for ext, lang in ext_map.items():
+        if ext in extensions:
+            tech_stack.append(lang)
+
+    # Scan content for framework imports and security patterns
+    for file in code_context.files:
+        content = file.content.lower()
+
+        # Detect frameworks
+        if "from fastapi" in content or "import fastapi" in content:
+            if "FastAPI" not in tech_stack:
+                tech_stack.append("FastAPI")
+        if "from flask" in content or "import flask" in content:
+            if "Flask" not in tech_stack:
+                tech_stack.append("Flask")
+        if "import express" in content or "require('express')" in content:
+            if "Express.js" not in tech_stack:
+                tech_stack.append("Express.js")
+        if "import torch" in content or "from torch" in content:
+            if "PyTorch" not in tech_stack:
+                tech_stack.append("PyTorch")
+        if "import tensorflow" in content or "from tensorflow" in content:
+            if "TensorFlow" not in tech_stack:
+                tech_stack.append("TensorFlow")
+
+        # Detect HTTP routes
+        route_patterns = [
+            r"@app\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
+            r"@router\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
+            r"app\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
+        ]
+        for pattern in route_patterns:
+            for match in re.finditer(pattern, content):
+                method = match.group(1).upper()
+                path = match.group(2)
+                entry_points.append(f"{method} {path}")
+
+        # Detect auth patterns
+        auth_keywords = ["jwt", "bcrypt", "oauth", "session", "token", "password"]
+        for keyword in auth_keywords:
+            if keyword in content:
+                auth_patterns.append(f"Uses {keyword}")
+
+        # Detect data stores
+        db_keywords = {
+            "sqlite": "SQLite",
+            "postgres": "PostgreSQL",
+            "mysql": "MySQL",
+            "redis": "Redis",
+            "mongodb": "MongoDB",
+            "create table": "SQL database",
+        }
+        for keyword, name in db_keywords.items():
+            if keyword in content and name not in data_stores:
+                data_stores.append(name)
+
+        # Detect external HTTP clients
+        http_keywords = ["httpx", "requests", "fetch(", "axios"]
+        for keyword in http_keywords:
+            if keyword in content:
+                external_dependencies.append(f"HTTP client: {keyword}")
+
+        # Detect security anti-patterns
+        if "eval(" in content:
+            security_observations.append("CRITICAL: eval() usage detected (code injection risk)")
+        if "pickle.load" in content:
+            security_observations.append("WARNING: pickle.load() without integrity checks")
+        if "shell=true" in content:
+            security_observations.append("WARNING: subprocess with shell=True (command injection risk)")
+        if re.search(r"select.*\+.*\+", content):
+            security_observations.append("WARNING: SQL string concatenation detected")
+
+    # Deduplicate
+    tech_stack = list(set(tech_stack))
+    entry_points = list(set(entry_points))[:10]  # Limit to 10
+    auth_patterns = list(set(auth_patterns))
+    data_stores = list(set(data_stores))
+    external_dependencies = list(set(external_dependencies))
+
+    # Generate raw summary
+    lang_list = ", ".join(tech_stack) if tech_stack else "unknown languages"
+    file_count = len(code_context.files)
+    raw_summary = (
+        f"Codebase with {file_count} files in {lang_list}. "
+        f"Found {len(entry_points)} entry points, {len(data_stores)} data stores, "
+        f"and {len(security_observations)} security observations."
+    )
+
+    return CodeSummary(
+        tech_stack=tech_stack if tech_stack else ["Unknown"],
+        entry_points=entry_points if entry_points else ["No entry points detected"],
+        auth_patterns=auth_patterns if auth_patterns else ["No auth patterns detected"],
+        data_stores=data_stores if data_stores else ["No data stores detected"],
+        external_dependencies=external_dependencies if external_dependencies else ["No external dependencies detected"],
+        security_observations=security_observations if security_observations else ["No security issues detected in automated scan"],
+        raw_summary=raw_summary,
+    )
+
+
+async def summarize_code(
+    code_context: CodeContext,
+    provider: LLMProvider,
+    temperature: float = 0.2,
+) -> CodeSummary:
+    """Generate security-focused code summary from code context.
+
+    Produces a condensed CodeSummary (~2KB) from full CodeContext for
+    downstream pipeline nodes. Falls back to deterministic extraction if
+    LLM fails.
+
+    Args:
+        code_context: Full code context from MCP extraction
+        provider: LLM provider for generation
+        temperature: Sampling temperature
+
+    Returns:
+        CodeSummary with structured security analysis
+    """
+    system_prompt = code_summary_prompt()
+    code_text = _format_code_context(code_context)
+    user_prompt = _build_xml_tag("code_context", code_text)
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+    try:
+        response = await provider.generate_structured(
+            prompt=full_prompt,
+            response_model=CodeSummary,
+            temperature=temperature,
+        )
+        return response
+    except ProviderError as e:
+        logger.warning(f"LLM code summarization failed: {e}. Using deterministic fallback.")
+        return _deterministic_code_summary(code_context)
+
+
 async def extract_assets(
     summary: str,
     description: str,
@@ -207,6 +445,7 @@ async def extract_assets(
     framework: Framework,
     provider: LLMProvider,
     temperature: float = 0.2,
+    code_summary: Optional[CodeSummary] = None,
 ) -> AssetsList:
     """Extract assets and entities from system description.
 
@@ -218,6 +457,7 @@ async def extract_assets(
         framework: STRIDE or MAESTRO framework
         provider: LLM provider
         temperature: Sampling temperature
+        code_summary: Optional condensed code context for asset identification
 
     Returns:
         AssetsList with identified assets and entities
@@ -251,6 +491,11 @@ async def extract_assets(
     if assumptions_text:
         prompt_parts.append(_build_xml_tag("assumptions", assumptions_text))
 
+    # Add code summary if available
+    if code_summary:
+        code_summary_text = _format_code_summary(code_summary)
+        prompt_parts.append(_build_xml_tag("code_summary", code_summary_text))
+
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
@@ -272,6 +517,7 @@ async def extract_flows(
     assets: AssetsList,
     provider: LLMProvider,
     temperature: float = 0.2,
+    code_summary: Optional[CodeSummary] = None,
 ) -> FlowsList:
     """Extract data flows, trust boundaries, and threat sources.
 
@@ -283,6 +529,7 @@ async def extract_flows(
         assets: Previously extracted assets
         provider: LLM provider
         temperature: Sampling temperature
+        code_summary: Optional condensed code context for flow identification
 
     Returns:
         FlowsList with data flows, trust boundaries, and threat sources
@@ -319,6 +566,11 @@ async def extract_flows(
         assets_text += f"- **{asset.name}** ({asset.type}): {asset.description}\n"
     prompt_parts.append(_build_xml_tag("identified_assets_and_entities", assets_text))
 
+    # Add code summary if available
+    if code_summary:
+        code_summary_text = _format_code_summary(code_summary)
+        prompt_parts.append(_build_xml_tag("code_summary", code_summary_text))
+
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
@@ -344,6 +596,7 @@ async def generate_threats(
     gap_analysis: Optional[str] = None,
     rag_context: Optional[list[str]] = None,
     temperature: float = 0.2,
+    code_summary: Optional[CodeSummary] = None,
 ) -> ThreatsList:
     """Generate or improve threat catalog.
 
@@ -359,6 +612,7 @@ async def generate_threats(
         gap_analysis: Optional gap analysis feedback
         rag_context: Optional similar approved threats from vector store
         temperature: Sampling temperature
+        code_summary: Optional condensed code context for threat identification
 
     Returns:
         ThreatsList with generated threats
@@ -439,6 +693,11 @@ async def generate_threats(
             rag_text += f"### Similar Threat {idx}\n{threat_text}\n\n"
         prompt_parts.append(_build_xml_tag("similar_threats", rag_text))
 
+    # Add code summary if available
+    if code_summary:
+        code_summary_text = _format_code_summary(code_summary)
+        prompt_parts.append(_build_xml_tag("code_summary", code_summary_text))
+
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
@@ -463,6 +722,7 @@ async def gap_analysis(
     provider: LLMProvider,
     previous_gaps: Optional[list[str]] = None,
     temperature: float = 0.2,
+    code_summary: Optional[CodeSummary] = None,
 ) -> ContinueThreatModeling:
     """Analyze gaps in threat coverage.
 
@@ -477,6 +737,7 @@ async def gap_analysis(
         provider: LLM provider
         previous_gaps: Optional list of previously identified gaps
         temperature: Sampling temperature
+        code_summary: Optional condensed code context for gap analysis
 
     Returns:
         ContinueThreatModeling with stop decision and gap description
@@ -540,6 +801,11 @@ async def gap_analysis(
     if previous_gaps:
         previous_gaps_text = "\n".join(f"- {gap}" for gap in previous_gaps)
         prompt_parts.append(_build_xml_tag("previous_gap", previous_gaps_text))
+
+    # Add code summary if available
+    if code_summary:
+        code_summary_text = _format_code_summary(code_summary)
+        prompt_parts.append(_build_xml_tag("code_summary", code_summary_text))
 
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"

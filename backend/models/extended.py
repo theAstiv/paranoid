@@ -117,6 +117,44 @@ class CodeContext(BaseModel):
     ] = None
 
 
+class CodeSummary(BaseModel):
+    """Condensed code context for downstream pipeline nodes.
+
+    Produced by summarize_code() node, this provides a ~2KB security-focused
+    summary of the codebase for use in asset extraction, flow analysis, threat
+    generation, and gap analysis steps.
+    """
+
+    tech_stack: Annotated[
+        list[str],
+        Field(description="Languages, frameworks, libraries, infrastructure"),
+    ]
+    entry_points: Annotated[
+        list[str],
+        Field(description="HTTP routes, API endpoints, CLI commands, queue consumers"),
+    ]
+    auth_patterns: Annotated[
+        list[str],
+        Field(description="Authentication and authorization mechanisms observed in code"),
+    ]
+    data_stores: Annotated[
+        list[str],
+        Field(description="Databases, caches, file storage, message queues"),
+    ]
+    external_dependencies: Annotated[
+        list[str],
+        Field(description="Third-party APIs, services, SDKs called by the code"),
+    ]
+    security_observations: Annotated[
+        list[str],
+        Field(description="Security-relevant findings from code review"),
+    ]
+    raw_summary: Annotated[
+        str,
+        Field(description="150-200 word free-text summary of security posture"),
+    ]
+
+
 class StrideComponentDescription(BaseModel):
     """Structured STRIDE component description from template."""
 

@@ -38,6 +38,11 @@ You are an expert in ML/AI security and threat modeling. Your role is to careful
       * <architecture_diagram>: Architecture diagram of the ML/AI solution
       * <description>: Description of the ML/AI system
       * <assumptions>: Assumptions about the ML/AI deployment
+      * <code_summary>: Security-focused analysis of the system's source code (if available).
+        Identify ML pipeline components visible in the code — model.fit()/model.predict() call sites,
+        model registries (MLflow, W&B), feature stores, training data loaders, vector databases,
+        embedding generation, and GPU/TPU resource allocation. Look for model serialization formats
+        (pickle, torch.save, ONNX, SavedModel) as these determine model integrity attack surface.
 
 2. Identify ML/AI-specific assets, such as:
    - **Models**: Trained model weights, model architectures, model cards
@@ -82,6 +87,12 @@ You are an expert in ML/AI security and threat modeling. Your goal is to generat
    * <data_flow>: ML pipeline data flows (training, inference, feedback)
    * <description>: System description
    * <assumptions>: ML deployment assumptions
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Ground ML threats in actual implementation — torch.load() without integrity checks (arbitrary
+     code execution via pickle), training data loaded from unvalidated URLs (data poisoning),
+     model serving endpoints without rate limiting (model extraction), prompt templates with
+     user-controlled variables (prompt injection), eval()/exec() on model outputs (code injection),
+     and gradient computation exposed to API callers (adversarial example generation).
 
 2. MAESTRO threat modeling framework:
 
@@ -266,6 +277,11 @@ You are an expert in ML/AI security. Validate the comprehensiveness of an ML/AI 
    * <threats>: Existing ML/AI threat catalog
    * <description>: System context
    * <assumptions>: ML deployment assumptions. **CRITICAL**: You MUST respect these assumptions when assessing gaps. Do not suggest threats that violate stated assumptions or are explicitly out-of-scope. Focus your gap analysis on areas marked as in-scope, AI-specific considerations, and threat modeling focus areas.
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Cross-reference against code-visible ML attack surface — are there model deserialization
+     paths without integrity validation, training pipelines accepting external data without
+     sanitization, inference endpoints missing authentication, feature stores with overly broad
+     access, or model outputs used in downstream decisions without confidence thresholds?
 
 2. MAESTRO framework assessment:
 
@@ -353,6 +369,12 @@ You are an expert in ML/AI security. Enrich an existing ML/AI threat catalog by 
    * <data_flow>: ML pipelines
    * <threats>: Existing catalog
    * <gap>: Gap analysis
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Ground ML threats in actual implementation — torch.load() without integrity checks (arbitrary
+     code execution via pickle), training data loaded from unvalidated URLs (data poisoning),
+     model serving endpoints without rate limiting (model extraction), prompt templates with
+     user-controlled variables (prompt injection), eval()/exec() on model outputs (code injection),
+     and gradient computation exposed to API callers (adversarial example generation).
 
 2. MAESTRO framework: {maestro_cats}
 

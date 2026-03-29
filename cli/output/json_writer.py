@@ -52,6 +52,7 @@ class JSONWriter:
 
         # Track pipeline artifacts
         self.summary: str | None = None
+        self.code_summary: dict[str, Any] | None = None
         self.assets: AssetsList | None = None
         self.flows: FlowsList | None = None
         self.threats: ThreatsList | None = None
@@ -76,6 +77,10 @@ class JSONWriter:
             if event.step == PipelineStep.SUMMARIZE:
                 if "summary" in event.data:
                     self.summary = event.data["summary"]
+
+            elif event.step == PipelineStep.SUMMARIZE_CODE:
+                if "code_summary" in event.data:
+                    self.code_summary = event.data["code_summary"]
 
             elif event.step == PipelineStep.EXTRACT_ASSETS:
                 if "assets" in event.data:

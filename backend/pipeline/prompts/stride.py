@@ -27,6 +27,10 @@ def stride_summary_prompt() -> str:
     """Generate prompt for system summary creation."""
     return f"""<instruction>
 Use the information provided by the user to generate a short headline summary of max {SUMMARY_MAX_WORDS} words.
+
+If <code_context> is provided, incorporate the system's actual implementation details
+— technology stack, frameworks, authentication mechanisms, data stores, and API patterns
+observed in the code — into your summary. Prioritize implementation facts over assumptions.
 </instruction>
 """
 
@@ -41,6 +45,9 @@ You are an expert in all security domains and threat modeling. Your role is to c
       * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
       * <description>: [Description of the solution provided by the user]
       * <assumptions>: [Assumptions provided by the user]
+      * <code_summary>: Security-focused analysis of the system's source code (if available).
+        Use this to identify assets visible in the code — databases, queues, external API clients,
+        auth providers, secret stores, configuration files — even if not mentioned in the description.
 
 2. Identify the most critical assets within the system, such as sensitive data, databases, communication channels, or APIs. These are components that need protection.
 
@@ -70,6 +77,10 @@ You are an expert in all security domains and threat modeling. Your goal is to s
    * <description>: [Description of the solution provided by the user]
    * <assumptions>: [Assumptions provided by the user]
    * <identified_assets_and_entities>: Inventory of key assets and entities in the architecture.
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Use this to trace data flows through the code — HTTP request/response paths, database
+     read/write operations, message queue publish/subscribe, external API calls, file I/O —
+     to identify flows the description may omit.
 
 2. Data Flow Analysis:
 
@@ -204,6 +215,11 @@ You are an expert in all security domains and threat modeling. Your goal is to v
    * <description>: Contextual overview of the system (if provided).
    * <assumptions>: Security assumptions and boundary considerations (if provided). **CRITICAL**: You MUST respect these assumptions when assessing gaps. Do not suggest threats that violate stated assumptions or are explicitly out-of-scope. Focus your gap analysis on areas marked as in-scope and threat modeling focus areas.
    * <previous_gap>: Previous gap analysis, if available.
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Cross-reference the threat catalog against the code-visible attack surface — are there
+     HTTP endpoints without authentication, database queries without parameterization, external
+     API calls without TLS verification, or dependencies with known vulnerabilities not covered
+     by existing threats?
 
 2. Assessment framework and criteria:
 
@@ -332,6 +348,11 @@ You are an expert in all security domains and threat modeling. Your goal is to e
    * <assumptions>: Security assumptions.
    * <threats>: The existing threat catalog to be enhanced.
    * <gap>: Leverage gap analysis information to improve the catalog.
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Ground threats in actual implementation details — specific framework versions with known
+     CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
+     error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
+     observed in the code.
 
 2. Threat Similarity and Deduplication Guidelines (CRITICAL):
    **Before adding new threats, review existing threats to avoid duplication:**
@@ -415,6 +436,11 @@ You are an expert in all security domains and threat modeling. Your goal is to g
    * <data_flow>: Descriptions of data movements between components.
    * <description>: Contextual overview of the system (if provided).
    * <assumptions>: Security assumptions and boundary considerations (if provided).
+   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Ground threats in actual implementation details — specific framework versions with known
+     CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
+     error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
+     observed in the code.
 
 2. Threat modeling framework and scope:
    * Use the **STRIDE model** as your framework: {stride_cats}.

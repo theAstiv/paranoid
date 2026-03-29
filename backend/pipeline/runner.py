@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Optional
 
 from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeContext, TestSuite
+from backend.models.extended import AttackTree, CodeContext, CodeSummary, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.providers.base import LLMProvider
@@ -25,6 +25,7 @@ class PipelineStep(str, Enum):
     """Pipeline step identifiers for SSE events."""
 
     SUMMARIZE = "summarize"
+    SUMMARIZE_CODE = "summarize_code"
     EXTRACT_ASSETS = "extract_assets"
     EXTRACT_FLOWS = "extract_flows"
     GENERATE_THREATS = "generate_threats"
@@ -140,28 +141,65 @@ class PipelineRunner:
         self.start_time = datetime.now()
 
         try:
-            # Step 1: Summarize
+            # Step 1: Summarize (+ code summarization if code context provided)
             yield PipelineEvent(
                 step=PipelineStep.SUMMARIZE,
                 status="started",
                 message="Generating system summary...",
             )
 
-            summary = await nodes.summarize(
-                description=description,
-                architecture_diagram=architecture_diagram,
-                assumptions=assumptions,
-                code_context=code_context,
-                provider=self.provider,
-                temperature=self.config.temperature,
-            )
+            # Run summarize() and summarize_code() concurrently if code available
+            if code_context:
+                summary, code_summary = await asyncio.gather(
+                    nodes.summarize(
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        code_context=code_context,
+                        provider=self.provider,
+                        temperature=self.config.temperature,
+                    ),
+                    nodes.summarize_code(
+                        code_context=code_context,
+                        provider=self.provider,
+                        temperature=self.config.temperature,
+                    ),
+                )
 
-            yield PipelineEvent(
-                step=PipelineStep.SUMMARIZE,
-                status="completed",
-                message=f"Summary generated: {len(summary.summary)} chars",
-                data={"summary": summary.summary},
-            )
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE,
+                    status="completed",
+                    message=f"Summary generated: {len(summary.summary)} chars",
+                    data={"summary": summary.summary},
+                )
+
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE_CODE,
+                    status="completed",
+                    message=f"Code summary: {len(code_summary.tech_stack)} technologies, {len(code_summary.entry_points)} entry points",
+                    data={
+                        "tech_stack": code_summary.tech_stack,
+                        "entry_points": code_summary.entry_points,
+                        "code_summary": code_summary,
+                    },
+                )
+            else:
+                summary = await nodes.summarize(
+                    description=description,
+                    architecture_diagram=architecture_diagram,
+                    assumptions=assumptions,
+                    code_context=None,
+                    provider=self.provider,
+                    temperature=self.config.temperature,
+                )
+                code_summary = None
+
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE,
+                    status="completed",
+                    message=f"Summary generated: {len(summary.summary)} chars",
+                    data={"summary": summary.summary},
+                )
 
             # Step 2: Extract Assets
             yield PipelineEvent(
@@ -178,6 +216,7 @@ class PipelineRunner:
                 framework=framework,
                 provider=self.provider,
                 temperature=self.config.temperature,
+                code_summary=code_summary,
             )
 
             yield PipelineEvent(
@@ -202,6 +241,7 @@ class PipelineRunner:
                 assets=assets,
                 provider=self.provider,
                 temperature=self.config.temperature,
+                code_summary=code_summary,
             )
 
             yield PipelineEvent(
@@ -269,6 +309,7 @@ class PipelineRunner:
                         gap_analysis=gaps[-1] if gaps else None,
                         rag_context=rag_context,
                         temperature=self.config.temperature,
+                        code_summary=code_summary,
                     )
 
                     yield PipelineEvent(
@@ -299,6 +340,7 @@ class PipelineRunner:
                         gap_analysis=gaps[-1] if gaps else None,
                         rag_context=rag_context,
                         temperature=self.config.temperature,
+                        code_summary=code_summary,
                     )
 
                     yield PipelineEvent(
@@ -356,6 +398,7 @@ class PipelineRunner:
                         gap_analysis=gaps[-1] if gaps else None,
                         rag_context=rag_context,
                         temperature=self.config.temperature,
+                        code_summary=code_summary,
                     )
 
                     yield PipelineEvent(
@@ -416,6 +459,7 @@ class PipelineRunner:
                         provider=self.provider,
                         previous_gaps=gaps,
                         temperature=self.config.temperature,
+                        code_summary=code_summary,
                     )
 
                     if gap_result.stop:

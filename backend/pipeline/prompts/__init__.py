@@ -1,6 +1,7 @@
 """Prompt templates for threat modeling pipeline."""
 
 from backend.pipeline.prompts.attack_tree import attack_tree_prompt
+from backend.pipeline.prompts.code_summary import code_summary_prompt
 from backend.pipeline.prompts.maestro import (
     maestro_asset_prompt,
     maestro_gap_prompt,
@@ -30,6 +31,8 @@ __all__ = [
     "maestro_threats_prompt",
     "maestro_gap_prompt",
     "maestro_improve_prompt",
+    # Code summary prompts
+    "code_summary_prompt",
     # Attack tree prompts
     "attack_tree_prompt",
     # Test case prompts
