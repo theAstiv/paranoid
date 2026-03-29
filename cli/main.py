@@ -27,8 +27,8 @@ def cli() -> None:
 
     \b
     Documentation:
-      GitHub: https://github.com/yourusername/paranoid
-      Docs:   https://github.com/yourusername/paranoid#readme
+      GitHub: https://github.com/theAstiv/paranoid
+      Docs:   https://github.com/theAstiv/paranoid#readme
     """
     pass
 

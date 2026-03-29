@@ -128,12 +128,8 @@ This example demonstrates threat modeling for a traditional microservices API Ga
 ### Option 1: Command Line (CLI)
 
 ```bash
-python -m cli.main run \
-  --description "$(cat examples/stride-example-api-gateway.md)" \
-  --provider anthropic \
-  --model claude-sonnet-4-20250514 \
+paranoid run examples/stride-example-api-gateway.md \
   --iterations 5 \
-  --framework stride \
   --output stride-api-gateway-threats.json
 ```
 

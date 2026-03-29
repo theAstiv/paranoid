@@ -176,17 +176,13 @@ This example demonstrates threat modeling for an AI-powered customer support sys
 ### Option 1: Command Line (CLI)
 
 ```bash
-python -m cli.main run \
-  --description "$(cat examples/maestro-example-rag-chatbot.md)" \
-  --provider anthropic \
-  --model claude-sonnet-4-20250514 \
+paranoid run examples/maestro-example-rag-chatbot.md \
+  --maestro \
   --iterations 5 \
-  --framework stride \
-  --has-ai-components \
   --output rag-chatbot-combined-threats.json
 ```
 
-**Note:** The `--has-ai-components` flag triggers **both STRIDE and MAESTRO** frameworks.
+**Note:** The `--maestro` flag triggers **both STRIDE and MAESTRO** frameworks.
 
 ### Option 2: Python API
 

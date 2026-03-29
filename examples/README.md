@@ -56,19 +56,13 @@ python examples/test_structured_input.py
 #### Run STRIDE Example (API Gateway)
 
 ```bash
-# Edit test_structured_input.py and uncomment:
-# await test_stride_only()
-
-python examples/test_structured_input.py
+paranoid run examples/stride-example-api-gateway.md
 ```
 
 #### Run MAESTRO Example (RAG Chatbot)
 
 ```bash
-# Edit test_structured_input.py and uncomment:
-# await test_stride_maestro_dual()
-
-python examples/test_structured_input.py
+paranoid run examples/maestro-example-rag-chatbot.md --maestro
 ```
 
 ---
@@ -249,5 +243,4 @@ Have a great threat modeling example? Submit a PR with:
 ## Related Documentation
 
 - [Input-template.md](../Input-template.md) - Template reference
-- [CLAUDE.md](../.claude/rules/CLAUDE.md) - Project guidelines
-- [RULES.md](../.claude/rules/RULES.md) - Coding conventions
+- [README.md](../README.md) - Project overview and quick start

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Package metadata** - Updated author from "Astitva / StateCheck Security" to just "Astitva"
-- **Documentation URLs** - Fixed remaining `yourusername` placeholder in RELEASE.md to use actual GitHub username `theAstiv`
+- **Documentation URLs** - Fixed remaining placeholder URLs to use actual GitHub username `theAstiv`
 
 ### Note
 
@@ -32,6 +32,9 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 - **Structured input templates** with XML-tagged component descriptions and assumption enforcement
 - **Multi-provider LLM support** (Anthropic, OpenAI, Ollama) with protocol-based abstraction
 - **Event-driven pipeline** with real-time SSE event streaming
+- **SARIF 2.1.0 export** for GitHub Security tab integration, PR annotations, and severity mapping from DREAD scores
+- **Attack tree generation** with Mermaid diagram output
+- **Test case generation** from threats with Gherkin/BDD format
 
 #### CLI Commands
 - `paranoid run INPUT_FILE` - Execute threat modeling on system descriptions
@@ -39,8 +42,9 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
   - Supports plain text `.md`/`.txt` files and structured templates
   - Real-time console output with progress indicators
   - JSON export with simple (lightweight) and full (complete) formats
-  - `--output, -o PATH` - Specify JSON output file
-  - `--format [simple|full]` - Choose output detail level
+  - SARIF export for GitHub Security integration
+  - `--output, -o PATH` - Specify output file
+  - `--format [simple|full|sarif]` - Choose output format
   - `--maestro` - Force dual framework execution
   - `--iterations, -n INT` - Override iteration count (1-15)
   - `--framework [STRIDE|MAESTRO]` - Override framework auto-detection
@@ -54,52 +58,30 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 - `paranoid version` - Show version, Python version, dependencies, and configuration
 
+#### Persistence & Vector Search
+- **SQLite database** with schema for threat models, threats, assets, flows, pipeline runs
+- **sqlite-vec integration** for vector similarity search over threat patterns
+- **fastembed** for local embedding generation (ONNX, BAAI/bge-small-en-v1.5)
+- **Seed data loader** for curated STRIDE, MAESTRO, and OWASP LLM Top 10 patterns
+
 #### JSON Export Formats
 - **Simple format** (default, ~2-3 KB) - Lightweight threat summaries for CI/CD dashboards
-  - Execution metadata (iterations, duration, threat counts)
-  - Lightweight threat list (name, category, target, impact, likelihood, mitigation_count)
-  - No DREAD scoring, no events, no complete models
-
-- **Full format** (~45 KB) - Complete models for detailed analysis
-  - Complete Pydantic models (Assets, Flows, Threats with all fields)
-  - DREAD risk assessment scores
-  - Full pipeline event audit trail
-  - Suitable for archival and integration with other tools
+- **Full format** (~45 KB) - Complete Pydantic models with DREAD scores and event audit trail
 
 #### Structured Input Templates
-- **STRIDE template** for traditional systems
-  - `<component_description>` with technology stack, interfaces, data handling
-  - 6 structured assumption sections (security controls, scope, focus areas)
-
-- **MAESTRO template** for AI/ML systems
-  - `<maestro_component_description>` with mission alignment, agent profile
-  - 9 structured assumption sections (mission constraints, AI-specific controls, agentic considerations)
+- **STRIDE template** for traditional systems with 6 assumption sections
+- **MAESTRO template** for AI/ML systems with 9 assumption sections
 
 #### Configuration System
 - Environment variable support (`.env` file)
 - User configuration file (`~/.paranoid/config.json`)
 - Config precedence: CLI flags > Environment variables > Config file > Defaults
 - Interactive wizard for first-time setup
-- Multi-provider configuration (Anthropic, OpenAI, Ollama)
 
 #### LLM Providers
-- **Anthropic** - Claude models via tool_use API
-  - Tested: `claude-sonnet-4-20250514` (recommended)
-  - Not recommended: `claude-haiku-4-5-20251001` (fails on complex outputs)
-
+- **Anthropic** - Claude models via tool_use API (recommended: `claude-sonnet-4-20250514`)
 - **OpenAI** - GPT models via response_format API
-  - Supports structured output with JSON schema
-
-- **Ollama** - Local/air-gapped deployment
-  - Fully local execution, no external API calls
-  - Compatible with Llama 3, Mistral, and other models
-
-#### Documentation
-- Comprehensive README.md with quick start guide
-- Example structured templates in `examples/` directory
-- TESTING.md with validation results
-- STRUCTURED_INPUT_IMPLEMENTATION.md feature guide
-- Developer documentation in `.claude/` directory
+- **Ollama** - Local/air-gapped deployment with Llama 3, Mistral, etc.
 
 ### Fixed
 - Pydantic model serialization in verbose mode (AssetsList not JSON serializable)
@@ -107,50 +89,24 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 - Framework auto-detection from structured input templates
 - JSON export format differentiation (simple vs full)
 
-### Technical Details
-- **Language**: Python 3.12+
-- **CLI Framework**: Click 8.1.7+
-- **Data Validation**: Pydantic v2
-- **Async Runtime**: asyncio with aiosqlite
-- **LLM SDKs**: anthropic 0.42.0+, openai 1.58.1+
-- **HTTP Client**: httpx
-- **Configuration**: JSON file at `~/.paranoid/config.json`
-
-### Architecture
-- Plain async functions (no LangChain, no LangGraph)
-- Protocol-based LLM abstraction (3 providers, ~50 lines each)
-- Event-driven pipeline with SSE streaming
-- Pydantic v2 for all data contracts
-- Clean separation: CLI layer → Backend pipeline → LLM providers
-
-### Breaking Changes
-- None (initial release)
-
 ### Known Limitations
-- SQLite-vec not included (future: deterministic rule engine)
 - No frontend UI (CLI-only for v1.0)
-- No attack tree generation (future feature)
-- No test case generation (future feature)
-- No SARIF export (future feature)
+- No deterministic rule engine (seed patterns loaded but not yet used for fallback)
+- No MCP integration (deferred to v2.0)
 - Single-user mode (no multi-user collaboration)
 
 ---
 
 ## [Unreleased]
 
-### Planned Features (Future Releases)
-- Deterministic rule engine with curated threat patterns (Phase 7)
-- RAG retrieval over previously approved threats (Phase 6.9)
-- MCP integration for code context (Phase 8)
-- Frontend UI with Svelte + Tailwind (Phase 10)
-- Attack tree generation
-- Test case generation from threats
-- SARIF export for GitHub Security tab
+### Planned Features (v2.0+)
+- Deterministic rule engine with curated threat patterns
+- RAG retrieval over previously approved threats
+- MCP integration for code context
+- Frontend UI with Svelte + Tailwind
 - PDF/Markdown export formats
 - GitHub Action for CI/CD integration
 - Multi-user collaboration features
-- Homebrew tap distribution
-- apt/deb package distribution
 
 ---
 
