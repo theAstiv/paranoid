@@ -6,7 +6,6 @@ import struct
 from typing import Any
 
 import aiosqlite
-from fastembed import TextEmbedding
 
 from backend.config import settings
 
@@ -14,13 +13,19 @@ from backend.config import settings
 logger = logging.getLogger(__name__)
 
 # Global embedding model instance (lazy loaded)
-_embedding_model: TextEmbedding | None = None
+_embedding_model: Any = None
 
 
-def get_embedding_model() -> TextEmbedding:
-    """Get or create the embedding model instance."""
+def get_embedding_model() -> Any:
+    """Get or create the embedding model instance.
+
+    Imports fastembed lazily so the module can be imported without
+    numpy/ONNX being installed (e.g. in PyInstaller CLI builds).
+    """
     global _embedding_model
     if _embedding_model is None:
+        from fastembed import TextEmbedding
+
         logger.info(f"Loading embedding model: {settings.embedding_model}")
         _embedding_model = TextEmbedding(model_name=settings.embedding_model)
         logger.info("Embedding model loaded successfully")

@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Paranoid",
     description="Open-source, self-hosted, iterative threat modeling powered by LLMs",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -62,7 +62,7 @@ async def health_check() -> JSONResponse:
     return JSONResponse(
         content={
             "status": "healthy",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "provider": settings.default_provider,
             "model": settings.default_model,
         }

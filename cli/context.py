@@ -22,7 +22,7 @@ DEFAULT_OLLAMA_MODEL = "llama3"
 
 # Default configuration
 DEFAULT_CONFIG = {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "default_provider": "anthropic",
     "default_model": DEFAULT_ANTHROPIC_MODEL,
     "default_iterations": 3,

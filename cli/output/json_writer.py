@@ -132,7 +132,7 @@ class JSONWriter:
             ]
 
         data = {
-            "version": "1.0.0",
+            "version": "1.1.0",
             "model_id": self.model_id,
             "created_at": self.start_time.isoformat(),
             "config": {
@@ -178,7 +178,7 @@ class JSONWriter:
 
         # Build full JSON structure (includes all Pydantic models)
         data = {
-            "version": "1.0.0",
+            "version": "1.1.0",
             "model_id": self.model_id,
             "created_at": self.start_time.isoformat(),
             "config": {

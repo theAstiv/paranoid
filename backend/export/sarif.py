@@ -42,7 +42,7 @@ def export_sarif(
                 "tool": {
                     "driver": {
                         "name": "Paranoid Threat Modeler",
-                        "version": "1.0.0",
+                        "version": "1.1.0",
                         "informationUri": "https://github.com/theAstiv/paranoid",
                         "rules": rules,
                     }
