@@ -169,7 +169,7 @@ def _generate_results(
                 "exploitability": threat.dread.exploitability,
                 "affected_users": threat.dread.affected_users,
                 "discoverability": threat.dread.discoverability,
-                "total": threat.dread.total,
+                "score": threat.dread.score,
             }
 
         # Add mitigations as fixes
@@ -255,14 +255,12 @@ def _severity_to_level(threat: Any) -> str:
 
     SARIF levels: error, warning, note, none
     """
-    # Try DREAD score first
-    if hasattr(threat, "dread") and threat.dread and threat.dread.total:
-        score = threat.dread.total
-        if score >= 40:  # Critical
+    # Try DREAD score first (average 0-10)
+    if hasattr(threat, "dread") and threat.dread:
+        score = threat.dread.score
+        if score >= 7:  # Critical/High
             return "error"
-        if score >= 25:  # High
-            return "error"
-        if score >= 11:  # Medium
+        if score >= 4:  # Medium
             return "warning"
         return "note"  # Low
 

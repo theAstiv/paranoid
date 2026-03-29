@@ -1,24 +1,11 @@
-"""Tests for database CRUD operations."""
+"""Tests for database CRUD operations.
 
-import tempfile
-from pathlib import Path
+Uses shared test_db fixture from conftest.py (function scope, fresh DB per test).
+"""
 
 import pytest
 
-from backend.db import crud, schema
-
-
-@pytest.fixture
-async def test_db():
-    """Create a temporary test database."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
-
-    await schema.init_database(db_path)
-    yield db_path
-
-    # Cleanup
-    Path(db_path).unlink(missing_ok=True)
+from backend.db import crud
 
 
 @pytest.mark.asyncio
