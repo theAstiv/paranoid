@@ -396,7 +396,7 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 ## Development Status
 
-**v1.0.1** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/), Docker Hub, and as standalone binaries.
+**v1.0.1** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
 **Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF export, DREAD scoring, CLI with config wizard, packaging and release automation.
 

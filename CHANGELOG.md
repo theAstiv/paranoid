@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-29
+
+### Added
+
+#### Threat Deduplication
+- **Embedding-based deduplication** across STRIDE + MAESTRO frameworks using cosine similarity (0.85 threshold) via existing fastembed infrastructure
+- **Cross-iteration dedup** prevents duplicate threats from accumulating across iteration 2+
+- **Text fallback** using difflib when embeddings fail
+
+#### Seed Pattern Expansion
+- **STRIDE patterns**: 18 → 53 (9 per category) — added XSS, CSRF, SSRF, IDOR, file upload, request smuggling, prototype pollution, ReDoS, XXE, WebSocket flooding, kernel exploits, IAM misconfig, race conditions, dependency confusion, and more
+- **MAESTRO patterns**: 20 → 46 — filled gaps in Data Security, LLM Security (indirect prompt injection, jailbreaking, context window manipulation, agentic tool abuse), Pipeline Security, Fairness, Monitoring, Privacy, and Distributed ML
+- **Total curated patterns**: 48 → 109
+- **Partial load detection** with automatic cleanup and reload on count mismatch
+
+#### Test Infrastructure
+- **MockProvider** — in-process `LLMProvider` implementation with canned Pydantic responses for all pipeline steps, enabling full pipeline testing without API tokens
+- **Test fixtures package** (`tests/fixtures/`) with 9 factory functions returning realistic threat model data
+- **48 new tests** covering pipeline nodes (24), pipeline runner (7), SARIF export (6), and seed loader (11)
+- **Total test count**: 65 → 113, all passing without network access
+
+### Fixed
+
+- **SARIF export `dread.score` bug** — `_severity_to_level` and `_generate_results` referenced nonexistent `dread.total` instead of the `DreadScore.score` property (average 0-10)
+- **Threat counting bug** — runner now tracks cumulative threats across iterations instead of reporting only the last iteration's count
+- **Iteration off-by-one** — explicit counter tracking avoids miscounts on early exit (gap satisfied/timeout)
+- **SSE serialization** — `TypeError` when event data contained nested Pydantic models; extracted shared `backend/serialization.py` utility with full recursive conversion
+- **Output file default** — `--output` no longer writes a default file when the flag is omitted; output is opt-in only
+- **Config environment mutation** — rewrote `_load_merged_settings` to use pydantic-settings constructor overrides instead of mutating `os.environ`, fixing thread-safety and permanent env pollution
+- **Silent parser failures** — replaced four bare `except Exception: return None` blocks in input parser with specific `ValidationError`/`AttributeError`/`TypeError`/`KeyError` handlers with logged warnings
+- **Broad CLI exception catching** — replaced catch-all `except Exception` in `_run_pipeline_async` with specific handlers for `ProviderAuthError`, `ProviderRateLimitError`, and `ProviderTimeoutError` with actionable messages
+- **Model string duplication** — extracted `DEFAULT_ANTHROPIC_MODEL`, `DEFAULT_OPENAI_MODEL`, `DEFAULT_OLLAMA_MODEL` constants to `cli/context.py` as single source of truth
+
+### Changed
+
+- **Providers now support async context managers** — `__aenter__`/`__aexit__` added to `LLMProvider` Protocol; fixes `httpx.AsyncClient` resource leak in OllamaProvider
+- **`run_sync_in_executor`** — replaced deprecated `asyncio.get_event_loop()` with `get_running_loop()`, `lambda` with `functools.partial`
+- **Documentation consolidated** — merged QUICKSTART.md, TESTING.md, and DISTRIBUTION.md into README.md; deleted stale STATUS.md; trimmed RELEASE.md
+
+---
+
 ## [1.0.1] - 2026-03-24
 
 ### Fixed
@@ -110,5 +151,6 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
+[1.1.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.1.0
 [1.0.1]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.1
 [1.0.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.0
