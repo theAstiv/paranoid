@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Pre-commit hook: Run tests and linting before allowing commit
+#
+# Install with: scripts/install-hooks.sh
+# Bypass with: git commit --no-verify
+
+set -e
+
+echo ""
+echo "🔍 Running pre-commit checks..."
+echo ""
+
+# Get the repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+# Determine Python command (python3 on Unix, python on Windows)
+if command -v python3 &> /dev/null; then
+    PYTHON=python3
+elif command -v python &> /dev/null; then
+    PYTHON=python
+else
+    echo "❌ Python not found. Please install Python 3.12+"
+    exit 1
+fi
+
+# Check if dependencies are installed
+if ! $PYTHON -c "import pytest, ruff" &> /dev/null; then
+    echo "⚠️  Dev dependencies not installed. Installing..."
+    $PYTHON -m pip install -e ".[dev]" --quiet
+fi
+
+# Run fast tests (skip slow integration tests)
+$PYTHON scripts/run_tests.py --fast
+
+echo ""
+echo "✅ Pre-commit checks passed!"
+echo ""

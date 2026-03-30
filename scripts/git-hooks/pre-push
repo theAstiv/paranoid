@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Pre-push hook: Run full test suite before pushing
+#
+# Install with: scripts/install-hooks.sh
+# Bypass with: git push --no-verify
+
+set -e
+
+echo ""
+echo "🚀 Running pre-push validation..."
+echo ""
+
+# Get the repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+# Determine Python command
+if command -v python3 &> /dev/null; then
+    PYTHON=python3
+elif command -v python &> /dev/null; then
+    PYTHON=python
+else
+    echo "❌ Python not found. Please install Python 3.12+"
+    exit 1
+fi
+
+# Check if dependencies are installed
+if ! $PYTHON -c "import pytest, ruff" &> /dev/null; then
+    echo "⚠️  Dev dependencies not installed. Installing..."
+    $PYTHON -m pip install -e ".[dev]" --quiet
+fi
+
+# Run full test suite (no --fast flag)
+$PYTHON scripts/run_tests.py
+
+echo ""
+echo "✅ Pre-push validation passed!"
+echo ""
