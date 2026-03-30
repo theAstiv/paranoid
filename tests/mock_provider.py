@@ -50,6 +50,8 @@ class MockProvider:
         self.response_overrides: dict[type, Any] = {}
         self.error_types: set[type] = set()
         self._gap_call_count = 0
+        self.last_prompt: str | None = None
+        self.last_images: list | None = None
 
     @property
     def name(self) -> str:
@@ -65,12 +67,18 @@ class MockProvider:
         response_model: Type[Any],
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        images: list | None = None,
     ) -> Any:
+        # Capture for diagram tests
+        self.last_prompt = prompt
+        self.last_images = images
+
         self.calls.append({
             "method": "generate_structured",
             "response_model": response_model,
             "temperature": temperature,
             "prompt_length": len(prompt),
+            "images": images,
         })
 
         if response_model in self.error_types:

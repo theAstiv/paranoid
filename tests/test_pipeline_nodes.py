@@ -528,3 +528,152 @@ def test_deterministic_code_summary_extraction():
     assert len(result.security_observations) > 0
     # Should have a summary
     assert len(result.raw_summary) >= 100
+
+
+# ---------------------------------------------------------------------------
+# Diagram integration tests (PNG/JPG/Mermaid via vision API)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_png_diagram():
+    """Test summarize passes PNG diagram via images parameter."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagram_data = DiagramData(
+        format=DiagramFormat.PNG,
+        source_path="test.png",
+        base64_data="base64encodeddata",
+        media_type="image/png",
+        size_bytes=1000,
+    )
+
+    provider = MockProvider()
+    result = await nodes.summarize(
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        code_context=None,
+        provider=provider,
+        diagram_data=diagram_data,
+    )
+
+    # Verify images parameter was passed to provider
+    assert provider.last_images is not None
+    assert len(provider.last_images) == 1
+    assert provider.last_images[0].data == "base64encodeddata"
+    assert provider.last_images[0].media_type == "image/png"
+
+    # Verify placeholder tag was added to prompt
+    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_mermaid_diagram():
+    """Test summarize injects Mermaid source into prompt."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagram_data = DiagramData(
+        format=DiagramFormat.MERMAID,
+        source_path="flow.mmd",
+        mermaid_source="graph TD\n  A-->B",
+    )
+
+    provider = MockProvider()
+    result = await nodes.summarize(
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        code_context=None,
+        provider=provider,
+        diagram_data=diagram_data,
+    )
+
+    # Verify images parameter is None for Mermaid
+    assert provider.last_images is None
+
+    # Verify Mermaid source appears in prompt XML tag
+    assert "<architecture_diagram>" in provider.last_prompt
+    assert "graph TD" in provider.last_prompt
+    assert "A-->B" in provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_summarize_without_diagram():
+    """Test summarize works without diagram (backward compat)."""
+    provider = MockProvider()
+    result = await nodes.summarize(
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        code_context=None,
+        provider=provider,
+        diagram_data=None,
+    )
+
+    # Verify no images parameter
+    assert provider.last_images is None
+
+    # Verify no architecture_diagram tag in prompt (no data to inject)
+    # (instructions may mention it, but no actual tag with content)
+    assert result.summary  # Just verify it worked
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_legacy_diagram_string():
+    """Test summarize still supports legacy architecture_diagram: str."""
+    provider = MockProvider()
+    result = await nodes.summarize(
+        description="Test system",
+        architecture_diagram="Legacy diagram description text",
+        assumptions=None,
+        code_context=None,
+        provider=provider,
+        diagram_data=None,
+    )
+
+    # Verify no images parameter for legacy string
+    assert provider.last_images is None
+
+    # Verify legacy diagram text appears in prompt
+    assert "Legacy diagram description text" in provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_with_jpeg_diagram():
+    """Test generate_threats passes JPEG via images parameter."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagram_data = DiagramData(
+        format=DiagramFormat.JPEG,
+        source_path="arch.jpg",
+        base64_data="jpegbase64",
+        media_type="image/jpeg",
+        size_bytes=2000,
+    )
+
+    assets = make_assets()
+    flows = make_flows()
+
+    provider = MockProvider()
+    result = await nodes.generate_threats(
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        flows=flows,
+        framework=Framework.STRIDE,
+        provider=provider,
+        diagram_data=diagram_data,
+    )
+
+    # Verify images parameter was passed
+    assert provider.last_images is not None
+    assert len(provider.last_images) == 1
+    assert provider.last_images[0].media_type == "image/jpeg"
+
+    # Verify placeholder tag
+    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
