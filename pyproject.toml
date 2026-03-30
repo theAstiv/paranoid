@@ -128,8 +128,6 @@ select = [
     "RUF", # ruff-specific rules
 ]
 ignore = [
-    "ANN101", # Missing type annotation for self
-    "ANN102", # Missing type annotation for cls
     "ANN001", # Missing type annotation for function arguments
     "ANN201", # Missing return type annotation
     "ANN202", # Missing return type annotation for private function

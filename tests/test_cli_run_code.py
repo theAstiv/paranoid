@@ -43,5 +43,3 @@ def test_run_with_code_flag_rejects_file_path(runner, sample_input_file):
     )
     # Should fail because --code must be a directory
     assert result.exit_code != 0
-
-
