@@ -58,8 +58,8 @@ def _extract_bulleted_list(text: str, header: str) -> list[str]:
     remaining_text = text[match.end():]
     lines = remaining_text.split("\n")
 
-    for line in lines:
-        line = line.strip()
+    for raw_line in lines:
+        line = raw_line.strip()
         # Stop at next header
         if line.startswith("**") and line.endswith("**"):
             break
@@ -146,8 +146,7 @@ def parse_stride_component_description(text: str) -> StrideComponentDescription 
         purpose = _extract_key_value(content, "Purpose:")
 
         # Extract technology stack
-        tech_stack_raw = _extract_subsections(content, "Technology Stack:")
-        technology_stack = {k: v for k, v in tech_stack_raw.items()}
+        technology_stack = _extract_subsections(content, "Technology Stack:")
 
         # Extract interfaces
         interfaces = _extract_subsections(content, "Interfaces and Protocols:")
@@ -156,7 +155,7 @@ def parse_stride_component_description(text: str) -> StrideComponentDescription 
         data_handled = _extract_subsections(content, "Data Handled:")
 
         # Extract trust level
-        trust_level_section = _extract_xml_section(content, "trust_level") or content
+        _trust_level_section = _extract_xml_section(content, "trust_level") or content
         trust_level = {}
         # Extract inline key-values for trust level
         internal_external = _extract_key_value(content, "Internal/External:")

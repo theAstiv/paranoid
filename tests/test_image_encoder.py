@@ -87,7 +87,7 @@ def test_validate_diagram_file_image_too_large(tmp_path):
     # Create 6MB file (exceeds 5MB limit)
     large_png.write_bytes(b"\x89PNG" + b"x" * (6 * 1024 * 1024))
 
-    with pytest.raises(DiagramValidationError, match="Image too large.*6.0MB"):
+    with pytest.raises(DiagramValidationError, match=r"Image too large.*6\.0MB"):
         validate_diagram_file(large_png)
 
 
@@ -98,7 +98,7 @@ def test_validate_diagram_file_mermaid_too_large(tmp_path):
     # Each line is ~8 bytes, so 13,500 * 8 = 108,000 bytes
     large_mmd.write_text("graph TD\n" + "  A-->B\n" * 13_500)
 
-    with pytest.raises(DiagramValidationError, match="Mermaid file too large.*10[0-9]KB"):
+    with pytest.raises(DiagramValidationError, match=r"Mermaid file too large.*10[0-9]KB"):
         validate_diagram_file(large_mmd)
 
 

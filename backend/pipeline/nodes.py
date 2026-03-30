@@ -832,10 +832,7 @@ async def gap_analysis(
     )
 
     # Select prompt based on framework
-    if framework == Framework.MAESTRO:
-        system_prompt = maestro_gap_prompt()
-    else:
-        system_prompt = stride_gap_prompt()
+    system_prompt = maestro_gap_prompt() if framework == Framework.MAESTRO else stride_gap_prompt()
 
     # Build prompt
     prompt_parts = []

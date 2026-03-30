@@ -75,7 +75,7 @@ class TestParseStructuredInput:
             "<description>Handles authentication</description>\n"
             "</component_description>\n"
         )
-        component, assumptions, plain = nodes._parse_structured_input(
+        _component, _assumptions, plain = nodes._parse_structured_input(
             stride_input, Framework.STRIDE
         )
         # Structured input detected — component should be parsed (or None if tags incomplete)
