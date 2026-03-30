@@ -86,9 +86,7 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
         rule = {
             "id": f"{framework.lower()}/{_rule_id(category)}",
             "name": category,
-            "shortDescription": {
-                "text": metadata.get("short", f"{category} threat identified")
-            },
+            "shortDescription": {"text": metadata.get("short", f"{category} threat identified")},
             "fullDescription": {
                 "text": metadata.get(
                     "full",
@@ -115,9 +113,7 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
     return rules
 
 
-def _generate_results(
-    threats: ThreatsList, source_file: str | None
-) -> list[dict[str, Any]]:
+def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dict[str, Any]]:
     """Convert threats to SARIF results.
 
     Each threat becomes a SARIF result with severity, location, and fixes.

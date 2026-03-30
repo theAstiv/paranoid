@@ -37,7 +37,9 @@ def _make_threat(
     )
 
 
-def _make_dread(damage: int = 5, repro: int = 5, exploit: int = 5, users: int = 5, discover: int = 5) -> DreadScore:
+def _make_dread(
+    damage: int = 5, repro: int = 5, exploit: int = 5, users: int = 5, discover: int = 5
+) -> DreadScore:
     """Helper to create DreadScore instances."""
     return DreadScore(
         damage=damage,
@@ -114,18 +116,21 @@ def _mock_embed(text: str) -> list[float]:
     """Mock embedding that returns a deterministic vector based on text content."""
     # Simple hash-based mock: similar texts get similar vectors
     import hashlib
+
     h = hashlib.md5(text.encode()).hexdigest()
     return [int(c, 16) / 15.0 for c in h]
 
 
 def _mock_embed_with_similarity(similarity_map: dict[str, list[float]]):
     """Return a mock embed function that maps specific texts to specific vectors."""
+
     def embed(text: str) -> list[float]:
         for key, vec in similarity_map.items():
             if key in text:
                 return vec
         # Default: unique vector
         return _mock_embed(text)
+
     return embed
 
 

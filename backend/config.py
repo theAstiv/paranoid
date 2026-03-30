@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     db_path: str = "./data/paranoid.db"
 
     # MCP settings
-    context_link_binary: str = ""  # Empty = auto-detect; set CONTEXT_LINK_BINARY env var to override
+    context_link_binary: str = (
+        ""  # Empty = auto-detect; set CONTEXT_LINK_BINARY env var to override
+    )
 
     # Server settings
     host: str = "0.0.0.0"

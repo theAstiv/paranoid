@@ -132,7 +132,10 @@ def _get_config_supplement(
     for config_key, field_name in field_map.items():
         if config_key not in config:
             continue
-        if base_settings is None or getattr(base_settings, field_name) == defaults[field_name].default:
+        if (
+            base_settings is None
+            or getattr(base_settings, field_name) == defaults[field_name].default
+        ):
             overrides[field_name] = config[config_key]
 
     # Provider-specific API keys — only supplement if missing (empty string)
@@ -148,7 +151,10 @@ def _get_config_supplement(
         if base_settings is None or not base_settings.openai_api_key:
             overrides["openai_api_key"] = provider_config["api_key"]
     elif provider == "ollama" and provider_config.get("base_url"):
-        if base_settings is None or base_settings.ollama_base_url == defaults["ollama_base_url"].default:
+        if (
+            base_settings is None
+            or base_settings.ollama_base_url == defaults["ollama_base_url"].default
+        ):
             overrides["ollama_base_url"] = provider_config["base_url"]
 
     return overrides
@@ -368,7 +374,9 @@ def run(
 
         # Override framework if specified
         if framework is not None:
-            detected_framework = Framework.STRIDE if framework.upper() == "STRIDE" else Framework.MAESTRO
+            detected_framework = (
+                Framework.STRIDE if framework.upper() == "STRIDE" else Framework.MAESTRO
+            )
 
         # Parse structured input if present
         description, assumptions = parse_structured_input(content)
@@ -527,7 +535,9 @@ async def _run_pipeline_async(
             diagram_data = await load_diagram_file(diagram_path)
             if not quiet:
                 diagram_type = diagram_data.format.value.upper()
-                click.secho(f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green")
+                click.secho(
+                    f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green"
+                )
         except InputFileError as e:
             raise CLIError(f"Diagram loading failed: {e}")
 
@@ -653,9 +663,7 @@ async def _run_pipeline_async(
                     output_file_str = str(output_path)
                 else:
                     click.echo()
-                    click.secho(
-                        "⚠ Warning: No threats to export to SARIF", fg="yellow"
-                    )
+                    click.secho("⚠ Warning: No threats to export to SARIF", fg="yellow")
                     click.echo()
             elif json_writer:
                 # JSON export

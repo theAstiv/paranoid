@@ -91,20 +91,24 @@ class AnthropicProvider:
             # Add images first (recommended by Anthropic docs)
             if images:
                 for img in images:
-                    content.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": img.media_type,
-                            "data": img.data,
+                    content.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.media_type,
+                                "data": img.data,
+                            },
                         }
-                    })
+                    )
 
             # Add text prompt
-            content.append({
-                "type": "text",
-                "text": prompt,
-            })
+            content.append(
+                {
+                    "type": "text",
+                    "text": prompt,
+                }
+            )
 
             # Call Anthropic API in thread pool (sync SDK)
             response = await run_sync_in_executor(

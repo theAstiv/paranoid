@@ -73,15 +73,13 @@ async def test_runner_three_iterations():
 
     # Should have gap analysis events for iterations 1 and 2
     gap_events = [
-        e for e in events
-        if e.step == PipelineStep.GAP_ANALYSIS and e.status == "completed"
+        e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "completed"
     ]
     assert len(gap_events) == 2
 
     # Should have threat generation events for all 3 iterations
     threat_events = [
-        e for e in events
-        if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
+        e for e in events if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
     ]
     assert len(threat_events) == 3
 
@@ -123,15 +121,13 @@ async def test_runner_dual_framework():
     # In dual mode, should see multiple GENERATE_THREATS completed events
     # (STRIDE + MAESTRO)
     threat_completed = [
-        e for e in events
-        if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
+        e for e in events if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
     ]
     assert len(threat_completed) >= 2  # At least STRIDE + MAESTRO
 
     # Check that we got a "COMBINED" info event or dedup event
     threat_info = [
-        e for e in events
-        if e.step == PipelineStep.GENERATE_THREATS and e.status == "info"
+        e for e in events if e.step == PipelineStep.GENERATE_THREATS and e.status == "info"
     ]
     assert len(threat_info) > 0
 
@@ -149,8 +145,7 @@ async def test_runner_emits_threat_count_in_events():
     events = await _collect_events(runner, "A web app", Framework.STRIDE)
 
     threat_completed = [
-        e for e in events
-        if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
+        e for e in events if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
     ]
     assert len(threat_completed) > 0
     for e in threat_completed:

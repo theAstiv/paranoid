@@ -70,16 +70,12 @@ async def get_threat_model(db_path: str, model_id: str) -> dict[str, Any] | None
     """Get a threat model by ID."""
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM threat_models WHERE id = ?", (model_id,)
-        ) as cursor:
+        async with db.execute("SELECT * FROM threat_models WHERE id = ?", (model_id,)) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
 
-async def update_threat_model_status(
-    db_path: str, model_id: str, status: str
-) -> None:
+async def update_threat_model_status(db_path: str, model_id: str, status: str) -> None:
     """Update threat model status."""
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA foreign_keys = ON;")
@@ -224,9 +220,7 @@ async def get_threat(db_path: str, threat_id: str) -> dict[str, Any] | None:
     """Get a threat by ID."""
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM threats WHERE id = ?", (threat_id,)
-        ) as cursor:
+        async with db.execute("SELECT * FROM threats WHERE id = ?", (threat_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 threat = dict(row)
@@ -259,9 +253,7 @@ async def list_threats(
             return threats
 
 
-async def update_threat_status(
-    db_path: str, threat_id: str, status: str
-) -> None:
+async def update_threat_status(db_path: str, threat_id: str, status: str) -> None:
     """Update threat status (pending/approved/rejected)."""
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA foreign_keys = ON;")
@@ -606,8 +598,10 @@ async def create_pipeline_run(
 
 async def get_pipeline_stats(db_path: str, model_id: str) -> dict[str, Any]:
     """Get pipeline execution statistics for a model."""
-    async with aiosqlite.connect(db_path) as db, db.execute(
-        """
+    async with (
+        aiosqlite.connect(db_path) as db,
+        db.execute(
+            """
             SELECT
                 COUNT(*) as total_steps,
                 SUM(duration_ms) as total_duration_ms,
@@ -616,8 +610,9 @@ async def get_pipeline_stats(db_path: str, model_id: str) -> dict[str, Any]:
             FROM pipeline_runs
             WHERE model_id = ?
             """,
-        (model_id,),
-    ) as cursor:
+            (model_id,),
+        ) as cursor,
+    ):
         row = await cursor.fetchone()
         if row:
             return {

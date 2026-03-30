@@ -86,10 +86,12 @@ async def import_stride_patterns(db_path: str) -> int:
             )
 
             # Prepare for vector insertion
-            threat_vectors.append({
-                "id": threat_id,
-                "text": f"{pattern['name']} {pattern['description']}",
-            })
+            threat_vectors.append(
+                {
+                    "id": threat_id,
+                    "text": f"{pattern['name']} {pattern['description']}",
+                }
+            )
 
             count += 1
         except Exception as e:
@@ -146,10 +148,12 @@ async def import_maestro_patterns(db_path: str) -> int:
                 iteration_number=0,
             )
 
-            threat_vectors.append({
-                "id": threat_id,
-                "text": f"{pattern['name']} {pattern['description']}",
-            })
+            threat_vectors.append(
+                {
+                    "id": threat_id,
+                    "text": f"{pattern['name']} {pattern['description']}",
+                }
+            )
 
             count += 1
         except Exception as e:
@@ -206,10 +210,12 @@ async def import_owasp_patterns(db_path: str) -> int:
                 iteration_number=0,
             )
 
-            threat_vectors.append({
-                "id": threat_id,
-                "text": f"{pattern['name']} {pattern['description']}",
-            })
+            threat_vectors.append(
+                {
+                    "id": threat_id,
+                    "text": f"{pattern['name']} {pattern['description']}",
+                }
+            )
 
             count += 1
         except Exception as e:
@@ -245,9 +251,7 @@ async def _cleanup_seed_data(db_path: str) -> None:
         )
         count = (await cursor.fetchone())[0]
 
-        await db.execute(
-            "DELETE FROM threat_models WHERE provider = ?", ("seed",)
-        )
+        await db.execute("DELETE FROM threat_models WHERE provider = ?", ("seed",))
 
         # Clean orphaned seed vectors from threat_metadata
         await db.execute("DELETE FROM threat_metadata WHERE source = ?", ("seed",))
@@ -318,9 +322,7 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
     results["total"] = sum(results.values())
 
     if results["total"] < expected:
-        logger.warning(
-            f"Seed load incomplete: {results['total']}/{expected} patterns imported"
-        )
+        logger.warning(f"Seed load incomplete: {results['total']}/{expected} patterns imported")
     else:
         logger.info(f"Loaded {results['total']} total seed patterns")
 

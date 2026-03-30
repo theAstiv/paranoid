@@ -126,8 +126,7 @@ def init(force: bool) -> None:
             model = click.prompt(
                 "Model name",
                 type=str,
-                default=config["providers"]["anthropic"].get("model")
-                or DEFAULT_ANTHROPIC_MODEL,
+                default=config["providers"]["anthropic"].get("model") or DEFAULT_ANTHROPIC_MODEL,
             )
             config["providers"]["anthropic"]["model"] = model
             config["default_model"] = model
@@ -148,8 +147,7 @@ def init(force: bool) -> None:
             model = click.prompt(
                 "Model name",
                 type=str,
-                default=config["providers"]["openai"].get("model")
-                or DEFAULT_OPENAI_MODEL,
+                default=config["providers"]["openai"].get("model") or DEFAULT_OPENAI_MODEL,
             )
             config["providers"]["openai"]["model"] = model
             config["default_model"] = model
@@ -162,16 +160,14 @@ def init(force: bool) -> None:
             base_url = click.prompt(
                 "Ollama base URL",
                 type=str,
-                default=config["providers"]["ollama"].get("base_url")
-                or "http://localhost:11434",
+                default=config["providers"]["ollama"].get("base_url") or "http://localhost:11434",
             )
             config["providers"]["ollama"]["base_url"] = base_url
 
             model = click.prompt(
                 "Model name",
                 type=str,
-                default=config["providers"]["ollama"].get("model")
-                or DEFAULT_OLLAMA_MODEL,
+                default=config["providers"]["ollama"].get("model") or DEFAULT_OLLAMA_MODEL,
             )
             config["providers"]["ollama"]["model"] = model
             config["default_model"] = model

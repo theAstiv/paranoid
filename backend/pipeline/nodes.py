@@ -99,22 +99,37 @@ def _format_code_summary(code_summary: CodeSummary) -> str:
     sections = []
 
     if code_summary.tech_stack:
-        sections.append("**Technology Stack:**\n" + "\n".join(f"- {item}" for item in code_summary.tech_stack))
+        sections.append(
+            "**Technology Stack:**\n" + "\n".join(f"- {item}" for item in code_summary.tech_stack)
+        )
 
     if code_summary.entry_points:
-        sections.append("**Entry Points:**\n" + "\n".join(f"- {item}" for item in code_summary.entry_points))
+        sections.append(
+            "**Entry Points:**\n" + "\n".join(f"- {item}" for item in code_summary.entry_points)
+        )
 
     if code_summary.auth_patterns:
-        sections.append("**Authentication & Authorization:**\n" + "\n".join(f"- {item}" for item in code_summary.auth_patterns))
+        sections.append(
+            "**Authentication & Authorization:**\n"
+            + "\n".join(f"- {item}" for item in code_summary.auth_patterns)
+        )
 
     if code_summary.data_stores:
-        sections.append("**Data Stores:**\n" + "\n".join(f"- {item}" for item in code_summary.data_stores))
+        sections.append(
+            "**Data Stores:**\n" + "\n".join(f"- {item}" for item in code_summary.data_stores)
+        )
 
     if code_summary.external_dependencies:
-        sections.append("**External Dependencies:**\n" + "\n".join(f"- {item}" for item in code_summary.external_dependencies))
+        sections.append(
+            "**External Dependencies:**\n"
+            + "\n".join(f"- {item}" for item in code_summary.external_dependencies)
+        )
 
     if code_summary.security_observations:
-        sections.append("**Security Observations:**\n" + "\n".join(f"- {item}" for item in code_summary.security_observations))
+        sections.append(
+            "**Security Observations:**\n"
+            + "\n".join(f"- {item}" for item in code_summary.security_observations)
+        )
 
     if code_summary.raw_summary:
         sections.append(f"**Summary:**\n{code_summary.raw_summary}")
@@ -261,15 +276,22 @@ async def summarize(
     if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
         # Add placeholder tag to satisfy prompt instruction enumeration
         # (actual image arrives via vision API content block)
-        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        prompt_parts.insert(
+            0,
+            _build_xml_tag(
+                "architecture_diagram", "[Architecture diagram provided as vision image]"
+            ),
+        )
         user_prompt = "".join(prompt_parts)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        images = [ImageContent(
-            data=diagram_data.base64_data,
-            media_type=diagram_data.media_type,
-            source=diagram_data.source_path,
-        )]
+        images = [
+            ImageContent(
+                data=diagram_data.base64_data,
+                media_type=diagram_data.media_type,
+                source=diagram_data.source_path,
+            )
+        ]
 
     # Generate structured output
     response = await provider.generate_structured(
@@ -390,7 +412,9 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
         if "pickle.load" in content:
             security_observations.append("WARNING: pickle.load() without integrity checks")
         if "shell=true" in content:
-            security_observations.append("WARNING: subprocess with shell=True (command injection risk)")
+            security_observations.append(
+                "WARNING: subprocess with shell=True (command injection risk)"
+            )
         if re.search(r"select.*\+.*\+", content):
             security_observations.append("WARNING: SQL string concatenation detected")
 
@@ -415,8 +439,12 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
         entry_points=entry_points if entry_points else ["No entry points detected"],
         auth_patterns=auth_patterns if auth_patterns else ["No auth patterns detected"],
         data_stores=data_stores if data_stores else ["No data stores detected"],
-        external_dependencies=external_dependencies if external_dependencies else ["No external dependencies detected"],
-        security_observations=security_observations if security_observations else ["No security issues detected in automated scan"],
+        external_dependencies=external_dependencies
+        if external_dependencies
+        else ["No external dependencies detected"],
+        security_observations=security_observations
+        if security_observations
+        else ["No security issues detected in automated scan"],
         raw_summary=raw_summary,
     )
 
@@ -529,15 +557,22 @@ async def extract_assets(
     if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
         # Add placeholder tag to satisfy prompt instruction enumeration
         # (actual image arrives via vision API content block)
-        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        prompt_parts.insert(
+            0,
+            _build_xml_tag(
+                "architecture_diagram", "[Architecture diagram provided as vision image]"
+            ),
+        )
         user_prompt = "".join(prompt_parts)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        images = [ImageContent(
-            data=diagram_data.base64_data,
-            media_type=diagram_data.media_type,
-            source=diagram_data.source_path,
-        )]
+        images = [
+            ImageContent(
+                data=diagram_data.base64_data,
+                media_type=diagram_data.media_type,
+                source=diagram_data.source_path,
+            )
+        ]
 
     # Generate structured output
     response = await provider.generate_structured(
@@ -579,6 +614,7 @@ async def extract_flows(
     """
     # Parse structured input if present (use STRIDE framework for flow extraction)
     from backend.models.enums import Framework
+
     component_desc, structured_assumptions, plain_description = _parse_structured_input(
         description, Framework.STRIDE
     )
@@ -625,15 +661,22 @@ async def extract_flows(
     if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
         # Add placeholder tag to satisfy prompt instruction enumeration
         # (actual image arrives via vision API content block)
-        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        prompt_parts.insert(
+            0,
+            _build_xml_tag(
+                "architecture_diagram", "[Architecture diagram provided as vision image]"
+            ),
+        )
         user_prompt = "".join(prompt_parts)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        images = [ImageContent(
-            data=diagram_data.base64_data,
-            media_type=diagram_data.media_type,
-            source=diagram_data.source_path,
-        )]
+        images = [
+            ImageContent(
+                data=diagram_data.base64_data,
+                media_type=diagram_data.media_type,
+                source=diagram_data.source_path,
+            )
+        ]
 
     # Generate structured output
     response = await provider.generate_structured(
@@ -772,15 +815,22 @@ async def generate_threats(
     if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
         # Add placeholder tag to satisfy prompt instruction enumeration
         # (actual image arrives via vision API content block)
-        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        prompt_parts.insert(
+            0,
+            _build_xml_tag(
+                "architecture_diagram", "[Architecture diagram provided as vision image]"
+            ),
+        )
         user_prompt = "".join(prompt_parts)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        images = [ImageContent(
-            data=diagram_data.base64_data,
-            media_type=diagram_data.media_type,
-            source=diagram_data.source_path,
-        )]
+        images = [
+            ImageContent(
+                data=diagram_data.base64_data,
+                media_type=diagram_data.media_type,
+                source=diagram_data.source_path,
+            )
+        ]
 
     # Generate structured output
     response = await provider.generate_structured(
@@ -899,15 +949,22 @@ async def gap_analysis(
     if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
         # Add placeholder tag to satisfy prompt instruction enumeration
         # (actual image arrives via vision API content block)
-        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        prompt_parts.insert(
+            0,
+            _build_xml_tag(
+                "architecture_diagram", "[Architecture diagram provided as vision image]"
+            ),
+        )
         user_prompt = "".join(prompt_parts)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        images = [ImageContent(
-            data=diagram_data.base64_data,
-            media_type=diagram_data.media_type,
-            source=diagram_data.source_path,
-        )]
+        images = [
+            ImageContent(
+                data=diagram_data.base64_data,
+                media_type=diagram_data.media_type,
+                source=diagram_data.source_path,
+            )
+        ]
 
     # Generate structured output
     response = await provider.generate_structured(

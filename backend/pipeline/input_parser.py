@@ -55,7 +55,7 @@ def _extract_bulleted_list(text: str, header: str) -> list[str]:
         return items
 
     # Extract text after header until next header or end
-    remaining_text = text[match.end():]
+    remaining_text = text[match.end() :]
     lines = remaining_text.split("\n")
 
     for raw_line in lines:
@@ -103,14 +103,18 @@ def _extract_subsections(text: str, header: str) -> dict[str, list[str]]:
     if not match:
         return result
 
-    remaining_text = text[match.end():]
+    remaining_text = text[match.end() :]
     lines = remaining_text.split("\n")
 
     current_subsection = None
     for line in lines:
         line_stripped = line.strip()
         # Stop at next top-level header
-        if line_stripped.startswith("**") and line_stripped.endswith("**") and line.startswith("**"):
+        if (
+            line_stripped.startswith("**")
+            and line_stripped.endswith("**")
+            and line.startswith("**")
+        ):
             break
 
         # Check for subsection headers (indented or prefixed with dash)

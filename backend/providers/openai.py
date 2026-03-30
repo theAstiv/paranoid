@@ -97,18 +97,20 @@ class OpenAIProvider:
             # Add images as data URIs
             if images:
                 for img in images:
-                    user_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{img.media_type};base64,{img.data}"
+                    user_content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{img.media_type};base64,{img.data}"},
                         }
-                    })
+                    )
 
             # Add text prompt
-            user_content.append({
-                "type": "text",
-                "text": prompt,
-            })
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": prompt,
+                }
+            )
 
             # Call OpenAI API with JSON mode (async)
             response = await run_sync_in_executor(

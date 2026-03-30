@@ -160,7 +160,9 @@ async def test_openai_vision_with_image():
 
     # Mock the OpenAI client
     mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(content='{"message": "Diagram analyzed"}'))]
+    mock_response.choices = [
+        MagicMock(message=MagicMock(content='{"message": "Diagram analyzed"}'))
+    ]
 
     async def mock_executor(func, *args, **kwargs):
         """Mock run_sync_in_executor that calls the function to capture args."""

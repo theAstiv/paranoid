@@ -86,9 +86,7 @@ def test_run_with_code_successful_extraction(runner, sample_input_file, sample_c
     """Test successful code extraction flow."""
     mock_context = CodeContext(
         repository=str(sample_code_dir),
-        files=[
-            CodeFile(path="test.py", content="def test(): pass", language="python")
-        ],
+        files=[CodeFile(path="test.py", content="def test(): pass", language="python")],
     )
 
     async def mock_extract(*args, **kwargs):

@@ -524,13 +524,13 @@ def make_test_suite() -> TestSuite:
             "Feature: SQL Injection Prevention in Document Search\n"
             "\n"
             "  Scenario: Search input with SQL injection attempt is rejected\n"
-            '    Given a user is authenticated\n'
+            "    Given a user is authenticated\n"
             '    When the user searches for "documents; DROP TABLE users;--"\n'
             "    Then the API returns a 400 Bad Request\n"
             "    And no SQL is executed beyond the parameterized query\n"
             "\n"
             "  Scenario: Legitimate search returns expected results\n"
-            '    Given a user is authenticated\n'
+            "    Given a user is authenticated\n"
             '    And a document titled "Q4 Report" exists\n'
             '    When the user searches for "Q4 Report"\n'
             "    Then the API returns the matching document\n"

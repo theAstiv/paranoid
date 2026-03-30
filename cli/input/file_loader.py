@@ -48,8 +48,7 @@ def load_input_file(file_path: Path) -> str:
     # Check file is readable
     if not file_path.is_file():
         raise InputFileError(
-            f"Path is not a file: {file_path}\n\n"
-            f"Please provide a path to a .txt or .md file."
+            f"Path is not a file: {file_path}\n\nPlease provide a path to a .txt or .md file."
         )
 
     # Check file size
@@ -76,9 +75,7 @@ def load_input_file(file_path: Path) -> str:
             f"Error: {e}"
         ) from e
     except Exception as e:
-        raise InputFileError(
-            f"Failed to read file: {file_path}\n\nError: {e}"
-        ) from e
+        raise InputFileError(f"Failed to read file: {file_path}\n\nError: {e}") from e
 
     # Validate content is not just whitespace
     if not content.strip():

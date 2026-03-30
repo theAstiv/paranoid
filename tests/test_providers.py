@@ -104,9 +104,7 @@ async def test_anthropic_auth_error():
         mock_response = MagicMock()
         mock_response.status_code = 401
         mock_error = AuthenticationError(
-            message="Invalid API key",
-            response=mock_response,
-            body={"error": "Unauthorized"}
+            message="Invalid API key", response=mock_response, body={"error": "Unauthorized"}
         )
 
         mock_client = MagicMock()
@@ -131,7 +129,7 @@ async def test_anthropic_rate_limit_error():
         mock_error = RateLimitError(
             message="Rate limit exceeded",
             response=mock_response,
-            body={"error": "Rate limit exceeded"}
+            body={"error": "Rate limit exceeded"},
         )
 
         mock_client = MagicMock()
@@ -219,9 +217,7 @@ async def test_openai_auth_error():
         mock_response = MagicMock()
         mock_response.status_code = 401
         mock_error = AuthenticationError(
-            message="Invalid API key",
-            response=mock_response,
-            body={"error": "Unauthorized"}
+            message="Invalid API key", response=mock_response, body={"error": "Unauthorized"}
         )
 
         mock_client = MagicMock()

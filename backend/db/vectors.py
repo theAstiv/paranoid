@@ -256,14 +256,16 @@ async def search_similar_threats(
             rows = await cursor.fetchall()
             results = []
             for row in rows:
-                results.append({
-                    "threat_id": row["threat_id"],
-                    "source": row["source"],
-                    "name": row["name"],
-                    "description": row["description"],
-                    "stride_category": row["stride_category"],
-                    "similarity": row["similarity"],
-                })
+                results.append(
+                    {
+                        "threat_id": row["threat_id"],
+                        "source": row["source"],
+                        "name": row["name"],
+                        "description": row["description"],
+                        "stride_category": row["stride_category"],
+                        "similarity": row["similarity"],
+                    }
+                )
             return results
 
 

@@ -251,7 +251,9 @@ class MaestroComponentDescription(BaseModel):
     ]
     technology_stack: Annotated[
         dict[str, list[str]],
-        Field(description="Orchestration framework, languages, infrastructure, supporting services"),
+        Field(
+            description="Orchestration framework, languages, infrastructure, supporting services"
+        ),
     ]
     assets: Annotated[
         dict[str, list[str]],
@@ -359,7 +361,9 @@ class ThreatModelConfig(BaseModel):
     ] = Framework.STRIDE
     has_ai_components: Annotated[
         bool,
-        Field(description="Whether the system has AI/ML components (triggers MAESTRO alongside STRIDE)"),
+        Field(
+            description="Whether the system has AI/ML components (triggers MAESTRO alongside STRIDE)"
+        ),
     ] = False
     provider: Annotated[Provider, Field(description="LLM provider")]
     model: Annotated[str, Field(description="Specific model identifier")]

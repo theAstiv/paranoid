@@ -100,10 +100,22 @@ async def test_extract_context_respects_byte_budget():
     )
 
     # Mock the wrapper methods at the instance level
-    extractor.search_symbols = AsyncMock(return_value=[
-        {"symbol_name": "func1", "file_path": "file1.py", "kind": "function", "language": "python"},
-        {"symbol_name": "func2", "file_path": "file2.py", "kind": "function", "language": "python"},
-    ])
+    extractor.search_symbols = AsyncMock(
+        return_value=[
+            {
+                "symbol_name": "func1",
+                "file_path": "file1.py",
+                "kind": "function",
+                "language": "python",
+            },
+            {
+                "symbol_name": "func2",
+                "file_path": "file2.py",
+                "kind": "function",
+                "language": "python",
+            },
+        ]
+    )
 
     # First code fetch consumes most of budget (48KB), second would exceed it
     call_count = 0
@@ -118,10 +130,12 @@ async def test_extract_context_respects_byte_budget():
         return {"code": "y" * 5_000, "symbol": {"name": "func2"}}
 
     extractor.get_code_by_symbol = mock_get_code
-    extractor.get_file_skeleton = AsyncMock(return_value={
-        "file_path": "file2.py",
-        "symbols": [{"name": "func2", "signature": "def func2(): pass"}]
-    })
+    extractor.get_file_skeleton = AsyncMock(
+        return_value={
+            "file_path": "file2.py",
+            "symbols": [{"name": "func2", "signature": "def func2(): pass"}],
+        }
+    )
 
     # Call extract_context with 50KB budget
     result = await extractor.extract_context("Test system", max_bytes=50_000)

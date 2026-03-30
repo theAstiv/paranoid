@@ -71,9 +71,7 @@ def load_config() -> dict[str, Any]:
         ) from e
     except Exception as e:
         raise ConfigurationError(
-            f"Failed to load configuration file\\n\\n"
-            f"Config file: {CONFIG_FILE}\\n"
-            f"Error: {e}"
+            f"Failed to load configuration file\\n\\nConfig file: {CONFIG_FILE}\\nError: {e}"
         ) from e
 
 
@@ -104,9 +102,7 @@ def save_config(config: dict[str, Any]) -> None:
 
     except Exception as e:
         raise ConfigurationError(
-            f"Failed to save configuration file\\n\\n"
-            f"Config file: {CONFIG_FILE}\\n"
-            f"Error: {e}"
+            f"Failed to save configuration file\\n\\nConfig file: {CONFIG_FILE}\\nError: {e}"
         ) from e
 
 

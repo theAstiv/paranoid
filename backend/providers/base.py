@@ -189,7 +189,7 @@ async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,  # TODO: Use named executor with explicit pool size for API server phase
-        functools.partial(func, *args, **kwargs)
+        functools.partial(func, *args, **kwargs),
     )
 
 
@@ -234,7 +234,4 @@ def create_provider(
 
         return OllamaProvider(model=model, base_url=base_url, **kwargs)
 
-    raise ValueError(
-        f"Unsupported provider: {provider_type}. "
-        f"Supported: anthropic, openai, ollama"
-    )
+    raise ValueError(f"Unsupported provider: {provider_type}. Supported: anthropic, openai, ollama")

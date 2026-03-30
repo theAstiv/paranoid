@@ -56,9 +56,7 @@ class SummaryState(BaseModel):
 
     summary: Annotated[
         str,
-        Field(
-            description=f"A short headline summary of max {SUMMARY_MAX_WORDS} words"
-        ),
+        Field(description=f"A short headline summary of max {SUMMARY_MAX_WORDS} words"),
     ]
 
 
@@ -70,9 +68,7 @@ class Asset(BaseModel):
         Field(description="Type: Asset or Entity"),
     ]
     name: Annotated[str, Field(description="The name of the asset")]
-    description: Annotated[
-        str, Field(description="The description of the asset or entity")
-    ]
+    description: Annotated[str, Field(description="The description of the asset or entity")]
 
 
 class AssetsList(BaseModel):
@@ -84,15 +80,9 @@ class AssetsList(BaseModel):
 class DataFlow(BaseModel):
     """Model representing data flow between entities in a system architecture."""
 
-    flow_description: Annotated[
-        str, Field(description="The description of the data flow")
-    ]
-    source_entity: Annotated[
-        str, Field(description="The source entity/asset of the data flow")
-    ]
-    target_entity: Annotated[
-        str, Field(description="The target entity/asset of the data flow")
-    ]
+    flow_description: Annotated[str, Field(description="The description of the data flow")]
+    source_entity: Annotated[str, Field(description="The source entity/asset of the data flow")]
+    target_entity: Annotated[str, Field(description="The target entity/asset of the data flow")]
 
 
 class TrustBoundary(BaseModel):
@@ -111,9 +101,7 @@ class ThreatSource(BaseModel):
     """Model representing sources of threats in the system."""
 
     category: Annotated[str, Field(description="The category of the threat source")]
-    description: Annotated[
-        str, Field(description="The description of the threat source")
-    ]
+    description: Annotated[str, Field(description="The description of the threat source")]
     example: Annotated[str, Field(description="An example of the threat source")]
 
 
@@ -124,9 +112,7 @@ class FlowsList(BaseModel):
     trust_boundaries: Annotated[
         list[TrustBoundary], Field(description="The list of trust boundaries")
     ]
-    threat_sources: Annotated[
-        list[ThreatSource], Field(description="The list of threat actors")
-    ]
+    threat_sources: Annotated[list[ThreatSource], Field(description="The list of threat actors")]
 
 
 class Threat(BaseModel):

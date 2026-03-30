@@ -222,9 +222,7 @@ class MCPCodeExtractor:
             logger.warning(f"Symbol search failed: {e}")
             return []
 
-    async def get_code_by_symbol(
-        self, symbol_name: str, depth: int = 1
-    ) -> dict[str, Any] | None:
+    async def get_code_by_symbol(self, symbol_name: str, depth: int = 1) -> dict[str, Any] | None:
         """Retrieve code for a symbol with dependencies.
 
         Args:
@@ -263,9 +261,7 @@ class MCPCodeExtractor:
             logger.warning(f"get_file_skeleton({file_path}) failed: {e}")
             return None
 
-    async def extract_context(
-        self, description: str, max_bytes: int = 50_000
-    ) -> CodeContext:
+    async def extract_context(self, description: str, max_bytes: int = 50_000) -> CodeContext:
         """Extract relevant code context using three-tier funnel.
 
         Strategy:
@@ -364,9 +360,7 @@ class MCPCodeExtractor:
                 seen_paths.add(file_path)
                 total_bytes += content_bytes
 
-        logger.info(
-            f"Extracted {len(files)} files ({total_bytes} bytes) from {self.project_root}"
-        )
+        logger.info(f"Extracted {len(files)} files ({total_bytes} bytes) from {self.project_root}")
 
         return CodeContext(
             repository=str(self.project_root),

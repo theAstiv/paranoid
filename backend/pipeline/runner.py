@@ -324,7 +324,11 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(stride_threats.threats)} STRIDE threats",
                         iteration=iteration,
-                        data={"threat_count": len(stride_threats.threats), "framework": "STRIDE", "threats": stride_threats},
+                        data={
+                            "threat_count": len(stride_threats.threats),
+                            "framework": "STRIDE",
+                            "threats": stride_threats,
+                        },
                     )
 
                     # Generate MAESTRO threats for AI/ML components
@@ -356,13 +360,18 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(maestro_threats.threats)} MAESTRO threats",
                         iteration=iteration,
-                        data={"threat_count": len(maestro_threats.threats), "framework": "MAESTRO", "threats": maestro_threats},
+                        data={
+                            "threat_count": len(maestro_threats.threats),
+                            "framework": "MAESTRO",
+                            "threats": maestro_threats,
+                        },
                     )
 
                     # Merge and deduplicate across frameworks
                     combined = stride_threats + maestro_threats
                     dedup_result = deduplicate_threats(
-                        combined, threshold=self.config.similarity_threshold,
+                        combined,
+                        threshold=self.config.similarity_threshold,
                     )
                     current_threats = dedup_result.threats
 
@@ -380,7 +389,11 @@ class PipelineRunner:
                         status="info",
                         message=f"Combined {len(current_threats.threats)} new threats (STRIDE + MAESTRO)",
                         iteration=iteration,
-                        data={"threat_count": len(current_threats.threats), "threats": current_threats, "framework": "COMBINED"},
+                        data={
+                            "threat_count": len(current_threats.threats),
+                            "threats": current_threats,
+                            "framework": "COMBINED",
+                        },
                     )
                 else:
                     # Single framework execution
@@ -415,7 +428,10 @@ class PipelineRunner:
                         status="completed",
                         message=f"Generated {len(current_threats.threats)} new threats",
                         iteration=iteration,
-                        data={"threat_count": len(current_threats.threats), "threats": current_threats},
+                        data={
+                            "threat_count": len(current_threats.threats),
+                            "threats": current_threats,
+                        },
                     )
 
                 # Deduplicate against cumulative threats from prior iterations

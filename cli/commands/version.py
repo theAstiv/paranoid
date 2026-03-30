@@ -32,7 +32,9 @@ def version() -> None:
             pkg_version = "dev (not installed)"
 
         # Get Python version
-        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        python_version = (
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        )
 
         # Get key dependency versions
         dependencies = {}

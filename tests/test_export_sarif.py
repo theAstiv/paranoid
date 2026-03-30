@@ -63,6 +63,7 @@ def test_sarif_results_match_threats(sarif_output):
 
 def test_sarif_severity_mapping():
     """Test severity mapping from likelihood strings."""
+
     # Create mock threat-like objects for _severity_to_level
     class MockThreat:
         def __init__(self, likelihood, dread=None):

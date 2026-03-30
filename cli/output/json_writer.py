@@ -127,7 +127,9 @@ class JSONWriter:
             simplified_threats = [
                 {
                     "name": threat.name,
-                    "category": threat.stride_category if hasattr(threat, "stride_category") else None,
+                    "category": threat.stride_category
+                    if hasattr(threat, "stride_category")
+                    else None,
                     "target": threat.target,
                     "impact": threat.impact,
                     "likelihood": threat.likelihood,
@@ -164,9 +166,7 @@ class JSONWriter:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             raise OutputWriteError(
-                f"Failed to write JSON output\n\n"
-                f"Output path: {output_path}\n"
-                f"Error: {e}"
+                f"Failed to write JSON output\n\nOutput path: {output_path}\nError: {e}"
             ) from e
 
     def export_full(self, output_path: Path) -> None:
@@ -207,7 +207,9 @@ class JSONWriter:
             # Event history
             "events": [
                 {
-                    "step": event.step.value if isinstance(event.step, PipelineStep) else event.step,
+                    "step": event.step.value
+                    if isinstance(event.step, PipelineStep)
+                    else event.step,
                     "status": event.status,
                     "message": event.message,
                     "iteration": event.iteration,
@@ -224,9 +226,7 @@ class JSONWriter:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             raise OutputWriteError(
-                f"Failed to write JSON output\n\n"
-                f"Output path: {output_path}\n"
-                f"Error: {e}"
+                f"Failed to write JSON output\n\nOutput path: {output_path}\nError: {e}"
             ) from e
 
 

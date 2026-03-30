@@ -66,15 +66,9 @@ async def test_update_threat_model(test_db):
 async def test_list_threat_models(test_db):
     """Test listing threat models."""
     # Create multiple models
-    await crud.create_threat_model(
-        test_db, "Model 1", "Desc 1", "anthropic", "claude-sonnet-4"
-    )
-    await crud.create_threat_model(
-        test_db, "Model 2", "Desc 2", "openai", "gpt-4"
-    )
-    await crud.create_threat_model(
-        test_db, "Model 3", "Desc 3", "ollama", "llama3"
-    )
+    await crud.create_threat_model(test_db, "Model 1", "Desc 1", "anthropic", "claude-sonnet-4")
+    await crud.create_threat_model(test_db, "Model 2", "Desc 2", "openai", "gpt-4")
+    await crud.create_threat_model(test_db, "Model 3", "Desc 3", "ollama", "llama3")
 
     # List models
     models = await crud.list_threat_models(test_db)
@@ -221,9 +215,7 @@ async def test_create_and_list_assets(test_db):
     )
 
     # Create assets
-    await crud.create_asset(
-        test_db, model_id, "Asset", "Database", "PostgreSQL database"
-    )
+    await crud.create_asset(test_db, model_id, "Asset", "Database", "PostgreSQL database")
     await crud.create_asset(test_db, model_id, "Entity", "User", "End user")
 
     # List assets
@@ -240,9 +232,7 @@ async def test_update_asset(test_db):
         test_db, "Test Model", "Desc", "anthropic", "claude-sonnet-4"
     )
 
-    asset_id = await crud.create_asset(
-        test_db, model_id, "Asset", "API", "REST API"
-    )
+    asset_id = await crud.create_asset(test_db, model_id, "Asset", "API", "REST API")
 
     # Update asset
     await crud.update_asset(
@@ -275,9 +265,7 @@ async def test_create_and_list_flows(test_db):
         "Client",
         "API Gateway",
     )
-    await crud.create_flow(
-        test_db, model_id, "data_flow", "Database query", "API", "Database"
-    )
+    await crud.create_flow(test_db, model_id, "data_flow", "Database query", "API", "Database")
 
     # List flows
     flows = await crud.list_flows(test_db, model_id)

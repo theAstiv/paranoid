@@ -73,13 +73,15 @@ class MockProvider:
         self.last_prompt = prompt
         self.last_images = images
 
-        self.calls.append({
-            "method": "generate_structured",
-            "response_model": response_model,
-            "temperature": temperature,
-            "prompt_length": len(prompt),
-            "images": images,
-        })
+        self.calls.append(
+            {
+                "method": "generate_structured",
+                "response_model": response_model,
+                "temperature": temperature,
+                "prompt_length": len(prompt),
+                "images": images,
+            }
+        )
 
         if response_model in self.error_types:
             raise ProviderError(
@@ -98,11 +100,13 @@ class MockProvider:
         temperature: float = 0.0,
         max_tokens: int | None = None,
     ) -> str:
-        self.calls.append({
-            "method": "generate",
-            "temperature": temperature,
-            "prompt_length": len(prompt),
-        })
+        self.calls.append(
+            {
+                "method": "generate",
+                "temperature": temperature,
+                "prompt_length": len(prompt),
+            }
+        )
         return "Mock response for testing."
 
     async def __aenter__(self) -> "MockProvider":

@@ -46,9 +46,7 @@ def test_maestro_category_enum():
 
 def test_asset_creation():
     """Test creating an Asset."""
-    asset = Asset(
-        type=AssetType.ASSET, name="Database", description="PostgreSQL database"
-    )
+    asset = Asset(type=AssetType.ASSET, name="Database", description="PostgreSQL database")
     assert asset.name == "Database"
     assert asset.type == AssetType.ASSET
 
@@ -100,9 +98,7 @@ def test_flows_list_creation():
     """Test creating a FlowsList."""
     flows = FlowsList(
         data_flows=[
-            DataFlow(
-                flow_description="Login", source_entity="Client", target_entity="API"
-            )
+            DataFlow(flow_description="Login", source_entity="Client", target_entity="API")
         ],
         trust_boundaries=[
             TrustBoundary(purpose="DMZ", source_entity="Internet", target_entity="DMZ")
