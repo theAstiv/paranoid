@@ -6,6 +6,7 @@ from typing import Type, TypeVar
 from anthropic import Anthropic, APIError, RateLimitError, AuthenticationError
 from pydantic import BaseModel, ValidationError
 
+from backend.models.extended import ImageContent
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -67,8 +68,12 @@ class AnthropicProvider:
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        images: list[ImageContent] | None = None,
     ) -> T:
-        """Generate structured output conforming to a Pydantic model."""
+        """Generate structured output conforming to a Pydantic model.
+
+        Supports vision API for PNG/JPG images via content blocks.
+        """
         try:
             # Get JSON schema from Pydantic model
             schema = response_model.model_json_schema()
@@ -80,6 +85,27 @@ class AnthropicProvider:
                 f"Respond ONLY with the JSON object, no other text."
             )
 
+            # Build message content (images + text)
+            content = []
+
+            # Add images first (recommended by Anthropic docs)
+            if images:
+                for img in images:
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.media_type,
+                            "data": img.data,
+                        }
+                    })
+
+            # Add text prompt
+            content.append({
+                "type": "text",
+                "text": prompt,
+            })
+
             # Call Anthropic API in thread pool (sync SDK)
             response = await run_sync_in_executor(
                 self._client.messages.create,
@@ -87,16 +113,16 @@ class AnthropicProvider:
                 max_tokens=max_tokens or 4096,
                 temperature=temperature,
                 system=system_prompt,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content}],
             )
 
             # Extract and clean text content
-            content = response.content[0].text
-            content = strip_markdown_fences(content)
+            response_text = response.content[0].text
+            response_text = strip_markdown_fences(response_text)
 
             # Parse JSON and validate against Pydantic model
             try:
-                data = json.loads(content)
+                data = json.loads(response_text)
                 return response_model.model_validate(data)
             except (json.JSONDecodeError, ValidationError) as e:
                 raise ProviderError(

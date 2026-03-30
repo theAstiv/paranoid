@@ -1,16 +1,21 @@
 """Ollama LLM provider implementation for local/self-hosted models."""
 
 import json
+import logging
 from typing import Type, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from backend.models.extended import ImageContent
 from backend.providers.base import (
     ProviderError,
     ProviderTimeoutError,
     strip_markdown_fences,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -60,8 +65,20 @@ class OllamaProvider:
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        images: list[ImageContent] | None = None,
     ) -> T:
-        """Generate structured output conforming to a Pydantic model."""
+        """Generate structured output conforming to a Pydantic model.
+
+        Note: Ollama does not support vision for most models. Images are ignored
+        with a warning. Consider using Anthropic or OpenAI for vision-based threat modeling.
+        """
+        # Graceful degradation: log warning if images provided
+        if images:
+            logger.warning(
+                f"Ollama provider (model: {self._model}) does not support vision. "
+                f"Architecture diagram will be ignored. Consider using Anthropic or OpenAI providers."
+            )
+
         try:
             # Get JSON schema from Pydantic model
             schema = response_model.model_json_schema()

@@ -6,6 +6,8 @@ from typing import Any, Callable, Protocol, Type, TypeVar
 
 from pydantic import BaseModel
 
+from backend.models.extended import ImageContent
+
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -26,6 +28,7 @@ class LLMProvider(Protocol):
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        images: list[ImageContent] | None = None,
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
@@ -34,6 +37,7 @@ class LLMProvider(Protocol):
             response_model: Pydantic model class for structured output
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens in response (None = provider default)
+            images: Optional list of images for vision-enabled models (Claude/GPT-4 vision)
 
         Returns:
             Instance of response_model with LLM-generated data

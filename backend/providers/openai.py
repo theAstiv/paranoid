@@ -6,6 +6,7 @@ from typing import Type, TypeVar
 from openai import OpenAI, APIError, RateLimitError, AuthenticationError
 from pydantic import BaseModel, ValidationError
 
+from backend.models.extended import ImageContent
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -70,8 +71,15 @@ class OpenAIProvider:
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        images: list[ImageContent] | None = None,
     ) -> T:
-        """Generate structured output conforming to a Pydantic model."""
+        """Generate structured output conforming to a Pydantic model.
+
+        Supports vision API for PNG/JPG images via image_url content blocks.
+
+        Note: OpenAI JSON mode + vision is only supported on gpt-4o and gpt-4o-mini.
+        Models like gpt-4-vision-preview do not support JSON mode with images.
+        """
         try:
             # Get JSON schema from Pydantic model
             schema = response_model.model_json_schema()
@@ -83,6 +91,25 @@ class OpenAIProvider:
                 f"Respond ONLY with the JSON object."
             )
 
+            # Build user message content (images + text)
+            user_content = []
+
+            # Add images as data URIs
+            if images:
+                for img in images:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{img.media_type};base64,{img.data}"
+                        }
+                    })
+
+            # Add text prompt
+            user_content.append({
+                "type": "text",
+                "text": prompt,
+            })
+
             # Call OpenAI API with JSON mode (async)
             response = await run_sync_in_executor(
                 self._client.chat.completions.create,
@@ -92,7 +119,7 @@ class OpenAIProvider:
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_content},
                 ],
             )
 
