@@ -26,11 +26,11 @@ python scripts/build_test.py
 ### Output
 
 The script creates release artifacts in `dist/`:
-- `paranoid_cli-1.2.0-py3-none-any.whl` - PyPI wheel
-- `paranoid_cli-1.2.0.tar.gz` - PyPI source distribution
-- `paranoid-1.2.0-windows-amd64.exe` - Windows binary (on Windows)
-- `paranoid-1.2.0-linux-x86_64` - Linux binary (on Linux)
-- `paranoid-1.2.0-macos-arm64` - macOS binary (on macOS)
+- `paranoid_cli-1.2.1-py3-none-any.whl` - PyPI wheel
+- `paranoid_cli-1.2.1.tar.gz` - PyPI source distribution
+- `paranoid-1.2.1-windows-amd64.exe` - Windows binary (on Windows)
+- `paranoid-1.2.1-linux-x86_64` - Linux binary (on Linux)
+- `paranoid-1.2.1-macos-arm64` - macOS binary (on macOS)
 
 ## Manual Binary Build
 
@@ -61,19 +61,19 @@ twine upload dist/*
 
 1. **Tag the release:**
    ```bash
-   git tag -a v1.2.0 -m "Release v1.2.0"
-   git push origin v1.2.0
+   git tag -a v1.2.1 -m "Release v1.2.1"
+   git push origin v1.2.1
    ```
 
 2. **Create GitHub Release:**
    - Go to https://github.com/theAstiv/paranoid/releases/new
-   - Select the tag v1.2.0
-   - Title: "v1.2.0"
+   - Select the tag v1.2.1
+   - Title: "v1.2.1"
    - Copy changelog from CHANGELOG.md
    - Attach binaries:
-     - `paranoid-1.2.0-windows-amd64.exe`
-     - `paranoid-1.2.0-linux-x86_64`
-     - `paranoid-1.2.0-macos-arm64`
+     - `paranoid-1.2.1-windows-amd64.exe`
+     - `paranoid-1.2.1-linux-x86_64`
+     - `paranoid-1.2.1-macos-arm64`
    - Click "Publish release"
 
 ## Cross-Platform Builds
@@ -84,19 +84,19 @@ To build binaries for all platforms, you need to run the build on each platform:
 ```bash
 python scripts/build_test.py
 ```
-Produces: `paranoid-1.2.0-windows-amd64.exe`
+Produces: `paranoid-1.2.1-windows-amd64.exe`
 
 ### Linux (GitHub Actions or local):
 ```bash
 python scripts/build_test.py
 ```
-Produces: `paranoid-1.2.0-linux-x86_64`
+Produces: `paranoid-1.2.1-linux-x86_64`
 
 ### macOS (GitHub Actions or local):
 ```bash
 python scripts/build_test.py
 ```
-Produces: `paranoid-1.2.0-macos-arm64` (or `macos-x86_64` on Intel Macs)
+Produces: `paranoid-1.2.1-macos-arm64` (or `macos-x86_64` on Intel Macs)
 
 ## Automated Builds with GitHub Actions
 

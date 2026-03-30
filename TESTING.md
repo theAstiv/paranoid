@@ -163,7 +163,7 @@ Python: [3.12, 3.13]
 ### 3. Release Workflow (`.github/workflows/release.yml`)
 
 **Triggers:**
-- Git tag push: `v*.*.*` (e.g., `v1.2.0`)
+- Git tag push: `v*.*.*` (e.g., `v1.2.1`)
 
 **What it does:**
 - **Build binaries:**
@@ -192,8 +192,8 @@ Python: [3.12, 3.13]
 paranoid-linux-x64
 paranoid-macos-arm64
 paranoid-windows-x64.exe
-paranoid_cli-1.2.0-py3-none-any.whl
-paranoid_cli-1.2.0.tar.gz
+paranoid_cli-1.2.1-py3-none-any.whl
+paranoid_cli-1.2.1.tar.gz
 ```
 
 ## 📊 Test Coverage
