@@ -3,6 +3,7 @@
 Verifies that the --code flag is properly wired and triggers code extraction.
 """
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -44,7 +45,15 @@ def test_run_without_code_flag(runner, sample_input_file):
         mock_pipeline.side_effect = mock_async
 
         with patch("cli.commands.run.asyncio.run") as mock_asyncio:
-            mock_asyncio.side_effect = lambda coro: None
+            # Properly run the coroutine synchronously
+            def run_sync(coro):
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(coro)
+                finally:
+                    loop.close()
+
+            mock_asyncio.side_effect = run_sync
 
             result = runner.invoke(
                 run,
@@ -67,7 +76,15 @@ def test_run_with_code_flag_triggers_extraction(runner, sample_input_file, sampl
             mock_pipeline.side_effect = mock_async
 
             with patch("cli.commands.run.asyncio.run") as mock_asyncio:
-                mock_asyncio.side_effect = lambda coro: None
+                # Properly run the coroutine synchronously
+                def run_sync(coro):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        return loop.run_until_complete(coro)
+                    finally:
+                        loop.close()
+
+                mock_asyncio.side_effect = run_sync
 
                 result = runner.invoke(
                     run,
@@ -120,7 +137,15 @@ def test_run_with_code_successful_extraction(runner, sample_input_file, sample_c
             mock_pipeline_async.side_effect = mock_async
 
             with patch("cli.commands.run.asyncio.run") as mock_asyncio:
-                mock_asyncio.side_effect = lambda coro: None
+                # Properly run the coroutine synchronously
+                def run_sync(coro):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        return loop.run_until_complete(coro)
+                    finally:
+                        loop.close()
+
+                mock_asyncio.side_effect = run_sync
 
                 result = runner.invoke(
                     run,
