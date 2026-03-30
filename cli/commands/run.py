@@ -24,6 +24,7 @@ from backend.providers import (
 from backend.providers.base import LLMProvider
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
+from cli.input.diagram_loader import load_diagram_file
 from cli.input.file_loader import detect_framework_from_input, load_input_file, parse_structured_input
 from cli.output.console import ConsoleRenderer
 from cli.output.json_writer import JSONWriter
@@ -276,6 +277,13 @@ async def _extract_code_context(
     default=None,
     help="Path to code repository for MCP-based code context extraction",
 )
+@click.option(
+    "--diagram",
+    "-d",
+    type=click.Path(exists=True, file_okay=True, path_type=Path),
+    default=None,
+    help="Path to architecture diagram (.png, .jpg, .jpeg, .mmd for Mermaid)",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -286,6 +294,7 @@ def run(
     quiet: bool,
     verbose: bool,
     code: Path | None,
+    diagram: Path | None,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -434,6 +443,7 @@ def run(
                 output_format=output_format,
                 quiet=quiet,
                 code_path=code,
+                diagram_path=diagram,
                 content=content,
             )
         )
@@ -472,6 +482,7 @@ async def _run_pipeline_async(
     output_format: str,
     quiet: bool,
     code_path: Path | None,
+    diagram_path: Path | None,
     content: str,
 ) -> None:
     """Run pipeline asynchronously and render events.
@@ -490,6 +501,7 @@ async def _run_pipeline_async(
         output_format: JSON format (simple or full)
         quiet: Whether to suppress real-time output
         code_path: Optional path to code repository for MCP extraction
+        diagram_path: Optional path to architecture diagram (.png, .jpg, .jpeg, .mmd)
         content: Input file content for code context extraction
     """
     # Extract code context if --code flag provided
@@ -502,10 +514,23 @@ async def _run_pipeline_async(
             quiet=quiet,
         )
 
+    # Load diagram if --diagram flag provided
+    diagram_data = None
+    if diagram_path:
+        if not quiet:
+            click.echo(f"Loading diagram from {diagram_path}...")
+        try:
+            diagram_data = await load_diagram_file(diagram_path)
+            if not quiet:
+                diagram_type = diagram_data.format.value.upper()
+                click.secho(f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green")
+        except InputFileError as e:
+            raise CLIError(f"Diagram loading failed: {e}")
+
     # Track results
     total_threats = 0
     iterations_completed = 0
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
 
     # Initialize JSON writer if output requested
     json_writer = None
@@ -528,6 +553,7 @@ async def _run_pipeline_async(
             has_ai_components=has_ai_components,
             similarity_threshold=settings.similarity_threshold,
             code_context=code_context,
+            diagram_data=diagram_data,
         ):
             # Render event (unless quiet mode)
             if renderer:
@@ -600,7 +626,7 @@ async def _run_pipeline_async(
         ) from e
 
     # Calculate duration
-    duration = asyncio.get_event_loop().time() - start_time
+    duration = asyncio.get_running_loop().time() - start_time
 
     # Export output if requested
     output_file_str = None

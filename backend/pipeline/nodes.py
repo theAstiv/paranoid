@@ -10,11 +10,13 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from backend.models.enums import Framework
+from backend.models.enums import DiagramFormat, Framework
 from backend.models.extended import (
     AttackTree,
     CodeContext,
     CodeSummary,
+    DiagramData,
+    ImageContent,
     MaestroAssumptions,
     MaestroComponentDescription,
     StrideAssumptions,
@@ -216,16 +218,18 @@ async def summarize(
     assumptions: Optional[list[str]],
     code_context: Optional[CodeContext],
     provider: LLMProvider,
+    diagram_data: Optional[DiagramData] = None,
     temperature: float = 0.2,
 ) -> SummaryState:
     """Generate system summary from description and optional diagram/code context.
 
     Args:
         description: User-provided system description
-        architecture_diagram: Optional diagram data (could be text description or base64 image)
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional list of assumptions about the system
         code_context: Optional code context from MCP server
         provider: LLM provider for generation
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
         temperature: Sampling temperature
 
     Returns:
@@ -236,7 +240,10 @@ async def summarize(
     # Build prompt with XML tags
     prompt_parts = []
 
-    if architecture_diagram:
+    # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        prompt_parts.append(_build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif architecture_diagram:  # Legacy support
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
     prompt_parts.append(_build_xml_tag("description", description))
@@ -252,11 +259,27 @@ async def summarize(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Build images list for vision API (PNG/JPG only)
+    images = None
+    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        # Add placeholder tag to satisfy prompt instruction enumeration
+        # (actual image arrives via vision API content block)
+        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        user_prompt = "".join(prompt_parts)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        images = [ImageContent(
+            data=diagram_data.base64_data,
+            media_type=diagram_data.media_type,
+            source=diagram_data.source_path,
+        )]
+
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=SummaryState,
         temperature=temperature,
+        images=images,
     )
 
     return response
@@ -446,18 +469,20 @@ async def extract_assets(
     provider: LLMProvider,
     temperature: float = 0.2,
     code_summary: Optional[CodeSummary] = None,
+    diagram_data: Optional[DiagramData] = None,
 ) -> AssetsList:
     """Extract assets and entities from system description.
 
     Args:
         summary: Generated system summary
         description: Original system description (may contain structured XML-tagged input)
-        architecture_diagram: Optional diagram data
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions (legacy list format)
         framework: STRIDE or MAESTRO framework
         provider: LLM provider
         temperature: Sampling temperature
         code_summary: Optional condensed code context for asset identification
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
 
     Returns:
         AssetsList with identified assets and entities
@@ -476,7 +501,10 @@ async def extract_assets(
     # Build prompt
     prompt_parts = []
 
-    if architecture_diagram:
+    # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        prompt_parts.append(_build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif architecture_diagram:  # Legacy support
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
     # Add component description if structured input was parsed
@@ -499,11 +527,27 @@ async def extract_assets(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Build images list for vision API (PNG/JPG only)
+    images = None
+    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        # Add placeholder tag to satisfy prompt instruction enumeration
+        # (actual image arrives via vision API content block)
+        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        user_prompt = "".join(prompt_parts)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        images = [ImageContent(
+            data=diagram_data.base64_data,
+            media_type=diagram_data.media_type,
+            source=diagram_data.source_path,
+        )]
+
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=AssetsList,
         temperature=temperature,
+        images=images,
     )
 
     return response
@@ -518,18 +562,20 @@ async def extract_flows(
     provider: LLMProvider,
     temperature: float = 0.2,
     code_summary: Optional[CodeSummary] = None,
+    diagram_data: Optional[DiagramData] = None,
 ) -> FlowsList:
     """Extract data flows, trust boundaries, and threat sources.
 
     Args:
         summary: Generated system summary
         description: Original system description (may contain structured XML-tagged input)
-        architecture_diagram: Optional diagram data
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions (legacy list format)
         assets: Previously extracted assets
         provider: LLM provider
         temperature: Sampling temperature
         code_summary: Optional condensed code context for flow identification
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
 
     Returns:
         FlowsList with data flows, trust boundaries, and threat sources
@@ -545,7 +591,10 @@ async def extract_flows(
     # Build prompt
     prompt_parts = []
 
-    if architecture_diagram:
+    # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        prompt_parts.append(_build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif architecture_diagram:  # Legacy support
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
     # Add component description if structured input was parsed
@@ -574,11 +623,27 @@ async def extract_flows(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Build images list for vision API (PNG/JPG only)
+    images = None
+    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        # Add placeholder tag to satisfy prompt instruction enumeration
+        # (actual image arrives via vision API content block)
+        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        user_prompt = "".join(prompt_parts)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        images = [ImageContent(
+            data=diagram_data.base64_data,
+            media_type=diagram_data.media_type,
+            source=diagram_data.source_path,
+        )]
+
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=FlowsList,
         temperature=temperature,
+        images=images,
     )
 
     return response
@@ -597,12 +662,13 @@ async def generate_threats(
     rag_context: Optional[list[str]] = None,
     temperature: float = 0.2,
     code_summary: Optional[CodeSummary] = None,
+    diagram_data: Optional[DiagramData] = None,
 ) -> ThreatsList:
     """Generate or improve threat catalog.
 
     Args:
         description: System description (may contain structured XML-tagged input)
-        architecture_diagram: Optional diagram data
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
@@ -613,6 +679,7 @@ async def generate_threats(
         rag_context: Optional similar approved threats from vector store
         temperature: Sampling temperature
         code_summary: Optional condensed code context for threat identification
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
 
     Returns:
         ThreatsList with generated threats
@@ -639,7 +706,10 @@ async def generate_threats(
     # Build prompt
     prompt_parts = []
 
-    if architecture_diagram:
+    # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        prompt_parts.append(_build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif architecture_diagram:  # Legacy support
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
     # Add component description if structured input was parsed
@@ -701,11 +771,27 @@ async def generate_threats(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Build images list for vision API (PNG/JPG only)
+    images = None
+    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        # Add placeholder tag to satisfy prompt instruction enumeration
+        # (actual image arrives via vision API content block)
+        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        user_prompt = "".join(prompt_parts)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        images = [ImageContent(
+            data=diagram_data.base64_data,
+            media_type=diagram_data.media_type,
+            source=diagram_data.source_path,
+        )]
+
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=ThreatsList,
         temperature=temperature,
+        images=images,
     )
 
     return response
@@ -723,12 +809,13 @@ async def gap_analysis(
     previous_gaps: Optional[list[str]] = None,
     temperature: float = 0.2,
     code_summary: Optional[CodeSummary] = None,
+    diagram_data: Optional[DiagramData] = None,
 ) -> ContinueThreatModeling:
     """Analyze gaps in threat coverage.
 
     Args:
         description: System description (may contain structured XML-tagged input)
-        architecture_diagram: Optional diagram data
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
@@ -738,6 +825,7 @@ async def gap_analysis(
         previous_gaps: Optional list of previously identified gaps
         temperature: Sampling temperature
         code_summary: Optional condensed code context for gap analysis
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
 
     Returns:
         ContinueThreatModeling with stop decision and gap description
@@ -756,7 +844,10 @@ async def gap_analysis(
     # Build prompt
     prompt_parts = []
 
-    if architecture_diagram:
+    # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        prompt_parts.append(_build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif architecture_diagram:  # Legacy support
         prompt_parts.append(_build_xml_tag("architecture_diagram", architecture_diagram))
 
     # Add component description if structured input was parsed
@@ -810,11 +901,27 @@ async def gap_analysis(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Build images list for vision API (PNG/JPG only)
+    images = None
+    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        # Add placeholder tag to satisfy prompt instruction enumeration
+        # (actual image arrives via vision API content block)
+        prompt_parts.insert(0, _build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]"))
+        user_prompt = "".join(prompt_parts)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        images = [ImageContent(
+            data=diagram_data.base64_data,
+            media_type=diagram_data.media_type,
+            source=diagram_data.source_path,
+        )]
+
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=ContinueThreatModeling,
         temperature=temperature,
+        images=images,
     )
 
     return response

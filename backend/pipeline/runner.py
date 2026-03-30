@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Optional
 
 from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeContext, CodeSummary, TestSuite
+from backend.models.extended import AttackTree, CodeContext, CodeSummary, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.providers.base import LLMProvider
@@ -125,15 +125,17 @@ class PipelineRunner:
         architecture_diagram: Optional[str] = None,
         assumptions: Optional[list[str]] = None,
         code_context: Optional[CodeContext] = None,
+        diagram_data: Optional[DiagramData] = None,
     ) -> AsyncGenerator[PipelineEvent, None]:
         """Run the complete threat modeling pipeline with SSE events.
 
         Args:
             description: System description
             framework: STRIDE or MAESTRO framework
-            architecture_diagram: Optional architecture diagram
+            architecture_diagram: DEPRECATED - use diagram_data instead
             assumptions: Optional list of assumptions
             code_context: Optional code context from MCP
+            diagram_data: Optional diagram data (PNG/JPG/Mermaid)
 
         Yields:
             PipelineEvent for each step and iteration
@@ -157,6 +159,7 @@ class PipelineRunner:
                         assumptions=assumptions,
                         code_context=code_context,
                         provider=self.provider,
+                        diagram_data=diagram_data,
                         temperature=self.config.temperature,
                     ),
                     nodes.summarize_code(
@@ -190,6 +193,7 @@ class PipelineRunner:
                     assumptions=assumptions,
                     code_context=None,
                     provider=self.provider,
+                    diagram_data=diagram_data,
                     temperature=self.config.temperature,
                 )
                 code_summary = None
@@ -217,6 +221,7 @@ class PipelineRunner:
                 provider=self.provider,
                 temperature=self.config.temperature,
                 code_summary=code_summary,
+                diagram_data=diagram_data,
             )
 
             yield PipelineEvent(
@@ -242,6 +247,7 @@ class PipelineRunner:
                 provider=self.provider,
                 temperature=self.config.temperature,
                 code_summary=code_summary,
+                diagram_data=diagram_data,
             )
 
             yield PipelineEvent(
@@ -310,6 +316,7 @@ class PipelineRunner:
                         rag_context=rag_context,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
+                        diagram_data=diagram_data,
                     )
 
                     yield PipelineEvent(
@@ -341,6 +348,7 @@ class PipelineRunner:
                         rag_context=rag_context,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
+                        diagram_data=diagram_data,
                     )
 
                     yield PipelineEvent(
@@ -399,6 +407,7 @@ class PipelineRunner:
                         rag_context=rag_context,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
+                        diagram_data=diagram_data,
                     )
 
                     yield PipelineEvent(
@@ -460,6 +469,7 @@ class PipelineRunner:
                         previous_gaps=gaps,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
+                        diagram_data=diagram_data,
                     )
 
                     if gap_result.stop:
@@ -582,6 +592,7 @@ async def run_pipeline_for_model(
     architecture_diagram: Optional[str] = None,
     assumptions: Optional[list[str]] = None,
     code_context: Optional[CodeContext] = None,
+    diagram_data: Optional[DiagramData] = None,
     max_iterations: int = 3,
     has_ai_components: bool = False,
     similarity_threshold: float = 0.85,
@@ -593,9 +604,10 @@ async def run_pipeline_for_model(
         description: System description
         framework: STRIDE or MAESTRO
         provider: LLM provider
-        architecture_diagram: Optional diagram
+        architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions
         code_context: Optional code context
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
         max_iterations: Maximum iteration count (1-15)
         has_ai_components: Whether to run MAESTRO alongside STRIDE
         similarity_threshold: Cosine similarity threshold for threat deduplication
@@ -624,5 +636,6 @@ async def run_pipeline_for_model(
         architecture_diagram=architecture_diagram,
         assumptions=assumptions,
         code_context=code_context,
+        diagram_data=diagram_data,
     ):
         yield event
