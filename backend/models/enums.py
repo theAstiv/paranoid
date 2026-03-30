@@ -96,3 +96,11 @@ class Provider(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OLLAMA = "ollama"
+
+
+class DiagramFormat(str, Enum):
+    """Supported architecture diagram formats."""
+
+    PNG = "png"
+    JPEG = "jpeg"
+    MERMAID = "mermaid"

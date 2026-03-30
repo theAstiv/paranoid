@@ -6,6 +6,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from backend.models.enums import (
+    DiagramFormat,
     Framework,
     ImpactLevel,
     LikelihoodLevel,
@@ -153,6 +154,60 @@ class CodeSummary(BaseModel):
         str,
         Field(description="150-200 word free-text summary of security posture"),
     ]
+
+
+class ImageContent(BaseModel):
+    """Image content for vision API calls (RULES.md: all pipeline data as Pydantic).
+
+    Passed to LLM providers for vision-enabled models (Claude/GPT-4 with vision).
+    """
+
+    data: Annotated[str, Field(description="Base64-encoded image data")]
+    media_type: Annotated[
+        str,
+        Field(description="MIME type: image/png or image/jpeg"),
+    ]
+    source: Annotated[
+        str,
+        Field(description="Original file path (for error messages and logging)"),
+    ]
+
+
+class DiagramData(BaseModel):
+    """Architecture diagram data for threat modeling.
+
+    Supports PNG/JPG images (vision API) and Mermaid text files (parsed by LLM).
+    Loaded once at CLI, passed through all 5 pipeline nodes.
+    """
+
+    format: Annotated[
+        DiagramFormat,
+        Field(description="Diagram format: png, jpeg, or mermaid"),
+    ]
+    source_path: Annotated[
+        str,
+        Field(description="Original file path"),
+    ]
+
+    # For PNG/JPG images (vision API input)
+    base64_data: Annotated[
+        str | None,
+        Field(description="Base64-encoded image for vision API"),
+    ] = None
+    media_type: Annotated[
+        str | None,
+        Field(description="MIME type for images: image/png or image/jpeg"),
+    ] = None
+    size_bytes: Annotated[
+        int | None,
+        Field(description="File size in bytes (for validation)"),
+    ] = None
+
+    # For Mermaid .mmd files (text input)
+    mermaid_source: Annotated[
+        str | None,
+        Field(description="Raw Mermaid syntax (Claude/GPT-4 parse natively)"),
+    ] = None
 
 
 class StrideComponentDescription(BaseModel):
