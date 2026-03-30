@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v1.2.0
+
+### Added
+
+#### Code-as-Input (`--code`)
+- **`--code PATH`** CLI flag — extracts semantically relevant code from a local repository and threads it through all pipeline nodes
+- **`MCPCodeExtractor`** async context manager (`backend/mcp/client.py`) — manages context-link subprocess lifecycle over MCP stdio transport
+- **Three-tier extraction funnel**: semantic symbol search → code body extraction → file skeletons, capped at 50KB (~12.5K tokens)
+- **`summarize_code()` pipeline node** — condenses raw `CodeContext` into a ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, external dependencies, security observations); runs concurrently with `summarize()` via `asyncio.gather()`
+- **`_deterministic_code_summary()` fallback** — when `summarize_code()` LLM call fails, extracts `CodeSummary` from file extensions, import patterns, and keyword matches; never returns `None`
+- **`CodeSummary` Pydantic model** (`backend/models/extended.py`) — structured condensed code representation threaded through `extract_assets`, `extract_flows`, `generate_threats`, `gap_analysis`
+- **`CONTEXT_LINK_BINARY` env var** — override binary path; auto-detection order: env var → `./bin/context-link` → `shutil.which("context-link")`
+- **MCP error hierarchy** (`backend/mcp/errors.py`): `MCPError` → `MCPBinaryNotFoundError`, `MCPConnectionError`, `MCPToolError`, `MCPTimeoutError`
+- **Graceful degradation**: binary not found, subprocess crash, tool call error, and index timeout all produce a warning and allow the pipeline to continue with text-only input
+- **Prompt updates**: STRIDE and MAESTRO prompts updated to reference `<code_summary>` in all 5 prompt functions with security-specific guidance per prompt type
+
+#### Image-as-Input (`--diagram`)
+- **`--diagram PATH`** CLI flag — loads a PNG, JPG, or Mermaid `.mmd` file and threads it through all pipeline nodes
+- **Vision API support**: PNG/JPG encoded as base64 and passed as native vision content blocks (Anthropic `image` content block; OpenAI `image_url` data URI)
+- **Mermaid support**: `.mmd` files loaded as UTF-8 text and injected as `<architecture_diagram>` XML tag — works with all providers including Ollama
+- **`DiagramData` and `ImageContent` Pydantic models** (`backend/models/extended.py`) — carry diagram content through the pipeline
+- **`DiagramFormat` enum** (`backend/models/enums.py`) — `png`, `jpeg`, `mermaid`; prevents format string typos
+- **`backend/image/` package**: `encoder.py` (PNG/JPG base64 loading), `mermaid.py` (text loading), `validation.py` (size/format validation)
+- **`cli/input/diagram_loader.py`** — async diagram loading entry point used by CLI
+- **File size limits**: 5MB for PNG/JPG, 100KB for Mermaid (validated at CLI load time with descriptive error messages)
+- **`_replace_architecture_diagram_instruction()` helper** — replaces the `<architecture_diagram>` input enumeration line in STRIDE/MAESTRO prompts with a format-specific directive when a diagram is provided, preventing conflicting instructions
+- **`DiagramData` threads through 5 pipeline nodes**: `summarize`, `extract_assets`, `extract_flows`, `generate_threats`, `gap_analysis`
+- **Provider support matrix**: Anthropic (all models, full vision); OpenAI `gpt-4o`/`gpt-4o-mini` (full vision); OpenAI other models (Mermaid only, logs warning for PNG/JPG); Ollama (Mermaid only, logs warning for PNG/JPG)
+- **Backward compatible**: existing `architecture_diagram: str` parameter kept alongside new `diagram_data: Optional[DiagramData]`; deprecated, removal planned for v2.0
+
+#### New `paranoid run` flags
+- `--code PATH` — path to repository for MCP code extraction
+- `--diagram PATH` — path to PNG, JPG, or `.mmd` architecture diagram
+
+---
+
 ## [1.1.0] - 2026-03-29
 
 ### Added
@@ -138,15 +174,12 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-## [Unreleased]
+## [Planned] - v2.0+
 
-### Planned Features (v2.0+)
 - Deterministic rule engine with curated threat patterns
 - RAG retrieval over previously approved threats
-- MCP integration for code context
 - Frontend UI with Svelte + Tailwind
 - PDF/Markdown export formats
-- GitHub Action for CI/CD integration
 - Multi-user collaboration features
 
 ---
@@ -154,3 +187,4 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 [1.1.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.1.0
 [1.0.1]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.1
 [1.0.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.0
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.1.0...HEAD

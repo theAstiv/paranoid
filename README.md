@@ -12,8 +12,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **DREAD Risk Scoring**: Automatic risk assessment with 5 dimensions (0-50 scale) for severity classification
 - **Structured Input Templates**: Tagged templates for component descriptions with assumption enforcement in the prompts
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
+- **Code-as-Input**: Semantic code extraction via context-link MCP — `--code /path/to/repo` grounds threats in actual implementation
+- **Image-as-Input**: Architecture diagram support via `--diagram arch.png` (vision API) or `--diagram flow.mmd` (Mermaid text)
 - **Deterministic Fallback**: Rule engine ensures known threats aren't missed[Coming Soon]
-- **MCP Integration**: Pull code context from any MCP server (context-link, etc.)[Coming Soon]
 - **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration)
 - **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
 
@@ -100,6 +101,10 @@ DEFAULT_MODEL=gpt-4-turbo
 OLLAMA_BASE_URL=http://localhost:11434
 DEFAULT_PROVIDER=ollama
 DEFAULT_MODEL=llama3
+
+# Optional: path to context-link binary for --code flag
+# If unset, Paranoid looks for bin/context-link then PATH
+CONTEXT_LINK_BINARY=/usr/local/bin/context-link
 ```
 
 ### Step 3: Run Your First Threat Model
@@ -183,6 +188,18 @@ paranoid run system.md --quiet
 
 # Verbose mode (show detailed event data with complete models)
 paranoid run system.md --verbose
+
+# Code-as-input: ground threats in actual source code (requires context-link binary)
+paranoid run system.md --code /path/to/repo
+
+# Image-as-input: include architecture diagram (PNG/JPG via vision API)
+paranoid run system.md --diagram architecture.png
+
+# Image-as-input: Mermaid diagram as text (all providers)
+paranoid run system.md --diagram flow.mmd
+
+# Combined: description + diagram + code context
+paranoid run system.md --diagram arch.png --code /path/to/repo
 ```
 
 ### Configuration Management
@@ -275,6 +292,80 @@ jobs:
           sarif_file: threats.sarif
 ```
 
+## Code-as-Input (`--code`)
+
+Ground threats in actual source code using the context-link MCP binary. When `--code` is provided, Paranoid extracts a semantically relevant slice of the codebase and threads it through every pipeline node.
+
+```bash
+paranoid run system.md --code /path/to/repo
+paranoid run system.md --code /path/to/repo --iterations 5
+paranoid run system.md --diagram arch.png --code /path/to/repo  # combined
+```
+
+**How it works:**
+
+1. **Three-tier extraction funnel** (50KB budget, ~12.5K tokens):
+   - Semantic search: `semantic_search_symbols` finds symbols relevant to the threat model description
+   - Code body extraction: `get_code_by_symbol` fetches full source for top results
+   - File skeletons: `get_file_skeleton` fills remaining budget with structural outlines
+
+2. **Code summary step**: A `summarize_code()` node condenses the raw 50KB `CodeContext` into a focused ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, security observations). This runs concurrently with `summarize()` to hide latency.
+
+3. **Full pipeline threading**: The `CodeSummary` is passed to all downstream nodes — `extract_assets`, `extract_flows`, `generate_threats`, and `gap_analysis` — so threats reference actual implementation details.
+
+4. **Deterministic fallback**: If the `summarize_code()` LLM call fails, a code-metadata extractor produces the `CodeSummary` from file extensions, import patterns, and keyword matches. The pipeline never silently drops code context.
+
+**Requirements:**
+
+- context-link binary at `bin/context-link` (relative to working directory), on `PATH`, or at the path set by `CONTEXT_LINK_BINARY`
+- Binary discovery order: explicit `CONTEXT_LINK_BINARY` env var → `./bin/context-link` → `shutil.which("context-link")`
+- If the binary is not found, Paranoid logs a warning and continues without code context
+
+**Error handling**: Every MCP failure degrades gracefully — binary not found, subprocess crash, tool call error, and index timeout all produce a warning and allow the pipeline to continue with text-only input.
+
+---
+
+## Image-as-Input (`--diagram`)
+
+Supply an architecture diagram alongside your text description. Paranoid passes it to every pipeline node for richer threat coverage.
+
+```bash
+# PNG or JPG via vision API
+paranoid run system.md --diagram architecture.png
+paranoid run system.md --diagram architecture.jpg
+
+# Mermaid (.mmd) as text — works with all providers
+paranoid run system.md --diagram flow.mmd
+
+# Combined with code context
+paranoid run system.md --diagram arch.png --code /path/to/repo
+```
+
+**Supported formats:**
+
+| Format | Mechanism | Size Limit |
+|--------|-----------|------------|
+| PNG | Vision content block (base64) | 5MB |
+| JPG/JPEG | Vision content block (base64) | 5MB |
+| Mermaid `.mmd` | `<architecture_diagram>` XML tag (text) | 100KB |
+
+**Provider support:**
+
+| Provider | PNG/JPG | Mermaid |
+|----------|---------|---------|
+| Anthropic (all models) | Full support | Full support |
+| OpenAI `gpt-4o`, `gpt-4o-mini` | Full support | Full support |
+| OpenAI other models | Not supported (use gpt-4o) | Full support |
+| Ollama | Logs warning, continues without image | Full support |
+
+**How it works:**
+
+- **PNG/JPG**: The image is base64-encoded and passed as a vision content block in the provider's native format (Anthropic `image` content block; OpenAI `image_url` data URI). Each prompt's `<architecture_diagram>` instruction is replaced with a vision-specific directive.
+- **Mermaid**: The `.mmd` file is read as UTF-8 text and injected as `<architecture_diagram>` XML in the prompt. All providers parse Mermaid syntax natively — no rendering required.
+- **Pipeline threading**: `DiagramData` threads through all 5 pipeline nodes: `summarize`, `extract_assets`, `extract_flows`, `generate_threats`, and `gap_analysis`.
+
+---
+
 ## Structured Input Templates
 
 Paranoid supports rich XML-tagged templates for better context and assumption enforcement. See [Input-template.md](Input-template.md) for the full template reference and [examples/](examples/) for working examples.
@@ -303,6 +394,8 @@ Paranoid supports rich XML-tagged templates for better context and assumption en
 - **Embeddings**: Local via fastembed (ONNX, BAAI/bge-small-en-v1.5)
 - **Models**: Pydantic v2 for all data validation
 - **Frameworks**: STRIDE (traditional) + MAESTRO (AI/ML security)
+- **Code context**: context-link MCP binary (Go) + `MCPCodeExtractor` async context manager
+- **Image input**: `backend/image/` package — `encoder.py` (PNG/JPG base64), `mermaid.py` (text load), `validation.py` (size/format)
 
 **Python API:**
 ```python
@@ -362,6 +455,23 @@ pip install -e .  # or: pip install paranoid-cli
 ollama serve  # start Ollama first, then run paranoid
 ```
 
+**`--code` flag: context-link binary not found:**
+```bash
+# Option 1: set env var pointing to the binary
+export CONTEXT_LINK_BINARY=/path/to/context-link
+
+# Option 2: place binary at bin/context-link relative to working directory
+
+# Option 3: add context-link to PATH
+```
+If the binary is missing, Paranoid logs a warning and continues without code context.
+
+**`--diagram` with OpenAI and vision errors:**
+Only `gpt-4o` and `gpt-4o-mini` support JSON structured output together with vision. Other OpenAI models that support vision do not support JSON mode simultaneously. Switch to `gpt-4o` or use Anthropic.
+
+**`--diagram` with Ollama:**
+Ollama does not support vision for most models. Paranoid logs a warning and continues without the image. Use `--diagram flow.mmd` (Mermaid text) instead — all providers support Mermaid.
+
 **macOS binary "developer cannot be verified":**
 ```bash
 xattr -d com.apple.quarantine paranoid-macos-arm64
@@ -396,11 +506,11 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 ## Development Status
 
-**v1.1.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
+**v1.2.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF export, DREAD scoring, CLI with config wizard, packaging and release automation.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), packaging and release automation.
 
-**Future (v2.0+):** RAG retrieval integration, deterministic rule engine, MCP client, REST API routes, frontend (Svelte UI).
+**Future (v2.0+):** RAG retrieval integration, deterministic rule engine, REST API routes, frontend (Svelte UI).
 
 ## License
 
