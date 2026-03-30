@@ -13,6 +13,7 @@ from difflib import SequenceMatcher
 from backend.db.vectors import embed_text
 from backend.models.state import Threat, ThreatsList
 
+
 logger = logging.getLogger(__name__)
 
 

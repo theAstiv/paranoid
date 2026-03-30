@@ -29,7 +29,7 @@ async def load_mermaid_as_diagram_data(file_path: Path) -> DiagramData:
         UnicodeDecodeError: If file is not valid UTF-8
     """
     # Read file asynchronously (RULES.md: async for all file I/O)
-    async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+    async with aiofiles.open(file_path, encoding="utf-8") as f:
         mermaid_source = await f.read()
 
     # Basic validation: non-empty

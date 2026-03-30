@@ -4,7 +4,7 @@ SARIF (Static Analysis Results Interchange Format) is the standard format
 for security findings in GitHub, GitLab, VS Code, and most CI systems.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.models.state import ThreatsList
@@ -55,7 +55,7 @@ def export_sarif(
                 "columnKind": "utf16CodeUnits",
                 "properties": {
                     "framework": framework,
-                    "generatedAt": datetime.now(timezone.utc).isoformat(),
+                    "generatedAt": datetime.now(UTC).isoformat(),
                 },
             }
         ],
@@ -98,7 +98,7 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
             "help": {
                 "text": metadata.get(
                     "help",
-                    f"Review the threat details and implement recommended mitigations.",
+                    "Review the threat details and implement recommended mitigations.",
                 ),
                 "markdown": metadata.get("markdown", ""),
             },
@@ -322,13 +322,13 @@ def _get_category_metadata(framework: str) -> dict[str, dict[str, str]]:
                 "markdown": "**Elevation of Privilege** involves unauthorized access escalation. Mitigate with:\n- Principle of least privilege\n- Role-based access control\n- Privilege separation\n- Input validation\n- Regular permission audits",
             },
         }
-    else:  # MAESTRO
-        return {
-            "Data Security": {
-                "short": "AI/ML data security threat",
-                "full": "Training data, models, or inference data may be compromised or poisoned.",
-                "help": "Secure data pipelines, validate inputs, and protect model artifacts.",
-                "markdown": "**Data Security** in AI/ML. Mitigate with:\n- Data validation\n- Access controls\n- Encryption\n- Secure data provenance",
-            },
-            # Add other MAESTRO categories as needed
-        }
+    # MAESTRO
+    return {
+        "Data Security": {
+            "short": "AI/ML data security threat",
+            "full": "Training data, models, or inference data may be compromised or poisoned.",
+            "help": "Secure data pipelines, validate inputs, and protect model artifacts.",
+            "markdown": "**Data Security** in AI/ML. Mitigate with:\n- Data validation\n- Access controls\n- Encryption\n- Secure data provenance",
+        },
+        # Add other MAESTRO categories as needed
+    }

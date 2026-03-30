@@ -5,16 +5,17 @@ and basic error handling works. Full integration tests require actual
 context-link binary.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import (
     MCPBinaryNotFoundError,
     MCPConnectionError,
 )
-from backend.models.extended import CodeContext, CodeFile
+from backend.models.extended import CodeContext
 
 
 @pytest.mark.asyncio
@@ -113,9 +114,8 @@ async def test_extract_context_respects_byte_budget():
         if call_count == 1:
             # First call: 48KB file (fits in budget)
             return {"code": "x" * 48_000, "symbol": {"name": "func1"}}
-        else:
-            # Second call: 5KB file (would exceed 50KB budget)
-            return {"code": "y" * 5_000, "symbol": {"name": "func2"}}
+        # Second call: 5KB file (would exceed 50KB budget)
+        return {"code": "y" * 5_000, "symbol": {"name": "func2"}}
 
     extractor.get_code_by_symbol = mock_get_code
     extractor.get_file_skeleton = AsyncMock(return_value={

@@ -4,11 +4,9 @@ Each node is an independent async function that takes structured input and retur
 structured output. No classes, no LangChain, no state management — just pure logic.
 """
 
-import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 from backend.models.enums import DiagramFormat, Framework
 from backend.models.extended import (
@@ -48,6 +46,7 @@ from backend.pipeline.prompts import (
 )
 from backend.providers.base import LLMProvider, ProviderError
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +57,7 @@ def _build_xml_tag(tag: str, content: str) -> str:
     return f"<{tag}>\n{content.strip()}\n</{tag}>\n\n"
 
 
-def _format_assumptions(assumptions: Optional[list[str]]) -> str:
+def _format_assumptions(assumptions: list[str] | None) -> str:
     """Format assumptions list as a string."""
     if not assumptions:
         return ""
@@ -127,8 +126,8 @@ def _parse_structured_input(
     description: str,
     framework: Framework,
 ) -> tuple[
-    Optional[StrideComponentDescription | MaestroComponentDescription],
-    Optional[StrideAssumptions | MaestroAssumptions],
+    StrideComponentDescription | MaestroComponentDescription | None,
+    StrideAssumptions | MaestroAssumptions | None,
     str,
 ]:
     """Parse structured XML-tagged input if present.
@@ -149,17 +148,16 @@ def _parse_structured_input(
         component_desc = input_parser.parse_stride_component_description(description)
         assumptions_struct = input_parser.parse_stride_assumptions(description)
         return component_desc, assumptions_struct, description
-    elif input_format == "maestro_structured":
+    if input_format == "maestro_structured":
         component_desc = input_parser.parse_maestro_component_description(description)
         assumptions_struct = input_parser.parse_maestro_assumptions(description)
         return component_desc, assumptions_struct, description
-    else:
-        # Plain text input - no structured parsing
-        return None, None, description
+    # Plain text input - no structured parsing
+    return None, None, description
 
 
 def _format_structured_component_for_prompt(
-    component_desc: Optional[StrideComponentDescription | MaestroComponentDescription],
+    component_desc: StrideComponentDescription | MaestroComponentDescription | None,
 ) -> str:
     """Format structured component description for prompt inclusion.
 
@@ -175,7 +173,7 @@ def _format_structured_component_for_prompt(
 
 
 def _format_structured_assumptions_for_prompt(
-    assumptions_struct: Optional[StrideAssumptions | MaestroAssumptions],
+    assumptions_struct: StrideAssumptions | MaestroAssumptions | None,
 ) -> str:
     """Format structured assumptions for prompt inclusion.
 
@@ -191,8 +189,8 @@ def _format_structured_assumptions_for_prompt(
 
 
 def _build_assumptions_section(
-    assumptions: Optional[list[str]],
-    structured_assumptions: Optional[StrideAssumptions | MaestroAssumptions],
+    assumptions: list[str] | None,
+    structured_assumptions: StrideAssumptions | MaestroAssumptions | None,
 ) -> str:
     """Build assumptions section for prompt.
 
@@ -206,19 +204,18 @@ def _build_assumptions_section(
     # Prefer structured assumptions if available
     if structured_assumptions:
         return _format_structured_assumptions_for_prompt(structured_assumptions)
-    elif assumptions:
+    if assumptions:
         return _format_assumptions(assumptions)
-    else:
-        return ""
+    return ""
 
 
 async def summarize(
     description: str,
-    architecture_diagram: Optional[str],
-    assumptions: Optional[list[str]],
-    code_context: Optional[CodeContext],
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
+    code_context: CodeContext | None,
     provider: LLMProvider,
-    diagram_data: Optional[DiagramData] = None,
+    diagram_data: DiagramData | None = None,
     temperature: float = 0.2,
 ) -> SummaryState:
     """Generate system summary from description and optional diagram/code context.
@@ -463,13 +460,13 @@ async def summarize_code(
 async def extract_assets(
     summary: str,
     description: str,
-    architecture_diagram: Optional[str],
-    assumptions: Optional[list[str]],
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
     framework: Framework,
     provider: LLMProvider,
     temperature: float = 0.2,
-    code_summary: Optional[CodeSummary] = None,
-    diagram_data: Optional[DiagramData] = None,
+    code_summary: CodeSummary | None = None,
+    diagram_data: DiagramData | None = None,
 ) -> AssetsList:
     """Extract assets and entities from system description.
 
@@ -556,13 +553,13 @@ async def extract_assets(
 async def extract_flows(
     summary: str,
     description: str,
-    architecture_diagram: Optional[str],
-    assumptions: Optional[list[str]],
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
     assets: AssetsList,
     provider: LLMProvider,
     temperature: float = 0.2,
-    code_summary: Optional[CodeSummary] = None,
-    diagram_data: Optional[DiagramData] = None,
+    code_summary: CodeSummary | None = None,
+    diagram_data: DiagramData | None = None,
 ) -> FlowsList:
     """Extract data flows, trust boundaries, and threat sources.
 
@@ -651,18 +648,18 @@ async def extract_flows(
 
 async def generate_threats(
     description: str,
-    architecture_diagram: Optional[str],
-    assumptions: Optional[list[str]],
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
     assets: AssetsList,
     flows: FlowsList,
     framework: Framework,
     provider: LLMProvider,
-    existing_threats: Optional[ThreatsList] = None,
-    gap_analysis: Optional[str] = None,
-    rag_context: Optional[list[str]] = None,
+    existing_threats: ThreatsList | None = None,
+    gap_analysis: str | None = None,
+    rag_context: list[str] | None = None,
     temperature: float = 0.2,
-    code_summary: Optional[CodeSummary] = None,
-    diagram_data: Optional[DiagramData] = None,
+    code_summary: CodeSummary | None = None,
+    diagram_data: DiagramData | None = None,
 ) -> ThreatsList:
     """Generate or improve threat catalog.
 
@@ -696,12 +693,11 @@ async def generate_threats(
             system_prompt = maestro_improve_prompt()
         else:
             system_prompt = stride_threats_improve_prompt()
+    # Initial iteration
+    elif framework == Framework.MAESTRO:
+        system_prompt = maestro_threats_prompt()
     else:
-        # Initial iteration
-        if framework == Framework.MAESTRO:
-            system_prompt = maestro_threats_prompt()
-        else:
-            system_prompt = stride_threats_prompt()
+        system_prompt = stride_threats_prompt()
 
     # Build prompt
     prompt_parts = []
@@ -799,17 +795,17 @@ async def generate_threats(
 
 async def gap_analysis(
     description: str,
-    architecture_diagram: Optional[str],
-    assumptions: Optional[list[str]],
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
     assets: AssetsList,
     flows: FlowsList,
     threats: ThreatsList,
     framework: Framework,
     provider: LLMProvider,
-    previous_gaps: Optional[list[str]] = None,
+    previous_gaps: list[str] | None = None,
     temperature: float = 0.2,
-    code_summary: Optional[CodeSummary] = None,
-    diagram_data: Optional[DiagramData] = None,
+    code_summary: CodeSummary | None = None,
+    diagram_data: DiagramData | None = None,
 ) -> ContinueThreatModeling:
     """Analyze gaps in threat coverage.
 
@@ -931,8 +927,8 @@ async def generate_attack_tree(
     threat: str,
     threat_description: str,
     target: str,
-    stride_category: Optional[str],
-    maestro_category: Optional[str],
+    stride_category: str | None,
+    maestro_category: str | None,
     mitigations: list[str],
     provider: LLMProvider,
     temperature: float = 0.3,

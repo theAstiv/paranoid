@@ -5,8 +5,6 @@ Prompts are designed to guide LLMs through systematic security analysis.
 
 from backend.models.enums import LikelihoodLevel, StrideCategory
 from backend.models.state import (
-    MITIGATION_MAX_ITEMS,
-    MITIGATION_MIN_ITEMS,
     SUMMARY_MAX_WORDS,
     THREAT_DESCRIPTION_MAX_WORDS,
     THREAT_DESCRIPTION_MIN_WORDS,

@@ -17,8 +17,8 @@ from backend.models.state import (
     GapAnalysis,
     SummaryState,
     Threat,
-    ThreatSource,
     ThreatsList,
+    ThreatSource,
     TrustBoundary,
 )
 

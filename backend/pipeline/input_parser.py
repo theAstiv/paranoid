@@ -6,7 +6,6 @@ extracting component descriptions and assumptions for STRIDE and MAESTRO framewo
 
 import logging
 import re
-from typing import Optional
 
 from pydantic import ValidationError
 
@@ -17,10 +16,11 @@ from backend.models.extended import (
     StrideComponentDescription,
 )
 
+
 logger = logging.getLogger(__name__)
 
 
-def _extract_xml_section(text: str, tag: str) -> Optional[str]:
+def _extract_xml_section(text: str, tag: str) -> str | None:
     """Extract content from XML tags.
 
     Args:
@@ -64,9 +64,7 @@ def _extract_bulleted_list(text: str, header: str) -> list[str]:
         if line.startswith("**") and line.endswith("**"):
             break
         # Extract bulleted items
-        if line.startswith("- "):
-            items.append(line[2:].strip())
-        elif line.startswith("* "):
+        if line.startswith("- ") or line.startswith("* "):
             items.append(line[2:].strip())
 
     return items
@@ -130,7 +128,7 @@ def _extract_subsections(text: str, header: str) -> dict[str, list[str]]:
     return result
 
 
-def parse_stride_component_description(text: str) -> Optional[StrideComponentDescription]:
+def parse_stride_component_description(text: str) -> StrideComponentDescription | None:
     """Parse STRIDE component description from XML-tagged template.
 
     Args:
@@ -188,7 +186,7 @@ def parse_stride_component_description(text: str) -> Optional[StrideComponentDes
         return None
 
 
-def parse_maestro_component_description(text: str) -> Optional[MaestroComponentDescription]:
+def parse_maestro_component_description(text: str) -> MaestroComponentDescription | None:
     """Parse MAESTRO component description from XML-tagged template.
 
     Args:
@@ -263,7 +261,7 @@ def parse_maestro_component_description(text: str) -> Optional[MaestroComponentD
         return None
 
 
-def parse_stride_assumptions(text: str) -> Optional[StrideAssumptions]:
+def parse_stride_assumptions(text: str) -> StrideAssumptions | None:
     """Parse STRIDE assumptions from XML-tagged template.
 
     Args:
@@ -302,7 +300,7 @@ def parse_stride_assumptions(text: str) -> Optional[StrideAssumptions]:
         return None
 
 
-def parse_maestro_assumptions(text: str) -> Optional[MaestroAssumptions]:
+def parse_maestro_assumptions(text: str) -> MaestroAssumptions | None:
     """Parse MAESTRO assumptions from XML-tagged template.
 
     Args:

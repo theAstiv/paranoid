@@ -18,6 +18,7 @@ from backend.pipeline.prompts.stride import (
 )
 from backend.pipeline.prompts.test_case import test_case_prompt
 
+
 __all__ = [
     # STRIDE prompts
     "stride_summary_prompt",

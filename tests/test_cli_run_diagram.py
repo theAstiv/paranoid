@@ -2,14 +2,11 @@
 
 import base64
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.image.errors import DiagramValidationError
 from backend.models.enums import DiagramFormat
-from backend.models.extended import DiagramData
-from cli.errors import CLIError, InputFileError
+from cli.errors import InputFileError
 from cli.input.diagram_loader import load_diagram_file
 
 

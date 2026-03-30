@@ -7,14 +7,14 @@ and emits server-sent events for real-time progress tracking.
 import asyncio
 import json
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import AsyncGenerator, Optional
 
 from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeContext, CodeSummary, DiagramData, TestSuite
+from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.providers.base import LLMProvider
@@ -43,9 +43,9 @@ class PipelineEvent:
     step: PipelineStep
     status: str  # "started" | "completed" | "failed" | "info"
     message: str
-    iteration: Optional[int] = None
-    data: Optional[dict] = None
-    timestamp: Optional[float] = None
+    iteration: int | None = None
+    data: dict | None = None
+    timestamp: float | None = None
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -108,7 +108,7 @@ class PipelineRunner:
         self.provider = provider
         self.config = config
         self.model_id = model_id
-        self.start_time: Optional[datetime] = None
+        self.start_time: datetime | None = None
 
     def _check_time_limit(self) -> bool:
         """Check if execution time limit has been reached."""
@@ -122,10 +122,10 @@ class PipelineRunner:
         self,
         description: str,
         framework: Framework,
-        architecture_diagram: Optional[str] = None,
-        assumptions: Optional[list[str]] = None,
-        code_context: Optional[CodeContext] = None,
-        diagram_data: Optional[DiagramData] = None,
+        architecture_diagram: str | None = None,
+        assumptions: list[str] | None = None,
+        code_context: CodeContext | None = None,
+        diagram_data: DiagramData | None = None,
     ) -> AsyncGenerator[PipelineEvent, None]:
         """Run the complete threat modeling pipeline with SSE events.
 
@@ -269,7 +269,7 @@ class PipelineRunner:
             # - cumulative_threats = all threats from all iterations
             # - existing_threats passed to LLM = cumulative from previous iterations
             # - Gap analysis uses cumulative to assess full coverage
-            current_threats: Optional[ThreatsList] = None
+            current_threats: ThreatsList | None = None
             cumulative_threats = ThreatsList(threats=[])  # Track all threats across iterations
             iteration = 1
             iterations_completed = 0  # Track completed iterations (avoids off-by-one on early exit)
@@ -514,7 +514,7 @@ class PipelineRunner:
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,
                 status="failed",
-                message=f"Pipeline failed: {str(e)}",
+                message=f"Pipeline failed: {e!s}",
                 data={"error": str(e)},
             )
             raise
@@ -525,8 +525,8 @@ class PipelineRunner:
         threat_name: str,
         threat_description: str,
         target: str,
-        stride_category: Optional[str],
-        maestro_category: Optional[str],
+        stride_category: str | None,
+        maestro_category: str | None,
         mitigations: list[str],
     ) -> AttackTree:
         """Generate attack tree for a specific approved threat.
@@ -589,10 +589,10 @@ async def run_pipeline_for_model(
     description: str,
     framework: Framework,
     provider: LLMProvider,
-    architecture_diagram: Optional[str] = None,
-    assumptions: Optional[list[str]] = None,
-    code_context: Optional[CodeContext] = None,
-    diagram_data: Optional[DiagramData] = None,
+    architecture_diagram: str | None = None,
+    assumptions: list[str] | None = None,
+    code_context: CodeContext | None = None,
+    diagram_data: DiagramData | None = None,
     max_iterations: int = 3,
     has_ai_components: bool = False,
     similarity_threshold: float = 0.85,

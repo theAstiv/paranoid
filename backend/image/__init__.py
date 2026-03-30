@@ -12,8 +12,9 @@ from backend.image.encoder import load_image_as_diagram_data
 from backend.image.mermaid import load_mermaid_as_diagram_data
 from backend.image.validation import validate_diagram_file
 
+
 __all__ = [
-    "validate_diagram_file",
     "load_image_as_diagram_data",
     "load_mermaid_as_diagram_data",
+    "validate_diagram_file",
 ]

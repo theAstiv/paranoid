@@ -3,14 +3,13 @@
 Verifies that the --code flag is properly wired and triggers code extraction.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
 from click.testing import CliRunner
 
-from cli.commands.run import run
 from backend.models.extended import CodeContext, CodeFile
-from backend.mcp.errors import MCPBinaryNotFoundError, MCPConnectionError, MCPTimeoutError
+from cli.commands.run import run
 
 
 @pytest.fixture

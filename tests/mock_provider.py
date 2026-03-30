@@ -5,7 +5,7 @@ to pre-built response fixtures based on response_model type.
 Framework dispatch is explicit via constructor — no prompt string matching.
 """
 
-from typing import Any, Type
+from typing import Any
 
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeSummary, TestSuite
@@ -64,7 +64,7 @@ class MockProvider:
     async def generate_structured(
         self,
         prompt: str,
-        response_model: Type[Any],
+        response_model: type[Any],
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list | None = None,
@@ -111,7 +111,7 @@ class MockProvider:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         pass
 
-    def _dispatch(self, response_model: Type[Any]) -> Any:
+    def _dispatch(self, response_model: type[Any]) -> Any:
         """Route response_model type to the appropriate fixture factory."""
         dispatch_table: dict[type, Any] = {
             SummaryState: make_summary,

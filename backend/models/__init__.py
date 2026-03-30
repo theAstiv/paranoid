@@ -36,6 +36,7 @@ from backend.models.state import (
     TrustBoundary,
 )
 
+
 __all__ = [
     # Enums
     "AssetType",

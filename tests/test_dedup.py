@@ -5,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 from backend.dedup import (
-    DedupResult,
     _cosine_similarity,
     _select_preferred_threat,
     _threat_to_text,

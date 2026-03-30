@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -62,7 +62,7 @@ class OllamaProvider:
     async def generate_structured(
         self,
         prompt: str,
-        response_model: Type[T],
+        response_model: type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,

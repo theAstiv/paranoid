@@ -21,6 +21,10 @@ datas = []
 datas += collect_data_files('anthropic')
 datas += collect_data_files('openai')
 datas += collect_data_files('pydantic')
+datas += collect_data_files('fastembed')
+
+# Include seeds directory for threat patterns
+datas += [('seeds', 'seeds')]
 
 # Collect all submodules that might be dynamically imported
 hiddenimports = []
@@ -31,8 +35,11 @@ hiddenimports += collect_submodules('httpx')
 hiddenimports += collect_submodules('click')
 hiddenimports += collect_submodules('backend')
 hiddenimports += collect_submodules('cli')
+hiddenimports += collect_submodules('fastembed')
+hiddenimports += collect_submodules('PIL')
 
 # Add specific hidden imports that PyInstaller might miss
+hiddenimports += collect_submodules('aiofiles')
 hiddenimports += [
     'aiosqlite',
     'sqlite3',
@@ -40,6 +47,11 @@ hiddenimports += [
     'json',
     'pathlib',
     'importlib.metadata',
+    'sqlite_vec',
+    'PIL.Image',
+    'aiofiles',
+    'aiofiles.os',
+    'aiofiles.threadpool',
 ]
 
 block_cipher = None
@@ -57,12 +69,13 @@ a = Analysis(
         'matplotlib',
         'numpy',
         'pandas',
-        'PIL',
         'tkinter',
         'scipy',
         'IPython',
         'jupyter',
         'notebook',
+        'tests',
+        'frontend',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

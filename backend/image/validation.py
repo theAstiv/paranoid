@@ -63,12 +63,11 @@ def validate_diagram_file(file_path: Path) -> DiagramFormat:
                 f"Mermaid file too large: {size / 1024:.0f}KB (max {max_size / 1024:.0f}KB)\n\n"
                 f"Simplify the diagram or split into multiple threat models."
             )
-        else:
-            raise DiagramValidationError(
-                f"Image too large: {size / 1024 / 1024:.1f}MB (max {max_size / 1024 / 1024:.0f}MB)\n\n"
-                f"Compress the image or use a lower resolution.\n"
-                f"Recommended: Use PNG with optimization or JPEG with 80% quality."
-            )
+        raise DiagramValidationError(
+            f"Image too large: {size / 1024 / 1024:.1f}MB (max {max_size / 1024 / 1024:.0f}MB)\n\n"
+            f"Compress the image or use a lower resolution.\n"
+            f"Recommended: Use PNG with optimization or JPEG with 80% quality."
+        )
 
     # Validate file is readable
     try:

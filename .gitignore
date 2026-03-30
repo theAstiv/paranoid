@@ -186,3 +186,4 @@ frontend/dist/
 *.db
 *.db-shm
 *.db-wal
+build-test-output.txt

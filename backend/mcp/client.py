@@ -23,6 +23,7 @@ from backend.mcp.errors import (
 )
 from backend.models.extended import CodeContext, CodeFile
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,7 +80,7 @@ class MCPCodeExtractor:
             logger.info("context-link MCP session established")
             return self
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             logger.error(f"context-link startup timeout after {self.timeout_seconds}s")
             raise MCPTimeoutError(
                 f"context-link did not start within {self.timeout_seconds}s"
@@ -192,7 +193,7 @@ class MCPCodeExtractor:
             logger.warning(f"Tool {name} returned non-text content")
             return None
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             logger.error(f"Tool {name} timeout after {self.timeout_seconds}s")
             raise MCPTimeoutError(f"Tool {name} exceeded timeout") from e
         except Exception as e:

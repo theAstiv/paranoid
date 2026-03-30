@@ -14,7 +14,7 @@ from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
 from backend.models.extended import CodeContext
-from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
+from backend.pipeline.runner import PipelineStep, run_pipeline_for_model
 from backend.providers import (
     ProviderAuthError,
     ProviderRateLimitError,
@@ -25,7 +25,11 @@ from backend.providers.base import LLMProvider
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
-from cli.input.file_loader import detect_framework_from_input, load_input_file, parse_structured_input
+from cli.input.file_loader import (
+    detect_framework_from_input,
+    load_input_file,
+    parse_structured_input,
+)
 from cli.output.console import ConsoleRenderer
 from cli.output.json_writer import JSONWriter
 
@@ -87,7 +91,7 @@ def _load_merged_settings() -> Settings:
             "  ANTHROPIC_API_KEY=sk-ant-xxx\n\n"
             "Get an API key at: https://console.anthropic.com/settings/keys"
         )
-    elif base_settings.default_provider == "openai" and not base_settings.openai_api_key:
+    if base_settings.default_provider == "openai" and not base_settings.openai_api_key:
         raise ConfigurationError(
             "OpenAI API key not configured\n\n"
             "Run the setup wizard:\n"
@@ -403,7 +407,7 @@ def run(
                 framework_str += " (overridden)"
             click.echo(f"  Framework: {framework_str}")
             if maestro:
-                click.echo(f"  Mode: Dual framework (STRIDE + MAESTRO)")
+                click.echo("  Mode: Dual framework (STRIDE + MAESTRO)")
             click.echo(f"  Input: {input_file.name}")
             click.echo()
 

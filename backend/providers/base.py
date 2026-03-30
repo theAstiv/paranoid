@@ -2,7 +2,8 @@
 
 import asyncio
 import functools
-from typing import Any, Callable, Protocol, Type, TypeVar
+from collections.abc import Callable
+from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -25,7 +26,7 @@ class LLMProvider(Protocol):
     async def generate_structured(
         self,
         prompt: str,
-        response_model: Type[T],
+        response_model: type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
@@ -221,20 +222,19 @@ def create_provider(
             raise ValueError("api_key required for Anthropic provider")
         return AnthropicProvider(model=model, api_key=api_key, **kwargs)
 
-    elif provider_type == "openai":
+    if provider_type == "openai":
         from backend.providers.openai import OpenAIProvider
 
         if not api_key:
             raise ValueError("api_key required for OpenAI provider")
         return OpenAIProvider(model=model, api_key=api_key, base_url=base_url, **kwargs)
 
-    elif provider_type == "ollama":
+    if provider_type == "ollama":
         from backend.providers.ollama import OllamaProvider
 
         return OllamaProvider(model=model, base_url=base_url, **kwargs)
 
-    else:
-        raise ValueError(
-            f"Unsupported provider: {provider_type}. "
-            f"Supported: anthropic, openai, ollama"
-        )
+    raise ValueError(
+        f"Unsupported provider: {provider_type}. "
+        f"Supported: anthropic, openai, ollama"
+    )

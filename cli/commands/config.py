@@ -15,7 +15,7 @@ from cli.context import (
     load_config,
     save_config,
 )
-from cli.errors import CLIError, ConfigurationError
+from cli.errors import CLIError
 
 
 @click.group()

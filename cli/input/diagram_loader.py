@@ -42,12 +42,11 @@ async def load_diagram_file(file_path: str | Path) -> DiagramData:
         if diagram_format in (DiagramFormat.PNG, DiagramFormat.JPEG):
             # PNG/JPG: Load and base64 encode for vision API
             return await load_image_as_diagram_data(path, diagram_format)
-        elif diagram_format == DiagramFormat.MERMAID:
+        if diagram_format == DiagramFormat.MERMAID:
             # Mermaid: Load as text (no encoding needed)
             return await load_mermaid_as_diagram_data(path)
-        else:
-            # Should never reach here (validation ensures supported format)
-            raise InputFileError(f"Unsupported diagram format: {diagram_format}")
+        # Should never reach here (validation ensures supported format)
+        raise InputFileError(f"Unsupported diagram format: {diagram_format}")
     except ValueError as e:
         # Catch ValueError from empty Mermaid files and re-raise as InputFileError
         raise InputFileError(str(e)) from e

@@ -12,6 +12,7 @@ from tests.fixtures.pipeline import (
     make_test_suite,
 )
 
+
 __all__ = [
     "make_assets",
     "make_attack_tree",

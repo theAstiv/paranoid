@@ -10,6 +10,9 @@ include .env.example
 # Include example templates
 recursive-include examples *.md *.txt
 
+# Include seed data (threat patterns)
+recursive-include seeds *.json
+
 # Exclude development files
 exclude .gitignore
 exclude test_pipeline.py

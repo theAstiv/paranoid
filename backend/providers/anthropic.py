@@ -1,9 +1,9 @@
 """Anthropic LLM provider implementation."""
 
 import json
-from typing import Type, TypeVar
+from typing import TypeVar
 
-from anthropic import Anthropic, APIError, RateLimitError, AuthenticationError
+from anthropic import Anthropic, APIError, AuthenticationError, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
@@ -65,7 +65,7 @@ class AnthropicProvider:
     async def generate_structured(
         self,
         prompt: str,
-        response_model: Type[T],
+        response_model: type[T],
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
@@ -146,7 +146,7 @@ class AnthropicProvider:
         except APIError as e:
             raise ProviderError(
                 provider=self.name,
-                message=f"API error: {str(e)}",
+                message=f"API error: {e!s}",
                 original_error=e,
             )
 
@@ -184,7 +184,7 @@ class AnthropicProvider:
         except APIError as e:
             raise ProviderError(
                 provider=self.name,
-                message=f"API error: {str(e)}",
+                message=f"API error: {e!s}",
                 original_error=e,
             )
 

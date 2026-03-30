@@ -7,8 +7,7 @@ from typing import Any
 
 import aiosqlite
 
-from backend.config import settings
-from backend.db.crud import create_threat, generate_id
+from backend.db.crud import create_threat
 from backend.db.vectors import bulk_insert_seed_vectors, get_vector_stats
 
 

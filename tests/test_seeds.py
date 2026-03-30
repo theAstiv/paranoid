@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.db import schema
 from backend.db.seed import (
     SEEDS_DIR,
     _count_expected_seeds,

@@ -606,9 +606,8 @@ async def create_pipeline_run(
 
 async def get_pipeline_stats(db_path: str, model_id: str) -> dict[str, Any]:
     """Get pipeline execution statistics for a model."""
-    async with aiosqlite.connect(db_path) as db:
-        async with db.execute(
-            """
+    async with aiosqlite.connect(db_path) as db, db.execute(
+        """
             SELECT
                 COUNT(*) as total_steps,
                 SUM(duration_ms) as total_duration_ms,
@@ -617,14 +616,14 @@ async def get_pipeline_stats(db_path: str, model_id: str) -> dict[str, Any]:
             FROM pipeline_runs
             WHERE model_id = ?
             """,
-            (model_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "total_steps": row[0],
-                    "total_duration_ms": row[1],
-                    "total_tokens": row[2],
-                    "avg_duration_ms": row[3],
-                }
-            return {}
+        (model_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+        if row:
+            return {
+                "total_steps": row[0],
+                "total_duration_ms": row[1],
+                "total_tokens": row[2],
+                "avg_duration_ms": row[3],
+            }
+        return {}

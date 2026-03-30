@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backend.models.enums import Framework
 
+
 logger = logging.getLogger(__name__)
 from backend.pipeline.input_parser import (
     detect_input_format,
@@ -76,7 +77,7 @@ def load_input_file(file_path: Path) -> str:
         ) from e
     except Exception as e:
         raise InputFileError(
-            f"Failed to read file: {file_path}\n\n" f"Error: {e}"
+            f"Failed to read file: {file_path}\n\nError: {e}"
         ) from e
 
     # Validate content is not just whitespace
@@ -157,7 +158,7 @@ def parse_structured_input(content: str) -> tuple[str, list[str] | None]:
 
         return (description, assumptions)
 
-    elif input_format == "maestro_structured":
+    if input_format == "maestro_structured":
         component_desc = parse_maestro_component_description(content)
         assumptions_obj = parse_maestro_assumptions(content)
 
