@@ -77,7 +77,7 @@ async def test_load_all_seeds_first_run(test_db):
         new_callable=AsyncMock,
         return_value=0,
     ):
-        results = await load_all_seeds(test_db, force=True)
+        results = await load_all_seeds(force=True)
 
     assert "stride" in results
     assert "maestro" in results
@@ -102,7 +102,7 @@ async def test_load_all_seeds_skips_when_complete(test_db):
             new_callable=AsyncMock,
         ) as mock_stride,
     ):
-        results = await load_all_seeds(test_db)
+        results = await load_all_seeds()
 
     assert "skipped" in results
     assert results["skipped"] == 109
@@ -128,9 +128,9 @@ async def test_partial_load_triggers_cleanup(test_db):
             return_value=0,
         ),
     ):
-        results = await load_all_seeds(test_db)
+        results = await load_all_seeds()
 
-    mock_cleanup.assert_called_once_with(test_db)
+    mock_cleanup.assert_called_once_with()
     assert results["total"] == 109
 
 
@@ -148,9 +148,9 @@ async def test_force_reload(test_db):
             return_value=0,
         ),
     ):
-        results = await load_all_seeds(test_db, force=True)
+        results = await load_all_seeds(force=True)
 
-    mock_cleanup.assert_called_once_with(test_db)
+    mock_cleanup.assert_called_once_with()
     assert results["total"] == 109
 
 
@@ -167,7 +167,7 @@ async def test_check_seeds_status_partial():
         new_callable=AsyncMock,
         return_value={"seed": 50, "total": 50},
     ):
-        status = await check_seeds_status("dummy.db")
+        status = await check_seeds_status()
 
     assert status["partial"] is True
     assert status["loaded"] is False
@@ -186,7 +186,7 @@ async def test_check_seeds_status_complete():
         new_callable=AsyncMock,
         return_value={"seed": 109, "total": 109},
     ):
-        status = await check_seeds_status("dummy.db")
+        status = await check_seeds_status()
 
     assert status["loaded"] is True
     assert status["partial"] is False

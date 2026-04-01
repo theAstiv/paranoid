@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
+from backend.db.connection import db
+from backend.db.seed import load_all_seeds
 
 
 # Configure logging
@@ -33,8 +35,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     data_dir = Path(settings.db_path).parent
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    # Initialize database connection and schema
+    await db.initialize(settings.db_path)
+
+    # Load seed patterns
+    await load_all_seeds()
+
     yield
 
+    # Close database connection
+    await db.close()
     logger.info("Shutting down Paranoid application")
 
 

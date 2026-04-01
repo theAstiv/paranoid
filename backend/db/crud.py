@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import aiosqlite
+from backend.db.connection import db
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,6 @@ def now_iso() -> str:
 
 
 async def create_threat_model(
-    db_path: str,
     title: str,
     description: str,
     provider: str,
@@ -38,62 +37,58 @@ async def create_threat_model(
     model_id = generate_id()
     now = now_iso()
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            INSERT INTO threat_models (
-                id, title, description, framework, provider, model,
-                status, iteration_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                model_id,
-                title,
-                description,
-                framework,
-                provider,
-                model,
-                "pending",
-                iteration_count,
-                now,
-                now,
-            ),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO threat_models (
+            id, title, description, framework, provider, model,
+            status, iteration_count, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            model_id,
+            title,
+            description,
+            framework,
+            provider,
+            model,
+            "pending",
+            iteration_count,
+            now,
+            now,
+        ),
+    )
+    await conn.commit()
 
     logger.info(f"Created threat model {model_id}")
     return model_id
 
 
-async def get_threat_model(db_path: str, model_id: str) -> dict[str, Any] | None:
+async def get_threat_model(model_id: str) -> dict[str, Any] | None:
     """Get a threat model by ID."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM threat_models WHERE id = ?", (model_id,)) as cursor:
-            row = await cursor.fetchone()
-            return dict(row) if row else None
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM threat_models WHERE id = ?", (model_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
 
-async def update_threat_model_status(db_path: str, model_id: str, status: str) -> None:
+async def update_threat_model_status(model_id: str, status: str) -> None:
     """Update threat model status."""
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            UPDATE threat_models
-            SET status = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (status, now_iso(), model_id),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        UPDATE threat_models
+        SET status = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, now_iso(), model_id),
+    )
+    await conn.commit()
 
     logger.info(f"Updated threat model {model_id} status to {status}")
 
 
 async def update_threat_model(
-    db_path: str,
     model_id: str,
     title: str | None = None,
     description: str | None = None,
@@ -104,7 +99,6 @@ async def update_threat_model(
     Update threat model details. Only provided fields will be updated.
 
     Args:
-        db_path: Path to SQLite database
         model_id: ID of threat model to update
         title: Model title
         description: Model description
@@ -141,30 +135,27 @@ async def update_threat_model(
 
     query = f"UPDATE threat_models SET {', '.join(update_fields)} WHERE id = ?"
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(query, params)
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(query, params)
+    await conn.commit()
 
     logger.info(f"Updated threat model {model_id}")
 
 
-async def list_threat_models(db_path: str, limit: int = 50) -> list[dict[str, Any]]:
+async def list_threat_models(limit: int = 50) -> list[dict[str, Any]]:
     """List all threat models."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM threat_models ORDER BY created_at DESC LIMIT ?", (limit,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM threat_models ORDER BY created_at DESC LIMIT ?", (limit,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 # Threats CRUD
 
 
 async def create_threat(
-    db_path: str,
     model_id: str,
     name: str,
     description: str,
@@ -182,96 +173,89 @@ async def create_threat(
     now = now_iso()
     mitigations_json = json.dumps(mitigations)
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            INSERT INTO threats (
-                id, model_id, stride_category, maestro_category, name,
-                description, target, impact, likelihood, dread_score,
-                mitigations, status, iteration_number, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                threat_id,
-                model_id,
-                stride_category,
-                maestro_category,
-                name,
-                description,
-                target,
-                impact,
-                likelihood,
-                dread_score,
-                mitigations_json,
-                "pending",
-                iteration_number,
-                now,
-                now,
-            ),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO threats (
+            id, model_id, stride_category, maestro_category, name,
+            description, target, impact, likelihood, dread_score,
+            mitigations, status, iteration_number, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            threat_id,
+            model_id,
+            stride_category,
+            maestro_category,
+            name,
+            description,
+            target,
+            impact,
+            likelihood,
+            dread_score,
+            mitigations_json,
+            "pending",
+            iteration_number,
+            now,
+            now,
+        ),
+    )
+    await conn.commit()
 
     logger.info(f"Created threat {threat_id} for model {model_id}")
     return threat_id
 
 
-async def get_threat(db_path: str, threat_id: str) -> dict[str, Any] | None:
+async def get_threat(threat_id: str) -> dict[str, Any] | None:
     """Get a threat by ID."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM threats WHERE id = ?", (threat_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                threat = dict(row)
-                threat["mitigations"] = json.loads(threat["mitigations"])
-                return threat
-            return None
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM threats WHERE id = ?", (threat_id,)) as cursor:
+        row = await cursor.fetchone()
+        if row:
+            threat = dict(row)
+            threat["mitigations"] = json.loads(threat["mitigations"])
+            return threat
+        return None
 
 
-async def list_threats(
-    db_path: str, model_id: str, status: str | None = None
-) -> list[dict[str, Any]]:
+async def list_threats(model_id: str, status: str | None = None) -> list[dict[str, Any]]:
     """List threats for a model, optionally filtered by status."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
+    conn = await db.get()
 
-        if status:
-            query = "SELECT * FROM threats WHERE model_id = ? AND status = ? ORDER BY created_at"
-            params = (model_id, status)
-        else:
-            query = "SELECT * FROM threats WHERE model_id = ? ORDER BY created_at"
-            params = (model_id,)
+    if status:
+        query = "SELECT * FROM threats WHERE model_id = ? AND status = ? ORDER BY created_at"
+        params = (model_id, status)
+    else:
+        query = "SELECT * FROM threats WHERE model_id = ? ORDER BY created_at"
+        params = (model_id,)
 
-        async with db.execute(query, params) as cursor:
-            rows = await cursor.fetchall()
-            threats = []
-            for row in rows:
-                threat = dict(row)
-                threat["mitigations"] = json.loads(threat["mitigations"])
-                threats.append(threat)
-            return threats
+    async with conn.execute(query, params) as cursor:
+        rows = await cursor.fetchall()
+        threats = []
+        for row in rows:
+            threat = dict(row)
+            threat["mitigations"] = json.loads(threat["mitigations"])
+            threats.append(threat)
+        return threats
 
 
-async def update_threat_status(db_path: str, threat_id: str, status: str) -> None:
+async def update_threat_status(threat_id: str, status: str) -> None:
     """Update threat status (pending/approved/rejected)."""
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            UPDATE threats
-            SET status = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (status, now_iso(), threat_id),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        UPDATE threats
+        SET status = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, now_iso(), threat_id),
+    )
+    await conn.commit()
 
     logger.info(f"Updated threat {threat_id} status to {status}")
 
 
 async def update_threat(
-    db_path: str,
     threat_id: str,
     name: str | None = None,
     description: str | None = None,
@@ -292,7 +276,6 @@ async def update_threat(
     Update threat details. Only provided fields will be updated.
 
     Args:
-        db_path: Path to SQLite database
         threat_id: ID of threat to update
         name: Threat name
         description: Threat description
@@ -382,10 +365,9 @@ async def update_threat(
 
     query = f"UPDATE threats SET {', '.join(update_fields)} WHERE id = ?"
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(query, params)
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(query, params)
+    await conn.commit()
 
     logger.info(f"Updated threat {threat_id} with {len(update_fields)} fields")
 
@@ -393,40 +375,35 @@ async def update_threat(
 # Assets CRUD
 
 
-async def create_asset(
-    db_path: str, model_id: str, asset_type: str, name: str, description: str
-) -> str:
+async def create_asset(model_id: str, asset_type: str, name: str, description: str) -> str:
     """Create a new asset."""
     asset_id = generate_id()
     now = now_iso()
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            INSERT INTO assets (id, model_id, type, name, description, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (asset_id, model_id, asset_type, name, description, now),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO assets (id, model_id, type, name, description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (asset_id, model_id, asset_type, name, description, now),
+    )
+    await conn.commit()
 
     return asset_id
 
 
-async def list_assets(db_path: str, model_id: str) -> list[dict[str, Any]]:
+async def list_assets(model_id: str) -> list[dict[str, Any]]:
     """List all assets for a model."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM assets WHERE model_id = ? ORDER BY created_at", (model_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM assets WHERE model_id = ? ORDER BY created_at", (model_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 async def update_asset(
-    db_path: str,
     asset_id: str,
     name: str | None = None,
     description: str | None = None,
@@ -436,7 +413,6 @@ async def update_asset(
     Update asset details. Only provided fields will be updated.
 
     Args:
-        db_path: Path to SQLite database
         asset_id: ID of asset to update
         name: Asset name
         description: Asset description
@@ -465,46 +441,41 @@ async def update_asset(
 
     query = f"UPDATE assets SET {', '.join(update_fields)} WHERE id = ?"
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(query, params)
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(query, params)
+    await conn.commit()
 
     logger.info(f"Updated asset {asset_id}")
 
 
-async def delete_threat(db_path: str, threat_id: str) -> None:
+async def delete_threat(threat_id: str) -> None:
     """
     Delete a threat and its associated data.
 
     Args:
-        db_path: Path to SQLite database
         threat_id: ID of threat to delete
     """
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
+    conn = await db.get()
 
-        # Delete threat (CASCADE will handle related records)
-        await db.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
-        await db.commit()
+    # Delete threat (CASCADE will handle related records)
+    await conn.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
+    await conn.commit()
 
     logger.info(f"Deleted threat {threat_id}")
 
 
-async def delete_threat_model(db_path: str, model_id: str) -> None:
+async def delete_threat_model(model_id: str) -> None:
     """
     Delete a threat model and all associated data.
 
     Args:
-        db_path: Path to SQLite database
         model_id: ID of threat model to delete
     """
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
+    conn = await db.get()
 
-        # Delete model (CASCADE will handle all related records)
-        await db.execute("DELETE FROM threat_models WHERE id = ?", (model_id,))
-        await db.commit()
+    # Delete model (CASCADE will handle all related records)
+    await conn.execute("DELETE FROM threat_models WHERE id = ?", (model_id,))
+    await conn.commit()
 
     logger.info(f"Deleted threat model {model_id}")
 
@@ -513,7 +484,6 @@ async def delete_threat_model(db_path: str, model_id: str) -> None:
 
 
 async def create_flow(
-    db_path: str,
     model_id: str,
     flow_type: str,
     flow_description: str,
@@ -524,38 +494,35 @@ async def create_flow(
     flow_id = generate_id()
     now = now_iso()
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            INSERT INTO flows (
-                id, model_id, flow_type, flow_description,
-                source_entity, target_entity, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (flow_id, model_id, flow_type, flow_description, source_entity, target_entity, now),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO flows (
+            id, model_id, flow_type, flow_description,
+            source_entity, target_entity, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (flow_id, model_id, flow_type, flow_description, source_entity, target_entity, now),
+    )
+    await conn.commit()
 
     return flow_id
 
 
-async def list_flows(db_path: str, model_id: str) -> list[dict[str, Any]]:
+async def list_flows(model_id: str) -> list[dict[str, Any]]:
     """List all data flows for a model."""
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM flows WHERE model_id = ? ORDER BY created_at", (model_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM flows WHERE model_id = ? ORDER BY created_at", (model_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 # Pipeline Runs CRUD
 
 
 async def create_pipeline_run(
-    db_path: str,
     model_id: str,
     iteration: int,
     step: str,
@@ -569,50 +536,47 @@ async def create_pipeline_run(
     run_id = generate_id()
     now = now_iso()
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        await db.execute(
-            """
-            INSERT INTO pipeline_runs (
-                id, model_id, iteration, step, input_hash, output_hash,
-                provider, tokens_used, duration_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                model_id,
-                iteration,
-                step,
-                input_hash,
-                output_hash,
-                provider,
-                tokens_used,
-                duration_ms,
-                now,
-            ),
-        )
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO pipeline_runs (
+            id, model_id, iteration, step, input_hash, output_hash,
+            provider, tokens_used, duration_ms, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            model_id,
+            iteration,
+            step,
+            input_hash,
+            output_hash,
+            provider,
+            tokens_used,
+            duration_ms,
+            now,
+        ),
+    )
+    await conn.commit()
 
     return run_id
 
 
-async def get_pipeline_stats(db_path: str, model_id: str) -> dict[str, Any]:
+async def get_pipeline_stats(model_id: str) -> dict[str, Any]:
     """Get pipeline execution statistics for a model."""
-    async with (
-        aiosqlite.connect(db_path) as db,
-        db.execute(
-            """
-            SELECT
-                COUNT(*) as total_steps,
-                SUM(duration_ms) as total_duration_ms,
-                SUM(tokens_used) as total_tokens,
-                AVG(duration_ms) as avg_duration_ms
-            FROM pipeline_runs
-            WHERE model_id = ?
-            """,
-            (model_id,),
-        ) as cursor,
-    ):
+    conn = await db.get()
+    async with conn.execute(
+        """
+        SELECT
+            COUNT(*) as total_steps,
+            SUM(duration_ms) as total_duration_ms,
+            SUM(tokens_used) as total_tokens,
+            AVG(duration_ms) as avg_duration_ms
+        FROM pipeline_runs
+        WHERE model_id = ?
+        """,
+        (model_id,),
+    ) as cursor:
         row = await cursor.fetchone()
         if row:
             return {
