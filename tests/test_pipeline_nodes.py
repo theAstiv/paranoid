@@ -16,6 +16,8 @@ from backend.models.state import (
     ThreatsList,
 )
 from backend.pipeline import nodes
+from backend.pipeline.nodes import helpers
+from backend.pipeline.nodes.summary import _deterministic_code_summary
 from backend.providers.base import ProviderError
 from tests.fixtures.pipeline import (
     make_assets,
@@ -34,33 +36,33 @@ from tests.mock_provider import MockProvider
 
 class TestBuildXmlTag:
     def test_wraps_content_in_tag(self):
-        result = nodes._build_xml_tag("description", "hello world")
+        result = helpers.build_xml_tag("description", "hello world")
         assert result == "<description>\nhello world\n</description>\n\n"
 
     def test_strips_whitespace(self):
-        result = nodes._build_xml_tag("tag", "  padded  ")
+        result = helpers.build_xml_tag("tag", "  padded  ")
         assert "<tag>\npadded\n</tag>" in result
 
     def test_empty_content_returns_empty_string(self):
-        assert nodes._build_xml_tag("tag", "") == ""
-        assert nodes._build_xml_tag("tag", "   ") == ""
+        assert helpers.build_xml_tag("tag", "") == ""
+        assert helpers.build_xml_tag("tag", "   ") == ""
 
 
 class TestFormatAssumptions:
     def test_formats_list_as_bullets(self):
-        result = nodes._format_assumptions(["First", "Second"])
+        result = helpers.format_assumptions(["First", "Second"])
         assert result == "- First\n- Second"
 
     def test_none_returns_empty(self):
-        assert nodes._format_assumptions(None) == ""
+        assert helpers.format_assumptions(None) == ""
 
     def test_empty_list_returns_empty(self):
-        assert nodes._format_assumptions([]) == ""
+        assert helpers.format_assumptions([]) == ""
 
 
 class TestParseStructuredInput:
     def test_plain_text_returns_no_structured_data(self):
-        component, assumptions, plain = nodes._parse_structured_input(
+        component, assumptions, plain = helpers.parse_structured_input(
             "A simple web application", Framework.STRIDE
         )
         assert component is None
@@ -75,7 +77,7 @@ class TestParseStructuredInput:
             "<description>Handles authentication</description>\n"
             "</component_description>\n"
         )
-        _component, _assumptions, plain = nodes._parse_structured_input(
+        _component, _assumptions, plain = helpers.parse_structured_input(
             stride_input, Framework.STRIDE
         )
         # Structured input detected — component should be parsed (or None if tags incomplete)
@@ -391,9 +393,9 @@ async def test_summarize_code_deterministic_fallback():
 
 
 def test_format_code_context_helper():
-    """Test _format_code_context XML formatting."""
+    """Test format_code_context XML formatting."""
     code_context = make_code_context()
-    result = nodes._format_code_context(code_context)
+    result = helpers.format_code_context(code_context)
 
     assert "Repository:" in result
     assert "/home/user/document-sharing-app" in result
@@ -404,9 +406,9 @@ def test_format_code_context_helper():
 
 
 def test_format_code_summary_helper():
-    """Test _format_code_summary XML formatting."""
+    """Test format_code_summary XML formatting."""
     code_summary = make_code_summary()
-    result = nodes._format_code_summary(code_summary)
+    result = helpers.format_code_summary(code_summary)
 
     assert "**Technology Stack:**" in result
     assert "Python 3.11" in result or "FastAPI" in result
@@ -514,7 +516,7 @@ async def test_gap_analysis_with_code_summary(mock_provider):
 def test_deterministic_code_summary_extraction():
     """Test deterministic extraction of CodeSummary from CodeContext."""
     code_context = make_code_context()
-    result = nodes._deterministic_code_summary(code_context)
+    result = _deterministic_code_summary(code_context)
 
     assert isinstance(result, CodeSummary)
     # Should detect Python from file extensions
