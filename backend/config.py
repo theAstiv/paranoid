@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: Literal["debug", "info", "warning", "error"] = "info"
+    cors_origins: str = "*"  # Comma-separated origins, or "*" for all
 
     # Prompt configuration
     summary_max_words: int = 40
