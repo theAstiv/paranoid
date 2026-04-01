@@ -55,8 +55,8 @@ def deduplicate_threats(
             existing_threats.threats if existing_threats else None,
             threshold,
         )
-    except Exception:
-        logger.warning("Embedding-based dedup failed, falling back to text comparison")
+    except (ValueError, RuntimeError) as e:
+        logger.warning(f"Embedding-based dedup failed ({e}), falling back to text comparison")
         kept = _deduplicate_by_text(
             new_threats.threats,
             existing_threats.threats if existing_threats else None,
