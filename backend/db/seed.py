@@ -5,9 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
-
-from backend.db.crud import create_threat
+from backend.db.connection import db
+from backend.db.crud import create_threat, create_threat_model
 from backend.db.vectors import bulk_insert_seed_vectors, get_vector_stats
 
 
@@ -41,12 +40,9 @@ async def load_seed_file(file_path: Path) -> list[dict[str, Any]]:
         return []
 
 
-async def import_stride_patterns(db_path: str) -> int:
+async def import_stride_patterns() -> int:
     """
     Import STRIDE threat patterns from seeds/stride_patterns.json.
-
-    Args:
-        db_path: Path to SQLite database
 
     Returns:
         Number of patterns imported
@@ -56,10 +52,7 @@ async def import_stride_patterns(db_path: str) -> int:
         return 0
 
     # Create a seed threat model to associate patterns with
-    from backend.db.crud import create_threat_model
-
     model_id = await create_threat_model(
-        db_path=db_path,
         title="STRIDE Seed Patterns",
         description="Curated STRIDE threat patterns for RAG",
         provider="seed",
@@ -73,7 +66,6 @@ async def import_stride_patterns(db_path: str) -> int:
     for pattern in patterns:
         try:
             threat_id = await create_threat(
-                db_path=db_path,
                 model_id=model_id,
                 name=pattern["name"],
                 description=pattern["description"],
@@ -99,18 +91,15 @@ async def import_stride_patterns(db_path: str) -> int:
 
     # Bulk insert vectors
     if threat_vectors:
-        await bulk_insert_seed_vectors(db_path, threat_vectors)
+        await bulk_insert_seed_vectors(threat_vectors)
 
     logger.info(f"Imported {count} STRIDE seed patterns")
     return count
 
 
-async def import_maestro_patterns(db_path: str) -> int:
+async def import_maestro_patterns() -> int:
     """
     Import MAESTRO threat patterns from seeds/maestro_patterns.json.
-
-    Args:
-        db_path: Path to SQLite database
 
     Returns:
         Number of patterns imported
@@ -119,10 +108,7 @@ async def import_maestro_patterns(db_path: str) -> int:
     if not patterns:
         return 0
 
-    from backend.db.crud import create_threat_model
-
     model_id = await create_threat_model(
-        db_path=db_path,
         title="MAESTRO Seed Patterns",
         description="Curated MAESTRO (ML/AI) threat patterns for RAG",
         provider="seed",
@@ -136,7 +122,6 @@ async def import_maestro_patterns(db_path: str) -> int:
     for pattern in patterns:
         try:
             threat_id = await create_threat(
-                db_path=db_path,
                 model_id=model_id,
                 name=pattern["name"],
                 description=pattern["description"],
@@ -160,18 +145,15 @@ async def import_maestro_patterns(db_path: str) -> int:
             logger.error(f"Failed to import MAESTRO pattern {pattern.get('name')}: {e}")
 
     if threat_vectors:
-        await bulk_insert_seed_vectors(db_path, threat_vectors)
+        await bulk_insert_seed_vectors(threat_vectors)
 
     logger.info(f"Imported {count} MAESTRO seed patterns")
     return count
 
 
-async def import_owasp_patterns(db_path: str) -> int:
+async def import_owasp_patterns() -> int:
     """
     Import OWASP LLM Top 10 patterns from seeds/owasp_llm_top10.json.
-
-    Args:
-        db_path: Path to SQLite database
 
     Returns:
         Number of patterns imported
@@ -180,10 +162,7 @@ async def import_owasp_patterns(db_path: str) -> int:
     if not patterns:
         return 0
 
-    from backend.db.crud import create_threat_model
-
     model_id = await create_threat_model(
-        db_path=db_path,
         title="OWASP LLM Top 10",
         description="OWASP Top 10 for LLM Applications",
         provider="seed",
@@ -197,7 +176,6 @@ async def import_owasp_patterns(db_path: str) -> int:
     for pattern in patterns:
         try:
             threat_id = await create_threat(
-                db_path=db_path,
                 model_id=model_id,
                 name=pattern["name"],
                 description=pattern["description"],
@@ -222,7 +200,7 @@ async def import_owasp_patterns(db_path: str) -> int:
             logger.error(f"Failed to import OWASP pattern {pattern.get('name')}: {e}")
 
     if threat_vectors:
-        await bulk_insert_seed_vectors(db_path, threat_vectors)
+        await bulk_insert_seed_vectors(threat_vectors)
 
     logger.info(f"Imported {count} OWASP LLM patterns")
     return count
@@ -242,26 +220,23 @@ def _count_expected_seeds() -> int:
     return total
 
 
-async def _cleanup_seed_data(db_path: str) -> None:
+async def _cleanup_seed_data() -> None:
     """Remove existing seed threat models and their cascaded data."""
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM threat_models WHERE provider = ?", ("seed",)
-        )
-        count = (await cursor.fetchone())[0]
+    conn = await db.get()
+    cursor = await conn.execute("SELECT COUNT(*) FROM threat_models WHERE provider = ?", ("seed",))
+    count = (await cursor.fetchone())[0]
 
-        await db.execute("DELETE FROM threat_models WHERE provider = ?", ("seed",))
+    await conn.execute("DELETE FROM threat_models WHERE provider = ?", ("seed",))
 
-        # Clean orphaned seed vectors from threat_metadata
-        await db.execute("DELETE FROM threat_metadata WHERE source = ?", ("seed",))
-        await db.commit()
+    # Clean orphaned seed vectors from threat_metadata
+    await conn.execute("DELETE FROM threat_metadata WHERE source = ?", ("seed",))
+    await conn.commit()
 
     if count > 0:
         logger.info(f"Cleaned up {count} existing seed threat models")
 
 
-async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
+async def load_all_seeds(force: bool = False) -> dict[str, int]:
     """
     Load all seed patterns into the database.
 
@@ -269,7 +244,6 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
     count from seed files. If counts don't match, cleans up and reloads.
 
     Args:
-        db_path: Path to SQLite database
         force: If True, reload even if seeds already exist
 
     Returns:
@@ -281,7 +255,7 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
 
     # Check if seeds already loaded (and complete)
     if not force:
-        stats = await get_vector_stats(db_path)
+        stats = await get_vector_stats()
         actual = stats.get("seed", 0)
 
         if actual > 0 and actual >= expected:
@@ -297,24 +271,24 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
 
     # Clean up existing seed data before reimporting
     if force:
-        await _cleanup_seed_data(db_path)
+        await _cleanup_seed_data()
 
     results = {}
 
     try:
-        results["stride"] = await import_stride_patterns(db_path)
+        results["stride"] = await import_stride_patterns()
     except Exception as e:
         logger.error(f"Failed to import STRIDE patterns: {e}")
         results["stride"] = 0
 
     try:
-        results["maestro"] = await import_maestro_patterns(db_path)
+        results["maestro"] = await import_maestro_patterns()
     except Exception as e:
         logger.error(f"Failed to import MAESTRO patterns: {e}")
         results["maestro"] = 0
 
     try:
-        results["owasp"] = await import_owasp_patterns(db_path)
+        results["owasp"] = await import_owasp_patterns()
     except Exception as e:
         logger.error(f"Failed to import OWASP patterns: {e}")
         results["owasp"] = 0
@@ -329,17 +303,14 @@ async def load_all_seeds(db_path: str, force: bool = False) -> dict[str, int]:
     return results
 
 
-async def check_seeds_status(db_path: str) -> dict[str, Any]:
+async def check_seeds_status() -> dict[str, Any]:
     """
     Check the status of seed data.
-
-    Args:
-        db_path: Path to SQLite database
 
     Returns:
         Dictionary with seed status information
     """
-    stats = await get_vector_stats(db_path)
+    stats = await get_vector_stats()
     actual = stats.get("seed", 0)
     expected = _count_expected_seeds()
 

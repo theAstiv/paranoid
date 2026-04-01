@@ -699,3 +699,8 @@ async def _run_pipeline_async(
         if output_file_str:
             click.echo(f"Output:             {output_file_str}")
         click.echo()
+
+    # Close database connection (CLI cleanup path)
+    from backend.db.connection import db
+
+    await db.close()

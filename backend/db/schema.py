@@ -4,6 +4,8 @@ import logging
 
 import aiosqlite
 
+from backend.db.connection import db
+
 
 logger = logging.getLogger(__name__)
 
@@ -170,8 +172,54 @@ CREATE_INDICES = [
 ]
 
 
+async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
+    """Initialize database schema using an existing connection.
+
+    Args:
+        conn: Active aiosqlite connection (PRAGMA foreign_keys already set)
+    """
+    logger.info("Initializing database schema")
+
+    # Create all tables
+    await conn.execute(CREATE_THREAT_MODELS_TABLE)
+    await conn.execute(CREATE_THREATS_TABLE)
+    await conn.execute(CREATE_ASSETS_TABLE)
+    await conn.execute(CREATE_FLOWS_TABLE)
+    await conn.execute(CREATE_TRUST_BOUNDARIES_TABLE)
+    await conn.execute(CREATE_THREAT_SOURCES_TABLE)
+    await conn.execute(CREATE_ATTACK_TREES_TABLE)
+    await conn.execute(CREATE_TEST_CASES_TABLE)
+    await conn.execute(CREATE_THREAT_METADATA_TABLE)
+    await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
+
+    # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
+    # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
+    try:
+        await conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS threat_vectors
+            USING vec0(
+                embedding float[384]
+            );
+        """)
+    except Exception:
+        logger.warning(
+            "sqlite-vec extension not available — threat_vectors table not created. "
+            "Vector search features will be unavailable."
+        )
+
+    # Create indices
+    for index_sql in CREATE_INDICES:
+        await conn.execute(index_sql)
+
+    await conn.commit()
+    logger.info("Database schema initialized successfully")
+
+
 async def init_database(db_path: str) -> None:
-    """Initialize database with schema."""
+    """Initialize database with schema (legacy function for standalone use).
+
+    Prefer init_database_with_connection() when using ConnectionManager.
+    """
     logger.info(f"Initializing database at {db_path}")
 
     async with aiosqlite.connect(db_path) as db:
@@ -199,20 +247,20 @@ async def init_database(db_path: str) -> None:
     logger.info("Database initialized successfully")
 
 
-async def get_schema_version(db_path: str) -> int:
+async def get_schema_version() -> int:
     """Get current schema version."""
-    async with aiosqlite.connect(db_path) as db:
-        try:
-            async with db.execute("PRAGMA user_version;") as cursor:
-                result = await cursor.fetchone()
-                return result[0] if result else 0
-        except Exception as e:
-            logger.warning(f"Could not read schema version: {e}")
-            return 0
+    try:
+        conn = await db.get()
+        async with conn.execute("PRAGMA user_version;") as cursor:
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+    except Exception as e:
+        logger.warning(f"Could not read schema version: {e}")
+        return 0
 
 
-async def set_schema_version(db_path: str, version: int) -> None:
+async def set_schema_version(version: int) -> None:
     """Set schema version."""
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(f"PRAGMA user_version = {version};")
-        await db.commit()
+    conn = await db.get()
+    await conn.execute(f"PRAGMA user_version = {version};")
+    await conn.commit()

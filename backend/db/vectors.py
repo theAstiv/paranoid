@@ -5,9 +5,8 @@ import logging
 import struct
 from typing import Any
 
-import aiosqlite
-
 from backend.config import settings
+from backend.db.connection import db
 
 
 logger = logging.getLogger(__name__)
@@ -90,43 +89,7 @@ def compute_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-async def init_vector_table(db_path: str) -> None:
-    """
-    Initialize sqlite-vec virtual table for threat embeddings.
-
-    Args:
-        db_path: Path to SQLite database
-    """
-    logger.info("Initializing vector table")
-
-    async with aiosqlite.connect(db_path) as db:
-        # Load sqlite-vec extension
-        await db.enable_load_extension(True)
-        try:
-            # Try loading from common locations
-            await db.load_extension("vec0")
-        except Exception as e:
-            logger.warning(f"Could not load vec0 extension: {e}")
-            try:
-                await db.load_extension("sqlite-vec")
-            except Exception as e2:
-                logger.error(f"Could not load sqlite-vec extension: {e2}")
-                raise
-
-        # Create virtual table for 384-dimensional vectors (BAAI/bge-small-en-v1.5)
-        await db.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS threat_vectors
-            USING vec0(
-                embedding float[384]
-            );
-        """)
-
-        await db.commit()
-        logger.info("Vector table initialized successfully")
-
-
 async def upsert_threat_vector(
-    db_path: str,
     threat_id: str,
     text: str,
     source: str = "llm",
@@ -135,7 +98,6 @@ async def upsert_threat_vector(
     Insert or update a threat vector.
 
     Args:
-        db_path: Path to SQLite database
         threat_id: ID of the threat
         text: Text to embed (threat description)
         source: Source of the threat (llm, rule_engine, seed)
@@ -147,59 +109,57 @@ async def upsert_threat_vector(
     vector = embed_text(text)
     vector_blob = serialize_vector(vector)
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("PRAGMA foreign_keys = ON;")
+    conn = await db.get()
 
-        # Check if vector already exists for this threat
-        async with db.execute(
-            "SELECT id FROM threat_metadata WHERE threat_id = ?", (threat_id,)
-        ) as cursor:
-            existing = await cursor.fetchone()
+    # Check if vector already exists for this threat
+    async with conn.execute(
+        "SELECT id FROM threat_metadata WHERE threat_id = ?", (threat_id,)
+    ) as cursor:
+        existing = await cursor.fetchone()
 
-        if existing:
-            # Update existing vector
-            metadata_id = existing[0]
-            await db.execute(
-                """
-                UPDATE threat_vectors
-                SET embedding = ?
-                WHERE rowid = (
-                    SELECT rowid FROM threat_metadata WHERE id = ?
-                )
-                """,
-                (vector_blob, metadata_id),
+    if existing:
+        # Update existing vector
+        metadata_id = existing[0]
+        await conn.execute(
+            """
+            UPDATE threat_vectors
+            SET embedding = ?
+            WHERE rowid = (
+                SELECT rowid FROM threat_metadata WHERE id = ?
             )
-            logger.debug(f"Updated vector for threat {threat_id}")
-        else:
-            # Insert new vector and metadata
-            from backend.db.crud import generate_id, now_iso
+            """,
+            (vector_blob, metadata_id),
+        )
+        logger.debug(f"Updated vector for threat {threat_id}")
+    else:
+        # Insert new vector and metadata
+        from backend.db.crud import generate_id, now_iso
 
-            metadata_id = generate_id()
-            now = now_iso()
+        metadata_id = generate_id()
+        now = now_iso()
 
-            # Insert into threat_metadata
-            await db.execute(
-                """
-                INSERT INTO threat_metadata (
-                    id, threat_id, source, embedding_model, created_at
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (metadata_id, threat_id, source, settings.embedding_model, now),
-            )
+        # Insert into threat_metadata
+        await conn.execute(
+            """
+            INSERT INTO threat_metadata (
+                id, threat_id, source, embedding_model, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (metadata_id, threat_id, source, settings.embedding_model, now),
+        )
 
-            # Insert into threat_vectors
-            await db.execute(
-                "INSERT INTO threat_vectors (rowid, embedding) VALUES (?, ?)",
-                (hash(metadata_id) % (2**63), vector_blob),
-            )
-            logger.debug(f"Inserted vector for threat {threat_id}")
+        # Insert into threat_vectors
+        await conn.execute(
+            "INSERT INTO threat_vectors (rowid, embedding) VALUES (?, ?)",
+            (hash(metadata_id) % (2**63), vector_blob),
+        )
+        logger.debug(f"Inserted vector for threat {threat_id}")
 
-        await db.commit()
-        return metadata_id
+    await conn.commit()
+    return metadata_id
 
 
 async def search_similar_threats(
-    db_path: str,
     query_text: str,
     limit: int = 10,
     threshold: float = 0.7,
@@ -208,7 +168,6 @@ async def search_similar_threats(
     Search for similar threats using vector similarity.
 
     Args:
-        db_path: Path to SQLite database
         query_text: Query text to find similar threats
         limit: Maximum number of results
         threshold: Similarity threshold (0-1, cosine similarity)
@@ -220,64 +179,51 @@ async def search_similar_threats(
     query_vector = embed_text(query_text)
     query_blob = serialize_vector(query_vector)
 
-    async with aiosqlite.connect(db_path) as db:
-        await db.enable_load_extension(True)
-        try:
-            await db.load_extension("vec0")
-        except Exception:
-            try:
-                await db.load_extension("sqlite-vec")
-            except Exception as e:
-                logger.error(f"Could not load vector extension for search: {e}")
-                return []
+    conn = await db.get()
 
-        db.row_factory = aiosqlite.Row
+    # Query for similar vectors using cosine distance
+    query = """
+        SELECT
+            tm.threat_id,
+            tm.source,
+            t.name,
+            t.description,
+            t.stride_category,
+            1 - vec_distance_cosine(tv.embedding, ?) as similarity
+        FROM threat_vectors tv
+        JOIN threat_metadata tm ON tv.rowid = (
+            SELECT rowid FROM threat_metadata WHERE id = tm.id
+        )
+        JOIN threats t ON t.id = tm.threat_id
+        WHERE similarity >= ?
+        ORDER BY similarity DESC
+        LIMIT ?
+    """
 
-        # Query for similar vectors using cosine distance
-        query = """
-            SELECT
-                tm.threat_id,
-                tm.source,
-                t.name,
-                t.description,
-                t.stride_category,
-                1 - vec_distance_cosine(tv.embedding, ?) as similarity
-            FROM threat_vectors tv
-            JOIN threat_metadata tm ON tv.rowid = (
-                SELECT rowid FROM threat_metadata WHERE id = tm.id
+    async with conn.execute(query, (query_blob, threshold, limit)) as cursor:
+        rows = await cursor.fetchall()
+        results = []
+        for row in rows:
+            results.append(
+                {
+                    "threat_id": row["threat_id"],
+                    "source": row["source"],
+                    "name": row["name"],
+                    "description": row["description"],
+                    "stride_category": row["stride_category"],
+                    "similarity": row["similarity"],
+                }
             )
-            JOIN threats t ON t.id = tm.threat_id
-            WHERE similarity >= ?
-            ORDER BY similarity DESC
-            LIMIT ?
-        """
-
-        async with db.execute(query, (query_blob, threshold, limit)) as cursor:
-            rows = await cursor.fetchall()
-            results = []
-            for row in rows:
-                results.append(
-                    {
-                        "threat_id": row["threat_id"],
-                        "source": row["source"],
-                        "name": row["name"],
-                        "description": row["description"],
-                        "stride_category": row["stride_category"],
-                        "similarity": row["similarity"],
-                    }
-                )
-            return results
+        return results
 
 
 async def bulk_insert_seed_vectors(
-    db_path: str,
     threats: list[dict[str, Any]],
 ) -> int:
     """
     Bulk insert seed threat vectors.
 
     Args:
-        db_path: Path to SQLite database
         threats: List of threat dicts with 'text' and 'metadata' keys
 
     Returns:
@@ -289,7 +235,6 @@ async def bulk_insert_seed_vectors(
     for threat in threats:
         try:
             await upsert_threat_vector(
-                db_path=db_path,
                 threat_id=threat["id"],
                 text=threat["text"],
                 source="seed",
@@ -302,29 +247,26 @@ async def bulk_insert_seed_vectors(
     return count
 
 
-async def get_vector_stats(db_path: str) -> dict[str, Any]:
+async def get_vector_stats() -> dict[str, Any]:
     """
     Get statistics about stored vectors.
-
-    Args:
-        db_path: Path to SQLite database
 
     Returns:
         Dictionary with vector counts by source
     """
-    async with aiosqlite.connect(db_path) as db:
-        async with db.execute("""
-            SELECT
-                source,
-                COUNT(*) as count
-            FROM threat_metadata
-            GROUP BY source
-        """) as cursor:
-            rows = await cursor.fetchall()
-            stats = {row[0]: row[1] for row in rows}
+    conn = await db.get()
+    async with conn.execute("""
+        SELECT
+            source,
+            COUNT(*) as count
+        FROM threat_metadata
+        GROUP BY source
+    """) as cursor:
+        rows = await cursor.fetchall()
+        stats = {row[0]: row[1] for row in rows}
 
-        async with db.execute("SELECT COUNT(*) FROM threat_metadata") as cursor:
-            total = await cursor.fetchone()
-            stats["total"] = total[0] if total else 0
+    async with conn.execute("SELECT COUNT(*) FROM threat_metadata") as cursor:
+        total = await cursor.fetchone()
+        stats["total"] = total[0] if total else 0
 
-        return stats
+    return stats
