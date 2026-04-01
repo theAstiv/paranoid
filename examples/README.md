@@ -65,6 +65,29 @@ paranoid run examples/stride-example-api-gateway.md
 paranoid run examples/maestro-example-rag-chatbot.md --maestro
 ```
 
+#### Run Examples with Architecture Diagrams (`--diagram`)
+
+Combine text descriptions with visual architecture diagrams for richer threat coverage:
+
+```bash
+# STRIDE Example with diagram
+paranoid run examples/stride-example-api-gateway.md \
+  --diagram examples/stride-api-gateway-architecture.mmd
+
+# MAESTRO Example with diagram
+paranoid run examples/maestro-example-rag-chatbot.md \
+  --maestro \
+  --diagram examples/maestro-rag-chatbot-architecture.mmd
+```
+
+**Available diagram files:**
+- [`stride-api-gateway-architecture.mmd`](stride-api-gateway-architecture.mmd) - E-commerce API Gateway architecture
+- [`maestro-rag-chatbot-architecture.mmd`](maestro-rag-chatbot-architecture.mmd) - RAG chatbot AI pipeline
+
+**Supported formats:**
+- `.mmd` (Mermaid) - Works with all providers (Anthropic, OpenAI, Ollama)
+- `.png`, `.jpg` - Vision API (Anthropic all models, OpenAI gpt-4o/gpt-4o-mini only)
+
 ---
 
 ## Template Format

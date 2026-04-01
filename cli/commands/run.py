@@ -311,9 +311,9 @@ def run(
     INPUT_FILE: Path to .txt or .md file with system description
 
     Auto-detects framework from XML tags:
-      - <component_description> → STRIDE
-      - <maestro_component_description> → MAESTRO
-      - Plain text → STRIDE (default)
+      - <component_description> -> STRIDE
+      - <maestro_component_description> -> MAESTRO
+      - Plain text -> STRIDE (default)
 
     Examples:
 

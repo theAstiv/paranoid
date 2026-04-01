@@ -1,0 +1,122 @@
+graph TB
+    Customer[Customer<br/>Chat Widget]
+    Admin[Admin Dashboard<br/>React App - VPN]
+    SupportAgent[Support Agents<br/>Human Review]
+    DataScientist[Data Scientists<br/>Model Evaluation]
+
+    subgraph "Internet Boundary"
+        WAF[AWS WAF<br/>OWASP Top 10 Rules]
+        RateLimit[Rate Limiting<br/>10/min per user<br/>1000/hr per IP]
+    end
+
+    subgraph "Application Layer - EKS Kubernetes"
+        API[FastAPI Service<br/>Python 3.11<br/>JWT Auth]
+        TokenBudget[Token Budget Enforcer<br/>Max 8K tokens per conversation]
+
+        subgraph "AI Pipeline Components"
+            IntentClassifier[Intent Classifier<br/>gpt-3.5-turbo]
+            Rebuff[Rebuff.ai v0.3<br/>Prompt Injection Detection]
+            LangChain[LangChain Orchestrator<br/>Tool Routing & JSON Schema Validation]
+            RAG[RAG Pipeline<br/>Retrieval + Context]
+            Generator[Response Generator<br/>GPT-4 Turbo]
+            ModerationAPI[OpenAI Moderation API<br/>Hate/Harassment Filter]
+            Confidence[Confidence Scorer<br/>Custom Model<br/>threshold: 0.85]
+        end
+
+        KillSwitch[Admin Kill Switch<br/>Disable Agent / Route to Human]
+    end
+
+    subgraph "Vector & Embedding Layer"
+        EmbedModel[Embedding Model<br/>bge-small-en-v1.5<br/>ONNX Local]
+        Pinecone[(Pinecone Vector DB<br/>500K Doc Chunks)]
+    end
+
+    subgraph "Data Layer"
+        PostgreSQL[(PostgreSQL<br/>Conversation History)]
+        ProductDB[(Product Database<br/>PostgreSQL Read-Only)]
+        Redis[(Redis Cache<br/>Session Store)]
+        S3[(AWS S3<br/>Document Storage)]
+        SecretsManager[AWS Secrets Manager<br/>API Keys 90-day Rotation]
+    end
+
+    subgraph "Document Ingestion Pipeline"
+        Upload[Document Upload<br/>POST /admin/upload]
+        AdversarialScan[Adversarial Scanning<br/>Content Validation]
+    end
+
+    subgraph "External AI Services"
+        OpenAI[OpenAI API<br/>GPT-4 & GPT-3.5<br/>$5K/month budget]
+    end
+
+    subgraph "External Business Services"
+        Zendesk[Zendesk API<br/>Ticket Creation]
+        SendGrid[SendGrid API<br/>Email Sending]
+        Serper[Serper API<br/>Web Search<br/>DISABLED in prod]
+    end
+
+    subgraph "Monitoring"
+        CloudWatch[AWS CloudWatch<br/>Logs & Metrics]
+        Grafana[Grafana<br/>Dashboard]
+    end
+
+    Customer -->|HTTPS REST| WAF
+    Customer -.->|WebSocket| WAF
+    Admin -->|HTTPS Admin API| WAF
+    WAF --> RateLimit
+    RateLimit --> API
+
+    API --> TokenBudget
+    TokenBudget --> IntentClassifier
+    IntentClassifier -->|Classify Intent| OpenAI
+    IntentClassifier -.->|Review Classification Quality| SupportAgent
+    IntentClassifier --> Rebuff
+    Rebuff --> LangChain
+
+    LangChain --> RAG
+    RAG --> EmbedModel
+    EmbedModel --> Pinecone
+    Pinecone -->|Retrieved Docs| RAG
+
+    LangChain --> Generator
+    Generator -->|Generate Response| OpenAI
+    Generator --> ModerationAPI
+    ModerationAPI -->|Filter Output| Confidence
+
+    Confidence -->|confidence < 0.85| SupportAgent
+    Confidence -->|confidence >= 0.85| Customer
+    SupportAgent -->|Override/Flag Hallucinations| API
+
+    LangChain -->|Tool Use + JSON Schema| Zendesk
+    LangChain -->|Tool Use + JSON Schema| SendGrid
+    LangChain -->|Read-Only Query| ProductDB
+    LangChain -.->|DISABLED| Serper
+
+    API --> PostgreSQL
+    API --> Redis
+    LangChain --> SecretsManager
+
+    Admin --> KillSwitch
+    KillSwitch -.->|Disable Agent| API
+    DataScientist -->|Evaluation Access| Grafana
+
+    Admin -->|Upload Docs| Upload
+    Upload --> S3
+    S3 --> AdversarialScan
+    AdversarialScan --> EmbedModel
+
+    API --> CloudWatch
+    CloudWatch --> Grafana
+
+    style Generator fill:#f9f,stroke:#333,stroke-width:2px
+    style RAG fill:#f9f,stroke:#333,stroke-width:2px
+    style IntentClassifier fill:#f9f,stroke:#333
+    style Rebuff fill:#fcc,stroke:#333,stroke-width:2px
+    style WAF fill:#fcc,stroke:#333,stroke-width:2px
+    style KillSwitch fill:#fcc,stroke:#333,stroke-width:2px
+    style ModerationAPI fill:#fcc,stroke:#333,stroke-width:2px
+    style TokenBudget fill:#fcf,stroke:#333
+    style Pinecone fill:#ff9,stroke:#333
+    style OpenAI fill:#fbb,stroke:#333
+    style Customer fill:#bbf,stroke:#333
+    style Admin fill:#fbb,stroke:#333
+    style SecretsManager fill:#9f9,stroke:#333

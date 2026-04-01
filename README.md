@@ -105,6 +105,10 @@ DEFAULT_MODEL=llama3
 # Optional: path to context-link binary for --code flag
 # If unset, Paranoid looks for bin/context-link then PATH
 CONTEXT_LINK_BINARY=/usr/local/bin/context-link
+
+# Optional: restrict CORS origins (default: * allows all)
+# Comma-separated for multiple origins
+CORS_ORIGINS=https://app.example.com,https://staging.example.com
 ```
 
 ### Step 3: Run Your First Threat Model
@@ -112,6 +116,10 @@ CONTEXT_LINK_BINARY=/usr/local/bin/context-link
 ```bash
 # Run with an example
 paranoid run examples/stride-example-api-gateway.md
+
+# With architecture diagram (Mermaid, PNG, or JPG)
+paranoid run examples/stride-example-api-gateway.md \
+  --diagram examples/stride-api-gateway-architecture.mmd
 
 # With your own system description
 paranoid run my-system.md

@@ -1,0 +1,75 @@
+graph TB
+    Client[Web/Mobile Clients]
+    Admin[Admin Dashboard]
+
+    subgraph "Internet Boundary"
+        WAF[AWS WAF<br/>OWASP Top 10 Rules<br/>Rate Limiting]
+    end
+
+    subgraph "Application Layer - ECS Fargate"
+        Gateway[API Gateway Service<br/>Node.js/Express<br/>Port 443/8443]
+
+        subgraph "Request Validation Pipeline"
+            RateLimit[express-rate-limit]
+            Validation[Joi Schema Validation]
+            JWTAuth[JWT Authentication<br/>jsonwebtoken]
+            RBAC[RBAC Authorization]
+            Router[Routing Logic]
+        end
+    end
+
+    subgraph "Backend Microservices - Private Subnet"
+        UserSvc[User Service<br/>gRPC]
+        ProductSvc[Product Catalog<br/>REST API]
+        OrderSvc[Order Service<br/>REST API]
+        PaymentSvc[Payment Service<br/>REST API]
+    end
+
+    subgraph "Data Layer"
+        Redis[(Redis ElastiCache<br/>Session Store<br/>Unencrypted)]
+        Secrets[AWS Secrets Manager<br/>API Keys & Credentials]
+        ParamStore[AWS Parameter Store<br/>Configuration]
+    end
+
+    subgraph "External Services"
+        Stripe[Stripe Payment API<br/>External]
+        SNS[AWS SNS<br/>Event Bus]
+        CloudWatch[AWS CloudWatch<br/>Logs & Monitoring]
+    end
+
+    Client -->|HTTPS REST| WAF
+    Admin -->|HTTPS Admin API| WAF
+    Client -.->|WebSocket| WAF
+
+    WAF --> Gateway
+
+    Gateway --> RateLimit
+    RateLimit --> Validation
+    Validation --> JWTAuth
+    JWTAuth --> RBAC
+    RBAC --> Router
+
+    Router -->|gRPC mTLS| UserSvc
+    Router -->|HTTP| ProductSvc
+    Router -->|HTTP| OrderSvc
+    Router -->|HTTP| PaymentSvc
+
+    Gateway <-->|Session Data| Redis
+    Gateway -->|Get Secrets| Secrets
+    Gateway -->|Get Config| ParamStore
+
+    PaymentSvc -->|Process Payment| Stripe
+    Gateway -->|Publish Events| SNS
+    Gateway -->|Write Logs| CloudWatch
+
+    UserSvc -.->|mTLS| ProductSvc
+    UserSvc -.->|mTLS| OrderSvc
+    UserSvc -.->|mTLS| PaymentSvc
+
+    style Gateway fill:#f9f,stroke:#333,stroke-width:2px
+    style WAF fill:#fcc,stroke:#333,stroke-width:2px
+    style Client fill:#bbf,stroke:#333
+    style Admin fill:#fbb,stroke:#333
+    style Redis fill:#ff9,stroke:#333
+    style Secrets fill:#9f9,stroke:#333
+    style ParamStore fill:#9f9,stroke:#333
