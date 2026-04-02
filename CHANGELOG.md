@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-02
+
+### Added
+
+#### Deterministic Rule Engine
+- **`backend/rules/engine.py`** — keyword-based pattern matcher that runs on every pipeline execution alongside the LLM
+  - `extract_keywords()` — regex-based extraction across 8 tech categories (auth, DB, cloud, ML/AI, app arch, crypto, protocols, RBAC)
+  - `match_patterns()` — scores all loaded seed patterns by keyword overlap; returns top-N as `ThreatsList`
+  - `_pattern_to_threat()` — converts seed pattern dicts to `Threat` objects; maps all 13 MAESTRO categories to their nearest STRIDE equivalent via `_MAESTRO_TO_STRIDE`
+  - `run_rule_engine()` — standalone entry point; no LLM, no DB required
+  - `fetch_rag_context()` — async; queries `search_similar_threats()` to retrieve up to 5 prior approved/seed threats as LLM context strings; degrades gracefully on DB error
+  - `merge_rule_and_llm_threats()` — deduplicates rule-engine output against LLM output via cosine similarity (default threshold 0.85); appends only unique rule threats
+- **`backend/pipeline/runner.py`** — rule engine wired in after all LLM iterations:
+  - RAG context fetched before each iteration's `generate_threats` call (when `config.enable_rag` is true)
+  - `RULE_ENGINE` added to `PipelineStep` enum
+  - Merged threat count reported in pipeline completion event
+- **27 tests** in `tests/test_rules.py` covering keyword extraction, pattern matching, MAESTRO→STRIDE mapping, `run_rule_engine` standalone, merge deduplication, and `fetch_rag_context` graceful failure
+
+#### SQLite Persistence Layer
+- **`backend/db/persist.py`** — `persist_pipeline_result()` non-fatal entry point; saves all pipeline artifacts in dependency order: threat model → assets → data flows → trust boundaries → threat sources → threats; sets status to `completed` on success; returns `None` (not raises) on any DB error
+- **`backend/db/crud.py`** additions:
+  - `create_threat_source(model_id, category, description, example)` — persists threat actors from `FlowsList.threat_sources`
+  - `list_threat_sources(model_id)` — lists all threat sources for a model
+  - `create_threat()` extended with 5 individual DREAD sub-score parameters: `dread_damage`, `dread_reproducibility`, `dread_exploitability`, `dread_affected_users`, `dread_discoverability` (all `float | None`)
+  - `find_threat_model_by_prefix(prefix)` — resolves a short ID prefix (`WHERE id LIKE 'prefix%'`); raises `ValueError` if the prefix matches multiple models
+- **`cli/commands/run.py`** — `persist_pipeline_result()` called after every run:
+  - `JSONWriter` now always created (was previously gated on `--output`); file export remains opt-in
+  - Persist guard: `if json_writer.assets or json_writer.flows or json_writer.threats` — partial runs (e.g. pipeline failed after `extract_assets`) are saved with whatever data is available
+  - Database ID printed at end of run in normal (non-quiet) mode
+- **`backend/db/vectors.py`** — fixed rowid JOIN bug in `search_similar_threats` and `upsert_threat_vector`:
+  - Added `vector_rowid INTEGER` column to `threat_metadata`; stored at insert time as `hash(metadata_id) % 2^63`
+  - `search_similar_threats` JOIN changed from broken subquery to `JOIN threat_metadata tm ON tv.rowid = tm.vector_rowid`
+  - UPDATE path now uses stored `vector_rowid`; logs a warning for pre-migration rows with NULL `vector_rowid`
+- **`backend/db/schema.py`** — `ALTER TABLE threat_metadata ADD COLUMN vector_rowid INTEGER` migration added to `init_database_with_connection()`
+- **11 tests** in `tests/test_db_persist.py` covering all write paths, DREAD round-trip, `None` inputs (partial run), and DB-failure → `None` (not raise)
+
+#### New CLI Commands: `paranoid models`
+- **`paranoid models list`** — tabular list of saved threat models (short ID, title, framework, threat count, status, date)
+  - `--limit N` — cap results (default: 20, max: 200)
+  - `--json` — machine-readable output
+- **`paranoid models show <id>`** — detailed view of a saved model with full threat list
+  - Accepts full UUID or any unique prefix (e.g. `a1b2c3d4`); raises a clear error if prefix is ambiguous
+  - `--no-mitigations` — suppress mitigation list
+  - `--json` — model metadata + threats array as JSON
+
+#### New `paranoid run` flags
+- `--provider [anthropic|openai|ollama]` — override configured provider for a single run without editing config or `.env`
+- `--model NAME` — override configured model name for a single run
+- Both flags show `(overridden)` in the configuration summary printed at startup; API key re-validated after provider override
+
+### Fixed
+- **Always-persist**: runs without `--output` now correctly save to SQLite; previously `JSONWriter` was never created when no output file was requested, silently skipping all DB writes
+
+### Changed
+- `paranoid models` registered as a top-level command group in `cli/main.py`
+
+---
+
 ## [1.2.1] - 2026-03-31
 
 ### Added
@@ -233,15 +291,16 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ## [Planned] - v2.0+
 
-- Deterministic rule engine with curated threat patterns
-- RAG retrieval over previously approved threats
+- REST API routes (model CRUD, pipeline SSE, threat approval)
 - Frontend UI with Svelte + Tailwind
+- Provider offline fallback (rule-engine-only mode when LLM unavailable)
 - PDF/Markdown export formats
 - Multi-user collaboration features
 
 ---
 
+[1.3.0]: https://github.com/theAstiv/paranoid/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/theAstiv/paranoid/releases/tag/v1.2.1
 [1.1.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.1.0
 [1.0.1]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.1
 [1.0.0]: https://github.com/theAstiv/paranoid/releases/tag/v1.0.0
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.1.0...HEAD

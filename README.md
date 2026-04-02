@@ -14,7 +14,8 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Code-as-Input**: Semantic code extraction via context-link MCP — `--code /path/to/repo` grounds threats in actual implementation
 - **Image-as-Input**: Architecture diagram support via `--diagram arch.png` (vision API) or `--diagram flow.mmd` (Mermaid text)
-- **Deterministic Fallback**: Rule engine ensures known threats aren't missed[Coming Soon]
+- **Deterministic Rule Engine**: 109 curated STRIDE/MAESTRO/OWASP patterns run alongside the LLM and are merged into the final output
+- **Persistent Results**: Every run is saved to SQLite automatically — inspect past models with `paranoid models list` / `paranoid models show`
 - **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration)
 - **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
 
@@ -191,6 +192,10 @@ paranoid run system.md --iterations 7
 # Override framework auto-detection
 paranoid run system.md --framework MAESTRO
 
+# Override provider and model for a single run (without changing config)
+paranoid run system.md --provider openai --model gpt-4o
+paranoid run system.md --provider anthropic --model claude-opus-4-5
+
 # Quiet mode (suppress real-time output, show only summary)
 paranoid run system.md --quiet
 
@@ -208,6 +213,60 @@ paranoid run system.md --diagram flow.mmd
 
 # Combined: description + diagram + code context
 paranoid run system.md --diagram arch.png --code /path/to/repo
+```
+
+### Inspecting Saved Models
+
+Every `paranoid run` saves its results to SQLite automatically. Use the `models` subcommand to browse and inspect past runs without re-running the pipeline.
+
+```bash
+# List recent threat models (most recent first)
+paranoid models list
+
+# Limit results
+paranoid models list --limit 50
+
+# Machine-readable JSON output
+paranoid models list --json
+
+# Show threats for a saved model — partial ID works (first 8 chars)
+paranoid models show a1b2c3d4
+
+# Full UUID also accepted
+paranoid models show a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+# Show threats without mitigations
+paranoid models show a1b2c3d4 --no-mitigations
+
+# JSON output (model metadata + threats array)
+paranoid models show a1b2c3d4 --json
+```
+
+**Example `models list` output:**
+```
+  ID          Title                 Framework  Threats  Status      Date
+  --------------------------------------------------------------------------
+  a1b2c3d4    api-gateway           STRIDE           23  completed   2026-04-01 14:32
+  e5f6g7h8    auth-service          STRIDE           17  completed   2026-03-28 09:15
+  c9d0e1f2    rag-chatbot           MAESTRO          31  completed   2026-03-25 11:04
+```
+
+**Example `models show` output:**
+```
+  Threat Model: api-gateway
+  ============================================================
+  ID:           a1b2c3d4-...
+  Framework:    STRIDE
+  Threats:      23
+  Iterations:   3
+
+  THREATS
+  ------------------------------------------------------------
+  [1] SQL Injection  (Tampering)  pending
+      Target: PostgreSQL DB  |  Impact: High  |  Likelihood: Medium
+      → Use parameterized queries
+      → Apply input validation
+  ...
 ```
 
 ### Configuration Management
@@ -514,11 +573,11 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 ## Development Status
 
-**v1.2.1** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
+**v1.3.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), packaging and release automation.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (109 curated patterns, RAG retrieval), full SQLite persistence (every run saved with assets/flows/threats/DREAD), `paranoid models list/show` commands, `--provider`/`--model` run-time overrides, packaging and release automation.
 
-**Future (v2.0+):** RAG retrieval integration, deterministic rule engine, REST API routes, frontend (Svelte UI).
+**Future (v2.0+):** REST API routes, frontend (Svelte UI), multi-user collaboration, provider offline fallback (rule-engine-only mode).
 
 ## License
 
