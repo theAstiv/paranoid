@@ -12,7 +12,7 @@ from cli.commands.version import version
 
 
 @click.group()
-@click.version_option(version="1.1.0", prog_name="paranoid")
+@click.version_option(version="1.3.0", prog_name="paranoid")
 def cli() -> None:
     """Paranoid - Open-source iterative threat modeling powered by LLMs.
 

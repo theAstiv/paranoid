@@ -6,10 +6,10 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 
 ## Features
 
-- **Zero Infrastructure**: SQLite + sqlite-vec. One command to run: `docker compose up`[coming soon]
+- **Zero Infrastructure**: SQLite + sqlite-vec. One command to run: `docker compose up` [Coming Soon]
 - **Multi-Provider LLM**: Anthropic, OpenAI, or Ollama (fully local/air-gapped)
 - **Dual Framework Support**: STRIDE (traditional) + MAESTRO (AI/ML) auto-detected or run in parallel
-- **DREAD Risk Scoring**: Automatic risk assessment with 5 dimensions (0-50 scale) for severity classification
+- **DREAD Risk Scoring**: Automatic risk assessment with 5 dimensions (0-10 scale each, averaged) for severity classification
 - **Structured Input Templates**: Tagged templates for component descriptions with assumption enforcement in the prompts
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Code-as-Input**: Semantic code extraction via context-link MCP — `--code /path/to/repo` grounds threats in actual implementation
@@ -96,7 +96,7 @@ DEFAULT_MODEL=claude-sonnet-4-20250514
 # OR OpenAI
 OPENAI_API_KEY=sk-xxxxxxxxx
 DEFAULT_PROVIDER=openai
-DEFAULT_MODEL=gpt-4-turbo
+DEFAULT_MODEL=gpt-4o
 
 # OR Ollama (fully local, no API key)
 OLLAMA_BASE_URL=http://localhost:11434
@@ -449,7 +449,7 @@ Paranoid supports rich XML-tagged templates for better context and assumption en
 |-------|--------|-------|
 | `claude-sonnet-4-20250514` | Recommended | Validated end-to-end, reliable for production |
 | `claude-haiku-4-5-20251001` | Not recommended | Fails with JSON parsing errors on complex outputs |
-| GPT-4 Turbo | Supported | Works well, slightly slower |
+| `gpt-4o` | Supported | Works well, also supports vision (`--diagram`) |
 | Ollama (Llama 3 70B+) | Supported | Fully local, no external API calls |
 
 ## Architecture
@@ -470,7 +470,7 @@ from backend.pipeline.runner import run_pipeline_for_model
 from backend.providers.anthropic import AnthropicProvider
 from backend.models.enums import Framework
 
-provider = AnthropicProvider(api_key="your-key")
+provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="your-key")
 
 async for event in run_pipeline_for_model(
     model_id="web-app-001",
@@ -488,8 +488,8 @@ async for event in run_pipeline_for_model(
 # Run unit/integration tests (no API key required)
 pytest tests/ -v
 
-# Run pipeline integration test (requires API key)
-python test_pipeline.py
+# Run end-to-end pipeline test (requires ANTHROPIC_API_KEY)
+pytest tests/test_pipeline_e2e.py -v
 
 # Validate structured input parser (no API key required)
 python examples/test_structured_input.py
@@ -498,13 +498,6 @@ python examples/test_structured_input.py
 ruff check backend/ cli/
 ruff format backend/ cli/
 ```
-
-**Validated Results (2026-03-24):**
-- Parser validation: PASSING (no API key required)
-- STRIDE pipeline: PASSING (15-25 threats)
-- STRIDE+MAESTRO dual framework: PASSING (24 threats, 213s, 2 iterations)
-- Assumption enforcement: VALIDATED
-- Gap-driven iteration stopping: VALIDATED
 
 ## Troubleshooting
 
