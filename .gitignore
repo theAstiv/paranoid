@@ -179,7 +179,8 @@ cython_debug/
 
 # Paranoid project-specific
 data/
-bin/
+.bin/
+*.mcp.json
 node_modules/
 frontend/dist/
 .context-link.db

@@ -54,14 +54,18 @@ class MCPCodeExtractor:
         self._stdio_context = None
 
     async def __aenter__(self) -> "MCPCodeExtractor":
-        """Start context-link subprocess and initialize MCP session."""
+        """Index the project, then start context-link MCP session."""
         binary = self._resolve_binary(self.binary_path)
         logger.info(f"Starting context-link from {binary} for {self.project_root}")
 
+        # Index the repo first — builds .context-link.db for semantic search
+        await self._index_project(str(binary))
+
         server_params = StdioServerParameters(
             command=str(binary),
-            args=["serve", str(self.project_root)],
+            args=["serve", "--project-root", str(self.project_root)],
             env=None,
+            cwd=str(self.project_root),
         )
 
         try:
@@ -74,6 +78,10 @@ class MCPCodeExtractor:
             self._session = ClientSession(read, write)
             await asyncio.wait_for(
                 self._session.__aenter__(),
+                timeout=self.timeout_seconds,
+            )
+            await asyncio.wait_for(
+                self._session.initialize(),
                 timeout=self.timeout_seconds,
             )
 
@@ -104,6 +112,41 @@ class MCPCodeExtractor:
                 logger.warning(f"Error closing stdio context: {e}")
 
         logger.info("context-link subprocess terminated")
+
+    async def _index_project(self, binary: str) -> None:
+        """Run context-link index to build the searchable symbol database."""
+        logger.info(f"Indexing {self.project_root} with context-link")
+        try:
+            proc = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    binary,
+                    "index",
+                    "--project-root",
+                    str(self.project_root),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.project_root),
+                ),
+                timeout=self.timeout_seconds,
+            )
+            _stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self.timeout_seconds,
+            )
+            if proc.returncode != 0:
+                err_msg = stderr.decode().strip() if stderr else "unknown error"
+                raise MCPConnectionError(
+                    f"context-link index failed (rc={proc.returncode}): {err_msg}"
+                )
+            logger.info("context-link index complete for %s", self.project_root)
+        except TimeoutError as e:
+            raise MCPTimeoutError(
+                f"context-link index timed out after {self.timeout_seconds}s"
+            ) from e
+        except MCPConnectionError:
+            raise
+        except OSError as e:
+            raise MCPConnectionError(f"Failed to run context-link index: {e}") from e
 
     def _resolve_binary(self, explicit_path: str | None) -> Path:
         """Resolve context-link binary location.
@@ -217,6 +260,8 @@ class MCPCodeExtractor:
             )
             if isinstance(result, list):
                 return result
+            if isinstance(result, dict) and "results" in result:
+                return result["results"]
             return []
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"Symbol search failed: {e}")
