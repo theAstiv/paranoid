@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS threat_metadata (
     threat_id TEXT,
     source TEXT NOT NULL,
     embedding_model TEXT NOT NULL,
+    vector_rowid INTEGER,
     created_at TEXT NOT NULL,
     FOREIGN KEY (threat_id) REFERENCES threats(id) ON DELETE CASCADE
 );
@@ -191,6 +192,14 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_TEST_CASES_TABLE)
     await conn.execute(CREATE_THREAT_METADATA_TABLE)
     await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
+
+    # Migrate existing threat_metadata tables that lack vector_rowid column
+    try:
+        await conn.execute("ALTER TABLE threat_metadata ADD COLUMN vector_rowid INTEGER")
+        await conn.commit()
+        logger.info("Migrated threat_metadata: added vector_rowid column")
+    except Exception:
+        pass  # Column already exists — normal on fresh or already-migrated DBs
 
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
