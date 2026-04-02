@@ -16,26 +16,29 @@ MITIGATION_MAX_ITEMS = 5
 
 
 class DreadScore(BaseModel):
-    """DREAD risk assessment scoring model."""
+    """DREAD risk assessment scoring model.
+
+    Scores use float to match prompt anchor values (0, 2.5, 5, 7.5, 10).
+    """
 
     damage: Annotated[
-        int,
+        float,
         Field(ge=0, le=10, description="Damage potential (0-10)"),
     ]
     reproducibility: Annotated[
-        int,
+        float,
         Field(ge=0, le=10, description="How easy to reproduce (0-10)"),
     ]
     exploitability: Annotated[
-        int,
+        float,
         Field(ge=0, le=10, description="How easy to exploit (0-10)"),
     ]
     affected_users: Annotated[
-        int,
+        float,
         Field(ge=0, le=10, description="Number of affected users (0-10)"),
     ]
     discoverability: Annotated[
-        int,
+        float,
         Field(ge=0, le=10, description="How easy to discover (0-10)"),
     ]
 
