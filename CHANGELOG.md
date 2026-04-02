@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Markdown Export
+- **`backend/export/markdown.py`** — `export_markdown()` produces human-readable `.md` reports suitable for PRs, Confluence, and Notion
+  - Summary table (threat name, category, target, likelihood, DREAD score)
+  - Per-category threat sections with full detail: DREAD breakdown `*(D:8 R:7 E:8 A:6 Di:7)*`, blockquote description, `[P]/[D]/[C]`-tagged mitigations
+  - `include_header: bool = True` parameter — set to `False` to omit the H1 heading and metadata block when embedding into an existing document
+  - Accepts `list[dict[str, Any]]` rather than `ThreatsList`: works with both DB row shape (flat `dread_score`, `dread_damage`, … fields) and `model_dump()` shape (nested `dread` dict). Score is computed as `sum(dread.values()) / 5.0` for the nested shape since `DreadScore.score` is a `@property` and is not serialized by `model_dump()`
+- **`--format markdown`** added to `paranoid run` — exports `.md` alongside existing `simple`, `full`, `sarif` choices
+  - Auto-suffix: `--output threats` → `threats.md` (mirrors existing `.sarif` auto-suffix behaviour)
+  - Warning printed if no threats are available to export (consistent with SARIF behaviour)
+- **9 unit tests** in `tests/test_export_markdown.py` covering flat DREAD, nested DREAD with computed score, MAESTRO threats without DREAD, empty list, `include_header=False`, source file rendering, category grouping order, and untagged mitigations
+
+#### `paranoid models export`
+- **`paranoid models export <MODEL_ID> --format <choice> [-o output]`** — re-export any saved model from SQLite in any supported format after the fact
+  - Accepts full UUID or unique prefix (same resolution logic as `paranoid models show`)
+  - Formats: `markdown`, `sarif`, `simple` (JSON), `full` (JSON)
+  - Default output path: `{model_id[:8]}_{format}{ext}` in the current working directory when `--output` is omitted
+  - Auto-suffix: output path with no extension gets the correct suffix added (`.md`, `.sarif`, `.json`)
+  - **SARIF from DB**: STRIDE-only reconstruction via `Threat.model_construct(**row)` and `ThreatsList.model_construct(threats=built)` — skips Pydantic validation to avoid word-count failures on persisted descriptions; MAESTRO threats skipped with a per-threat warning; still writes a valid (empty) SARIF file when all threats are MAESTRO
+  - **Simple JSON**: `{model_id, title, framework, created_at, threats[{name, category, target, impact, likelihood, dread_score, mitigation_count}]}`
+  - **Full JSON**: raw `{model: {...}, threats: [...]}` dump from `crud.get_threat_model` + `crud.list_threats`
+- **11 integration tests** in `tests/test_models_export.py` using `test_db` fixture: markdown from DB, MAESTRO markdown, SARIF with deserialized mitigations, MAESTRO-only SARIF (empty result + warning), empty mitigations without crash, simple/full JSON shape, default output path naming, auto-suffix
+
+---
+
 ## [1.3.0] - 2026-04-02
 
 ### Added
@@ -294,7 +322,7 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 - REST API routes (model CRUD, pipeline SSE, threat approval)
 - Frontend UI with Svelte + Tailwind
 - Provider offline fallback (rule-engine-only mode when LLM unavailable)
-- PDF/Markdown export formats
+- PDF export (reportlab)
 - Multi-user collaboration features
 
 ---

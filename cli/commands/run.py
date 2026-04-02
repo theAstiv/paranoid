@@ -244,9 +244,9 @@ async def _extract_code_context(
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["simple", "full", "sarif"], case_sensitive=False),
+    type=click.Choice(["simple", "full", "sarif", "markdown"], case_sensitive=False),
     default="simple",
-    help="Output format: simple/full (JSON) or sarif (GitHub Security)",
+    help="Output format: simple/full (JSON), sarif (GitHub Security), or markdown",
 )
 @click.option(
     "--maestro",
@@ -352,6 +352,10 @@ def run(
         \b
         # Export to SARIF for GitHub Security
         paranoid run system.md --format sarif
+
+        \b
+        # Export as Markdown for PRs / Confluence / Notion
+        paranoid run system.md --format markdown -o threats.md
 
         \b
         # With full JSON output
@@ -469,6 +473,8 @@ def run(
         if output:
             if output_format == "sarif" and not output.suffix:
                 output_path = output.with_suffix(".sarif")
+            elif output_format == "markdown" and not output.suffix:
+                output_path = output.with_suffix(".md")
             else:
                 output_path = output
         else:
@@ -704,7 +710,27 @@ async def _run_pipeline_async(
                     click.echo()
                     click.secho("⚠ Warning: No threats to export to SARIF", fg="yellow")
                     click.echo()
-            else:
+            elif output_format == "markdown":
+                if json_writer and json_writer.threats:
+                    from backend.export.markdown import export_markdown
+
+                    threats_dicts = [t.model_dump() for t in json_writer.threats.threats]
+                    md_content = export_markdown(
+                        threats=threats_dicts,
+                        model_id=model_id,
+                        framework=framework.value,
+                        title=input_file.stem,
+                        source_file=str(input_file),
+                    )
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(md_content)
+                    output_file_str = str(output_path)
+                else:
+                    click.echo()
+                    click.secho("⚠ Warning: No threats to export to Markdown", fg="yellow")
+                    click.echo()
+            elif json_writer:
                 # JSON export
                 if output_format == "simple":
                     json_writer.export_simple(output_path)

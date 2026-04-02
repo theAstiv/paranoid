@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import click
 
@@ -21,6 +22,11 @@ def _format_date(iso_str: str) -> str:
     return iso_str[:16].replace("T", " ")
 
 
+def _category_from_row(row: dict) -> str:  # type: ignore[type-arg]
+    """Return stride_category or maestro_category from a DB threat row."""
+    return row.get("stride_category") or row.get("maestro_category") or "Unknown"
+
+
 @click.group()
 def models() -> None:
     """List and inspect saved threat models.
@@ -34,6 +40,10 @@ def models() -> None:
         \b
         # Show threats for a model (partial ID works)
         paranoid models show a1b2c3d4
+
+        \b
+        # Export a saved model to Markdown
+        paranoid models export a1b2c3d4 --format markdown -o report.md
     """
     pass
 
@@ -247,4 +257,166 @@ async def _show_model_async(model_id: str, as_json: bool, show_mitigations: bool
 
     click.echo()
     click.secho(f"  {len(threats)} threat(s) total.", fg="white")
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# export command
+# ---------------------------------------------------------------------------
+
+_FORMAT_EXTENSIONS = {
+    "simple": ".json",
+    "full": ".json",
+    "sarif": ".sarif",
+    "markdown": ".md",
+}
+
+
+@models.command(name="export")
+@click.argument("model_id")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["simple", "full", "sarif", "markdown"], case_sensitive=False),
+    required=True,
+    help="Export format: simple/full (JSON), sarif (GitHub Security), or markdown",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output file path (default: {id_prefix}_{format}{ext} in current directory)",
+)
+def export_model(model_id: str, output_format: str, output: Path | None) -> None:
+    """Export a saved threat model to a file.
+
+    MODEL_ID can be a full UUID or a unique prefix (e.g. 'a1b2c3d4').
+
+    Examples:
+
+        \b
+        paranoid models export a1b2c3d4 --format markdown -o report.md
+        paranoid models export a1b2c3d4 --format sarif -o findings.sarif
+        paranoid models export a1b2c3d4 --format simple -o threats.json
+        paranoid models export a1b2c3d4 --format full
+    """
+    try:
+        asyncio.run(
+            _export_model_async(model_id=model_id, output_format=output_format, output=output)
+        )
+    except CLIError as e:
+        click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
+        raise SystemExit(e.exit_code) from e
+    except Exception as e:
+        click.secho(f"\n✗ Unexpected error: {e}", fg="red", err=True)
+        raise SystemExit(1) from e
+
+
+async def _export_model_async(
+    model_id: str,
+    output_format: str,
+    output: Path | None,
+) -> None:
+    from backend.db import crud
+
+    # Resolve full UUID or prefix
+    if len(model_id) == 36:
+        model = await crud.get_threat_model(model_id)
+    else:
+        try:
+            model = await crud.find_threat_model_by_prefix(model_id)
+        except ValueError as e:
+            raise CLIError(str(e)) from e
+
+    if model is None:
+        raise CLIError(
+            f"No threat model found matching '{model_id}'.\n"
+            "Run 'paranoid models list' to see available models."
+        )
+
+    threats = await crud.list_threats(model["id"])
+
+    # Determine output path
+    ext = _FORMAT_EXTENSIONS[output_format]
+    if output is None:
+        output_path = Path(f"{model['id'][:8]}_{output_format}{ext}")
+    elif not output.suffix:
+        output_path = output.with_suffix(ext)
+    else:
+        output_path = output
+
+    # Dispatch to export function
+    if output_format == "markdown":
+        from backend.export.markdown import export_markdown
+
+        md = export_markdown(
+            threats=threats,
+            model_id=model["id"],
+            framework=model.get("framework", "STRIDE"),
+            title=model.get("title"),
+        )
+        output_path.write_text(md, encoding="utf-8")
+
+    elif output_format == "sarif":
+        from backend.export.sarif import export_sarif
+        from backend.models.state import Threat, ThreatsList
+
+        stride_rows = [r for r in threats if r.get("stride_category")]
+        skipped = len(threats) - len(stride_rows)
+        if skipped:
+            click.secho(
+                f"  ⚠ Skipping {skipped} MAESTRO threat(s) — SARIF export is STRIDE-only",
+                fg="yellow",
+            )
+
+        built = []
+        for r in stride_rows:
+            try:
+                # model_construct skips Pydantic validation — persisted descriptions may
+                # not meet the 35-50 word constraint enforced at generation time
+                built.append(Threat.model_construct(**r))
+            except Exception as exc:
+                click.secho(f"  ⚠ Skipping threat '{r.get('name', '?')}': {exc}", fg="yellow")
+
+        threats_list = ThreatsList.model_construct(threats=built)
+        sarif_data = export_sarif(
+            threats=threats_list,
+            model_id=model["id"],
+            framework=model.get("framework", "STRIDE"),
+        )
+        output_path.write_text(json.dumps(sarif_data, indent=2), encoding="utf-8")
+
+    elif output_format == "simple":
+        simple = {
+            "model_id": model["id"],
+            "title": model.get("title"),
+            "framework": model.get("framework"),
+            "created_at": model.get("created_at"),
+            "threats": [
+                {
+                    "name": t.get("name"),
+                    "category": _category_from_row(t),
+                    "target": t.get("target"),
+                    "impact": t.get("impact"),
+                    "likelihood": t.get("likelihood"),
+                    "dread_score": t.get("dread_score"),
+                    "mitigation_count": len(t.get("mitigations") or []),
+                }
+                for t in threats
+            ],
+        }
+        output_path.write_text(json.dumps(simple, indent=2), encoding="utf-8")
+
+    else:  # full
+        output_path.write_text(
+            json.dumps({"model": model, "threats": threats}, indent=2, default=str),
+            encoding="utf-8",
+        )
+
+    click.echo()
+    click.secho(
+        f"  ✓ Exported {len(threats)} threat(s) → {output_path}",
+        fg="green",
+    )
     click.echo()
