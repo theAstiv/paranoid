@@ -700,6 +700,24 @@ async def _run_pipeline_async(
             click.echo(f"Output:             {output_file_str}")
         click.echo()
 
+    # Persist pipeline result to SQLite
+    if json_writer and json_writer.threats:
+        from backend.db.persist import persist_pipeline_result
+
+        model_db_id = await persist_pipeline_result(
+            title=input_file.stem,
+            description=content,
+            provider=settings.default_provider,
+            model_name=settings.default_model,
+            framework=framework,
+            iterations_completed=json_writer.iterations_completed,
+            assets=json_writer.assets,
+            flows=json_writer.flows,
+            threats=json_writer.threats,
+        )
+        if model_db_id and not quiet:
+            click.echo(f"  Database ID: {model_db_id}")
+
     # Close database connection (CLI cleanup path)
     from backend.db.connection import db
 
