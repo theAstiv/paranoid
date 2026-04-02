@@ -143,13 +143,45 @@ async def update_threat_model(
 
 
 async def list_threat_models(limit: int = 50) -> list[dict[str, Any]]:
-    """List all threat models."""
+    """List all threat models with per-model threat counts."""
     conn = await db.get()
     async with conn.execute(
-        "SELECT * FROM threat_models ORDER BY created_at DESC LIMIT ?", (limit,)
+        """
+        SELECT
+            tm.*,
+            COUNT(t.id) AS threat_count
+        FROM threat_models tm
+        LEFT JOIN threats t ON t.model_id = tm.id
+        GROUP BY tm.id
+        ORDER BY tm.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
     ) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def find_threat_model_by_prefix(prefix: str) -> dict[str, Any] | None:
+    """Find a threat model by ID prefix (first N characters).
+
+    Returns the first match if the prefix is unambiguous, or None if no match.
+    Raises ValueError if the prefix matches more than one model.
+    """
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM threat_models WHERE id LIKE ? ORDER BY created_at DESC",
+        (f"{prefix}%",),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise ValueError(
+            f"Prefix '{prefix}' is ambiguous — matches {len(rows)} models. Use more characters."
+        )
+    return dict(rows[0])
 
 
 # Threats CRUD
@@ -166,6 +198,11 @@ async def create_threat(
     stride_category: str | None = None,
     maestro_category: str | None = None,
     dread_score: float | None = None,
+    dread_damage: float | None = None,
+    dread_reproducibility: float | None = None,
+    dread_exploitability: float | None = None,
+    dread_affected_users: float | None = None,
+    dread_discoverability: float | None = None,
     iteration_number: int = 1,
 ) -> str:
     """Create a new threat."""
@@ -178,9 +215,11 @@ async def create_threat(
         """
         INSERT INTO threats (
             id, model_id, stride_category, maestro_category, name,
-            description, target, impact, likelihood, dread_score,
+            description, target, impact, likelihood,
+            dread_damage, dread_reproducibility, dread_exploitability,
+            dread_affected_users, dread_discoverability, dread_score,
             mitigations, status, iteration_number, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             threat_id,
@@ -192,6 +231,11 @@ async def create_threat(
             target,
             impact,
             likelihood,
+            dread_damage,
+            dread_reproducibility,
+            dread_exploitability,
+            dread_affected_users,
+            dread_discoverability,
             dread_score,
             mitigations_json,
             "pending",
@@ -478,6 +522,42 @@ async def delete_threat_model(model_id: str) -> None:
     await conn.commit()
 
     logger.info(f"Deleted threat model {model_id}")
+
+
+# Threat Sources CRUD
+
+
+async def create_threat_source(
+    model_id: str,
+    category: str,
+    description: str,
+    example: str,
+) -> str:
+    """Create a new threat source (threat actor)."""
+    source_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO threat_sources (id, model_id, category, description, example, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (source_id, model_id, category, description, example, now),
+    )
+    await conn.commit()
+
+    return source_id
+
+
+async def list_threat_sources(model_id: str) -> list[dict[str, Any]]:
+    """List all threat sources for a model."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM threat_sources WHERE model_id = ? ORDER BY created_at", (model_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 # Flows CRUD

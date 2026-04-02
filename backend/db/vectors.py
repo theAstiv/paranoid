@@ -113,47 +113,53 @@ async def upsert_threat_vector(
 
     # Check if vector already exists for this threat
     async with conn.execute(
-        "SELECT id FROM threat_metadata WHERE threat_id = ?", (threat_id,)
+        "SELECT id, vector_rowid FROM threat_metadata WHERE threat_id = ?", (threat_id,)
     ) as cursor:
         existing = await cursor.fetchone()
 
     if existing:
-        # Update existing vector
+        # Update existing vector using the stored vector_rowid
         metadata_id = existing[0]
-        await conn.execute(
-            """
-            UPDATE threat_vectors
-            SET embedding = ?
-            WHERE rowid = (
-                SELECT rowid FROM threat_metadata WHERE id = ?
+        vector_rowid = existing[1]
+        if vector_rowid is not None:
+            await conn.execute(
+                "UPDATE threat_vectors SET embedding = ? WHERE rowid = ?",
+                (vector_blob, vector_rowid),
             )
-            """,
-            (vector_blob, metadata_id),
-        )
-        logger.debug(f"Updated vector for threat {threat_id}")
+            logger.debug(f"Updated vector for threat {threat_id}")
+        else:
+            # Pre-migration row: vector_rowid was NULL before schema v1 migration.
+            # The vector cannot be updated without the rowid; log so it's visible.
+            logger.warning(
+                f"Cannot update vector for threat {threat_id}: "
+                "threat_metadata.vector_rowid is NULL (pre-migration row). "
+                "Re-seed or delete and re-insert this threat to backfill."
+            )
     else:
         # Insert new vector and metadata
         from backend.db.crud import generate_id, now_iso
 
         metadata_id = generate_id()
         now = now_iso()
+        # Derive a stable integer rowid from the metadata UUID
+        vector_rowid = hash(metadata_id) % (2**63)
 
-        # Insert into threat_metadata
+        # Insert into threat_metadata (including the vector_rowid for future joins)
         await conn.execute(
             """
             INSERT INTO threat_metadata (
-                id, threat_id, source, embedding_model, created_at
-            ) VALUES (?, ?, ?, ?, ?)
+                id, threat_id, source, embedding_model, vector_rowid, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (metadata_id, threat_id, source, settings.embedding_model, now),
+            (metadata_id, threat_id, source, settings.embedding_model, vector_rowid, now),
         )
 
-        # Insert into threat_vectors
+        # Insert into threat_vectors with matching rowid
         await conn.execute(
             "INSERT INTO threat_vectors (rowid, embedding) VALUES (?, ?)",
-            (hash(metadata_id) % (2**63), vector_blob),
+            (vector_rowid, vector_blob),
         )
-        logger.debug(f"Inserted vector for threat {threat_id}")
+        logger.debug(f"Inserted vector for threat {threat_id} (rowid={vector_rowid})")
 
     await conn.commit()
     return metadata_id
@@ -181,7 +187,9 @@ async def search_similar_threats(
 
     conn = await db.get()
 
-    # Query for similar vectors using cosine distance
+    # Query for similar vectors using cosine distance.
+    # threat_metadata.vector_rowid is the stable integer key written at insert time,
+    # matching the explicit rowid used when inserting into threat_vectors.
     query = """
         SELECT
             tm.threat_id,
@@ -191,9 +199,7 @@ async def search_similar_threats(
             t.stride_category,
             1 - vec_distance_cosine(tv.embedding, ?) as similarity
         FROM threat_vectors tv
-        JOIN threat_metadata tm ON tv.rowid = (
-            SELECT rowid FROM threat_metadata WHERE id = tm.id
-        )
+        JOIN threat_metadata tm ON tv.rowid = tm.vector_rowid
         JOIN threats t ON t.id = tm.threat_id
         WHERE similarity >= ?
         ORDER BY similarity DESC

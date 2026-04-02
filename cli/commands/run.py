@@ -294,6 +294,20 @@ async def _extract_code_context(
     default=None,
     help="Path to architecture diagram (.png, .jpg, .jpeg, .mmd for Mermaid)",
 )
+@click.option(
+    "--provider",
+    "provider_override",
+    type=click.Choice(["anthropic", "openai", "ollama"], case_sensitive=False),
+    default=None,
+    help="Override configured LLM provider",
+)
+@click.option(
+    "--model",
+    "model_override",
+    type=str,
+    default=None,
+    help="Override configured model name (e.g. claude-opus-4-5, gpt-4o)",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -305,6 +319,8 @@ def run(
     verbose: bool,
     code: Path | None,
     diagram: Path | None,
+    provider_override: str | None,
+    model_override: str | None,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -361,6 +377,25 @@ def run(
         if iterations is not None:
             settings.default_iterations = iterations
 
+        # Override provider/model if specified
+        if provider_override is not None:
+            settings.default_provider = provider_override.lower()
+        if model_override is not None:
+            settings.default_model = model_override
+
+        # Re-validate API key after provider override
+        if provider_override is not None:
+            if settings.default_provider == "anthropic" and not settings.anthropic_api_key:
+                raise ConfigurationError(
+                    "Anthropic API key not configured\n\n"
+                    "Set ANTHROPIC_API_KEY in your .env file or run 'paranoid config init'."
+                )
+            if settings.default_provider == "openai" and not settings.openai_api_key:
+                raise ConfigurationError(
+                    "OpenAI API key not configured\n\n"
+                    "Set OPENAI_API_KEY in your .env file or run 'paranoid config init'."
+                )
+
         # Load input file
         try:
             content = load_input_file(input_file)
@@ -404,8 +439,14 @@ def run(
         if not quiet:
             click.echo()
             click.secho("Configuration:", fg="cyan", bold=True)
-            click.echo(f"  Provider: {settings.default_provider}")
-            click.echo(f"  Model: {settings.default_model}")
+            provider_str = settings.default_provider
+            if provider_override is not None:
+                provider_str += " (overridden)"
+            click.echo(f"  Provider: {provider_str}")
+            model_str = settings.default_model
+            if model_override is not None:
+                model_str += " (overridden)"
+            click.echo(f"  Model: {model_str}")
             iterations_str = f"{settings.default_iterations}"
             if iterations is not None:
                 iterations_str += " (overridden)"
@@ -546,14 +587,13 @@ async def _run_pipeline_async(
     iterations_completed = 0
     start_time = asyncio.get_running_loop().time()
 
-    # Initialize JSON writer if output requested
-    json_writer = None
-    if output_path:
-        json_writer = JSONWriter(
-            model_id=model_id,
-            input_file=input_file,
-            framework=framework,
-        )
+    # Always create a JSONWriter for data accumulation (assets, flows, threats).
+    # File export is gated on output_path below; persistence always runs.
+    json_writer = JSONWriter(
+        model_id=model_id,
+        input_file=input_file,
+        framework=framework,
+    )
 
     try:
         # Run pipeline
@@ -573,9 +613,8 @@ async def _run_pipeline_async(
             if renderer:
                 renderer.render_event(event)
 
-            # Add to JSON writer if enabled
-            if json_writer:
-                json_writer.add_event(event)
+            # Accumulate pipeline artifacts for export and persistence
+            json_writer.add_event(event)
 
             # Track threat generation events
             if event.step == PipelineStep.GENERATE_THREATS and event.status == "completed":
@@ -648,7 +687,7 @@ async def _run_pipeline_async(
         try:
             if output_format == "sarif":
                 # SARIF export
-                if json_writer and json_writer.threats:
+                if json_writer.threats:
                     import json
 
                     sarif_data = export_sarif(
@@ -665,7 +704,7 @@ async def _run_pipeline_async(
                     click.echo()
                     click.secho("⚠ Warning: No threats to export to SARIF", fg="yellow")
                     click.echo()
-            elif json_writer:
+            else:
                 # JSON export
                 if output_format == "simple":
                     json_writer.export_simple(output_path)
@@ -699,6 +738,25 @@ async def _run_pipeline_async(
         if output_file_str:
             click.echo(f"Output:             {output_file_str}")
         click.echo()
+
+    # Persist pipeline result to SQLite — save partial runs too (assets/flows
+    # without threats are still useful, e.g. if pipeline failed mid-run).
+    if json_writer.assets or json_writer.flows or json_writer.threats:
+        from backend.db.persist import persist_pipeline_result
+
+        model_db_id = await persist_pipeline_result(
+            title=input_file.stem,
+            description=content,
+            provider=settings.default_provider,
+            model_name=settings.default_model,
+            framework=framework,
+            iterations_completed=json_writer.iterations_completed,
+            assets=json_writer.assets,
+            flows=json_writer.flows,
+            threats=json_writer.threats,
+        )
+        if model_db_id and not quiet:
+            click.echo(f"  Database ID: {model_db_id}")
 
     # Close database connection (CLI cleanup path)
     from backend.db.connection import db

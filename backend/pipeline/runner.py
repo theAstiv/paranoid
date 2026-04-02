@@ -18,6 +18,7 @@ from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSu
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.providers.base import LLMProvider
+from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
 
 
@@ -33,6 +34,7 @@ class PipelineStep(str, Enum):
     ITERATE = "iterate"
     GENERATE_ATTACK_TREE = "generate_attack_tree"
     GENERATE_TEST_CASES = "generate_test_cases"
+    RULE_ENGINE = "rule_engine"
     COMPLETE = "complete"
 
 
@@ -299,8 +301,11 @@ class PipelineRunner:
                         iteration=iteration,
                     )
 
-                    # TODO: Phase 6.9 - Integrate RAG retrieval here
-                    rag_context = None  # Will be populated in Phase 6.9
+                    if self.config.enable_rag:
+                        assets_text = " ".join(a.name for a in assets.assets)
+                        rag_context = await fetch_rag_context(description, assets_text=assets_text)
+                    else:
+                        rag_context = None
 
                     # Generate STRIDE threats
                     stride_threats = await nodes.generate_threats(
@@ -404,8 +409,11 @@ class PipelineRunner:
                         iteration=iteration,
                     )
 
-                    # TODO: Phase 6.9 - Integrate RAG retrieval here
-                    rag_context = None  # Will be populated in Phase 6.9
+                    if self.config.enable_rag:
+                        assets_text = " ".join(a.name for a in assets.assets)
+                        rag_context = await fetch_rag_context(description, assets_text=assets_text)
+                    else:
+                        rag_context = None
 
                     current_threats = await nodes.generate_threats(
                         description=description,
@@ -509,6 +517,46 @@ class PipelineRunner:
                         )
 
                 iteration += 1
+
+            # Rule engine pass: run deterministic pattern matching and merge
+            # unique findings into cumulative_threats. Runs regardless of LLM success
+            # because it catches known patterns the LLM may have missed.
+            yield PipelineEvent(
+                step=PipelineStep.RULE_ENGINE,
+                status="started",
+                message="Running deterministic rule engine...",
+            )
+
+            rule_threats = run_rule_engine(description, framework)
+
+            if rule_threats.threats:
+                pre_merge_count = len(cumulative_threats.threats)
+                cumulative_threats = merge_rule_and_llm_threats(
+                    rule_threats,
+                    cumulative_threats,
+                    threshold=self.config.similarity_threshold,
+                )
+                added = len(cumulative_threats.threats) - pre_merge_count
+                yield PipelineEvent(
+                    step=PipelineStep.RULE_ENGINE,
+                    status="completed",
+                    message=(
+                        f"Rule engine: {len(rule_threats.threats)} patterns matched, "
+                        f"{added} new threats added after dedup"
+                    ),
+                    data={
+                        "rule_engine_matched": len(rule_threats.threats),
+                        "new_threats_added": added,
+                        "total_threats": len(cumulative_threats.threats),
+                    },
+                )
+            else:
+                yield PipelineEvent(
+                    step=PipelineStep.RULE_ENGINE,
+                    status="completed",
+                    message="Rule engine: no keyword matches found in description",
+                    data={"rule_engine_matched": 0, "new_threats_added": 0},
+                )
 
             # Step 5: Complete
             total_duration = (datetime.now() - self.start_time).total_seconds()

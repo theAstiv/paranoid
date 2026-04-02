@@ -6,6 +6,7 @@ Command-line interface for iterative threat modeling powered by LLMs.
 import click
 
 from cli.commands.config import config
+from cli.commands.models import models
 from cli.commands.run import run
 from cli.commands.version import version
 
@@ -22,8 +23,10 @@ def cli() -> None:
     Examples:
       paranoid run system.md                    # Basic usage
       paranoid run api-gateway.md --maestro     # Dual framework
-      paranoid config init                      # Setup wizard (Phase 2)
-      paranoid version                          # Show version info (Phase 5)
+      paranoid models list                      # List saved threat models
+      paranoid models show a1b2c3d4             # Show threats for a model
+      paranoid config init                      # Setup wizard
+      paranoid version                          # Show version info
 
     \b
     Documentation:
@@ -36,6 +39,7 @@ def cli() -> None:
 # Register commands
 cli.add_command(run)
 cli.add_command(config)
+cli.add_command(models)
 cli.add_command(version)
 
 
