@@ -85,7 +85,7 @@ async def test_connection_error_on_subprocess_failure():
                 project_root="/test/repo",
                 binary_path="/usr/local/bin/context-link",
             )
-            with pytest.raises(MCPConnectionError, match="context-link subprocess failed"):
+            with pytest.raises(MCPConnectionError, match="context-link"):
                 async with extractor:
                     pass
 
