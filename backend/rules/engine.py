@@ -81,6 +81,16 @@ _KEYWORD_PATTERNS: list[str] = [
     r"\b(arp|dhcp|bgp|ospf|ntp|snmp|icmp|ssrf|crlf|rfi|lfi|xxe|ssi|dn[s]?[ -]?rebind)\b",
     # Browser & client-side security
     r"\b(browser|extension|addon|plugin|iframe|cors|csp|sri|hsts|same[-]?origin|cookie[ -]?flag)\b",
+    # AWS service identifiers (EC2, RDS, EKS, KMS, etc.)
+    r"\b(ec2|rds|eks|ecs|fargate|sagemaker|bedrock|glue|athena|redshift|elasticache|aurora|cloudfront|route53|guardduty|securityhub|cloudtrail|cloudwatch|codecommit|codepipeline|codebuild|codeartifact|kms)\b",
+    # Azure service identifiers (AKS, Entra, Key Vault, Storage Account, etc.)
+    r"\b(aks|entra|app[-\s]?service|key[-\s]?vault|azure[-\s]?sql|azure[-\s]?ad|function[-\s]?app|azure[-\s]?container|azure[-\s]?devops|acr|ado|storage[-\s]?account)\b",
+    # GCP service identifiers (GKE, Cloud SQL, Cloud Storage, Compute Engine, etc.)
+    r"\b(gke|cloud[-\s]?sql|cloud[-\s]?run|cloud[-\s]?function|vertex[-\s]?ai|stackdriver|bigquery|cloud[-\s]?armor|cloud[-\s]?build|cloud[-\s]?spanner|cloud[-\s]?storage|compute[-\s]?engine|compute[-\s]?instance)\b",
+    # CI/CD pipeline security (T1677 Poisoned Pipeline Execution)
+    r"\b(ci[-/]?cd|github[-\s]?action|gitlab[-\s]?ci|jenkins|circleci|travis|buildkite|tekton|argo[-\s]?cd|artifact[-\s]?registry|ecr|ghcr|container[-\s]?registry)\b",
+    # Cloud identity & federation attack surface (T1552.005, T1606.002, T1548.005)
+    r"\b(imds|metadata[-\s]?api|instance[-\s]?metadata|federation|workload[-\s]?identity|oidc[-\s]?token|assume[-\s]?role|cross[-\s]?account|service[-\s]?principal|managed[-\s]?identity)\b",
 ]
 
 
@@ -123,6 +133,11 @@ def _load_seed_patterns() -> list[dict[str, Any]]:
         "infrastructure_patterns.json",
         "ai_llm_patterns.json",
         "capec_patterns.json",
+        "aws_prowler_patterns.json",
+        "azure_prowler_patterns.json",
+        "gcp_prowler_patterns.json",
+        "attack_cloud_patterns.json",
+        "atlas_patterns.json",
     ):
         path = SEEDS_DIR / filename
         if not path.exists():

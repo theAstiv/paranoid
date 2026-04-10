@@ -1,0 +1,391 @@
+[
+  {
+    "name": "ML Training Data Poisoning Attack (AML.T0020)",
+    "stride_category": "Tampering",
+    "maestro_category": "Model Security",
+    "description": "Attacker with write access to the training data pipeline injects maliciously crafted samples — mislabeled examples, adversarially crafted inputs, or backdoor trigger patterns — into the training dataset before model training occurs. Poisoned models behave normally on clean inputs but produce targeted incorrect outputs when the trigger pattern is present, enabling the attacker to control model behavior at inference time.",
+    "target": "ML Training Data Pipeline",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement data provenance tracking: record the source, hash, and collection time of all training samples",
+      "Apply statistical outlier detection on training data to flag samples that are statistically inconsistent with the distribution",
+      "Use data versioning (DVC, Delta Lake) and restrict write access to training datasets to trusted ingestion pipelines only",
+      "Perform backdoor detection scans (Neural Cleanse, ABS, or STRIP) on trained models before deployment"
+    ]
+  },
+  {
+    "name": "AI Software Framework Supply Chain Compromise (AML.T0010.001)",
+    "stride_category": "Tampering",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker compromises a widely used AI/ML software package (deep learning framework, training library, data preprocessing tool) and injects malicious code that executes during model training or inference. Trojanized packages published to PyPI, conda-forge, or npm that are pulled as transitive dependencies can exfiltrate training data, model weights, or API keys, or install backdoors in trained models.",
+    "target": "AI/ML Software Dependencies",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Pin all AI framework dependencies to specific versions with cryptographic hashes (pip hash checking, poetry.lock)",
+      "Use a private package mirror with allowlisted, pre-scanned packages rather than installing directly from public PyPI",
+      "Run AI training in an isolated environment with no outbound internet access to prevent data exfiltration by compromised packages",
+      "Audit package dependencies with supply-chain security scanners (Snyk, Dependabot, pip-audit) on every CI run"
+    ]
+  },
+  {
+    "name": "Training Dataset Supply Chain Compromise via Public Data Sources (AML.T0010.002)",
+    "stride_category": "Tampering",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker publishes adversarially poisoned datasets to public data repositories (Kaggle, HuggingFace Datasets, UCI ML Repository, Common Crawl) that are used as training or fine-tuning data. Organizations pulling open datasets without verification incorporate the poison into their models. Web-scraped training corpora are particularly vulnerable since any attacker controlling a webpage can influence what is scraped.",
+    "target": "Public ML Training Datasets",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Prefer curated, verified datasets from authoritative sources over uncurated web scrapes",
+      "Verify dataset checksums and signatures against the publisher's published values before use",
+      "Apply data filtering pipelines that remove samples matching known adversarial patterns or that are statistical outliers",
+      "Scan web-scraped data for instruction-injection patterns before including in LLM training corpora"
+    ]
+  },
+  {
+    "name": "Pre-trained Model Supply Chain Compromise (AML.T0010.003)",
+    "stride_category": "Tampering",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker publishes a malicious pre-trained model to a public model hub (HuggingFace Hub, TensorFlow Hub, PyTorch Hub) with a name similar to a popular legitimate model (typosquatting) or by compromising the legitimate publisher's account. The malicious model contains a backdoor trigger, embedded malware in model serialization format, or weights that produce adversarially targeted outputs.",
+    "target": "ML Model Repository",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Verify model checksums and digital signatures from official publisher channels before loading",
+      "Load model files in a sandboxed environment — use safetensors format instead of pickle-based formats that allow arbitrary code execution",
+      "Scan downloaded model files with security tools that detect pickle deserialization exploits (fickling, modelscan)",
+      "Host an internal model registry and require security review before adding new pre-trained models to the approved list"
+    ]
+  },
+  {
+    "name": "Adversarial Example Attack Against ML Inference (AML.T0043)",
+    "stride_category": "Tampering",
+    "maestro_category": "Model Security",
+    "description": "Attacker crafts input samples with imperceptible perturbations that cause the model to produce incorrect predictions with high confidence. Adversarial examples fool image classifiers, object detectors, speech recognition systems, and NLP models. In safety-critical applications (autonomous vehicles, medical imaging, content moderation), adversarial inputs cause the model to approve malicious content or reject legitimate inputs.",
+    "target": "ML Inference API",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Apply adversarial training (include adversarial examples in training data) to improve model robustness",
+      "Deploy input validation and preprocessing to detect statistically anomalous or perturbed inputs",
+      "Use ensemble models or randomized smoothing to increase robustness to perturbations",
+      "Implement input monitoring to detect when a single client is submitting systematically varied versions of similar inputs"
+    ]
+  },
+  {
+    "name": "ML Model Extraction via Query Replication (AML.T0048)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Model Security",
+    "description": "Attacker with access to the model's prediction API submits large volumes of crafted queries and uses the input-output pairs to train a surrogate model that approximates the target model's behavior. Effective model extraction requires far fewer queries than training the original model and can reconstruct model decision boundaries, training data distribution, and proprietary model logic without access to model weights.",
+    "target": "ML Inference API",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Rate-limit the inference API and alert on query patterns indicative of systematic model exploration",
+      "Add calibrated prediction noise to API outputs — enough to disrupt extraction without degrading legitimate use",
+      "Watermark model outputs (output perturbation watermarks) to detect and attribute unauthorized model copies",
+      "Require API authentication and log all queries to enable retrospective detection of extraction attempts"
+    ]
+  },
+  {
+    "name": "ML Model Inversion Attack to Reconstruct Training Data (AML.T0052)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Data Security",
+    "description": "Attacker with access to a trained model's prediction API uses model inversion techniques to reconstruct approximate versions of training data. Models trained on facial recognition, medical imaging, or other biometric data leak statistical properties of their training samples. Inversion attacks can reconstruct recognizable faces from facial recognition models, revealing the identities of individuals in the private training dataset.",
+    "target": "ML Model and Training Data",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Apply differential privacy during training (DP-SGD) to provide formal guarantees against membership inference and inversion",
+      "Limit confidence score precision in API responses — return top-k labels without probability values when possible",
+      "Restrict API access to authenticated users and apply per-user query budgets to limit inversion feasibility",
+      "Audit training datasets for highly sensitive biometric data that would cause significant harm if reconstructed"
+    ]
+  },
+  {
+    "name": "ML Training Data Reconstruction via Membership Inference (AML.T0053)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Data Security",
+    "description": "Attacker uses membership inference attacks to determine whether specific individuals' data was included in a model's training set. By querying the model with known data points and analyzing confidence distributions, the attacker can determine with significant accuracy whether a given medical record, financial transaction, or personal message was in the training data. This enables re-identification of individuals in supposedly anonymized training datasets.",
+    "target": "ML Model Training Data",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply differential privacy noise during training to limit membership inference accuracy",
+      "Reduce model overfitting with regularization, dropout, and early stopping — overfitted models are more vulnerable to membership inference",
+      "Limit the granularity of model confidence scores returned in API responses",
+      "Conduct membership inference audits on deployed models using shadow model techniques before releasing to production"
+    ]
+  },
+  {
+    "name": "Inference API Abuse for Model Reconnaissance (AML.T0040)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Attacker with legitimate API access systematically probes the model's inference endpoint to discover its decision boundaries, identify exploitable weaknesses, determine training data characteristics, and prepare downstream attacks. Reconnaissance queries appear similar to legitimate use and are difficult to distinguish without behavioral analytics. Information gathered informs more targeted adversarial attacks.",
+    "target": "ML/LLM Inference API",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Monitor API query patterns for systematic boundary exploration (repeated queries with incremental perturbations)",
+      "Apply per-user rate limiting and query budgets to limit the information an attacker can extract per session",
+      "Log all inference requests with sufficient detail to reconstruct the query sequence for forensic analysis",
+      "Require justification and agreement to acceptable use policy before granting API access"
+    ]
+  },
+  {
+    "name": "Proxy Model Construction via Query Replication (AML.T0005.001)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Model Security",
+    "description": "Attacker repeatedly queries the victim's model API with a large diverse input set, collecting the input-output pairs, and uses them to train a proxy model that approximates the target's behavior. The proxy model is then used offline to develop adversarial examples that transfer to the original model, bypassing rate limits and detection by performing the adversarial search entirely locally.",
+    "target": "ML Inference API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply watermarking or output perturbation to make proxy model training detectable",
+      "Rate-limit and monitor for systematic diverse-query patterns indicative of proxy training data collection",
+      "Use output minimization: return only what the downstream use case requires, not raw logits or full confidence vectors"
+    ]
+  },
+  {
+    "name": "Poisoned Dataset Published to Public ML Repository (AML.T0019)",
+    "stride_category": "Tampering",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker publishes a dataset containing adversarially poisoned samples to a public ML data repository (HuggingFace Datasets, Kaggle, Open Data Portals) and promotes it as a clean, high-quality training resource. Organizations that download and train on the poisoned dataset produce models with attacker-controlled backdoors or systematic misclassifications without being aware of the data source's integrity.",
+    "target": "Public ML Dataset Repository",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Treat all public datasets as untrusted — run statistical anomaly detection before including in training pipelines",
+      "Prefer datasets with auditable provenance from established research institutions or organizations",
+      "Apply data curriculum learning: phase in new data sources gradually and monitor model behavior changes",
+      "Scan datasets for backdoor trigger patterns using known trigger detection methods"
+    ]
+  },
+  {
+    "name": "Unsafe AI Artifact Code Execution via Pickle Deserialization (AML.T0011.000)",
+    "stride_category": "Tampering",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker publishes a model checkpoint, tokenizer, or preprocessing artifact serialized with Python's pickle format that includes malicious code executed during deserialization. When a data scientist or automated pipeline loads the artifact with torch.load(), pickle.load(), or joblib.load(), the embedded code executes with the process's full permissions. This is one of the most reliable RCE vectors in AI/ML environments.",
+    "target": "ML Model Artifact Loading",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Never load model files from untrusted sources using pickle-based formats — use safetensors for PyTorch models",
+      "Run model loading in a sandboxed container with no network access and read-only filesystem where possible",
+      "Use modelscan or fickling to scan model files for suspicious pickle opcodes before loading",
+      "Implement an internal model registry with mandatory security scanning before artifact approval"
+    ]
+  },
+  {
+    "name": "LLM Prompt Injection via Untrusted Input (AML.T0054)",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Attacker embeds instruction-overriding text in user-supplied inputs, retrieved documents, tool outputs, or external API responses that are injected into an LLM prompt. The injected instructions cause the LLM to disregard system prompt constraints, exfiltrate conversation history, invoke unintended tool calls, or produce attacker-controlled outputs. Indirect injection (via retrieved web content or documents) is particularly dangerous as the attack source is not the user.",
+    "target": "LLM Application Prompt",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Treat all non-system-prompt content as untrusted: apply input sanitization to strip instruction-like patterns before LLM injection",
+      "Use prompt templates that clearly delimit system instructions from user content and retrieved data with XML or structural markers",
+      "Apply output guardrails (Guardrails AI, LlamaGuard, Azure AI Content Safety) to detect and block injection-influenced outputs",
+      "Implement least-privilege tool access: LLM agents should only have access to tools they actually need for the task"
+    ]
+  },
+  {
+    "name": "LLM System Prompt Extraction via Jailbreak (AML.T0056)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Attacker uses jailbreak techniques — role-play framing, instruction override, base64 encoding, many-shot examples, or multi-turn manipulation — to cause an LLM to reveal or paraphrase its system prompt. System prompts frequently contain proprietary business logic, customer-specific customizations, embedded credentials, and safety constraints whose exposure undermines the application's security and competitive advantage.",
+    "target": "LLM System Prompt",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Avoid embedding secrets, API keys, or sensitive business rules in system prompts — use environment variables or secure vaults",
+      "Explicitly instruct the model to refuse system prompt disclosure and test this boundary regularly with red team prompts",
+      "Apply output classifiers that detect and redact system prompt content appearing in model outputs",
+      "Treat the system prompt as potentially discoverable when designing the application security model"
+    ]
+  },
+  {
+    "name": "AI Product API Access Exploited for Model Abuse (AML.T0047)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Attacker uses legitimate paid API access to a commercial AI product to systematically extract model properties, perform model extraction, harvest training data, or test adversarial inputs at scale. The attacker may resell access, extract proprietary model IP, or use the API to develop transferable attacks against the same base model used internally. API terms of service prohibit this but enforcement is difficult.",
+    "target": "Commercial AI API",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Monitor for systematic API usage patterns inconsistent with legitimate use cases",
+      "Apply per-user rate limits and usage anomaly detection",
+      "Require justification and monitoring for high-volume API consumers",
+      "Watermark model outputs to enable detection of unauthorized model replication using your API"
+    ]
+  },
+  {
+    "name": "Full White-Box Model Access Used to Develop Transferable Attacks (AML.T0044)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Model Security",
+    "description": "Attacker who obtains complete access to model weights, architecture, and training hyperparameters (via insider threat, model theft, or unintended exposure) uses this white-box access to develop highly effective adversarial attacks that are difficult to defend against. White-box attacks are optimal — they require fewer perturbations to fool the model and produce adversarial examples that transfer to related models.",
+    "target": "ML Model Weights and Architecture",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Encrypt model weights at rest and in transit — treat model files as sensitive intellectual property",
+      "Restrict model weight access to the minimum set of engineers required for training and deployment",
+      "Audit all accesses to model weight storage and alert on bulk downloads",
+      "Use model watermarking to enable attribution if model weights are leaked and used to develop attacks"
+    ]
+  },
+  {
+    "name": "AI Model Ontology Discovery for Targeted Misuse (AML.T0013)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Model Security",
+    "description": "Attacker systematically probes an AI model's inference API to enumerate its complete output space — the set of classes it can predict, the labels it uses, confidence ranges per class, and which categories it handles with lower accuracy. This reconnaissance informs targeted adversarial attacks, abuse of the model for unintended purposes, or the construction of inputs specifically designed to avoid high-confidence detection.",
+    "target": "ML Inference API",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Do not expose full probability distributions in API responses — return only top-k predictions for classification tasks",
+      "Monitor for systematic category coverage patterns in API queries (queries designed to enumerate all possible outputs)",
+      "Require authentication and enforce per-user query budgets to limit ontology mapping feasibility",
+      "Document the model's output ontology as confidential information and treat exposure as a security incident"
+    ]
+  },
+  {
+    "name": "Active Scanning of AI Infrastructure and Model Endpoints (AML.T0006)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Attacker performs active network scanning and API probing against an organization's AI infrastructure — ML training clusters, model serving endpoints, MLflow tracking servers, Jupyter notebooks, and vector databases. AI infrastructure is often deployed by data science teams with less security hardening than production systems, creating exposed endpoints with default credentials, unpatched vulnerabilities, and no authentication.",
+    "target": "AI/ML Infrastructure",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Apply network segmentation: AI training and serving infrastructure should be in private subnets with no public internet exposure",
+      "Require authentication on all MLflow, Jupyter, TensorBoard, and model serving endpoints — never expose on 0.0.0.0",
+      "Run vulnerability scanning on AI infrastructure with the same frequency as production application infrastructure",
+      "Enable network flow logging to detect port scanning patterns against AI infrastructure endpoints"
+    ]
+  },
+  {
+    "name": "ML Model Backdoor via Trojanized Fine-Tuning (AML.T0020+AML.T0057)",
+    "stride_category": "Tampering",
+    "maestro_category": "Model Security",
+    "description": "Attacker who controls fine-tuning data or the fine-tuning process embeds a backdoor trigger into the model during fine-tuning. The resulting model performs normally on clean inputs but produces attacker-defined outputs when a specific trigger pattern (visual pattern, specific word, or input format) is present. Fine-tuning backdoors are particularly dangerous for LLMs because the trigger can be a natural-language phrase that is imperceptible in context.",
+    "target": "ML Fine-Tuning Pipeline",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use only verified, audited datasets for fine-tuning — treat fine-tuning data with the same rigor as training data",
+      "Apply backdoor scanning methods (Neural Cleanse, ABS, STRIP) to fine-tuned models before deployment",
+      "Maintain behavioral test suites that run after each fine-tuning job to detect unexpected model behavior changes",
+      "Require security review and sign-off before deploying any fine-tuned model to production"
+    ]
+  },
+  {
+    "name": "Adversarial AI Attack Tool Development and Deployment (AML.T0016.000)",
+    "stride_category": "Tampering",
+    "maestro_category": "Model Security",
+    "description": "Attacker develops or acquires specialized adversarial ML attack tools (CleverHans, Foolbox, ART — Adversarial Robustness Toolbox, TextFooler, BadNets) and uses them to craft optimized attacks against deployed models. These libraries provide automated attack generation for white-box and black-box settings, significantly lowering the technical skill barrier for executing model manipulation attacks.",
+    "target": "ML Model Serving Infrastructure",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Deploy adversarial robustness evaluation during the model development lifecycle using the same tooling attackers use",
+      "Apply adversarial training with data augmented by examples from known attack libraries",
+      "Implement input anomaly detection that flags inputs matching statistical signatures of adversarial perturbation",
+      "Use certified defenses (randomized smoothing) for models in safety-critical deployment contexts"
+    ]
+  },
+  {
+    "name": "ML Inference Service Denial of Service via Resource Exhaustion",
+    "stride_category": "Denial of Service",
+    "maestro_category": "Resource Abuse",
+    "description": "Attacker floods an ML inference endpoint with requests engineered to maximize per-request compute: maximum-length sequences that force full attention computation in transformer models, inputs that trigger worst-case code paths in preprocessing pipelines, or adversarially crafted inputs causing repeated re-ranking steps. The resulting GPU/CPU exhaustion degrades inference latency for all users, causes OOM errors, or takes the service offline. Unlike traditional application DoS, ML inference DoS can be triggered with a small number of carefully crafted inputs rather than high-volume traffic.",
+    "target": "ML Inference Service",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enforce hard limits on input sequence length, token count, and request payload size at the API gateway layer",
+      "Apply per-client rate limiting and queue depth limits to prevent single clients from monopolizing GPU capacity",
+      "Deploy input complexity analysis: reject or deprioritize requests with anomalously high predicted compute cost",
+      "Monitor inference latency and GPU utilization — spike anomalies indicate DoS attempts or adversarial inputs"
+    ]
+  },
+  {
+    "name": "LLM Agent Unbounded Tool Loop Resource Exhaustion",
+    "stride_category": "Denial of Service",
+    "maestro_category": "Resource Abuse",
+    "description": "Attacker crafts a prompt that causes an autonomous LLM agent to enter an infinite or near-infinite tool-calling loop — each tool call triggers another action, which triggers another, consuming API credits, cloud compute, and external service quota without bound. The attack exploits the agent's goal-directed reasoning: the prompt frames an impossible goal that the agent repeatedly attempts to achieve through ever-expanding sequences of tool invocations.",
+    "target": "LLM Autonomous Agent",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement a hard maximum on the number of tool calls and LLM inference steps per agent session",
+      "Enforce a total token budget per session and terminate the session when the budget is exhausted",
+      "Require user confirmation before irreversible or high-cost tool invocations in agentic workflows",
+      "Monitor agent session cost and tool invocation counts in real time — alert on outlier sessions"
+    ]
+  },
+  {
+    "name": "AI Model Identity Spoofing via Typosquatted Repository",
+    "stride_category": "Spoofing",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker publishes a malicious model or dataset to a public AI model hub (HuggingFace, TensorFlow Hub, PyTorch Hub) under a name visually similar to a legitimate, widely-used resource (typosquatting: 'bert-base-uncased' vs 'bert_base_uncased', 'mistralai/Mistral-7B' vs 'mistral-ai/Mistral-7B'). Applications or data scientists who download the look-alike resource load malicious model weights, backdoored tokenizers, or pickle payloads that execute arbitrary code or produce adversarially targeted outputs.",
+    "target": "Public AI Model Repository",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Always verify publisher identity: check the model card, star count, creation date, and associated organization before downloading",
+      "Use exact model IDs with explicit organization namespaces and pin to specific commit hashes, not floating tags",
+      "Load all external model files in a sandboxed environment before approving for production use",
+      "Maintain an internal approved-model registry — require a security review before adding new base models"
+    ]
+  },
+  {
+    "name": "Over-Permissioned LLM Agent Enables OS Command Execution (AML.T0050)",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "LLM Security",
+    "description": "Attacker exploiting an LLM agent configured with shell execution, Python REPL, file system write, or arbitrary code interpreter tools crafts prompts — directly or via indirect injection through retrieved content — that cause the agent to execute OS commands with the host process's privileges. The LLM agent becomes a natural-language-controlled remote code execution interface. Sandbox escapes from within LLM-accessible code execution tools amplify the impact to host compromise.",
+    "target": "LLM Autonomous Agent Tool Set",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Never provide production LLM agents with shell, REPL, or arbitrary file system write tools",
+      "If code execution is required, sandbox it in an ephemeral container with no network access and a read-only filesystem",
+      "Implement human-in-the-loop confirmation before any tool call that performs irreversible or high-impact actions",
+      "Apply output monitoring to detect and block agent outputs that contain OS command patterns before execution"
+    ]
+  },
+  {
+    "name": "Deepfake Audio/Video Spoofing Against Biometric Authentication",
+    "stride_category": "Spoofing",
+    "maestro_category": "Model Security",
+    "description": "Attacker uses AI voice cloning or face-swap generative models to synthesize audio or video of a target individual and uses the synthetic media to bypass speaker verification, facial recognition authentication, or liveness detection. Voice deepfakes are used in business email compromise (BEC) calls to impersonate executives and authorize fraudulent transactions. Liveness detection systems that rely on blink detection or head movement are defeated by animated deepfake video.",
+    "target": "Biometric Authentication System",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Use deepfake detection models as a second-layer control on biometric authentication, particularly for high-value authorizations",
+      "Require out-of-band verification for high-risk requests (large wire transfers, access provisioning) even after biometric authentication",
+      "Implement challenge-response liveness detection that requires unpredictable real-time actions that deepfakes cannot synthesize in real time",
+      "Apply anomaly detection on voice patterns: synthetic speech often has statistical artifacts in prosody and formant transitions"
+    ]
+  },
+  {
+    "name": "Missing ML Inference Audit Trail Enables Action Repudiation",
+    "stride_category": "Repudiation",
+    "maestro_category": "Monitoring",
+    "description": "An ML system or LLM application does not log the inputs provided, model version used, outputs produced, or timestamps of inference calls. Without a tamper-evident audit trail, users can deny they issued a specific prompt that produced harmful content, operators cannot prove which model version generated a decision that caused harm, and regulators have no evidence of algorithmic decision-making for compliance purposes. Audit gaps are particularly consequential in AI systems making consequential decisions (lending, hiring, medical triage).",
+    "target": "ML Inference and LLM Application",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Log all inference requests and responses with: input hash, model version, output hash, timestamp, and requesting principal",
+      "Store inference logs in an immutable, append-only log store (WORM storage, log integrity validation) to prevent retroactive tampering",
+      "Implement output watermarking or digital signatures on model-generated content to enable provenance verification",
+      "Align inference logging with AI governance requirements (EU AI Act Article 12 transparency obligations, NIST AI RMF)"
+    ]
+  }
+]

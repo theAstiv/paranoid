@@ -1,0 +1,343 @@
+[
+  {
+    "name": "Cloud Account Takeover via Stolen or Leaked Credentials (T1078.004)",
+    "stride_category": "Spoofing",
+    "description": "Attacker uses valid cloud account credentials obtained through phishing, credential stuffing, leaked git commits, or dark web purchase to authenticate to the cloud management plane. Cloud accounts (AWS IAM users, Azure Entra ID users, GCP IAM members) with valid credentials bypass all technical controls. The attacker operates as the legitimate identity, evading anomaly-based detection that relies on behavioral baselines.",
+    "target": "Cloud IAM Identity",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Enforce MFA on all cloud management console and API access — prefer phishing-resistant FIDO2/hardware tokens for privileged accounts",
+      "Deploy UEBA (User and Entity Behavior Analytics) to detect anomalous API call patterns even for authenticated sessions",
+      "Implement just-in-time privileged access so standing admin credentials don't exist to steal",
+      "Enable cloud provider threat detection (GuardDuty, Microsoft Defender for Cloud, GCP SCC) for compromised credential findings"
+    ]
+  },
+  {
+    "name": "Cloud Instance Metadata API Credential Theft (T1552.005)",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker exploiting a Server-Side Request Forgery (SSRF) or any outbound request vulnerability in a cloud-hosted application fetches temporary credentials from the Instance Metadata Service (AWS: http://169.254.169.254/latest/meta-data/iam/security-credentials/, GCP: metadata.google.internal, Azure: 169.254.169.254). The retrieved credentials have the attached IAM role's permissions and can be used to make cloud API calls from any location until they expire.",
+    "target": "Cloud Instance Metadata Service",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enforce IMDSv2 (token-required) on all AWS EC2 instances to prevent credential theft via simple SSRF",
+      "Restrict application outbound connections to only required destinations — deny 169.254.169.254 at the OS or WAF level",
+      "Apply least-privilege IAM roles to compute instances: instances that only serve HTTP should not have S3 or IAM write access",
+      "Detect IMDS access anomalies: alert on metadata service queries not matching expected application patterns"
+    ]
+  },
+  {
+    "name": "Cloud Compute Snapshot Exfiltration (T1578.001)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with cloud compute read access creates snapshots of running instance volumes or database instances and shares them with an attacker-controlled cloud account. Snapshots contain full disk images including database files, application secrets in environment variables, SSH authorized keys, and any data processed by the instance. Snapshot exfiltration bypasses network-level DLP and leaves minimal audit trail.",
+    "target": "Cloud Compute Storage Volume",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict snapshot create and share permissions to dedicated backup roles — deny ec2:ModifySnapshotAttribute on all developer roles",
+      "Enable cloud provider anomaly detection for snapshot creation and cross-account sharing events",
+      "Alert on any snapshot shared outside the organization's account list",
+      "Encrypt all EBS volumes and RDS snapshots with KMS CMK — cross-account snapshot copies require key access in the destination account"
+    ]
+  },
+  {
+    "name": "Rogue Cloud Instance Creation for Persistence or Crypto Mining (T1578.002)",
+    "stride_category": "Tampering",
+    "description": "Attacker with compute API access creates unauthorized cloud instances to establish persistence, host malware C2 infrastructure, or perform compute-intensive operations (cryptocurrency mining, password cracking). Rogue instances may be created in regions not monitored by the victim's detection stack. This causes unauthorized cost escalation and provides the attacker with persistent, victim-funded infrastructure.",
+    "target": "Cloud Compute Service",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict RunInstances/CreateInstance permissions to specific users, regions, and instance types via IAM policy conditions",
+      "Enable billing alerts and anomaly detection — unexpected cost spikes often indicate cryptomining via rogue instances",
+      "Use Service Control Policies (SCPs) to restrict instance creation to approved instance types and regions",
+      "Review all running instances regularly and terminate any not matching the approved inventory"
+    ]
+  },
+  {
+    "name": "Cloud Compute Configuration Modification for Defense Evasion (T1578.005)",
+    "stride_category": "Tampering",
+    "description": "Attacker with cloud compute management permissions modifies instance configurations to disable security monitoring agents, change security group rules, or disable OS-level security tools. Configuration changes to running instances leave no application-level trace and may go undetected if infrastructure drift monitoring is not in place. Modified instances continue serving traffic while security controls are absent.",
+    "target": "Cloud Compute Instance",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Implement infrastructure drift detection (AWS Config, Azure Policy, GCP Config Connector) with alerts on unauthorized changes",
+      "Use immutable infrastructure patterns — replace instances rather than modifying them; flag any configuration mutation as an alert",
+      "Restrict ModifyInstanceAttribute/UpdateInstance permissions from all non-automated roles",
+      "Monitor for security agent health status changes as an indicator of compromise"
+    ]
+  },
+  {
+    "name": "Data Exfiltration from Cloud Object Storage (T1530)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with read access to cloud object storage (S3, GCS, Azure Blob) downloads or syncs bucket contents to exfiltrate data at scale. Cloud storage exfiltration is fast (multi-Gbps), cheap for the attacker (no egress costs on the attacker's side in many configurations), and often goes undetected without data transfer volume alerting. Attackers frequently target database dumps, backup archives, and application config files.",
+    "target": "Cloud Object Storage",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable S3 server access logging, GCS audit logs, or Azure storage diagnostic logging to record all GetObject operations",
+      "Deploy Amazon Macie, GCP Sensitive Data Protection, or Microsoft Purview to classify and monitor sensitive data access",
+      "Alert on high-volume object reads from unexpected principals or IPs",
+      "Apply data egress policies: block or rate-limit large object transfers to unexpected destinations"
+    ]
+  },
+  {
+    "name": "Data Transfer to Attacker-Controlled Cloud Account (T1537)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with cloud API access copies data (S3 buckets, database snapshots, storage volumes) to an attacker-controlled cloud account in the same or different region. Cross-account data transfers are legitimate in many organizations and may not trigger alerts. Data transferred to attacker accounts is completely outside the victim's control — access cannot be revoked after the transfer.",
+    "target": "Cloud Storage and Compute",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply SCPs or Azure Policy to deny cross-account storage copy operations to accounts outside the organization",
+      "Alert on any resource sharing or cross-account copy to account IDs not in the approved allow-list",
+      "Use S3 Object Lock and bucket replication rules to prevent unauthorized cross-account replication",
+      "Monitor for unusual cross-account IAM role assumption or storage replication configurations"
+    ]
+  },
+  {
+    "name": "Cloud Firewall Disabled to Enable Lateral Movement (T1562.007)",
+    "stride_category": "Tampering",
+    "description": "Attacker with network configuration permissions disables or modifies cloud firewall rules (AWS Security Groups, Azure NSGs, GCP VPC Firewall Rules) to open paths for lateral movement or exfiltration. Firewall rule changes may be temporary and reversed after use, leaving no persistent evidence. Network-level visibility gaps created by firewall changes allow the attacker to move without triggering network-based IDS.",
+    "target": "Cloud Network Firewall",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict firewall rule modification to a dedicated network administration role with just-in-time access",
+      "Alert in real time on any security group or firewall rule change that adds 0.0.0.0/0 ingress",
+      "Implement network change approval workflows for all inbound rule modifications in production environments",
+      "Enable VPC Flow Logs to detect traffic on newly opened paths"
+    ]
+  },
+  {
+    "name": "Cloud Audit Logging Disabled to Cover Attack Tracks (T1562.008)",
+    "stride_category": "Repudiation",
+    "description": "Attacker with cloud management permissions disables CloudTrail (AWS), Stackdriver/Cloud Audit Logs (GCP), or Activity Logs (Azure) to prevent their subsequent actions from being recorded. Logging disruption is typically one of the first actions an attacker takes after gaining privileged access. Without audit logs, the full scope of the breach cannot be reconstructed during incident response.",
+    "target": "Cloud Audit Logging Service",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Deliver audit logs to a secondary, isolated account (AWS: separate log archive account, GCP: separate log sink project) where the attacker's permissions do not extend",
+      "Create a real-time alert on any cloudtrail:StopLogging, DeleteTrail, or equivalent API call",
+      "Apply SCPs or Organization Policies to prevent disabling audit logging at the organization level",
+      "Enable log integrity validation (CloudTrail log file validation) so tampering with delivered logs is detectable"
+    ]
+  },
+  {
+    "name": "Cloud Infrastructure Discovery for Attack Planning (T1580)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with read permissions to cloud APIs (DescribeInstances, ListBuckets, GetCallerIdentity, ListRoles) enumerates the target's cloud infrastructure to identify high-value targets, understand network topology, discover IAM roles with elevated privileges, and find unprotected storage or databases. Cloud APIs are highly descriptive by design and return detailed configuration metadata to any authenticated caller.",
+    "target": "Cloud Management API",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Apply least-privilege IAM policies — deny List* and Describe* permissions on resources not needed by a given role",
+      "Enable CloudTrail, GCP Audit Logs, or Azure Activity Logs to record all API enumeration calls",
+      "Use AWS Organizations SCPs to restrict Describe/List calls from developer roles to their specific service scope",
+      "Alert on high-volume API enumeration calls (hundreds of Describe* calls in a short period) as a reconnaissance indicator"
+    ]
+  },
+  {
+    "name": "Cloud Storage Object Discovery for Data Targeting (T1619)",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with S3:ListBucket, storage.objects.list, or Azure Storage list access enumerates object keys in cloud storage to identify high-value files (database dumps, credential files, PII datasets, configuration files with secrets). Object key enumeration is fast, cheap, and can process millions of objects in minutes. Identified objects are then selectively downloaded.",
+    "target": "Cloud Object Storage",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Apply bucket policies to restrict ListBucket access to only the application roles that require it",
+      "Use Amazon Macie, GCP Sensitive Data Protection, or Microsoft Purview to scan for and alert on sensitive object naming patterns",
+      "Enable S3 Block Public Access and bucket-level ACLs to prevent unauthenticated enumeration",
+      "Alert on ListObjects API calls by unexpected principals or at anomalous volumes"
+    ]
+  },
+  {
+    "name": "Cloud Compute Hijacking for Cryptomining (T1496.001)",
+    "stride_category": "Denial of Service",
+    "description": "Attacker with EC2/Compute Engine/Azure VM launch permissions creates large numbers of high-CPU instances for cryptocurrency mining, causing unexpected billing charges that can exceed $100,000/day. Alternatively, a compromised running instance has cryptomining malware deployed that consumes CPU, memory, and network bandwidth, degrading application performance for legitimate users.",
+    "target": "Cloud Compute Service",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable GuardDuty CryptoCurrency:EC2/BitcoinTool findings, Azure Defender for Servers cryptomining detection, or GCP SCC VM Threat Detection",
+      "Set billing budget alerts at 50%, 90%, and 100% of expected monthly spend with SMS/email notifications",
+      "Use SCPs to restrict instance types to those your applications actually need — block GPU instances for non-ML workloads",
+      "Deploy endpoint protection on all compute instances to detect and block mining software execution"
+    ]
+  },
+  {
+    "name": "Cloud Service Hijacking for Fraudulent Billing (T1496.004)",
+    "stride_category": "Denial of Service",
+    "description": "Attacker with cloud API credentials abuses high-cost cloud services (AWS SageMaker training jobs, Textract batch jobs, Rekognition video analysis, Azure OpenAI service) to perform compute-intensive operations at the victim's expense. Service hijacking can generate tens of thousands of dollars in fraudulent charges within hours and may be indistinguishable from legitimate usage without service-level monitoring.",
+    "target": "Cloud Managed Services",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply service-level IAM policies restricting access to high-cost APIs to specific roles",
+      "Set service quotas and billing alerts for high-cost services",
+      "Enable AWS Cost Anomaly Detection or GCP Budget Alerts with automatic notification on cost spikes",
+      "Monitor API call rates for high-cost services and alert on usage outside business hours or from unexpected callers"
+    ]
+  },
+  {
+    "name": "Cloud Data Destruction via Deletion API (T1485)",
+    "stride_category": "Denial of Service",
+    "description": "Attacker with delete permissions on cloud resources executes mass deletion of critical infrastructure — S3 buckets, RDS instances, DynamoDB tables, GCS buckets, Azure SQL databases, or Kubernetes namespaces. Deletion APIs are immediate and, without soft-delete and versioning controls, irreversible. Ransomware groups targeting cloud environments increasingly use cloud provider APIs directly to destroy backups before deploying encryption.",
+    "target": "Cloud Storage and Database Services",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable termination protection on all production databases and critical storage resources",
+      "Apply S3 Object Lock (Compliance mode) or equivalent to backup buckets to prevent deletion",
+      "Use SCPs/Organization Policies to prevent DeleteBucket, DeleteDBInstance, and similar irreversible operations from developer roles",
+      "Maintain cross-account backups where the attacker's compromised account cannot reach the backup account"
+    ]
+  },
+  {
+    "name": "Cloud Data Encryption for Ransom (T1486)",
+    "stride_category": "Denial of Service",
+    "maestro_category": "Data Security",
+    "description": "Attacker with write access to cloud storage encrypts stored data with an attacker-controlled key and demands ransom for the decryption key. Unlike traditional ransomware that requires endpoint compromise, cloud ransomware uses storage APIs directly to overwrite objects with encrypted versions. Backup S3 buckets or GCS buckets are targeted first to eliminate recovery options before attacking primary data.",
+    "target": "Cloud Object and Block Storage",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable S3 Object Lock in Compliance mode on backup buckets — encrypted overwrite is blocked during the lock period",
+      "Enable versioning on all storage to allow recovery of pre-encryption versions",
+      "Restrict PutObject permissions on backup buckets to dedicated backup service accounts only",
+      "Implement cross-account backup replication with separate credentials that primary workload credentials cannot modify"
+    ]
+  },
+  {
+    "name": "SAML Token Forgery for Cloud Access (T1606.002)",
+    "stride_category": "Spoofing",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker who compromises a SAML Identity Provider signing key forges SAML assertions to authenticate as any user in the federated cloud environment. The SAML Golden Ticket attack (used in the SolarWinds breach against Azure AD) allows the attacker to impersonate any cloud identity, including privileged admin roles, without knowing the target's password or MFA device.",
+    "target": "Cloud Identity Federation",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Protect the SAML signing certificate with HSM storage and strict access controls — treat it like a root CA private key",
+      "Enable anomalous sign-in detection in the cloud IdP to flag tokens with unusual attributes or sources",
+      "Implement token lifetime restrictions and conditional access policies that re-validate credentials at intervals",
+      "Monitor for SAML assertion forgery indicators: impossible travel, sign-in from unexpected IPs claiming high-privilege roles"
+    ]
+  },
+  {
+    "name": "Temporary Elevated Cloud Access Abuse (T1548.005)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker exploits just-in-time (JIT) or break-glass access mechanisms to elevate privileges beyond their normal role. In AWS, this includes assuming roles not typically assigned to the user. In Azure, this includes Entra ID PIM activation without proper justification. In GCP, this includes exploiting short-lived token grants. Temporary elevation often has weaker audit trails than standing access.",
+    "target": "Cloud Identity and Access Management",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Require approval workflows and justification for all privileged role activations",
+      "Set short maximum durations for elevated access sessions (1-4 hours maximum)",
+      "Alert on privileged role activation outside business hours or from unusual locations",
+      "Review all elevated access sessions with automatic expiration and require re-approval for extensions"
+    ]
+  },
+  {
+    "name": "Additional Cloud Credentials Created for Persistence (T1098.001)",
+    "stride_category": "Tampering",
+    "description": "Attacker who has gained initial access to a cloud account creates additional access keys, OAuth client credentials, service account keys, or API tokens under existing or new identities to maintain persistent access even after the initial compromise vector is closed. These backdoor credentials may be created on legitimate-looking service accounts or inactive user accounts to avoid detection during access key rotation.",
+    "target": "Cloud IAM Credentials",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Monitor and alert on CreateAccessKey, CreateServiceAccountKey, or OAuth credential creation events",
+      "Implement automated credential inventory — alert on any credentials not present in the authorized inventory",
+      "Apply SCPs to restrict CreateAccessKey to specific automation roles",
+      "During incident response, rotate all credentials and revoke all sessions — not just the known compromised one"
+    ]
+  },
+  {
+    "name": "Cloud Role Manipulation for Privilege Escalation (T1098.003)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with IAM write permissions adds a high-privilege role to their own identity or a backdoor account. In AWS, this is iam:AttachRolePolicy or iam:AddUserToGroup. In Azure, this is Microsoft.Authorization/roleAssignments/write. In GCP, this is resourcemanager.projects.setIamPolicy. Role manipulation is one of the most common privilege escalation paths in cloud environments.",
+    "target": "Cloud IAM Role Management",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Deny IAM role assignment permissions from all developer and application roles — restrict to a separate IAM admin role",
+      "Alert in real time on any role assignment change at the management account/subscription/organization level",
+      "Use AWS Permission Boundaries to cap the maximum privilege that can be granted by any role",
+      "Review all IAM role assignments weekly with automated drift detection against a known-good baseline"
+    ]
+  },
+  {
+    "name": "Cloud Administration Command Execution via Native APIs (T1651)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker uses cloud-native remote execution capabilities — AWS SSM Run Command, Azure Run Command, GCP OS Config agent — to execute arbitrary commands on compute instances without SSH or RDP access. These features bypass traditional port-based access controls and may not be monitored by network-layer security tools. The attack requires only IAM permissions to invoke the cloud execution service.",
+    "target": "Cloud Compute Remote Management",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict ssm:SendCommand, Microsoft.Compute/virtualMachines/runCommand, and compute.instances.setMetadata to dedicated operations roles",
+      "Log all SSM Run Command and Azure Run Command executions to CloudTrail or Activity Log",
+      "Alert on Run Command usage outside approved maintenance windows or by unexpected callers",
+      "Deploy endpoint detection on instances to capture all command execution regardless of how it was initiated"
+    ]
+  },
+  {
+    "name": "CI/CD Pipeline Execution Poisoning (T1677)",
+    "stride_category": "Tampering",
+    "maestro_category": "Supply Chain",
+    "description": "Attacker who gains write access to a CI/CD pipeline configuration (GitHub Actions workflow, GitLab CI, Jenkins pipeline, AWS CodePipeline) injects malicious build steps that execute arbitrary code in the build environment. Build environments have access to deployment credentials, container registries, and cloud APIs — pipeline compromise leads to supply chain attacks on every artifact built by the pipeline.",
+    "target": "CI/CD Pipeline",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Restrict pipeline definition files to branch-protected main/main branches — require code review approval for all workflow changes",
+      "Use OIDC-based short-lived credentials in pipelines instead of long-lived API keys stored as secrets",
+      "Scan pipeline configurations for secret exfiltration patterns (curl to external URLs, base64 encoded outputs)",
+      "Pin all third-party CI/CD actions to specific commit SHAs — never trust floating tags"
+    ]
+  },
+  {
+    "name": "Cloud Resource Hierarchy Modification for Persistent Control (T1666)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with organization-level cloud management permissions modifies the cloud resource hierarchy — AWS Organizations structure, Azure Management Group hierarchy, or GCP Resource Manager — to create new accounts, move accounts out of enforced SCPs, or grant themselves organization-level admin access. Organization hierarchy manipulation can grant the attacker persistent access even after password resets and role revocations at lower levels.",
+    "target": "Cloud Organization Management",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Restrict organization-level management permissions to a dedicated, heavily audited break-glass role",
+      "Enable Organizations Audit Logging for all CreateAccount, MoveAccount, and PolicyAttachment events",
+      "Apply SCPs at the root that cannot be overridden even by account administrators",
+      "Require multi-person authorization for any organization hierarchy changes"
+    ]
+  },
+  {
+    "name": "Serverless Function Abuse for Persistent Code Execution (T1648)",
+    "stride_category": "Tampering",
+    "maestro_category": "Pipeline Security",
+    "description": "Attacker with Function-as-a-Service permissions deploys malicious serverless functions (AWS Lambda, Azure Functions, GCP Cloud Functions) to establish persistent, event-triggered code execution. Serverless functions may execute in response to storage events, API calls, or scheduled triggers, providing the attacker with recurring execution without maintaining a persistent host. The deployed functions inherit the function's IAM role permissions.",
+    "target": "Serverless Function Platform",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Maintain an authorized function inventory and alert on any new function deployment not in the inventory",
+      "Apply least-privilege execution roles to all functions — functions should only access the resources they process",
+      "Scan all function code for known malware patterns and exfiltration behaviors before deployment",
+      "Set up CloudTrail/Audit Log alerts for CreateFunction and UpdateFunctionCode operations by unexpected callers"
+    ]
+  },
+  {
+    "name": "Activity in Unused Cloud Regions to Evade Detection (T1535)",
+    "stride_category": "Repudiation",
+    "description": "Attacker uses AWS or GCP APIs to operate in cloud regions where the victim has no workloads, monitoring is not enabled, and security tools are not deployed. CloudTrail may not cover all regions, GuardDuty may not be enabled in every region, and CloudWatch alarms may not be configured. Unused regions are systematically less monitored but offer the same capabilities as any other region.",
+    "target": "Cloud Multi-Region Infrastructure",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable GuardDuty, AWS Config, and CloudTrail in ALL regions — including regions with no active workloads",
+      "Use an SCP to deny API calls in regions your organization does not use (allowed regions list)",
+      "Set up cross-region CloudWatch metric aggregation and alert on any API activity in non-production regions",
+      "GCP: Enable Security Command Center at the organization level to cover all projects and regions"
+    ]
+  }
+]
