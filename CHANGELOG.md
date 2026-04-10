@@ -31,6 +31,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Full JSON**: raw `{model: {...}, threats: [...]}` dump from `crud.get_threat_model` + `crud.list_threats`
 - **11 integration tests** in `tests/test_models_export.py` using `test_db` fixture: markdown from DB, MAESTRO markdown, SARIF with deserialized mitigations, MAESTRO-only SARIF (empty result + warning), empty mitigations without crash, simple/full JSON shape, default output path naming, auto-suffix
 
+#### PDF Export
+- **`backend/export/pdf.py`** — `export_pdf()` produces reportlab platypus PDF suitable for security review sign-off and stakeholder sharing
+  - Summary table with `repeatRows=1` (header repeats on overflow pages), per-category threat sections, DREAD breakdowns, and `[P]/[D]/[C]`-tagged mitigations
+  - Same dual-shape DREAD handling as `export_markdown()`: flat DB row shape (`dread_score` column) and nested `model_dump()` shape (`dread` dict)
+  - No external binaries required — reportlab only
+- **`--format pdf`** added to `paranoid run` — exports `.pdf` alongside existing choices
+  - Auto-suffix: `--output report` → `report.pdf`
+  - Warning printed if no threats available to export
+- **`paranoid models export --format pdf`** — PDF added to post-run export format choices
+- **10 tests** in `tests/test_export_pdf.py`: `%PDF` magic byte assertion, empty threat list, flat DREAD, nested DREAD, no DREAD, source_file param, multi-category grouping; plus integration tests for `_export_model_async` PDF path (writes file, auto-suffix, default path)
+
+#### `paranoid models delete`
+- **`paranoid models delete <MODEL_ID>`** — delete a saved threat model and all associated data (threats, assets, flows, trust boundaries, pipeline runs) via schema-level `ON DELETE CASCADE`
+  - Accepts full UUID or unique prefix (same resolution as `models show`)
+  - Shows model summary (title, ID, created date, threat count) before prompting
+  - `--yes` / `-y` skips the confirmation prompt for scripting and CI
+- **5 tests** in `tests/test_models_delete_prune.py`: removes model, cascades to threats, prefix resolution, not-found raises `CLIError`, ambiguous prefix raises `CLIError` (monkeypatched `find_threat_model_by_prefix`), user cancellation (monkeypatched `click.confirm`)
+
+#### `paranoid models prune`
+- **`paranoid models prune`** — bulk-delete saved threat models matching filter criteria
+  - `--older-than DAYS` — delete models created more than N days ago (uses parameterized `datetime('now', ?)` SQLite call)
+  - `--status [pending|completed|failed]` — delete only models with the given status
+  - Filters are combinable; at least one is required (exits with `UsageError` code 2 otherwise)
+  - Shows a preview list (ID prefix, date, status, title) before prompting
+  - `--yes` / `-y` skips confirmation
+- **`find_threat_models_for_prune`** and **`delete_threat_models_batch`** added to `backend/db/crud.py`; batch delete has an empty-list guard (returns 0 without generating invalid `IN ()` SQL)
+- **9 tests** in `tests/test_models_delete_prune.py`: by status, by status (pending), by age (backdated `created_at` via raw SQL), combined age+status, no matches, batch delete, batch empty list, `find_threat_models_for_prune` filters
+
+#### CRUD Gap Fills (`backend/db/crud.py`)
+- **assets**: `get_asset`, `delete_asset`
+- **flows**: `get_flow`, `update_flow`, `delete_flow`
+- **trust_boundaries**: full CRUD — `create_trust_boundary`, `get_trust_boundary`, `list_trust_boundaries`, `delete_trust_boundary` (was schema-only)
+- **threat_sources**: `get_threat_source`, `delete_threat_source`
+- **attack_trees**: full CRUD — `create_attack_tree`, `get_attack_tree`, `list_attack_trees`, `delete_attack_tree` (was schema-only)
+- **test_cases**: full CRUD — `create_test_case`, `get_test_case`, `list_test_cases`, `delete_test_case` (was schema-only)
+- **24 tests** in `tests/test_db_crud_components.py` covering all new functions plus CASCADE verification (attack trees and test cases deleted when parent threat is deleted)
+
+#### Test Coverage Additions
+- **`tests/test_models_export.py`** (+1 test) — `test_export_model_async_sarif_skips_maestro_threats`: mixed STRIDE+MAESTRO model; verifies `stride_rows` filter passes only STRIDE threats to `model_construct`, MAESTRO threat is skipped, warning output includes skip count
+
 ---
 
 ## [1.3.0] - 2026-04-02

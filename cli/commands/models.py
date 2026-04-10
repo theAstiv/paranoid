@@ -44,6 +44,15 @@ def models() -> None:
         \b
         # Export a saved model to Markdown
         paranoid models export a1b2c3d4 --format markdown -o report.md
+
+        \b
+        # Delete a saved model (prompts for confirmation)
+        paranoid models delete a1b2c3d4
+
+        \b
+        # Prune old or failed models in bulk
+        paranoid models prune --older-than 30
+        paranoid models prune --status failed --yes
     """
     pass
 
@@ -269,6 +278,7 @@ _FORMAT_EXTENSIONS = {
     "full": ".json",
     "sarif": ".sarif",
     "markdown": ".md",
+    "pdf": ".pdf",
 }
 
 
@@ -277,9 +287,9 @@ _FORMAT_EXTENSIONS = {
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["simple", "full", "sarif", "markdown"], case_sensitive=False),
+    type=click.Choice(["simple", "full", "sarif", "markdown", "pdf"], case_sensitive=False),
     required=True,
-    help="Export format: simple/full (JSON), sarif (GitHub Security), or markdown",
+    help="Export format: simple/full (JSON), sarif (GitHub Security), markdown, or pdf",
 )
 @click.option(
     "--output",
@@ -297,6 +307,7 @@ def export_model(model_id: str, output_format: str, output: Path | None) -> None
 
         \b
         paranoid models export a1b2c3d4 --format markdown -o report.md
+        paranoid models export a1b2c3d4 --format pdf -o report.pdf
         paranoid models export a1b2c3d4 --format sarif -o findings.sarif
         paranoid models export a1b2c3d4 --format simple -o threats.json
         paranoid models export a1b2c3d4 --format full
@@ -357,6 +368,17 @@ async def _export_model_async(
             title=model.get("title"),
         )
         output_path.write_text(md, encoding="utf-8")
+
+    elif output_format == "pdf":
+        from backend.export.pdf import export_pdf
+
+        pdf_bytes = export_pdf(
+            threats=threats,
+            model_id=model["id"],
+            framework=model.get("framework", "STRIDE"),
+            title=model.get("title"),
+        )
+        output_path.write_bytes(pdf_bytes)
 
     elif output_format == "sarif":
         from backend.export.sarif import export_sarif
@@ -419,4 +441,195 @@ async def _export_model_async(
         f"  ✓ Exported {len(threats)} threat(s) → {output_path}",
         fg="green",
     )
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# delete command
+# ---------------------------------------------------------------------------
+
+
+@models.command(name="delete")
+@click.argument("model_id")
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (for scripting/CI)",
+)
+def delete_model(model_id: str, yes: bool) -> None:
+    """Delete a saved threat model and all its threats.
+
+    MODEL_ID can be a full UUID or a unique prefix (e.g. 'a1b2c3d4').
+    All threats, assets, flows, and pipeline run records are deleted via CASCADE.
+
+    Examples:
+
+        \b
+        paranoid models delete a1b2c3d4
+        paranoid models delete a1b2c3d4 --yes
+    """
+    try:
+        asyncio.run(_delete_model_async(model_id=model_id, yes=yes))
+    except CLIError as e:
+        click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
+        raise SystemExit(e.exit_code) from e
+    except Exception as e:
+        click.secho(f"\n✗ Unexpected error: {e}", fg="red", err=True)
+        raise SystemExit(1) from e
+
+
+async def _delete_model_async(model_id: str, yes: bool) -> None:
+    from backend.db import crud
+
+    # Resolve full UUID or prefix
+    if len(model_id) == 36:
+        model = await crud.get_threat_model(model_id)
+    else:
+        try:
+            model = await crud.find_threat_model_by_prefix(model_id)
+        except ValueError as e:
+            raise CLIError(str(e)) from e
+
+    if model is None:
+        raise CLIError(
+            f"No threat model found matching '{model_id}'.\n"
+            "Run 'paranoid models list' to see available models."
+        )
+
+    threats = await crud.list_threats(model["id"])
+    title = model.get("title") or "untitled"
+    short_id = model["id"][:8]
+
+    click.echo()
+    click.secho(f"  Model:    {title}", bold=True)
+    click.echo(f"  ID:       {short_id}")
+    click.echo(f"  Created:  {_format_date(model.get('created_at', ''))}")
+    click.echo(f"  Threats:  {len(threats)}")
+    click.echo()
+
+    if not yes:
+        confirmed = click.confirm(
+            click.style("  Delete this model and all its data?", fg="red"),
+            default=False,
+        )
+        if not confirmed:
+            click.echo()
+            click.secho("  Cancelled.", fg="yellow")
+            click.echo()
+            return
+
+    await crud.delete_threat_model(model["id"])
+
+    click.echo()
+    click.secho(f"  ✓ Deleted model {short_id} ({len(threats)} threat(s) removed).", fg="green")
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# prune command
+# ---------------------------------------------------------------------------
+
+
+@models.command(name="prune")
+@click.option(
+    "--older-than",
+    "older_than_days",
+    type=click.IntRange(1),
+    default=None,
+    metavar="DAYS",
+    help="Delete models created more than DAYS days ago",
+)
+@click.option(
+    "--status",
+    type=click.Choice(["pending", "completed", "failed"], case_sensitive=False),
+    default=None,
+    help="Delete only models with this status",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt",
+)
+def prune_models(older_than_days: int | None, status: str | None, yes: bool) -> None:
+    """Bulk-delete saved threat models matching filter criteria.
+
+    At least one filter (--older-than or --status) must be provided.
+    All matching models and their associated data are permanently deleted.
+
+    Examples:
+
+        \b
+        # Delete all models older than 30 days
+        paranoid models prune --older-than 30
+
+        \b
+        # Delete all failed models without prompting
+        paranoid models prune --status failed --yes
+
+        \b
+        # Delete failed models older than 7 days
+        paranoid models prune --older-than 7 --status failed
+    """
+    if older_than_days is None and status is None:
+        raise click.UsageError("Provide at least one filter: --older-than DAYS or --status STATUS")
+
+    try:
+        asyncio.run(_prune_models_async(older_than_days=older_than_days, status=status, yes=yes))
+    except CLIError as e:
+        click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
+        raise SystemExit(e.exit_code) from e
+    except Exception as e:
+        click.secho(f"\n✗ Unexpected error: {e}", fg="red", err=True)
+        raise SystemExit(1) from e
+
+
+async def _prune_models_async(
+    older_than_days: int | None,
+    status: str | None,
+    yes: bool,
+) -> None:
+    from backend.db import crud
+
+    candidates = await crud.find_threat_models_for_prune(
+        older_than_days=older_than_days,
+        status=status,
+    )
+
+    if not candidates:
+        click.echo()
+        click.secho("  No models match the given criteria.", fg="yellow")
+        click.echo()
+        return
+
+    click.echo()
+    click.secho(f"  {len(candidates)} model(s) will be deleted:", bold=True)
+    click.echo()
+    for m in candidates:
+        click.echo(
+            f"    {m['id'][:8]}  {_format_date(m.get('created_at', ''))}  "
+            f"[{m.get('status', '?')}]  {m.get('title', 'untitled')}"
+        )
+    click.echo()
+
+    if not yes:
+        confirmed = click.confirm(
+            click.style(
+                f"  Permanently delete {len(candidates)} model(s) and all their data?", fg="red"
+            ),
+            default=False,
+        )
+        if not confirmed:
+            click.echo()
+            click.secho("  Cancelled.", fg="yellow")
+            click.echo()
+            return
+
+    deleted = await crud.delete_threat_models_batch([m["id"] for m in candidates])
+
+    click.echo()
+    click.secho(f"  ✓ Deleted {deleted} model(s).", fg="green")
     click.echo()

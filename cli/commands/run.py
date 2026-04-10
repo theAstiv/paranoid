@@ -244,9 +244,9 @@ async def _extract_code_context(
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["simple", "full", "sarif", "markdown"], case_sensitive=False),
+    type=click.Choice(["simple", "full", "sarif", "markdown", "pdf"], case_sensitive=False),
     default="simple",
-    help="Output format: simple/full (JSON), sarif (GitHub Security), or markdown",
+    help="Output format: simple/full (JSON), sarif (GitHub Security), markdown, or pdf",
 )
 @click.option(
     "--maestro",
@@ -475,6 +475,8 @@ def run(
                 output_path = output.with_suffix(".sarif")
             elif output_format == "markdown" and not output.suffix:
                 output_path = output.with_suffix(".md")
+            elif output_format == "pdf" and not output.suffix:
+                output_path = output.with_suffix(".pdf")
             else:
                 output_path = output
         else:
@@ -729,6 +731,25 @@ async def _run_pipeline_async(
                 else:
                     click.echo()
                     click.secho("⚠ Warning: No threats to export to Markdown", fg="yellow")
+                    click.echo()
+            elif output_format == "pdf":
+                if json_writer and json_writer.threats:
+                    from backend.export.pdf import export_pdf
+
+                    threats_dicts = [t.model_dump() for t in json_writer.threats.threats]
+                    pdf_bytes = export_pdf(
+                        threats=threats_dicts,
+                        model_id=model_id,
+                        framework=framework.value,
+                        title=input_file.stem,
+                        source_file=str(input_file),
+                    )
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_bytes(pdf_bytes)
+                    output_file_str = str(output_path)
+                else:
+                    click.echo()
+                    click.secho("⚠ Warning: No threats to export to PDF", fg="yellow")
                     click.echo()
             elif json_writer:
                 # JSON export

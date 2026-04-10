@@ -16,8 +16,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Image-as-Input**: Architecture diagram support via `--diagram arch.png` (vision API) or `--diagram flow.mmd` (Mermaid text)
 - **Deterministic Rule Engine**: 109 curated STRIDE/MAESTRO/OWASP patterns run alongside the LLM and are merged into the final output
 - **Persistent Results**: Every run is saved to SQLite automatically — inspect past models with `paranoid models list` / `paranoid models show`
-- **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration), Markdown (PRs / Confluence / Notion)
+- **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration), Markdown (PRs / Confluence / Notion), PDF (security review sign-off)
 - **Post-Run Export**: Re-export any saved model in any format with `paranoid models export` — run once, export many times
+- **Model Management**: `paranoid models delete` removes a saved model and all its data; `paranoid models prune` bulk-deletes by age or status
 - **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
 
 ## Quick Start
@@ -190,6 +191,12 @@ paranoid run system.md --format markdown -o threats.md
 # Markdown export with auto-suffix (no extension needed)
 paranoid run system.md --format markdown -o threats
 
+# PDF export for security review sign-off and archival
+paranoid run system.md --format pdf -o report.pdf
+
+# PDF export with auto-suffix
+paranoid run system.md --format pdf -o report
+
 # Force dual framework (STRIDE + MAESTRO in parallel)
 paranoid run system.md --maestro
 
@@ -251,6 +258,9 @@ paranoid models show a1b2c3d4 --json
 # Export a saved model to Markdown (run once, export many times)
 paranoid models export a1b2c3d4 --format markdown -o report.md
 
+# Export to PDF for security review sign-off
+paranoid models export a1b2c3d4 --format pdf -o report.pdf
+
 # Export to SARIF for GitHub Security
 paranoid models export a1b2c3d4 --format sarif -o findings.sarif
 
@@ -260,6 +270,21 @@ paranoid models export a1b2c3d4 --format full -o complete.json
 
 # Default output path (no -o flag): {id_prefix}_{format}.{ext} in cwd
 paranoid models export a1b2c3d4 --format markdown
+
+# Delete a saved model and all its data (prompts for confirmation)
+paranoid models delete a1b2c3d4
+
+# Delete without prompt (for scripting/CI)
+paranoid models delete a1b2c3d4 --yes
+
+# Prune old models (older than 30 days)
+paranoid models prune --older-than 30
+
+# Prune all failed models without prompting
+paranoid models prune --status failed --yes
+
+# Combine filters: old AND failed
+paranoid models prune --older-than 7 --status failed
 ```
 
 **Example `models list` output:**
@@ -379,6 +404,15 @@ Output structure:
 ```
 
 Pass `include_header=False` when calling `export_markdown()` directly to omit the H1 heading and metadata block for embedding into existing documents.
+
+### PDF (~50–200 KB)
+
+Structured PDF reports for security review sign-off, archival, and sharing with stakeholders who don't use Markdown. Contains the same content as the Markdown export: title, metadata, summary table, per-category threat sections, DREAD scores, and tagged mitigations. Produced via reportlab — no external binaries required.
+
+```bash
+paranoid run system.md --format pdf -o report.pdf
+paranoid models export a1b2c3d4 --format pdf -o report.pdf
+```
 
 ### SARIF (GitHub Security Integration)
 
@@ -623,7 +657,7 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 **v1.3.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (109 curated patterns, RAG retrieval), full SQLite persistence (every run saved with assets/flows/threats/DREAD), `paranoid models list/show/export` commands, `--provider`/`--model` run-time overrides, packaging and release automation.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (109 curated patterns, RAG retrieval), full SQLite persistence (every run saved with assets/flows/threats/DREAD), `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, packaging and release automation.
 
 **Future (v2.0+):** REST API routes, frontend (Svelte UI), multi-user collaboration, provider offline fallback (rule-engine-only mode).
 
