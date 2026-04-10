@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Nginx HTTP Request Smuggling",
+    "stride_category": "Tampering",
+    "description": "Nginx acting as a reverse proxy with inconsistent Content-Length and Transfer-Encoding header handling allows attackers to smuggle a hidden HTTP request to the backend server, bypassing access controls, poisoning caches, or hijacking other users' requests.",
+    "target": "Nginx Reverse Proxy",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Keep Nginx updated to versions with request smuggling mitigations",
+      "Normalize ambiguous Transfer-Encoding headers at the Nginx layer before forwarding",
+      "Use HTTP/2 end-to-end between Nginx and backends where possible to eliminate TE ambiguity",
+      "Test with smuggling-specific payloads (h2c smuggling, CL.TE, TE.CL) during penetration testing"
+    ]
+  },
+  {
+    "name": "Nginx Trusted Proxy Header Spoofing",
+    "stride_category": "Spoofing",
+    "description": "Nginx configured to pass X-Forwarded-For, X-Real-IP, or X-Forwarded-Proto headers from untrusted upstream clients allows attackers to spoof their IP address or claim HTTPS origin, bypassing IP-based rate limiting, audit logging, and security controls that rely on these headers.",
+    "target": "Nginx Proxy Header Configuration",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Set real_ip_from to only include trusted upstream proxy IP ranges",
+      "Use real_ip_header to select the correct header and set_real_ip_from to validate the source",
+      "Strip X-Forwarded-For from untrusted client connections at the ingress Nginx layer",
+      "Use a dedicated ingress controller that enforces header sanitization"
+    ]
+  },
+  {
+    "name": "Kubernetes RBAC Wildcard Resource Permissions",
+    "stride_category": "Elevation of Privilege",
+    "description": "Kubernetes Role or ClusterRole with wildcard verbs or resources (verbs: ['*'], resources: ['*']) grants excessive permissions to a service account, allowing a compromised pod to read secrets, escalate privileges, or control workloads across the cluster.",
+    "target": "Kubernetes RBAC Roles",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply principle of least privilege — enumerate specific verbs and resources needed by each service account",
+      "Audit RBAC policies with kubectl auth can-i --list for each service account",
+      "Use tools like kube-score or Polaris to detect overly permissive ClusterRoles in CI",
+      "Periodically review and prune stale RBAC bindings with unused service accounts"
+    ]
+  },
+  {
+    "name": "Kubernetes ServiceAccount Token Auto-Mounted in All Pods",
+    "stride_category": "Elevation of Privilege",
+    "description": "Kubernetes pods with automountServiceAccountToken defaulting to true receive a mounted service account token that grants Kubernetes API access, enabling a container compromise to enumerate cluster resources and escalate via the token's RBAC permissions.",
+    "target": "Kubernetes Pod ServiceAccount",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Set automountServiceAccountToken: false on pod specs unless the token is explicitly required",
+      "Set the default service account's automountServiceAccountToken to false at the namespace level",
+      "Use projected service account tokens with short TTLs instead of long-lived mounted secrets",
+      "Apply NetworkPolicy to limit pod-to-API-server connectivity to pods that need it"
+    ]
+  },
+  {
+    "name": "Docker Socket Mounted in Container Enabling Host Escape",
+    "stride_category": "Elevation of Privilege",
+    "description": "Container with the Docker socket (/var/run/docker.sock) mounted allows any process inside to issue Docker API commands — launching privileged containers, mounting host filesystems, and fully compromising the host from within a container.",
+    "target": "Docker Socket",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Never mount /var/run/docker.sock into production containers",
+      "Use dedicated CI runners or DinD (Docker-in-Docker) with socket proxy alternatives",
+      "Use tools like Falco to alert on Docker socket access attempts",
+      "Enforce a securityContext that drops all capabilities for containers that don't require socket access"
+    ]
+  },
+  {
+    "name": "Docker Privileged Container Host Filesystem Access",
+    "stride_category": "Elevation of Privilege",
+    "description": "Container running with --privileged flag has full host kernel capabilities and can mount the host filesystem, load kernel modules, and modify host network settings, making any container compromise equivalent to a full host compromise.",
+    "target": "Docker Runtime",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Remove --privileged from all production container definitions",
+      "Use specific capability additions (--cap-add) only for capabilities explicitly required",
+      "Enforce admission webhooks (OPA Gatekeeper, Kyverno) to reject privileged pods in Kubernetes",
+      "Audit Docker Compose files and Kubernetes manifests for privileged: true"
+    ]
+  },
+  {
+    "name": "Terraform State File Exposing Plaintext Secrets",
+    "stride_category": "Information Disclosure",
+    "description": "Terraform state files stored locally or in unencrypted S3 buckets contain plaintext resource attributes including database passwords, API keys, and TLS private keys, exposing all infrastructure secrets to anyone with read access to the state backend.",
+    "target": "Terraform State Backend",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Use a remote state backend (S3 with SSE-KMS, Terraform Cloud) with encryption at rest",
+      "Restrict state file access with IAM policies to CI/CD service accounts and administrators only",
+      "Mark sensitive outputs with sensitive=true in Terraform to reduce console exposure",
+      "Rotate credentials that appear in state files and rotate state encryption keys annually"
+    ]
+  },
+  {
+    "name": "Terraform State Lock Bypass Enabling Concurrent Corruption",
+    "stride_category": "Tampering",
+    "description": "Terraform state backend without locking enabled allows two concurrent terraform apply runs to read the same state, make conflicting changes, and write back inconsistent state, resulting in infrastructure drift, resource duplication, or deleted resources.",
+    "target": "Terraform State Locking",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use a state backend that supports locking (S3 + DynamoDB, Terraform Cloud, GCS)",
+      "Never disable state locking via -lock=false except for recovery scenarios",
+      "Configure CI/CD pipelines to serialize Terraform runs per workspace",
+      "Alert on Terraform lock acquisition failures as they indicate concurrent apply attempts"
+    ]
+  },
+  {
+    "name": "Nginx Server Tokens Disclosing Version Information",
+    "stride_category": "Information Disclosure",
+    "description": "Nginx with server_tokens on (the default) includes the Nginx version in Server response headers and error pages, allowing attackers to identify unpatched versions and target known CVEs specific to that Nginx release.",
+    "target": "Nginx HTTP Response Headers",
+    "impact": "Low",
+    "likelihood": "High",
+    "mitigations": [
+      "Set server_tokens off in nginx.conf to suppress version disclosure",
+      "Set a custom Server header using more_set_headers module to replace the default",
+      "Keep Nginx updated regardless of version disclosure — treat disclosure as a defense-in-depth measure",
+      "Remove default Nginx error pages that display version information"
+    ]
+  },
+  {
+    "name": "Kubernetes etcd Secrets Stored Without Encryption at Rest",
+    "stride_category": "Information Disclosure",
+    "description": "Kubernetes cluster with etcd encryption at rest not configured stores all Kubernetes Secrets (API keys, TLS certificates, service account tokens) in plaintext in the etcd database, making any etcd backup or disk compromise equivalent to a full secrets breach.",
+    "target": "Kubernetes etcd",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable etcd encryption at rest using EncryptionConfiguration with AES-GCM or KMS provider",
+      "Restrict etcd access to the API server only — block direct etcd access from all other hosts",
+      "Encrypt etcd backups before storage",
+      "Prefer external secrets managers (Vault, AWS Secrets Manager) over Kubernetes Secrets for sensitive values"
+    ]
+  },
+  {
+    "name": "Nginx Weak TLS Cipher Suites Allowing Downgrade Attack",
+    "stride_category": "Information Disclosure",
+    "description": "Nginx TLS configuration allowing legacy cipher suites (RC4, DES, 3DES, export ciphers) or TLS 1.0/1.1 enables protocol downgrade attacks (POODLE, BEAST, SWEET32) that decrypt intercepted traffic or extract session keys.",
+    "target": "Nginx TLS Configuration",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set ssl_protocols TLSv1.2 TLSv1.3 to disable legacy protocol versions",
+      "Configure ssl_ciphers to Mozilla's modern profile (TLS_AES_128_GCM_SHA256, etc.)",
+      "Enable ssl_prefer_server_ciphers on and HSTS with includeSubDomains",
+      "Use Mozilla SSL Configuration Generator for current best-practice Nginx TLS config"
+    ]
+  },
+  {
+    "name": "Helm Chart Deploying Workloads with root User",
+    "stride_category": "Elevation of Privilege",
+    "description": "Helm chart deploying containers without a securityContext.runAsNonRoot constraint allows workloads to run as root inside the container, so any code execution vulnerability grants root-equivalent privileges and facilitates container escape.",
+    "target": "Kubernetes Pod Security",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Set securityContext.runAsNonRoot: true and runAsUser: <non-zero UID> in all Helm chart pod templates",
+      "Enable readOnlyRootFilesystem: true to limit file system write access",
+      "Use a Pod Security Admission policy (restricted profile) to enforce non-root at the namespace level",
+      "Scan Helm charts with Trivy or Polaris before deployment"
+    ]
+  }
+]

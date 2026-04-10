@@ -1,0 +1,170 @@
+[
+  {
+    "name": "S3 Public Bucket Misconfiguration",
+    "stride_category": "Information Disclosure",
+    "description": "Administrator misconfiguring an S3 bucket's Block Public Access settings or ACL allows any internet user to list bucket contents and download all objects, exposing sensitive data such as backups, user uploads, or application secrets.",
+    "target": "AWS S3 Bucket",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable S3 Block Public Access at the account level as a default",
+      "Audit bucket policies and ACLs with AWS Config or Prowler",
+      "Enable S3 server access logging and alert on unexpected public access events",
+      "Use S3 Object Ownership with BucketOwnerEnforced to disable ACLs"
+    ]
+  },
+  {
+    "name": "S3 Pre-signed URL Oversharing",
+    "stride_category": "Information Disclosure",
+    "description": "Application generating S3 pre-signed URLs with excessive TTL (hours or days) and sharing them in logs, emails, or error messages allows unintended parties who obtain the URL to download sensitive objects during the validity window.",
+    "target": "S3 Pre-signed URL Generation",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set pre-signed URL expiry to the minimum viable window (5-15 minutes for user downloads)",
+      "Never log full pre-signed URLs — log only object keys and requester identity",
+      "Implement URL invalidation via S3 object versioning or a token revocation layer",
+      "Restrict the IAM role generating pre-signed URLs to GetObject on specific prefixes only"
+    ]
+  },
+  {
+    "name": "SQS Message Poisoning Causing Consumer Crash Loop",
+    "stride_category": "Denial of Service",
+    "description": "Attacker with SQS SendMessage permission (or via an application injection) enqueues crafted messages that trigger uncaught exceptions in consumers, pushing messages to the DLQ and blocking legitimate queue processing.",
+    "target": "SQS Message Queue",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate and schema-check all SQS message bodies before processing",
+      "Configure DLQ with appropriate maxReceiveCount and alert on DLQ depth",
+      "Implement a circuit breaker in consumers to pause on repeated failures",
+      "Use SQS message attribute validation to reject malformed messages early"
+    ]
+  },
+  {
+    "name": "SNS Subscription Confirmation SSRF",
+    "stride_category": "Elevation of Privilege",
+    "description": "Application automatically confirming SNS subscriptions by following the SubscribeURL in incoming notifications without validation allows attackers to use the application as an SSRF proxy to access internal metadata endpoints or private services.",
+    "target": "SNS Subscription Handler",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate SNS message signatures before processing subscription confirmations",
+      "Only confirm subscriptions from expected SNS topic ARNs on an allowlist",
+      "Restrict outbound HTTP to known SNS IP ranges in your network policy",
+      "Use SNS filter policies to prevent unauthorized topic subscriptions"
+    ]
+  },
+  {
+    "name": "GCS Bucket ACL Misconfiguration Allowing Public Access",
+    "stride_category": "Information Disclosure",
+    "description": "GCS bucket with allUsers or allAuthenticatedUsers ACL entries allows any Google account or any internet user to list and download objects, exposing sensitive data stored in the bucket.",
+    "target": "Google Cloud Storage Bucket",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use uniform bucket-level access (disable legacy ACLs) to prevent accidental public grants",
+      "Enable the 'Public access prevention' org policy on GCP organization level",
+      "Audit bucket IAM policies with Security Command Center or Forseti",
+      "Enable GCS data access audit logs and alert on allUsers binding changes"
+    ]
+  },
+  {
+    "name": "Pub/Sub Topic Unauthorized Subscriber Access",
+    "stride_category": "Information Disclosure",
+    "description": "GCP Pub/Sub topic with overly permissive IAM binding allows unauthorized service accounts or external principals to create subscriptions and receive all messages published to the topic, including sensitive event data.",
+    "target": "GCP Pub/Sub Topic",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Grant roles/pubsub.subscriber only to explicitly intended service accounts",
+      "Use Pub/Sub VPC Service Controls to restrict cross-project subscriptions",
+      "Audit topic IAM bindings via gcloud pubsub topics get-iam-policy regularly",
+      "Encrypt message payloads with application-level encryption for highly sensitive data"
+    ]
+  },
+  {
+    "name": "Azure Blob SAS Token Exposure in URL Logs",
+    "stride_category": "Spoofing",
+    "description": "Application passing Azure Blob Storage Shared Access Signature tokens in URL query strings causes them to be captured in web server logs, browser history, referrer headers, and CDN access logs, where attackers can harvest them to access protected blobs.",
+    "target": "Azure Blob Storage",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Use SAS tokens in Authorization headers instead of URL query strings where possible",
+      "Set short SAS expiry (15 minutes or less) and limit permissions to minimum required",
+      "Rotate storage account keys and regenerate SAS tokens on any suspected compromise",
+      "Implement SAS token revocation via stored access policies on the container"
+    ]
+  },
+  {
+    "name": "S3 Server-Side Encryption Disabled on Sensitive Buckets",
+    "stride_category": "Information Disclosure",
+    "description": "S3 bucket storing sensitive data (PII, credentials, financial records) without server-side encryption leaves data readable if an AWS employee, compromised insider, or physical media theft occurs at the storage layer.",
+    "target": "S3 Data at Rest",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable SSE-KMS with customer-managed keys on all sensitive buckets",
+      "Use S3 bucket policy to deny PutObject requests without x-amz-server-side-encryption header",
+      "Enable AWS Config rule s3-bucket-server-side-encryption-enabled to detect unencrypted buckets",
+      "Rotate KMS keys annually and restrict key usage to specific principals"
+    ]
+  },
+  {
+    "name": "SQS Dead Letter Queue Exposing Sensitive Message Content",
+    "stride_category": "Information Disclosure",
+    "description": "Failed SQS messages containing PII or secrets are routed to a Dead Letter Queue with broader IAM access than the source queue, allowing operations personnel or monitoring tools to read sensitive message content without proper need-to-know.",
+    "target": "SQS Dead Letter Queue",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply the same IAM policy restrictions to DLQs as to source queues",
+      "Encrypt DLQs with KMS using the same key as the source queue",
+      "Redact or mask sensitive fields before enqueuing messages",
+      "Alert on DLQ ingestion and require access approval for DLQ message inspection"
+    ]
+  },
+  {
+    "name": "S3 Path Traversal in Bucket Key Construction",
+    "stride_category": "Elevation of Privilege",
+    "description": "Application constructing S3 object keys from user-supplied filenames without normalization allows attackers to inject path traversal sequences (../../secrets/config) to read or overwrite objects outside their intended prefix.",
+    "target": "S3 Object Key Generation",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Normalize and sanitize filenames — strip leading slashes, dots, and traversal sequences",
+      "Prepend a fixed prefix (user_id + '/') to all user-controlled keys and validate the result",
+      "Use S3 bucket policies to restrict writes to specific key prefixes per principal",
+      "Generate random UUIDs as S3 keys instead of user-supplied filenames"
+    ]
+  },
+  {
+    "name": "SNS Message Filter Policy Bypass",
+    "stride_category": "Tampering",
+    "description": "Publisher sending SNS messages with forged or omitted message attributes bypasses subscription filter policies, delivering messages to subscribers that have explicitly opted out of receiving certain message types.",
+    "target": "SNS Message Filtering",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Validate and enforce message attribute values server-side before publishing",
+      "Use SNS message validation with signature verification in subscribers",
+      "Apply IAM conditions to restrict which publishers can set specific attribute values",
+      "Monitor SNS delivery metrics for unexpected message volumes per subscription"
+    ]
+  },
+  {
+    "name": "Pub/Sub Message Replay via Seek Operation",
+    "stride_category": "Tampering",
+    "description": "Attacker with roles/pubsub.editor permission uses Pub/Sub's Seek API to rewind a subscription to an earlier timestamp, causing consumers to reprocess previously handled messages, leading to duplicate operations, double charges, or stale data overwrites.",
+    "target": "GCP Pub/Sub Subscription",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Restrict roles/pubsub.editor and Seek API permissions to privileged administrator accounts only",
+      "Implement idempotent message handlers that safely handle redelivery",
+      "Audit all Seek operations via Cloud Audit Logs and alert on unexpected replays",
+      "Disable message retention on subscriptions that do not require replay functionality"
+    ]
+  }
+]
