@@ -1,0 +1,674 @@
+[
+  {
+    "name": "CAPEC-586: Insecure Deserialization via Object Injection",
+    "stride_category": "Tampering",
+    "description": "Attacker controlling serialized object input can craft a malicious payload exploiting deserialization gadget chains in the application's classpath, leading to remote code execution or arbitrary object instantiation with application-level privileges.",
+    "target": "Deserialization Layer",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate and allowlist deserializable types before deserialization occurs",
+      "Use data formats that cannot carry code (JSON/XML with schemas) instead of native serialization",
+      "Implement integrity checks (HMAC) on serialized data to detect tampering before parsing",
+      "Keep deserialization libraries patched; audit classpath for known gadget chains with tools like ysoserial"
+    ]
+  },
+  {
+    "name": "CAPEC-135: Format String Injection",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with control over format string arguments passed to functions like printf/sprintf can supply format specifiers (%x, %s, %n) to read arbitrary memory regions or write to arbitrary addresses, leaking sensitive data or corrupting process state.",
+    "target": "String Formatting Functions",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Never pass user-controlled data as the format string argument — always use a literal format string",
+      "Enable compiler format string warnings (-Wformat-security) and treat them as errors",
+      "Use safe string libraries that do not interpret format specifiers from user input",
+      "Fuzzing with format string payloads as part of security testing"
+    ]
+  },
+  {
+    "name": "CAPEC-136: LDAP Injection via Unvalidated Directory Query Input",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker supplying unvalidated input to an LDAP directory query can inject special characters (*, (, ), \\, NUL) to manipulate filter logic, bypassing authentication checks or enumerating all directory entries.",
+    "target": "LDAP Directory Service",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Encode all user-supplied values using LDAP distinguished name and filter encoding before query construction",
+      "Use parameterized LDAP APIs (RFC 4515 safe search filters) instead of string concatenation",
+      "Restrict the LDAP service account to read-only access on the minimum required subtree",
+      "Test LDAP endpoints with injection payloads: *, )(&, )(uid=*) as part of security assessment"
+    ]
+  },
+  {
+    "name": "CAPEC-101: Server-Side Include Injection",
+    "stride_category": "Tampering",
+    "description": "Attacker with control over content included in SSI-enabled web pages can inject SSI directives (<!--#exec cmd='...'-->) to execute arbitrary OS commands on the web server, access sensitive files, or modify page content.",
+    "target": "SSI-Enabled Web Server",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Disable SSI execution in directories that serve user-uploaded or user-controlled content",
+      "Sanitize user input to remove SSI directive syntax (<!--#)",
+      "Restrict SSI to specific, controlled directories using web server configuration",
+      "Run the web server process under a minimal-privilege user account"
+    ]
+  },
+  {
+    "name": "CAPEC-251: Local File Inclusion via Path Traversal",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with control over file path parameters can traverse the directory structure using sequences like ../../ to read sensitive files outside the intended web root, including configuration files, SSH keys, and /etc/passwd.",
+    "target": "File Inclusion Logic",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Resolve and validate that the canonical path starts with the expected base directory before opening",
+      "Use an allowlist of permitted filenames rather than accepting arbitrary user-supplied paths",
+      "Never pass user-controlled input directly to filesystem APIs",
+      "Run the application under a user with restricted filesystem access using chroot or containers"
+    ]
+  },
+  {
+    "name": "CAPEC-253: Remote File Inclusion",
+    "stride_category": "Tampering",
+    "description": "Attacker with control over file URL parameters in server-side include or require calls can supply a URL pointing to an attacker-controlled server, causing the application to download and execute malicious code with the application's privileges.",
+    "target": "Remote File Inclusion Logic",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Disable allow_url_include and allow_url_fopen in PHP configurations",
+      "Use an allowlist of permitted local file paths — never allow URLs as file references",
+      "Block outbound HTTP from the application server to prevent RFI payload retrieval",
+      "Enable AppArmor/SELinux profiles that restrict the application's file access scope"
+    ]
+  },
+  {
+    "name": "CAPEC-183: IMAP/SMTP Command Injection",
+    "stride_category": "Tampering",
+    "description": "Attacker with control over email address fields or mail headers can inject IMAP or SMTP protocol commands by embedding CRLF sequences, redirecting mail, exfiltrating mailbox contents, or using the mail server as a relay for further attacks.",
+    "target": "Mail Server Integration",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Sanitize email input by stripping or rejecting CR (\\r) and LF (\\n) characters before use in mail commands",
+      "Use well-maintained mail libraries that handle header injection prevention internally",
+      "Validate that email addresses conform to RFC 5321 syntax before passing to mail functions",
+      "Restrict the mail server to accept relay only from authorized application IP ranges"
+    ]
+  },
+  {
+    "name": "CAPEC-250: XML External Entity (XXE) Injection",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with control over XML input to an application can define an external entity referencing a local file path or internal service URL, causing the XML parser to read and return the file contents or make SSRF requests on the application's behalf.",
+    "target": "XML Parser",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Disable external entity processing in the XML parser (DOCTYPE declarations and entity resolution)",
+      "Use a modern XML library configured to reject DOCTYPE declarations entirely if XML schema does not require them",
+      "Validate and sanitize all XML input against a strict schema before parsing",
+      "Block outbound network access from the application server to prevent SSRF via XXE"
+    ]
+  },
+  {
+    "name": "CAPEC-134: Email Header Injection",
+    "stride_category": "Tampering",
+    "description": "Attacker with control over email form fields (To, From, Subject, CC) can inject CRLF characters to add arbitrary headers, redirecting emails, adding BCC recipients, or injecting spam content through the application's mail functionality.",
+    "target": "Email Composition Logic",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Strip CR and LF characters from all user-supplied values used in email headers",
+      "Use parameterized email APIs that separate headers from values at the library level",
+      "Validate To/From/CC fields against RFC 5321 patterns before constructing the message",
+      "Log all outbound email with recipient lists and alert on unexpectedly high send volumes"
+    ]
+  },
+  {
+    "name": "CAPEC-94: Adversary in the Middle (AiTM) Attack",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with network positioning between client and server can intercept, read, and selectively modify encrypted or unencrypted traffic in real time, capturing credentials, session tokens, and sensitive data without either party detecting the interception.",
+    "target": "Network Communication Channel",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enforce TLS with certificate pinning on all sensitive communications to prevent certificate substitution",
+      "Implement HTTP Strict Transport Security (HSTS) with preloading to prevent SSL stripping",
+      "Use mutual TLS (mTLS) for service-to-service communication to authenticate both endpoints",
+      "Deploy network monitoring to detect ARP spoofing and rogue CA certificates"
+    ]
+  },
+  {
+    "name": "CAPEC-275: DNS Rebinding Attack",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker controlling a DNS domain can serve a short-TTL record that first resolves to a public IP (passing browser same-origin checks) then rebinds to an internal IP address, enabling malicious browser scripts to make requests to internal services on behalf of the victim.",
+    "target": "Internal Network Services via Browser",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate the Host header in internal services and reject requests from unexpected hostnames",
+      "Configure DNS resolvers to block external domains from resolving to private IP ranges (DNS rebinding protection)",
+      "Implement token-based CSRF protection on all internal API endpoints",
+      "Bind internal services to loopback or specific internal interfaces rather than 0.0.0.0"
+    ]
+  },
+  {
+    "name": "CAPEC-90: Reflection Attack in Authentication Protocol",
+    "stride_category": "Spoofing",
+    "description": "Attacker with access to a challenge-response authentication protocol can exploit symmetric handshake designs by reflecting the server's own challenge back at it, convincing the server it has verified a secret the attacker does not possess.",
+    "target": "Challenge-Response Authentication",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Design authentication protocols so that challenges are directionally differentiated (server and client use distinct nonce spaces)",
+      "Use asymmetric cryptography (public/private keys) where the server never needs to prove knowledge of a shared secret",
+      "Include the session direction (initiator/responder) in the authenticated message to prevent reflection",
+      "Use established authentication protocols (TLS, SCRAM, SRP) rather than custom challenge-response designs"
+    ]
+  },
+  {
+    "name": "CAPEC-111: JSONP Callback Hijacking",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with JavaScript injection capability on a page can override Array or Object constructors before a JSONP endpoint loads, intercepting JSON data intended only for the legitimate page and exfiltrating authenticated user data to an attacker-controlled server.",
+    "target": "JSONP API Endpoints",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Replace JSONP endpoints with CORS-enabled JSON APIs that validate the Origin header",
+      "If JSONP is unavoidable, validate the callback parameter against a strict alphanumeric allowlist",
+      "Prepend anti-hijacking prefixes (while(1);) or use Content-Type: application/json instead of text/javascript",
+      "Require authentication tokens in the JSONP request URL to prevent unauthenticated data exposure"
+    ]
+  },
+  {
+    "name": "CAPEC-219: XML Routing Detour Attack",
+    "stride_category": "Tampering",
+    "description": "Attacker with access to a SOAP or XML-routed messaging system can inject or modify WS-Addressing headers to reroute messages through an attacker-controlled intermediary node, enabling transparent interception and modification before forwarding to the destination.",
+    "target": "SOAP/XML Web Service",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Digitally sign SOAP messages using WS-Security to detect header tampering in transit",
+      "Validate WS-Addressing routing headers against an allowlist of trusted intermediary nodes",
+      "Minimize the number of intermediary nodes permitted in the message routing path",
+      "Use mutual TLS between all nodes in the service mesh to prevent unauthorized intermediaries"
+    ]
+  },
+  {
+    "name": "CAPEC-384: API Message Manipulation via Adversary in the Middle",
+    "stride_category": "Tampering",
+    "description": "Attacker positioned between API client and server can intercept, modify, and replay API messages — changing request parameters, response data, or authentication tokens — to escalate privileges or trigger unintended server-side operations.",
+    "target": "REST/GraphQL API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Sign API request bodies with a shared secret (HMAC-SHA256) so the server can detect modifications",
+      "Use TLS with certificate pinning in API clients to prevent proxy interception",
+      "Implement request replay protection using nonce values or monotonic timestamps in request headers",
+      "Validate that response data has not been modified using response signing where critical"
+    ]
+  },
+  {
+    "name": "CAPEC-615: Evil Twin Wi-Fi Attack",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker broadcasting a rogue Wi-Fi access point with the same SSID as a trusted network can trick client devices into connecting automatically, capturing all plaintext traffic and harvesting credentials from users who do not verify TLS certificates.",
+    "target": "Wi-Fi Connected Clients",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enforce TLS with certificate pinning in all client applications to prevent credential capture on rogue networks",
+      "Configure device Wi-Fi policies to require 802.1X authentication for enterprise network connections",
+      "Educate users to verify HTTPS padlocks and not accept certificate warnings on sensitive sites",
+      "Deploy rogue access point detection in office environments using wireless intrusion detection"
+    ]
+  },
+  {
+    "name": "CAPEC-37: Retrieving Hardcoded Sensitive Data from Binaries",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with access to distributed application binaries (APK, EXE, JAR, compiled Go) can use decompilation or string extraction tools to recover hardcoded credentials, API keys, encryption keys, or internal service URLs embedded by developers at compile time.",
+    "target": "Application Binary",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Never hardcode secrets in source code — use environment variables or a secrets manager at runtime",
+      "Scan all build artifacts for secrets patterns using tools like truffleHog or gitleaks in CI",
+      "For mobile apps, use Android Keystore/iOS Keychain for credential storage — not strings in code",
+      "Rotate any credential found in a binary immediately and audit what access it granted"
+    ]
+  },
+  {
+    "name": "CAPEC-204: Mining Sensitive Data from Application Cache",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with local system access can examine application cache directories (browser cache, HTTP response cache, ORM query cache) containing inadequately protected sensitive data, extracting credentials, PII, or session tokens persisted without expiry.",
+    "target": "Application Cache Layer",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set Cache-Control: no-store on HTTP responses containing sensitive data",
+      "Encrypt sensitive values before writing to any disk-backed cache",
+      "Apply cache TTLs proportional to data sensitivity — shorter TTLs for credentials and session data",
+      "Clear caches on logout and on sensitive context changes (privilege escalation, account changes)"
+    ]
+  },
+  {
+    "name": "CAPEC-150: Data Harvesting from Common Resource Locations",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with web or filesystem access can probe well-known paths (/.git/, /backup/, /.env, /config.yaml, /phpinfo.php, robots.txt excluded paths) to retrieve configuration files, database credentials, or application source code left accessible by misconfiguration.",
+    "target": "Web Server File System",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Block access to dotfiles (.env, .git, .htpasswd) and backup extensions (.bak, .old, .swp) at the web server level",
+      "Never deploy version control directories (.git/) into the web root",
+      "Scan deployments with tools like dirbuster or gobuster as part of security testing",
+      "Configure the web server to return 403 for directory listing and unknown file types"
+    ]
+  },
+  {
+    "name": "CAPEC-54: System Information Fingerprinting via Error Messages",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker probing the application with crafted requests can extract technology fingerprints (framework version, database type, server stack, internal paths) from verbose error pages, HTTP headers, and diagnostic endpoints, reducing the effort required to mount targeted attacks.",
+    "target": "Application Error Handling",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Return generic error messages to clients — log detailed errors server-side only",
+      "Remove framework-specific headers (X-Powered-By, Server) from all HTTP responses",
+      "Disable diagnostic endpoints (phpinfo, /debug, Spring Actuator) in production",
+      "Implement custom error pages that do not expose stack traces or internal path information"
+    ]
+  },
+  {
+    "name": "CAPEC-116: Application Excavation via Differential Error Analysis",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker systematically sending valid but boundary-probing requests and observing differences in application responses (timing, error codes, response size) can map internal application structure, valid usernames, configuration parameters, and business logic without triggering obvious errors.",
+    "target": "Application API Surface",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Normalize responses to be constant-time and constant-size where feasible to prevent differential analysis",
+      "Return the same error structure regardless of whether the target resource exists (prevent enumeration)",
+      "Rate-limit and throttle requests from single sources to slow systematic probing",
+      "Implement anomaly detection to identify and block systematic enumeration patterns"
+    ]
+  },
+  {
+    "name": "CAPEC-621: Packet Timing Analysis to Infer Encrypted Content",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with network access who cannot decrypt TLS traffic can analyze inter-packet timing, packet sizes, and traffic patterns to infer the type of activity (login, search, video streaming) or reconstruct sensitive information such as keystrokes or page content.",
+    "target": "Encrypted Network Traffic",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Implement fixed-size packet padding to normalize traffic patterns for sensitive operations",
+      "Add randomized delays to responses for authentication and other sensitive endpoints",
+      "Use traffic obfuscation techniques (cover traffic) in high-security contexts",
+      "Prefer binary protocols with predictable payload sizes over text protocols that reveal content length"
+    ]
+  },
+  {
+    "name": "CAPEC-600: Credential Stuffing Attack",
+    "stride_category": "Spoofing",
+    "description": "Attacker with a list of username/password pairs from previous data breaches can systematically try them against the application's login endpoint, successfully authenticating as users who reuse passwords across services, gaining access to accounts without knowing the actual passwords.",
+    "target": "Authentication Endpoint",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Require multi-factor authentication — a second factor invalidates stuffed credentials even when the password matches",
+      "Implement adaptive rate limiting and CAPTCHA on login endpoints triggered by failure rate or velocity",
+      "Check submitted passwords against known-breached credential databases (HaveIBeenPwned API) at login",
+      "Detect and alert on distributed login attempts targeting many accounts with the same password"
+    ]
+  },
+  {
+    "name": "CAPEC-50: Password Recovery Mechanism Exploitation",
+    "stride_category": "Spoofing",
+    "description": "Attacker targeting a user account can exploit weak password recovery flows — security questions with guessable answers, recovery tokens sent without rate limiting, or recovery links that do not expire — to gain account access without knowing the original password.",
+    "target": "Password Recovery Flow",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use email or SMS OTP as the recovery factor — avoid knowledge-based security questions",
+      "Expire recovery tokens after 15 minutes and invalidate them immediately after use",
+      "Rate-limit recovery requests by account and IP to prevent enumeration and brute force",
+      "Notify the account owner via an alternate channel when a recovery flow is initiated"
+    ]
+  },
+  {
+    "name": "CAPEC-59: Session Token Prediction via Insufficient Entropy",
+    "stride_category": "Spoofing",
+    "description": "Attacker observing a sequence of session tokens generated with a weak or seeded pseudo-random number generator can predict future or past token values, forging valid session identifiers to hijack authenticated sessions without intercepting traffic.",
+    "target": "Session Token Generation",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Generate session tokens using a cryptographically secure PRNG (os.urandom, secrets module) with at least 128 bits of entropy",
+      "Never seed the PRNG with predictable values (timestamps, PIDs, request counters)",
+      "Use established session management libraries rather than custom token generation",
+      "Rotate session tokens on privilege changes (login, role escalation) to limit prediction window"
+    ]
+  },
+  {
+    "name": "CAPEC-196: Session Token Forgery via Weak Signing",
+    "stride_category": "Spoofing",
+    "description": "Attacker with knowledge of a weak or exposed signing secret can forge valid session tokens (JWT, signed cookies) with arbitrary claims, impersonating any user or elevating privileges without needing to steal an existing token.",
+    "target": "Token Signing Infrastructure",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use a strong, randomly generated secret of at least 256 bits for HMAC signing — never a guessable string",
+      "Store signing secrets in a secrets manager, not in environment variables or configuration files",
+      "Prefer asymmetric signing (RS256/ES256) for tokens so the private key never leaves the issuer",
+      "Implement key rotation and short token lifetimes to bound the blast radius of key compromise"
+    ]
+  },
+  {
+    "name": "CAPEC-114: Authentication State Machine Abuse",
+    "stride_category": "Spoofing",
+    "description": "Attacker can exploit multi-step authentication workflows by manipulating the sequence of requests — skipping steps, replaying intermediate states, or sending requests out of order — to bypass portions of the authentication flow and gain access without completing all required checks.",
+    "target": "Multi-Step Authentication Flow",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Track authentication state server-side using an opaque session token — never rely on client-supplied step indicators",
+      "Enforce strict sequential state transitions; any out-of-order step should invalidate the session",
+      "Test authentication flows with step-skipping and replay attacks as part of security assessment",
+      "Require re-authentication for sensitive operations rather than trusting long-lived session state"
+    ]
+  },
+  {
+    "name": "CAPEC-115: Authentication Bypass via Direct Resource Access",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker can access protected resources by directly requesting the resource URL, bypassing the authentication front-end or relying on a misconfiguration where the back-end resource lacks its own access control and relies solely on a gateway that is not enforced on all paths.",
+    "target": "Access Control Enforcement Layer",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enforce authentication at the resource level, not only at the front controller or gateway",
+      "Use a centralized authorization middleware that applies to all routes by default, requiring explicit opt-out",
+      "Test all routes with unauthenticated requests as part of security scanning and CI",
+      "Map all application routes and verify each has a documented authentication requirement"
+    ]
+  },
+  {
+    "name": "CAPEC-87: Forceful Browsing to Access Unlinked Resources",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker aware of common resource naming conventions can directly request URLs for administrative pages, backup files, or user-specific resources by guessing or predicting paths, bypassing the UI-level access restriction that would normally prevent navigation to those resources.",
+    "target": "Web Application Resource Paths",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Authenticate and authorize every HTTP request at the server — never assume an unlinked resource is inaccessible",
+      "Use non-guessable identifiers (UUIDs) for user-specific resources rather than sequential IDs",
+      "Return 403 (not 404) for resources the authenticated user cannot access to avoid confirming existence",
+      "Automated security scanning of all application routes to verify access control enforcement"
+    ]
+  },
+  {
+    "name": "CAPEC-1: Accessing Functionality Not Constrained by ACLs (Broken Access Control)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with a low-privilege account can access administrative functions, other users' data, or restricted API endpoints that are listed in routes or discovered by enumeration but lack server-side authorization checks, relying instead on UI-level hiding.",
+    "target": "Application Authorization Layer",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement a default-deny authorization model — every endpoint explicitly grants access, nothing is permitted by default",
+      "Perform access control checks in server-side code, never relying solely on client-side UI suppression",
+      "Write automated tests that assert every endpoint returns 401/403 when accessed without required permissions",
+      "Conduct periodic access control matrix audits mapping roles to permitted operations"
+    ]
+  },
+  {
+    "name": "CAPEC-77: Client-Side Variable and Parameter Tampering",
+    "stride_category": "Tampering",
+    "description": "Attacker modifying hidden form fields, URL parameters, cookies, or local storage values before submission can override price, quantity, role, or user_id values that the server trusts from the client, enabling price manipulation, business logic bypass, or unauthorized data access.",
+    "target": "Client-Side Data Submission",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Never trust client-supplied values for security-sensitive attributes — recompute them server-side from the authenticated session",
+      "Sign or MAC sensitive parameters that must round-trip through the client to detect tampering",
+      "Validate all submitted values against server-side business rules regardless of what the UI allows",
+      "Log parameter override attempts and alert on values that differ from expected ranges"
+    ]
+  },
+  {
+    "name": "CAPEC-39: Opaque Client Token Tampering",
+    "stride_category": "Tampering",
+    "description": "Attacker intercepting or modifying encrypted or obfuscated data tokens transmitted between client and server (e.g., price tokens, discount codes, capability grants) can alter the embedded values when the server decrypts them, exploiting weak integrity protection to change business-critical parameters.",
+    "target": "Client-Server Data Tokens",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use authenticated encryption (AES-GCM) rather than encryption alone — unauthenticated ciphertext can be modified without detection",
+      "Include an HMAC over all sensitive fields in the token to detect tampering before decryption",
+      "Prefer server-side state (session store) over client-side tokens for security-sensitive data",
+      "Validate decrypted token fields against server-side constraints before acting on them"
+    ]
+  },
+  {
+    "name": "CAPEC-202: Malicious Client-Side Code Modification",
+    "stride_category": "Tampering",
+    "description": "Attacker reverse-engineering a client application (mobile app, thick client, compiled JavaScript) can modify its logic — removing input validation, altering calculation results, or injecting additional API calls — and use the modified client to bypass controls the server assumes the client enforces.",
+    "target": "Client Application Logic",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Never rely on client-side validation as the sole security control — duplicate all checks server-side",
+      "Implement server-side integrity verification of all inputs, especially security-relevant calculated values",
+      "Use code signing and runtime integrity checks (Android SafetyNet, iOS DeviceCheck) for mobile clients",
+      "Treat all client-submitted data as untrusted regardless of what the client code is supposed to do"
+    ]
+  },
+  {
+    "name": "CAPEC-207: Removing or Disabling Client-Side Security Controls",
+    "stride_category": "Tampering",
+    "description": "Attacker with access to a browser developer console or a proxy tool can disable or bypass client-side validation, content security policies, UI-level restrictions, or JavaScript-enforced rate limits, submitting requests the UI was designed to prevent.",
+    "target": "Client-Side Security Controls",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Implement all security-relevant validations server-side — consider client-side controls as UX only",
+      "Content Security Policy headers enforce script execution constraints but do not replace server validation",
+      "Perform integration tests that directly call API endpoints (bypassing the UI) to verify server-side enforcement",
+      "Monitor API usage patterns for requests that are structurally impossible through the normal UI"
+    ]
+  },
+  {
+    "name": "CAPEC-695: Dependency Repository Jacking",
+    "stride_category": "Tampering",
+    "description": "Attacker who discovers that a package name referenced in a project's dependency manifest is no longer maintained or has been deleted from the public registry can register a malicious package under that name, causing builds that install the package to execute attacker-controlled code with developer machine or CI/CD privileges.",
+    "target": "Package Registry Dependencies",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Pin all dependency versions to exact version numbers and verify checksums (lock files with integrity hashes)",
+      "Use a private artifact registry or repository proxy that only mirrors explicitly approved packages",
+      "Monitor for changes in ownership or publication of transitive dependencies",
+      "Regularly audit the dependency tree for packages with no active maintainers or unusual publication patterns"
+    ]
+  },
+  {
+    "name": "CAPEC-471: Library Search Order Hijacking (DLL Planting)",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with write access to a directory earlier in an application's library search path can place a malicious shared library or DLL with the same name as a legitimate dependency, causing the application to load and execute the attacker's code with the application's privilege level when the library is imported.",
+    "target": "Dynamic Library Loading",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use absolute paths when loading libraries — never rely on relative search path resolution",
+      "Verify library integrity using cryptographic signatures before loading",
+      "Set restrictive permissions on directories in the application's library search path",
+      "On Windows, enable Safe DLL Search Mode and use DELAYLOAD to control library loading order"
+    ]
+  },
+  {
+    "name": "CAPEC-132: Symlink Attack on Privileged File Operations",
+    "stride_category": "Tampering",
+    "description": "Attacker with write access to a directory where a privileged process creates temporary files can replace those files with symbolic links pointing to sensitive targets before the privileged process writes to them, causing the privileged process to overwrite arbitrary files on behalf of the attacker.",
+    "target": "Privileged File Operations",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use O_NOFOLLOW flag when opening files to prevent following symlinks",
+      "Create temporary files in directories that only the owning process can write to (mkstemp in a private temp dir)",
+      "Check that the file opened is the file expected — verify inode after open to detect race conditions",
+      "Run privileged processes with minimal filesystem permissions using capabilities or namespaces"
+    ]
+  },
+  {
+    "name": "CAPEC-38: Configuration File Search Path Hijacking",
+    "stride_category": "Tampering",
+    "description": "Attacker with write access to directories earlier in an application's configuration search path can plant a malicious configuration file that overrides the legitimate configuration, redirecting the application to attacker-controlled endpoints, disabling security controls, or injecting malicious command parameters.",
+    "target": "Application Configuration Loading",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Load configuration from a single, explicitly specified absolute path rather than searching multiple directories",
+      "Verify the integrity and provenance of configuration files using cryptographic signatures",
+      "Restrict write permissions on all directories in the configuration search path to privileged accounts only",
+      "Implement startup validation that confirms expected configuration values are present and within allowed ranges"
+    ]
+  },
+  {
+    "name": "CAPEC-630: Package Typosquatting Attack",
+    "stride_category": "Tampering",
+    "description": "Attacker registering a package name on npm, PyPI, or similar registries that closely resembles a popular legitimate package (one character transposition, added hyphen, common misspelling) can cause developers or CI/CD systems that mistype the package name to install and execute malicious code.",
+    "target": "Package Manager Dependency Resolution",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use package lock files with exact version pins and integrity hashes to prevent resolving to unexpected packages",
+      "Configure a private registry or dependency proxy that only allows pre-approved packages through",
+      "Add package name validation to code review — flag unfamiliar packages for verification",
+      "Register common typo variants of your own published package names to prevent squatting"
+    ]
+  },
+  {
+    "name": "CAPEC-632: Homograph Domain Attack via Visually Similar Characters",
+    "stride_category": "Spoofing",
+    "description": "Attacker registering a domain name containing Unicode homoglyphs — characters that are visually identical or near-identical to ASCII characters (Cyrillic 'а' vs. Latin 'a') — can create convincing counterfeit sites or email domains that bypass visual inspection and some phishing filters.",
+    "target": "Domain Name Verification",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable browser internationalized domain name (IDN) restrictions that warn users about mixed-script domains",
+      "Use DMARC, DKIM, and SPF for your email domain and monitor for homograph variants sending mail",
+      "Register common homograph variants of your own domain to prevent impersonation",
+      "Deploy certificate transparency monitoring to detect fraudulent certificates issued for homograph domains"
+    ]
+  },
+  {
+    "name": "CAPEC-201: SSRF via Serialized Data External Entity Reference",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker with control over serialized data (XML, YAML, pickle, Java serialization) processed by the server can embed external references to internal URLs or file paths that the deserializer resolves on the server's behalf, enabling SSRF to cloud metadata endpoints or reading sensitive local files.",
+    "target": "Data Deserialization Layer",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure serialization libraries to reject external references (disable YAML anchors, XML external entities, pickle object imports)",
+      "Use data format parsers in safe mode that do not resolve URLs or file paths during parsing",
+      "Restrict outbound HTTP from the application server to prevent SSRF reachability of cloud metadata endpoints",
+      "Validate and sanitize serialized input against a strict schema before parsing"
+    ]
+  },
+  {
+    "name": "CAPEC-104: Cross-Zone Scripting via Trusted Zone Injection",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker who can inject content into a higher-trust browser zone (Local Machine Zone, intranet zone, or trusted site zone) can execute scripts with elevated privileges that bypass the restrictions applied to the Internet zone, reading local files or making privileged API calls.",
+    "target": "Browser Security Zone Boundary",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Apply Content Security Policy headers that restrict script sources regardless of zone",
+      "Validate and sanitize all content that may be rendered in any browser context, especially local HTML files",
+      "Configure browser enterprise policies to restrict Local Machine Zone script execution",
+      "Deliver application content over HTTPS to ensure it is always treated as Internet zone content"
+    ]
+  },
+  {
+    "name": "CAPEC-662: Adversary in the Browser via Malicious Extension",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker distributing a malicious browser extension through official extension stores can intercept and modify all HTTP traffic, capture form submissions, steal session cookies, and inject JavaScript into pages — bypassing HTTPS, HSTS, and multi-factor authentication by operating inside the trusted browser context.",
+    "target": "Browser Extension Security",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict corporate devices to a pre-approved extension allowlist using browser enterprise policy",
+      "Educate users not to install extensions that request broad permissions (read all site data)",
+      "Monitor for new extensions installed on managed devices and alert on unapproved additions",
+      "Implement Subresource Integrity (SRI) for all CDN-loaded scripts to detect modification"
+    ]
+  },
+  {
+    "name": "CAPEC-595: TCP/IP Connection Reset via Forged RST Packets",
+    "stride_category": "Denial of Service",
+    "description": "Attacker with network access and knowledge of an active TCP connection's sequence numbers can send forged RST (reset) packets to abruptly terminate the connection, disrupting persistent connections such as database connections, long-polling APIs, SSH tunnels, or streaming media.",
+    "target": "TCP Network Connections",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use TLS for all connections so that forged RST packets can be detected as invalid (connection state mismatch)",
+      "Implement application-level keepalive and reconnection logic to recover from unexpected connection drops",
+      "Deploy network monitoring to detect RST injection patterns from unexpected sources",
+      "Use TCP Authentication Option (TCP-AO) for infrastructure connections to authenticate TCP segments"
+    ]
+  },
+  {
+    "name": "CAPEC-240: Resource Injection via URL or Identifier Manipulation",
+    "stride_category": "Tampering",
+    "description": "Attacker with control over resource identifiers (file paths, URLs, database IDs, command arguments) passed to system functions can substitute unexpected resource references, causing the application to access, load, or operate on unintended resources outside the intended access scope.",
+    "target": "Resource Identifier Handling",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate all resource identifiers against an allowlist of permitted values or patterns before use",
+      "Use indirect reference maps that translate user-supplied keys to internal resource references server-side",
+      "Apply least-privilege to resource access — the application process should only be able to access what it legitimately needs",
+      "Log all resource access with the requesting identity to detect unauthorized resource probing"
+    ]
+  },
+  {
+    "name": "CAPEC-505: Mobile URL Scheme Squatting",
+    "stride_category": "Spoofing",
+    "description": "Attacker publishing a mobile application that registers a URL scheme (e.g., myapp://) identical to a legitimate app's deep link scheme can intercept deep link invocations on devices where both apps are installed, capturing OAuth authorization codes, tokens, or sensitive parameters passed in the URL.",
+    "target": "Mobile App Deep Linking",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Universal Links (iOS) and App Links (Android) verified via HTTPS instead of custom URL schemes for sensitive flows",
+      "Implement PKCE for OAuth flows so intercepted authorization codes are useless without the code verifier",
+      "Register App Links with SHA-256 certificate fingerprint verification to prevent scheme hijacking",
+      "Avoid passing sensitive tokens or credentials in URL parameters for deep links"
+    ]
+  },
+  {
+    "name": "CAPEC-616: Establishing Rogue Update Infrastructure",
+    "stride_category": "Tampering",
+    "description": "Attacker compromising an application's update distribution infrastructure or registering a domain similar to the update server can deliver malicious updates to clients that do not verify update signatures, replacing legitimate software with backdoored versions that execute with full user privileges.",
+    "target": "Software Update Mechanism",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Sign all software updates with a private key and verify the signature on the client before installation",
+      "Use certificate pinning for the update server connection to prevent DNS hijacking redirecting clients to rogue servers",
+      "Deliver updates over TLS with HSTS to prevent downgrade attacks",
+      "Implement rollback protection so clients reject updates with version numbers lower than the current version"
+    ]
+  },
+  {
+    "name": "CAPEC-48: Local File Path Injection via URL Parameter",
+    "stride_category": "Information Disclosure",
+    "description": "Attacker supplying a local file URI (file:///etc/passwd) as a URL parameter to a server-side function that fetches URLs without validating the scheme can cause the server to read arbitrary local files and return their contents in the response, bypassing authentication on the local filesystem.",
+    "target": "Server-Side URL Fetching",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate the scheme and host of any user-supplied URL — allowlist only https:// to known external domains",
+      "Use a URL parsing library to extract and validate scheme, host, and path components before fetching",
+      "Block outbound requests to localhost, link-local addresses, and private IP ranges to prevent SSRF",
+      "Never pass user-supplied strings directly to HTTP client libraries without full URL validation"
+    ]
+  }
+]

@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Prisma Raw Query SQL Injection",
+    "stride_category": "Tampering",
+    "description": "Developer using Prisma's $queryRaw or $executeRaw with string interpolation instead of tagged template literals allows attackers who control input values to inject arbitrary SQL, reading or modifying any data in the database.",
+    "target": "Prisma Database Client",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use $queryRaw and $executeRaw exclusively with tagged template literals, never string concatenation",
+      "Prefer Prisma's type-safe query API (findMany, update, etc.) over raw queries",
+      "Add a linter rule to flag $queryRaw usage in code review",
+      "Run automated SQL injection tests (sqlmap, custom payloads) in CI"
+    ]
+  },
+  {
+    "name": "SQLAlchemy Mass Assignment via Model Update",
+    "stride_category": "Tampering",
+    "description": "API endpoint passing unfiltered request body fields directly to SQLAlchemy's model update allows attackers to overwrite columns they should not control (e.g., is_admin, account_balance, user_id).",
+    "target": "SQLAlchemy ORM Models",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Allowlist permitted fields before passing to ORM update — never use **request.json directly",
+      "Use separate input schemas (Pydantic/Marshmallow) to whitelist writable attributes",
+      "Add integration tests asserting that privileged fields (is_admin) cannot be set via the API",
+      "Log and alert on unexpected field write attempts"
+    ]
+  },
+  {
+    "name": "Mongoose NoSQL Operator Injection",
+    "stride_category": "Tampering",
+    "description": "Express application passing raw JSON body fields directly into Mongoose query conditions allows attackers to inject MongoDB query operators ($gt, $where, $regex) to bypass authentication or extract arbitrary records.",
+    "target": "MongoDB via Mongoose",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Sanitize all query inputs to remove MongoDB operator keys before querying",
+      "Use express-mongo-sanitize middleware to strip $ and . prefixes from request bodies",
+      "Define strict Mongoose schemas with type validation",
+      "Avoid constructing queries from user-controlled objects — build queries explicitly"
+    ]
+  },
+  {
+    "name": "Drizzle Template Literal SQL Injection",
+    "stride_category": "Tampering",
+    "description": "Developer using Drizzle ORM's sql template tag with JavaScript string interpolation instead of placeholder syntax introduces SQL injection vulnerabilities when user input is embedded directly in the query.",
+    "target": "Drizzle ORM",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Drizzle's typed query builder (db.select, db.insert) instead of raw sql template strings",
+      "When sql`` is necessary, use placeholder parameters: sql`WHERE id = ${userId}`",
+      "Audit all sql`` occurrences in the codebase for interpolated user values",
+      "Enable automated SAST rules targeting template literal SQL construction"
+    ]
+  },
+  {
+    "name": "ORM N+1 Query DoS via Unprotected Endpoint",
+    "stride_category": "Denial of Service",
+    "description": "API endpoint triggering ORM lazy-loading relationships without pagination or depth limits allows attackers to craft requests that generate thousands of database queries, exhausting connection pools and starving legitimate traffic.",
+    "target": "ORM Query Layer",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use eager loading (include/joinedload) for known relation traversals",
+      "Enforce query depth limits and maximum page sizes on all list endpoints",
+      "Implement connection pool limits and query timeouts",
+      "Use DataLoader pattern or batch loading to cap query count per request"
+    ]
+  },
+  {
+    "name": "Prisma Schema Migration File Leakage",
+    "stride_category": "Information Disclosure",
+    "description": "Prisma migration files committed to a public repository or accessible via a misconfigured file server expose the complete database schema, column names, and data types, enabling attackers to craft targeted injection or enumeration attacks.",
+    "target": "Prisma Migrations",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Keep the prisma/ directory out of public repository access",
+      "Add prisma/migrations to .gitignore for public-facing repositories",
+      "Restrict access to migration files in CI/CD artifacts",
+      "Treat schema information as sensitive — include it in threat models"
+    ]
+  },
+  {
+    "name": "Mongoose Prototype Pollution via Untrusted Object Merge",
+    "stride_category": "Tampering",
+    "description": "Application using lodash.merge or Object.assign with unvalidated request body before passing to Mongoose corrupts JavaScript prototype chain, potentially overriding security checks or injecting malicious properties into all objects.",
+    "target": "Mongoose Document Handling",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate and whitelist input fields before any object merge operation",
+      "Use JSON Schema or Mongoose schema validation as the first line of defense",
+      "Replace lodash.merge with safe alternatives that reject prototype keys",
+      "Keep Node.js and Mongoose updated to versions with prototype pollution patches"
+    ]
+  },
+  {
+    "name": "ORM LIKE Query Wildcard for User Enumeration",
+    "stride_category": "Information Disclosure",
+    "description": "Search endpoint passing user-supplied search terms directly into an ORM LIKE query without wildcard escaping allows attackers to use crafted patterns to enumerate email addresses, usernames, or other sensitive fields efficiently.",
+    "target": "Database Search Endpoint",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Escape LIKE wildcards (%, _) in user-supplied search terms before querying",
+      "Rate-limit and authenticate search endpoints",
+      "Restrict searchable fields to non-sensitive columns",
+      "Implement minimum search term length requirements"
+    ]
+  },
+  {
+    "name": "SQLAlchemy Async Session Shared Across Requests",
+    "stride_category": "Information Disclosure",
+    "description": "FastAPI or Starlette application reusing a single SQLAlchemy async session across concurrent requests causes session state cross-contamination, where one user's pending uncommitted writes are visible to another user's query within the same transaction.",
+    "target": "SQLAlchemy Async Session",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Create a new SQLAlchemy session per request using dependency injection",
+      "Use contextlib.asynccontextmanager to scope sessions to individual request lifetimes",
+      "Never store session objects as module-level singletons",
+      "Add integration tests asserting session isolation between concurrent requests"
+    ]
+  },
+  {
+    "name": "ORM Bulk Update Without Ownership Verification",
+    "stride_category": "Elevation of Privilege",
+    "description": "API endpoint using ORM bulk update (updateMany/update_all) filtered only by attacker-controllable ID list without verifying record ownership allows horizontal privilege escalation — one user modifying another user's records.",
+    "target": "ORM Bulk Operations",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Always include user_id = current_user.id in update conditions alongside any user-supplied IDs",
+      "Use row-level ownership checks in ORM queries, not only in application logic",
+      "Write tests that assert cross-user update is rejected with 403",
+      "Log bulk update operations with requesting user identity"
+    ]
+  },
+  {
+    "name": "Mongoose Missing Nested Object Validation",
+    "stride_category": "Tampering",
+    "description": "Mongoose schema with shallow validation allows attackers to submit deeply nested objects in request payloads that bypass top-level validation, writing unexpected nested fields to documents or triggering application-level errors.",
+    "target": "Mongoose Schema Validation",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Define strict Mongoose schemas with strict: true to reject extra fields",
+      "Validate nested objects with embedded schemas, not plain Object types",
+      "Use express-validator or Joi for request-level validation before touching the ORM",
+      "Enable Mongoose's runValidators option on update operations"
+    ]
+  },
+  {
+    "name": "Drizzle Type Coercion Bypass in Filter Conditions",
+    "stride_category": "Elevation of Privilege",
+    "description": "Drizzle ORM application implicitly coercing query parameters from string to integer allows attackers to supply type-confusion payloads (e.g., '0 OR 1=1') that bypass expected filter conditions when the ORM applies loose JavaScript type comparison.",
+    "target": "Drizzle Query Filters",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Parse and validate all query parameters to their expected types before passing to Drizzle",
+      "Use Zod or similar for route parameter schemas with strict type enforcement",
+      "Avoid implicit type coercion in filter values — always use explicit parseInt/parseFloat",
+      "Write boundary tests for filter conditions with type-confusion payloads"
+    ]
+  }
+]

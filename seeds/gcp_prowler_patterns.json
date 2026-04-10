@@ -1,0 +1,218 @@
+[
+  {
+    "name": "GCP Cloud Storage Bucket Publicly Accessible",
+    "stride_category": "Information Disclosure",
+    "description": "A Google Cloud Storage bucket has allUsers or allAuthenticatedUsers in its IAM policy or legacy ACL, making it publicly readable or writable. Publicly accessible GCS buckets are indexed by search engines and scanning tools, enabling any attacker to enumerate and download bucket contents without credentials. Exposed buckets frequently contain backup files, database exports, application configs with credentials, and private user data.",
+    "target": "GCP Cloud Storage Bucket",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Remove allUsers and allAuthenticatedUsers from all bucket IAM bindings and ACLs immediately",
+      "Enable Uniform Bucket Level Access to disable legacy ACLs and use only IAM for access control",
+      "Enable Public Access Prevention at the project or organization level to block all public access by policy",
+      "Run gcloud storage buckets list and audit IAM policies with gcloud storage buckets get-iam-policy",
+      "See: https://cloud.google.com/storage/docs/public-access-prevention"
+    ]
+  },
+  {
+    "name": "GCP Cloud Storage Bucket Uniform Bucket Level Access Not Enabled",
+    "stride_category": "Elevation of Privilege",
+    "description": "A GCS bucket has Uniform Bucket Level Access disabled, allowing legacy object-level ACLs alongside bucket IAM policies. The dual access control system creates a complex permission matrix where object-level ACLs can override bucket IAM policies in non-obvious ways. An attacker who understands the precedence rules may access objects that appear restricted at the bucket level but are publicly accessible via object ACLs.",
+    "target": "GCP Cloud Storage Bucket",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable Uniform Bucket Level Access on all buckets — this disables object ACLs and uses only IAM policies",
+      "Migrate from legacy ACLs to IAM bindings before enabling uniform access to avoid losing required permissions",
+      "Use the Cloud Storage IAM Recommender to identify overly permissive bindings",
+      "See: https://cloud.google.com/storage/docs/uniform-bucket-level-access"
+    ]
+  },
+  {
+    "name": "GCP Cloud Storage Bucket Access Logging Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "A GCS bucket does not have data access logging enabled (Cloud Audit Logs DATA_READ and DATA_WRITE). Without access logs, there is no record of which principals read which objects, when, and from which IP. Data exfiltration from GCS buckets goes undetected, and forensic investigation after an incident cannot reconstruct what was accessed or by whom.",
+    "target": "GCP Cloud Storage Bucket",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Cloud Audit Logs DATA_READ and DATA_WRITE for the Cloud Storage service",
+      "Stream Cloud Audit Logs to BigQuery for long-term retention and SQL-based analysis",
+      "Create log-based alerts for access to sensitive buckets from unexpected principals or IPs",
+      "See: https://cloud.google.com/storage/docs/access-logs"
+    ]
+  },
+  {
+    "name": "GCP Cloud SQL Instance Has Public IP Address",
+    "stride_category": "Spoofing",
+    "description": "A Cloud SQL instance is configured with a public IP address, making the database endpoint reachable from the internet. Even with authorized networks configured, the database engine is exposed to brute-force attacks, protocol-level vulnerability exploitation, and any misconfiguration in the authorized networks list. Private IP with Cloud SQL Auth Proxy is the recommended access pattern.",
+    "target": "GCP Cloud SQL Instance",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Disable the public IP and enable private IP for Cloud SQL instances within a VPC",
+      "Use Cloud SQL Auth Proxy for all application and admin connections — it handles IAM-based authentication and TLS",
+      "If a public IP is required, restrict authorized networks to the minimum specific IPs needed",
+      "Enable Cloud SQL audit logs to detect unauthorized connection attempts",
+      "See: https://cloud.google.com/sql/docs/mysql/configure-private-ip"
+    ]
+  },
+  {
+    "name": "GCP Cloud SQL Instance SSL Not Required for Connections",
+    "stride_category": "Information Disclosure",
+    "description": "A Cloud SQL instance does not require SSL/TLS for all client connections. Database queries and result sets (which may contain PII, financial data, or credentials) are transmitted in plaintext. An attacker on the same network path — within a compromised GKE node, VPC peering, or VPN — can passively intercept or actively manipulate database traffic.",
+    "target": "GCP Cloud SQL Instance",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Set requireSsl to true in Cloud SQL instance settings to enforce TLS for all connections",
+      "Download and configure the server CA certificate in application connection strings to verify the server identity",
+      "Use Cloud SQL Auth Proxy as the preferred access method — it handles TLS automatically",
+      "See: https://cloud.google.com/sql/docs/mysql/configure-ssl-instance"
+    ]
+  },
+  {
+    "name": "GCP Cloud SQL Instance Automated Backups Not Enabled",
+    "stride_category": "Denial of Service",
+    "description": "A Cloud SQL instance does not have automated backups configured. A ransomware attack, accidental deletion, data corruption from a failed migration, or a logical error in application code can permanently destroy database data without any recovery path. Cloud SQL automated backups are the primary recovery mechanism for such events.",
+    "target": "GCP Cloud SQL Instance",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable automated backups with a backup window and retention period of at least 7 days",
+      "Enable point-in-time recovery (PITR) for MySQL and PostgreSQL instances for fine-grained recovery",
+      "Export backups to Cloud Storage for long-term retention beyond the 365-day maximum in Cloud SQL",
+      "See: https://cloud.google.com/sql/docs/mysql/backup-recovery/backups"
+    ]
+  },
+  {
+    "name": "GCP IAM Service Account Has User-Managed Keys",
+    "stride_category": "Spoofing",
+    "description": "A GCP service account has user-managed keys (JSON key files) created for it. These long-lived credentials bypass the Google-managed key rotation and are the most common source of credential leaks in GCP — they are frequently committed to git repositories, embedded in Docker images, or distributed insecurely. An attacker who obtains a service account JSON key can authenticate as the service account indefinitely.",
+    "target": "GCP IAM Service Account",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Delete all user-managed service account keys and replace with Workload Identity Federation or attached service accounts",
+      "Use gcloud iam service-accounts keys list for all service accounts to audit key existence and age",
+      "Set a key rotation policy: alert when user-managed keys are older than 90 days",
+      "For GKE workloads, use Workload Identity to bind Kubernetes service accounts to GCP service accounts without key files",
+      "See: https://cloud.google.com/iam/docs/best-practices-for-managing-service-account-keys"
+    ]
+  },
+  {
+    "name": "GCP IAM Service Account Has Admin-Level IAM Roles",
+    "stride_category": "Elevation of Privilege",
+    "description": "A GCP service account is bound to a highly privileged IAM role (roles/owner, roles/editor, or a custom role with broad resource permissions). If any workload running as this service account is compromised via RCE, SSRF, or dependency injection, the attacker inherits admin-level GCP access and can exfiltrate data, create backdoor service accounts, and disable logging.",
+    "target": "GCP IAM Service Account",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Replace owner/editor roles with specific predefined roles scoped to the exact permissions needed",
+      "Use IAM Recommender to identify overly permissive bindings and automatically generate least-privilege replacements",
+      "Bind service accounts to individual resources with resource-level IAM conditions where possible",
+      "Audit service account role bindings quarterly with gcloud projects get-iam-policy",
+      "See: https://cloud.google.com/iam/docs/using-iam-securely"
+    ]
+  },
+  {
+    "name": "GCP Compute Instance Has Public IP Address",
+    "stride_category": "Spoofing",
+    "description": "A GCP Compute Engine instance has a public external IP address assigned. Directly internet-reachable instances are targets for port scanning, service enumeration, SSH brute-force, and exploitation of any vulnerability in services listening on the public interface. Admin access should always go through IAP (Identity-Aware Proxy) or Cloud VPN rather than over the public internet.",
+    "target": "GCP Compute Instance",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Remove external IP addresses from Compute instances and place them in private subnets",
+      "Use Cloud NAT for outbound internet connectivity without assigning public IPs to instances",
+      "Use Identity-Aware Proxy (IAP) Tunnel for SSH/RDP access instead of public port exposure",
+      "Enable OS Login for SSH access controlled by IAM rather than SSH key files",
+      "See: https://cloud.google.com/compute/docs/instances/connecting-to-instance"
+    ]
+  },
+  {
+    "name": "GCP Compute Instance OS Login Not Enabled",
+    "stride_category": "Spoofing",
+    "description": "GCP Compute instances do not have OS Login enabled, relying instead on per-instance SSH key metadata for access control. SSH keys in instance metadata are less auditable than IAM-based access, can be added by any user with instance admin rights, and do not enforce centralized MFA or Entra ID/Google Workspace authentication policies. Leaked SSH key files grant long-term access.",
+    "target": "GCP Compute Instance",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable OS Login at the project or instance level (enable-oslogin: true in metadata)",
+      "Require two-factor authentication for OS Login (require-oslogin-sk: true) for sensitive instances",
+      "Remove all instance-level SSH key metadata after enabling OS Login",
+      "Grant roles/compute.osLogin or roles/compute.osAdminLogin rather than SSH key-based access",
+      "See: https://cloud.google.com/compute/docs/oslogin"
+    ]
+  },
+  {
+    "name": "GCP Compute Instance Shielded VM Not Enabled",
+    "stride_category": "Tampering",
+    "description": "A GCP Compute instance is not configured as a Shielded VM with Secure Boot, vTPM, and Integrity Monitoring enabled. Without Shielded VM, an attacker who achieves persistent access at the bootloader or kernel level (via a rootkit or firmware tampering) cannot be detected. Integrity Monitoring detects boot-time changes that indicate kernel-level compromise.",
+    "target": "GCP Compute Instance",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable Shielded VM features: Secure Boot, vTPM, and Integrity Monitoring on all instances",
+      "Review Shielded VM integrity reports in Cloud Monitoring when integrity policy violations are detected",
+      "Use Shielded VM images for new instance launches and migrate existing instances to Shielded VM images",
+      "See: https://cloud.google.com/compute/shielded-vm/docs/shielded-vm"
+    ]
+  },
+  {
+    "name": "GCP Cloud Logging Not Enabled for All Services",
+    "stride_category": "Repudiation",
+    "description": "Cloud Audit Logs are not enabled for all services at the project or organization level, creating gaps in the audit trail. Services without Data Access logging (DATA_READ, DATA_WRITE) do not record which principals accessed which data, when, or from where. An attacker who exfiltrates data or makes unauthorized API calls in unlogged services leaves no evidence.",
+    "target": "GCP Cloud Logging",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Cloud Audit Logs DATA_READ and DATA_WRITE for all GCP services at the organization level",
+      "Export Cloud Audit Logs to a BigQuery dataset or Cloud Storage bucket for long-term retention",
+      "Use Log-based alerts to notify on access to sensitive resources by unexpected principals",
+      "See: https://cloud.google.com/logging/docs/audit"
+    ]
+  },
+  {
+    "name": "GCP VPC Flow Logs Not Enabled for Subnets",
+    "stride_category": "Repudiation",
+    "description": "VPC Flow Logs are not enabled on GCP VPC subnets. Without flow logs, network-level activity — lateral movement between instances, data exfiltration over non-standard ports, C2 communication — leaves no trace. Network forensics after a security incident is impossible without flow data capturing source/destination IPs, ports, and bytes transferred.",
+    "target": "GCP VPC",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable VPC Flow Logs on all subnets and set an appropriate sampling rate (at least 0.5 for production)",
+      "Export flow logs to BigQuery and create scheduled queries to detect anomalous traffic patterns",
+      "Integrate flow logs with Security Command Center for automated threat detection",
+      "See: https://cloud.google.com/vpc/docs/flow-logs"
+    ]
+  },
+  {
+    "name": "GCP VPC Firewall Rule Allows SSH or RDP from Any Source",
+    "stride_category": "Spoofing",
+    "description": "A GCP VPC firewall rule allows inbound TCP port 22 (SSH) or port 3389 (RDP) from 0.0.0.0/0 or ::/0. Internet-exposed SSH and RDP are among the most actively exploited entry points for initial access. Automated scanners detect open SSH/RDP ports within minutes and immediately begin brute-force or credential stuffing attacks.",
+    "target": "GCP VPC Firewall Rule",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Delete or disable firewall rules allowing SSH/RDP from 0.0.0.0/0 — use Identity-Aware Proxy Tunnel instead",
+      "If restricted source IP access is required, limit to specific CIDR blocks (VPN or office IPs)",
+      "Enable GCP Security Command Center to continuously detect overly permissive firewall rules",
+      "See: https://cloud.google.com/compute/docs/tutorials/ssh-with-sk"
+    ]
+  },
+  {
+    "name": "GCP Security Command Center Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "GCP Security Command Center (SCC) is not enabled on the GCP organization. Without SCC, there is no centralized view of security findings, vulnerability assessments, or threat detections across all GCP projects. Security misconfigurations (public buckets, open firewall rules, overprivileged service accounts) and active threats (cryptomining, anomalous API calls) go undetected.",
+    "target": "GCP Security Command Center",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Security Command Center at the organization level with at least the Standard tier",
+      "Activate the Premium tier for Event Threat Detection and Container Threat Detection",
+      "Export SCC findings to a Security Information and Event Management (SIEM) platform",
+      "See: https://cloud.google.com/security-command-center/docs/concepts-security-command-center-overview"
+    ]
+  }
+]

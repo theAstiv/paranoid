@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Django CSRF Protection Disabled on API Views",
+    "stride_category": "Tampering",
+    "description": "Django API view decorated with @csrf_exempt or using CsrfExemptSessionAuthentication without additional request origin validation allows cross-site request forgery attacks where attacker-controlled pages submit state-changing requests on behalf of authenticated users.",
+    "target": "Django REST Framework API",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use token-based authentication (JWT, DRF TokenAuth) with Authorization header instead of cookies for APIs",
+      "If session auth is required, keep CSRF enabled and validate Origin header",
+      "Set SameSite=Strict or Lax on session cookies to limit cross-site delivery",
+      "Audit all @csrf_exempt decorators and require justification in code review"
+    ]
+  },
+  {
+    "name": "FastAPI Missing Auth Dependency on Protected Routes",
+    "stride_category": "Elevation of Privilege",
+    "description": "Developer omitting the FastAPI Depends(get_current_user) security dependency from a route that was intended to be protected allows unauthenticated access to administrative or user-specific endpoints.",
+    "target": "FastAPI Route Definition",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Apply authentication dependencies at the router level using APIRouter(dependencies=[Depends(auth)]) to prevent per-route omissions",
+      "Use OpenAPI security scheme annotations so auth requirements are visible and auditable",
+      "Write integration tests asserting 401 on all protected routes without credentials",
+      "Add a CI check that lists all routes and verifies each has an auth dependency"
+    ]
+  },
+  {
+    "name": "Express.js Prototype Pollution via Request Body",
+    "stride_category": "Tampering",
+    "description": "Express application using body-parser with JSON payloads allows attackers to send objects containing __proto__ or constructor keys, polluting the JavaScript object prototype and overriding application-wide security properties or function behavior.",
+    "target": "Express.js Application",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use JSON schema validation (ajv with allowUnionTypes:false) to reject payloads with __proto__ keys",
+      "Configure body-parser with a custom reviver that blocks prototype pollution keys",
+      "Keep Node.js updated — recent versions include prototype pollution mitigations",
+      "Use a linter rule to flag Object.assign or lodash.merge with untrusted objects"
+    ]
+  },
+  {
+    "name": "Rails Mass Assignment Without Strong Parameters",
+    "stride_category": "Tampering",
+    "description": "Rails controller passing params.permit! or using hash assignment without strong parameters allows attackers to overwrite any model attribute including privileged fields (admin, role, balance), even if not present in the HTML form.",
+    "target": "Ruby on Rails Controller",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use params.require(:model).permit(:field1, :field2) to explicitly allowlist writable attributes",
+      "Never use params.permit! in production code",
+      "Configure attr_accessible in models as a second line of defense",
+      "Write controller tests with unexpected parameter injection to verify rejection"
+    ]
+  },
+  {
+    "name": "Next.js Server Action Exposed Without Authorization",
+    "stride_category": "Elevation of Privilege",
+    "description": "Next.js Server Action that modifies data or triggers privileged operations without checking the caller's session allows any authenticated (or unauthenticated) user to invoke the action directly via HTTP POST to the action endpoint.",
+    "target": "Next.js Server Actions",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate session and user role at the top of every Server Action before performing any operation",
+      "Use middleware to enforce authentication for all Server Action routes",
+      "Treat Server Actions as untrusted API endpoints — apply the same security controls as REST routes",
+      "Audit Server Action exports with automated tooling to ensure auth checks are present"
+    ]
+  },
+  {
+    "name": "Django Debug Mode Enabled in Production",
+    "stride_category": "Information Disclosure",
+    "description": "Django application deployed with DEBUG=True exposes full stack traces, local variables, SQL queries, and installed app configurations in error pages, providing attackers with detailed intelligence about the application internals.",
+    "target": "Django Application Configuration",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set DEBUG=False in all production and staging environments",
+      "Use environment variables or secrets management for Django settings — never hardcode DEBUG=True",
+      "Configure ALLOWED_HOSTS to prevent Django from serving responses to unexpected domains",
+      "Add a startup check that exits if DEBUG=True is detected outside of local development"
+    ]
+  },
+  {
+    "name": "FastAPI Response Model Leaking Internal Fields",
+    "stride_category": "Information Disclosure",
+    "description": "FastAPI endpoint returning a SQLAlchemy model or Pydantic model without an explicit response_model exposes all fields including internal ones (hashed_password, secret_key, internal_flag), since FastAPI serializes the full object by default.",
+    "target": "FastAPI API Response",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Always specify response_model on FastAPI route decorators to enforce output shape",
+      "Create dedicated Pydantic response schemas that explicitly exclude sensitive fields",
+      "Never return ORM model objects directly — always convert to response schemas",
+      "Add integration tests that assert sensitive fields are absent from API responses"
+    ]
+  },
+  {
+    "name": "Express.js Path Traversal in Static File Serving",
+    "stride_category": "Information Disclosure",
+    "description": "Express.js application serving user-supplied file paths without normalization allows attackers to use path traversal sequences (../../etc/passwd) to read files outside the intended static directory, including application secrets and configuration files.",
+    "target": "Express.js Static File Server",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use path.resolve and validate the resolved path starts with the expected base directory",
+      "Prefer express.static() for static files — it handles traversal prevention internally",
+      "Never concatenate user input directly into file system paths",
+      "Run file-serving logic under a least-privilege OS user with restricted directory access"
+    ]
+  },
+  {
+    "name": "Rails ActiveRecord Raw SQL Injection",
+    "stride_category": "Tampering",
+    "description": "Rails controller using Model.where(\"field = '#{params[:value]}'\") with string interpolation instead of parameterized conditions allows SQL injection, enabling attackers to read arbitrary data, bypass authentication, or manipulate records.",
+    "target": "Ruby on Rails ActiveRecord",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use parameterized conditions: Model.where('field = ?', params[:value]) or Model.where(field: params[:value])",
+      "Enable Brakeman static analysis in CI to flag unsafe ActiveRecord patterns",
+      "Avoid raw SQL fragments in scopes, find_by_sql, and joins without parameterization",
+      "Use Rails' sanitize_sql_* helpers when raw SQL is unavoidable"
+    ]
+  },
+  {
+    "name": "Next.js Middleware Auth Bypass via Malformed URL",
+    "stride_category": "Elevation of Privilege",
+    "description": "Next.js middleware applying authentication checks based on pathname matching can be bypassed by supplying URLs with encoded characters, trailing slashes, or case variations that do not match the expected pattern but still route to the protected page.",
+    "target": "Next.js Middleware",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Next.js matcher config with explicit path patterns rather than manual pathname comparison",
+      "Normalize the request URL (decode, lowercase, strip trailing slashes) before matching",
+      "Verify auth on the page/API route level as a defense-in-depth measure, not only in middleware",
+      "Write end-to-end tests with URL variations to validate middleware coverage"
+    ]
+  },
+  {
+    "name": "Django Admin Interface Exposed Without IP Restriction",
+    "stride_category": "Elevation of Privilege",
+    "description": "Django admin interface accessible from the public internet without IP allowlisting exposes the full administrative UI to brute-force attacks, credential stuffing, and zero-day exploits targeting Django admin functionality.",
+    "target": "Django Admin Interface",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Restrict /admin/ via firewall rules or middleware to internal IP ranges or VPN",
+      "Use a non-default URL prefix for the admin interface to reduce automated scanning",
+      "Enforce MFA for all Django admin accounts",
+      "Monitor admin login attempts and alert on failed login spikes"
+    ]
+  },
+  {
+    "name": "FastAPI Request Body Size Limit Not Enforced",
+    "stride_category": "Denial of Service",
+    "description": "FastAPI application without request body size limits allows attackers to send arbitrarily large JSON payloads that exhaust server memory during parsing, causing out-of-memory errors or application crashes under moderate load.",
+    "target": "FastAPI Application Server",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure uvicorn or the ASGI server with a maximum request body size limit",
+      "Use a reverse proxy (nginx, Caddy) to enforce size limits before requests reach FastAPI",
+      "Validate Content-Length header before reading the body in sensitive endpoints",
+      "Set timeouts on body reads to prevent slow-upload attacks"
+    ]
+  }
+]

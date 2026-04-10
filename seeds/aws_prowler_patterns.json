@@ -1,0 +1,530 @@
+[
+  {
+    "name": "AWS IAM Root Account Active Access Keys",
+    "stride_category": "Spoofing",
+    "description": "The AWS root user account has active programmatic access keys, providing unrestricted API access that bypasses all IAM policy boundaries. An attacker who obtains these long-lived keys can disable logging, delete all resources, modify IAM policies, export any data, and lock legitimate administrators out of the account. Root access keys are not subject to IAM permission boundaries or SCPs.",
+    "target": "AWS IAM Root Account",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Delete all root user access keys immediately — the root account should never have programmatic credentials",
+      "Replace root API automation with IAM roles scoped to least-privilege policies",
+      "Enable hardware MFA on root and restrict it to break-glass scenarios only",
+      "Set a CloudWatch alarm and SNS alert for any root account API activity",
+      "See: https://hub.prowler.com/check/iam_no_root_access_key"
+    ]
+  },
+  {
+    "name": "AWS IAM Root Account No Hardware MFA Device",
+    "stride_category": "Spoofing",
+    "description": "The AWS root user account has no MFA enabled, or uses a virtual MFA device instead of a hardware token. Without hardware MFA, a stolen root password enables full account takeover. Virtual MFA is weaker than hardware because device backup codes and authenticator app compromise allow second-factor bypass. An attacker with root access can delete all resources, change policies, and disable monitoring.",
+    "target": "AWS IAM Root Account",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Assign a hardware MFA token (FIDO2 security key or hardware TOTP device) to the root account",
+      "Deactivate any virtual MFA device currently on the root account after hardware MFA is set",
+      "Keep a controlled break-glass process: document the hardware token location, require two-person authorization, and log every use",
+      "See: https://hub.prowler.com/check/iam_root_hardware_mfa_enabled"
+    ]
+  },
+  {
+    "name": "AWS IAM Policy Grants Full Administrative Wildcard Access",
+    "stride_category": "Elevation of Privilege",
+    "description": "An IAM policy grants Action:* and Resource:* (full admin), either directly to users or via overly broad managed policies. Any principal with this policy can escalate to full account control, create backdoor IAM users, exfiltrate secrets, and disable audit logging. Wildcards make it impossible to audit what a user actually needs.",
+    "target": "AWS IAM Policy",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Replace wildcard policies with service-scoped, resource-scoped least-privilege policies",
+      "Use IAM Access Analyzer to generate policies from actual CloudTrail activity",
+      "Apply Permission Boundaries on all IAM roles created by developers to cap maximum privilege",
+      "Audit inline policies and AWS managed policies attached to users — prefer role-based access",
+      "See: https://hub.prowler.com/check/iam_policy_allows_privilege_escalation"
+    ]
+  },
+  {
+    "name": "AWS IAM Password Policy Does Not Enforce Strong Passwords",
+    "stride_category": "Spoofing",
+    "description": "The IAM account-level password policy has weak settings: minimum length below 14 characters, no requirement for uppercase, lowercase, numbers, or symbols, or allows password reuse. Weak passwords make IAM user accounts susceptible to brute-force, credential stuffing, and password spray attacks, enabling account takeover without exploiting any vulnerability.",
+    "target": "AWS IAM Password Policy",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set minimum password length to 14 characters and require all character classes (upper, lower, number, symbol)",
+      "Prevent password reuse for the last 24 passwords and set maximum password age to 90 days",
+      "Prefer IAM Identity Center (SSO) with federated identity over long-lived IAM user passwords",
+      "Enable MFA on all IAM users regardless of password strength",
+      "See: https://hub.prowler.com/check/iam_password_policy_minimum_length_14"
+    ]
+  },
+  {
+    "name": "AWS IAM User Credentials Unused for More Than 90 Days",
+    "stride_category": "Spoofing",
+    "description": "An IAM user has active access keys or a console password that have not been used in over 90 days. Dormant credentials are a persistent attack surface: they may have been leaked in code repositories, sent in emails, or exfiltrated without detection. An attacker who finds stale credentials has time to quietly enumerate permissions and move laterally before triggering any alerts.",
+    "target": "AWS IAM User",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Deactivate and delete access keys and console passwords unused for more than 90 days",
+      "Automate credential lifecycle enforcement with AWS Config rules or a scheduled Lambda",
+      "Replace long-lived IAM user credentials with IAM roles and temporary STS tokens",
+      "Set up IAM Access Analyzer findings for active credentials and unused services",
+      "See: https://hub.prowler.com/check/iam_user_unused_credentials_45days"
+    ]
+  },
+  {
+    "name": "AWS S3 Bucket Public Access Block Not Fully Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An S3 bucket does not have all four S3 Public Access Block settings enabled (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, RestrictPublicBuckets). Without these controls, a single misconfigured bucket policy or ACL can expose the bucket's contents to the public internet. Attackers routinely scan for misconfigured S3 buckets to harvest credentials, PII, and business-sensitive data.",
+    "target": "AWS S3 Bucket",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable all four S3 Block Public Access settings at both the bucket level and the account level",
+      "Use an SCP to prevent disabling Block Public Access across the organization",
+      "Audit bucket policies and ACLs with S3 Access Analyzer to detect public exposure",
+      "Enable S3 server access logging and Amazon Macie to detect and alert on data exposure",
+      "See: https://hub.prowler.com/check/s3_bucket_public_access_block_enabled"
+    ]
+  },
+  {
+    "name": "AWS S3 Bucket Default Server-Side Encryption Not Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An S3 bucket lacks a default server-side encryption (SSE) configuration, meaning objects uploaded without explicit encryption headers are stored unencrypted. If the bucket is accessed by an unauthorized party (misconfigured policy, compromised credentials, pre-signed URL leak), data is immediately readable without needing to decrypt it. SSE-KMS is preferred over SSE-S3 for audit-ability and key management control.",
+    "target": "AWS S3 Bucket",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable default SSE-KMS encryption on all buckets containing sensitive data",
+      "Use SSE-S3 as a minimum baseline for all other buckets",
+      "Enforce encryption via bucket policy: deny PutObject requests that do not specify server-side encryption",
+      "Use AWS Config rule s3-default-encryption-kms to detect non-compliant buckets",
+      "See: https://hub.prowler.com/check/s3_bucket_default_encryption"
+    ]
+  },
+  {
+    "name": "AWS S3 Bucket Server Access Logging Disabled",
+    "stride_category": "Repudiation",
+    "description": "An S3 bucket does not have server access logging enabled. Without access logs, there is no record of who accessed which objects, from which IP, when, and using which API operation. This makes it impossible to detect unauthorized access, reconstruct data breaches, or meet audit and compliance requirements after an incident.",
+    "target": "AWS S3 Bucket",
+    "impact": "Low",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable S3 server access logging and direct logs to a centralized, access-controlled S3 bucket",
+      "Use CloudTrail Data Events as a higher-fidelity complement for individual object-level audit trails",
+      "Set S3 lifecycle policies on the log bucket to retain logs for at least 90 days",
+      "Enable Amazon Macie on the log bucket to detect sensitive data patterns in access logs",
+      "See: https://hub.prowler.com/check/s3_bucket_server_side_encryption_enabled"
+    ]
+  },
+  {
+    "name": "AWS S3 Bucket Versioning Not Enabled",
+    "stride_category": "Denial of Service",
+    "description": "An S3 bucket does not have versioning enabled. Without versioning, a single DeleteObject or PutObject call permanently overwrites or deletes data with no recovery path. An attacker with write access (or an operator error) can destroy data irreversibly. Ransomware targeting S3 typically overwrites all objects and then deletes the originals.",
+    "target": "AWS S3 Bucket",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable S3 versioning on all buckets containing business-critical or compliance data",
+      "Use S3 Object Lock in Governance or Compliance mode to prevent version deletion",
+      "Enable MFA Delete to require multi-factor authentication before any version can be permanently deleted",
+      "Set up replication to a cross-account or cross-region bucket for disaster recovery",
+      "See: https://hub.prowler.com/check/s3_bucket_versioning_enabled"
+    ]
+  },
+  {
+    "name": "AWS S3 Bucket MFA Delete Not Enabled",
+    "stride_category": "Tampering",
+    "description": "S3 bucket versioning is enabled but MFA Delete is not configured. Without MFA Delete, an attacker or insider who compromises an IAM user's API keys can permanently delete all object versions, destroying all data in the bucket with no recovery path. MFA Delete is the only control that prevents version deletion by compromised programmatic credentials.",
+    "target": "AWS S3 Bucket",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable MFA Delete on buckets containing sensitive or irreplaceable data using root credentials",
+      "Combine MFA Delete with S3 Object Lock (Compliance mode) for regulatory retention requirements",
+      "Restrict s3:DeleteObjectVersion permission to break-glass IAM roles only",
+      "See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html"
+    ]
+  },
+  {
+    "name": "AWS EC2 Instance Assigned a Public IPv4 Address",
+    "stride_category": "Spoofing",
+    "description": "An EC2 instance is directly reachable from the internet via a public IPv4 address. Publicly addressed instances are continuously scanned by automated tools, enabling direct probing of exposed services, brute-force of SSH/RDP, and exploitation of any unpatched service running on the instance. Management ports should never be internet-facing.",
+    "target": "AWS EC2 Instance",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Place EC2 instances in private subnets and expose only through application load balancers or API Gateway",
+      "Use AWS Systems Manager Session Manager for admin access instead of SSH/RDP over the internet",
+      "If a public IP is required, restrict Security Group ingress to specific known CIDR blocks only",
+      "Enable VPC Flow Logs and GuardDuty to detect anomalous traffic to public instances",
+      "See: https://hub.prowler.com/check/ec2_instance_public_ip"
+    ]
+  },
+  {
+    "name": "AWS EC2 IMDSv2 Not Enforced on Instance",
+    "stride_category": "Information Disclosure",
+    "description": "An EC2 instance allows IMDSv1 (Instance Metadata Service version 1), which does not require a session token. An attacker who achieves SSRF (Server-Side Request Forgery) in an application running on the instance can directly fetch the instance's IAM role credentials from http://169.254.169.254/latest/meta-data/iam/security-credentials/ without needing any token, enabling cloud API calls with the instance's permissions.",
+    "target": "AWS EC2 Instance",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enforce IMDSv2 (require session-oriented requests with PUT token) on all EC2 instances",
+      "Set aws ec2 modify-instance-metadata-options --http-tokens required on all existing instances",
+      "Use an SCP to prevent launching new instances without IMDSv2 enforcement",
+      "Apply WAF rules to detect and block SSRF attempts targeting 169.254.169.254",
+      "See: https://hub.prowler.com/check/ec2_instance_imdsv2_enabled"
+    ]
+  },
+  {
+    "name": "AWS EC2 EBS Volume Not Encrypted",
+    "stride_category": "Information Disclosure",
+    "description": "An EC2 EBS volume is not encrypted at rest. If the snapshot is shared accidentally, copied to another account, or the storage layer is physically accessed, data is exposed in plaintext. Unencrypted volumes also create compliance violations for PCI-DSS, HIPAA, and SOC2 workloads. Encryption can be enforced at the account level with zero performance impact for most workloads.",
+    "target": "AWS EBS Volume",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable EBS encryption by default at the account level in all regions",
+      "Use AWS KMS customer-managed keys (CMK) for EBS encryption on sensitive workloads",
+      "Migrate unencrypted volumes: create an encrypted snapshot, then create a new encrypted volume from it",
+      "Use AWS Config rule encrypted-volumes to continuously detect non-compliant volumes",
+      "See: https://hub.prowler.com/check/ec2_ebs_volume_encryption"
+    ]
+  },
+  {
+    "name": "AWS EC2 Security Group Allows Unrestricted SSH Ingress",
+    "stride_category": "Spoofing",
+    "description": "An EC2 security group allows inbound TCP port 22 (SSH) from 0.0.0.0/0 or ::/0, exposing the instance to brute-force attacks, SSH key compromise attempts, and exploitation of any SSH daemon vulnerability from anywhere on the internet. Automated scanners find open SSH ports within minutes of exposure.",
+    "target": "AWS EC2 Security Group",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Remove 0.0.0.0/0 ingress on port 22 — restrict SSH to specific admin CIDR blocks or remove it entirely",
+      "Replace SSH access with AWS Systems Manager Session Manager (no open ports required)",
+      "If SSH must be exposed, deploy an EC2 Instance Connect Endpoint or a bastion host with MFA",
+      "Enable GuardDuty SSH brute-force detection (UnauthorizedAccess:EC2/SSHBruteForce finding)",
+      "See: https://hub.prowler.com/check/ec2_securitygroup_allow_ingress_from_internet_to_ssh_port_22"
+    ]
+  },
+  {
+    "name": "AWS EC2 Security Group Allows Unrestricted RDP Ingress",
+    "stride_category": "Spoofing",
+    "description": "An EC2 security group allows inbound TCP port 3389 (RDP) from 0.0.0.0/0 or ::/0, exposing Windows instances to brute-force, credential stuffing, and exploitation of RDP protocol vulnerabilities (BlueKeep, DejaBlue) from anywhere on the internet. RDP is one of the most targeted services in ransomware attack chains.",
+    "target": "AWS EC2 Security Group",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Remove 0.0.0.0/0 ingress on port 3389 — restrict to specific admin CIDR blocks or disable RDP entirely",
+      "Use AWS Systems Manager Session Manager with RDP port forwarding for Windows admin access",
+      "Deploy a bastion host or VPN requiring MFA before reaching the RDP endpoint",
+      "Enable GuardDuty RDP brute-force detection (UnauthorizedAccess:EC2/RDPBruteForce finding)",
+      "See: https://hub.prowler.com/check/ec2_securitygroup_allow_ingress_from_internet_to_rdp_port_3389"
+    ]
+  },
+  {
+    "name": "AWS RDS Instance Publicly Accessible",
+    "stride_category": "Spoofing",
+    "description": "An RDS database instance has PubliclyAccessible set to true and is reachable from the internet. A publicly exposed database is directly targetable by credential brute-force, exploitation of database engine vulnerabilities, and automated enumeration. Any single credential compromise or CVE in the database engine provides direct data access without going through the application layer.",
+    "target": "AWS RDS Instance",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Set PubliclyAccessible to false on all RDS instances — route access through the application tier or VPN",
+      "Place RDS instances in private subnets with no route to an Internet Gateway",
+      "Use VPC security groups to allow database port ingress only from specific application security groups",
+      "Use RDS Proxy to pool connections and avoid exposing database credentials to application code",
+      "See: https://hub.prowler.com/check/rds_instance_no_public_access"
+    ]
+  },
+  {
+    "name": "AWS RDS Instance Encryption at Rest Not Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An RDS database instance does not have encryption at rest enabled. If database storage snapshots are shared, copied cross-account, or the underlying storage is accessed outside AWS controls, data is readable in plaintext. Encryption at rest is required for HIPAA, PCI-DSS, and GDPR compliance and has no measurable performance impact on modern RDS instance classes.",
+    "target": "AWS RDS Instance",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Encryption cannot be enabled on an existing unencrypted instance — take a snapshot, create an encrypted copy, restore as a new encrypted instance",
+      "Enforce RDS encryption at account level: use an SCP requiring rds:StorageEncrypted at launch",
+      "Use AWS KMS customer-managed keys for RDS encryption on sensitive workloads",
+      "Audit unencrypted snapshots with AWS Config rule rds-snapshot-encrypted",
+      "See: https://hub.prowler.com/check/rds_instance_storage_encrypted"
+    ]
+  },
+  {
+    "name": "AWS RDS Instance No Automated Backups",
+    "stride_category": "Denial of Service",
+    "description": "An RDS instance has automated backups disabled (BackupRetentionPeriod = 0). Without automated backups, there is no recovery path if the database is deleted, corrupted by a failed migration, or encrypted by ransomware. Data loss would be permanent unless a manual snapshot happened to exist before the incident.",
+    "target": "AWS RDS Instance",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable automated backups with a retention period of at least 7 days on all production databases",
+      "Enable Multi-AZ for automatic failover and point-in-time recovery",
+      "Test restore procedures regularly — backup that has never been tested is not a backup",
+      "Use AWS Backup to centrally manage and audit backup compliance across all RDS instances",
+      "See: https://hub.prowler.com/check/rds_instance_backup_enabled"
+    ]
+  },
+  {
+    "name": "AWS RDS Instance SSL/TLS Not Enforced for Connections",
+    "stride_category": "Information Disclosure",
+    "description": "An RDS instance does not enforce SSL/TLS for client connections. An attacker positioned on the network path between the application and the database (VPC misconfiguration, compromised EC2 instance, cloud-internal network tap) can intercept database queries and responses in plaintext, exfiltrating PII, credentials, or business-sensitive data.",
+    "target": "AWS RDS Instance",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Set the rds.force_ssl parameter to 1 for PostgreSQL and require_secure_transport for MySQL",
+      "Download the AWS RDS CA certificate bundle and configure all application clients to verify the server certificate",
+      "Use parameter groups to enforce TLS and deploy parameter group changes via IaC to prevent drift",
+      "See: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html"
+    ]
+  },
+  {
+    "name": "AWS KMS Customer-Managed Key Automatic Rotation Not Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An AWS KMS customer-managed symmetric key (CMK) does not have automatic key material rotation enabled. Long-lived cryptographic key material increases the blast radius if a key is ever compromised or if a cryptanalytic weakness is discovered in the underlying algorithm. Non-rotating keys also conflict with NIST, PCI-DSS, and HIPAA rotation requirements.",
+    "target": "AWS KMS Key",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable automatic annual rotation on all customer-managed symmetric KMS keys",
+      "Use on-demand rotation when a key compromise is suspected rather than waiting for the annual cycle",
+      "Apply least privilege to key policies: separate key administrator and key user roles",
+      "Enable KMS CloudTrail logging to audit all cryptographic operations on each key",
+      "See: https://hub.prowler.com/check/kms_cmk_rotation_enabled"
+    ]
+  },
+  {
+    "name": "AWS CloudTrail Multi-Region Logging Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "AWS CloudTrail is either not enabled or is not configured as a multi-region trail. Regions without active trail coverage create forensic blind spots where an attacker can create IAM users, launch instances, or exfiltrate data without leaving any API audit trail. Attackers aware of unmonitored regions deliberately use them to avoid detection.",
+    "target": "AWS CloudTrail Trail",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Create a multi-region CloudTrail trail with IsMultiRegionTrail: true to capture activity in all regions",
+      "Enable CloudTrail log file integrity validation to detect tampering with log files",
+      "Deliver CloudTrail logs to a dedicated, locked-down S3 bucket with MFA delete and bucket policy preventing deletion",
+      "Forward CloudTrail logs to CloudWatch Logs and set metric filters for high-risk events (root login, MFA disable)",
+      "See: https://hub.prowler.com/check/cloudtrail_multi_region_enabled"
+    ]
+  },
+  {
+    "name": "AWS CloudTrail Log File Validation Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "CloudTrail log file integrity validation is disabled. Without it, an attacker who gains write access to the S3 log bucket can modify or delete log files to cover their tracks, and there is no cryptographic way to detect the tampering. Compliance frameworks including PCI-DSS and SOC2 require evidence of log integrity.",
+    "target": "AWS CloudTrail Trail",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable CloudTrail log file validation — AWS generates SHA-256 hash digests for each log file",
+      "Restrict S3 bucket access: only CloudTrail should have write access; deny all DeleteObject actions",
+      "Forward logs to CloudWatch Logs as a secondary destination that is harder to tamper with",
+      "See: https://hub.prowler.com/check/cloudtrail_log_file_validation_enabled"
+    ]
+  },
+  {
+    "name": "AWS CloudTrail Logs Not Encrypted with KMS",
+    "stride_category": "Information Disclosure",
+    "description": "CloudTrail logs are stored in S3 without KMS encryption. The logs contain sensitive information: IAM role ARNs, API parameters, source IP addresses, user agent strings, and resource identifiers. An attacker who gains access to the S3 bucket can read the full API history of the account without needing additional privileges.",
+    "target": "AWS CloudTrail Trail",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Configure the CloudTrail trail to use a KMS CMK for log file encryption",
+      "Restrict the KMS key policy to CloudTrail service and authorized security auditors only",
+      "Enable S3 server-side encryption as a defense-in-depth measure in addition to CloudTrail-level encryption",
+      "See: https://hub.prowler.com/check/cloudtrail_kms_encryption_enabled"
+    ]
+  },
+  {
+    "name": "AWS VPC Flow Logs Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "One or more VPCs do not have VPC Flow Logs enabled. Without flow logs, there is no record of network-level traffic — which instances communicated with which IPs, on which ports, and whether connections were accepted or rejected. Attackers can probe, move laterally, and exfiltrate data over the network without leaving any evidence that can be used for detection or forensics.",
+    "target": "AWS VPC",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable VPC Flow Logs for all VPCs with TrafficType: ALL and deliver to CloudWatch Logs or S3",
+      "Create CloudWatch metric filters and alarms for rejected traffic patterns indicating port scanning",
+      "Integrate flow logs with a SIEM or use Amazon Detective for automated anomaly detection",
+      "See: https://hub.prowler.com/check/vpc_flow_logs_enabled"
+    ]
+  },
+  {
+    "name": "AWS VPC Default VPC Exists in Region",
+    "stride_category": "Spoofing",
+    "description": "The AWS default VPC exists in one or more regions. The default VPC is pre-configured with an internet gateway, a public subnet in every AZ, and default security groups that allow all outbound traffic. Workloads accidentally launched into the default VPC are immediately internet-reachable, bypassing any network segmentation. Attackers who compromise a workload in the default VPC can reach the internet without additional infrastructure.",
+    "target": "AWS VPC",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Delete the default VPC in all regions where it is not explicitly required",
+      "Use SCPs to prevent creating resources in the default VPC or require VPC tagging",
+      "Create application-specific VPCs with private subnets and explicit routing to force intentional exposure decisions",
+      "See: https://hub.prowler.com/check/vpc_default_sg_no_rules"
+    ]
+  },
+  {
+    "name": "AWS GuardDuty Not Enabled in Region",
+    "stride_category": "Repudiation",
+    "description": "Amazon GuardDuty threat detection is not enabled in one or more regions. Without GuardDuty, there is no automated detection of: IAM credential compromise (anomalous API calls), EC2 instance compromise (mining, C2 communication, data exfiltration), S3 data exfiltration attempts, or EKS cluster compromise. Attackers operating in unmonitored regions can operate undetected for extended periods.",
+    "target": "AWS GuardDuty",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable GuardDuty in all regions, including regions where you have no active workloads",
+      "Enable all GuardDuty protection plans: S3 Protection, EKS Audit Logs, Lambda Network Activity, RDS Login Activity",
+      "Configure GuardDuty findings to trigger SNS notifications and Security Hub ingestion",
+      "Use AWS Organizations GuardDuty delegated administrator to enforce GuardDuty across all accounts",
+      "See: https://hub.prowler.com/check/guardduty_is_enabled"
+    ]
+  },
+  {
+    "name": "AWS Config Not Enabled in Region",
+    "stride_category": "Repudiation",
+    "description": "AWS Config is not enabled, meaning there is no continuous record of resource configuration changes. Without Config, there is no way to determine the configuration state of resources before an incident, no compliance drift detection, and no change timeline for forensic analysis. Attackers who modify security group rules, IAM policies, or S3 bucket policies leave no configuration audit trail.",
+    "target": "AWS Config",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable AWS Config in all regions with all resource types recorded",
+      "Deliver Config snapshots to a centralized S3 bucket with bucket policy preventing deletion",
+      "Enable AWS Config conformance packs for CIS Benchmark, PCI-DSS, or HIPAA to get pre-built compliance rules",
+      "See: https://hub.prowler.com/check/config_recorder_all_regions_enabled"
+    ]
+  },
+  {
+    "name": "AWS Lambda Function Assigned Administrator IAM Role",
+    "stride_category": "Elevation of Privilege",
+    "description": "A Lambda function's execution role grants AdministratorAccess or equivalent wildcard permissions. If the Lambda function processes untrusted input (API events, SQS messages, S3 uploads), an attacker who achieves code execution within the function via injection or a dependency vulnerability inherits full account admin rights. Any SSRF or RCE in Lambda code with admin role equals account takeover.",
+    "target": "AWS Lambda Function",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Scope Lambda execution roles to the exact services and resources the function accesses",
+      "Use IAM Access Analyzer to generate least-privilege policies from Lambda function's actual API calls",
+      "Apply resource-based policies on downstream services (S3, DynamoDB, SQS) to limit what the Lambda can do even with a broad role",
+      "Enable Lambda function URLs or API Gateway auth to prevent unauthenticated invocation",
+      "See: https://hub.prowler.com/check/awslambda_function_not_publicly_accessible"
+    ]
+  },
+  {
+    "name": "AWS EKS Cluster etcd Secrets Not Encrypted with KMS",
+    "stride_category": "Information Disclosure",
+    "description": "An EKS cluster does not have envelope encryption of Kubernetes secrets enabled via AWS KMS. Kubernetes secrets (API keys, database passwords, TLS certificates) stored in etcd are base64-encoded but not encrypted. An attacker who gains access to the etcd data layer (via a compromised control plane component or AWS support access) can decode and read all cluster secrets without any cryptographic barrier.",
+    "target": "AWS EKS Cluster",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable secrets encryption at EKS cluster creation using a KMS CMK — this cannot be added to existing clusters without recreation",
+      "Use Kubernetes external secrets operator or AWS Secrets Manager to store sensitive values outside etcd",
+      "Apply RBAC policies to restrict who can read secrets in each namespace",
+      "Enable EKS control plane logging to capture secret access events",
+      "See: https://hub.prowler.com/check/eks_cluster_secrets_encrypted"
+    ]
+  },
+  {
+    "name": "AWS EKS Cluster API Server Endpoint Publicly Accessible",
+    "stride_category": "Spoofing",
+    "description": "An EKS cluster's Kubernetes API server endpoint is publicly accessible from the internet. The API server is the control plane entry point — an attacker who obtains valid kubeconfig credentials or exploits an API server vulnerability can gain full cluster control: deploying workloads, reading secrets, pivoting to any connected AWS service via pod IAM roles, and exfiltrating data.",
+    "target": "AWS EKS Cluster",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Disable public endpoint access and use private endpoint only, with VPN or Direct Connect for admin access",
+      "If public access is required, restrict it to specific CIDR blocks (operator office IPs, CI/CD runner IPs)",
+      "Enable EKS audit logging and pipe to CloudWatch for detection of unauthorized API calls",
+      "Rotate all kubeconfig credentials if public API server access was previously enabled",
+      "See: https://hub.prowler.com/check/eks_cluster_endpoint_public_access"
+    ]
+  },
+  {
+    "name": "AWS ECR Container Image Scanning on Push Not Enabled",
+    "stride_category": "Tampering",
+    "description": "An ECR repository does not have image scanning on push enabled. Containers with known vulnerabilities (CVEs in OS packages, language runtimes, or application libraries) are pushed and deployed without any vulnerability check. An attacker who can exploit a known CVE in a deployed container image can compromise the running workload, pivot to other containers, or escalate via the host.",
+    "target": "AWS ECR Repository",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable ECR Enhanced Scanning (powered by Amazon Inspector) on all repositories",
+      "Block deployment of images with CRITICAL or HIGH CVEs using ECR lifecycle policies or deployment pipeline gates",
+      "Use ECR image immutability to prevent overwriting tagged images",
+      "Integrate ECR scanning results with Security Hub for centralized vulnerability management",
+      "See: https://hub.prowler.com/check/ecr_repository_scan_on_push_enabled"
+    ]
+  },
+  {
+    "name": "AWS ELB/ALB HTTPS Not Enforced for Listener",
+    "stride_category": "Information Disclosure",
+    "description": "An Elastic Load Balancer or Application Load Balancer has an HTTP listener without automatic redirect to HTTPS. User traffic (authentication tokens, session cookies, form data, API credentials) is transmitted in plaintext, making it interceptable by a network-positioned attacker, corporate proxy, or ISP. Any credential transmitted over HTTP is compromised the moment the request is sent.",
+    "target": "AWS Application Load Balancer",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Add an HTTPS listener with a valid ACM certificate and set up an HTTP-to-HTTPS redirect rule",
+      "Enable HSTS headers on the application to instruct browsers to always use HTTPS",
+      "Use a TLS security policy that disables TLS 1.0 and 1.1 — prefer ELBSecurityPolicy-TLS13-1-2-2021-06",
+      "See: https://hub.prowler.com/check/elbv2_insecure_ssl_ciphers"
+    ]
+  },
+  {
+    "name": "AWS Secrets Manager Secret Automatic Rotation Not Configured",
+    "stride_category": "Spoofing",
+    "description": "A secret in AWS Secrets Manager does not have automatic rotation enabled. Long-lived, static credentials (database passwords, API keys) that are never rotated create a permanently open window if they are leaked. Credentials exposed in logs, git commits, or API responses remain valid indefinitely until manual rotation is performed.",
+    "target": "AWS Secrets Manager",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable automatic rotation with an appropriate rotation interval (30 days for sensitive credentials, 90 days for others)",
+      "Use managed rotation for RDS, Redshift, DocumentDB, and ElastiCache to have AWS handle the rotation Lambda",
+      "Audit all secrets with rotation disabled and prioritize rotation of credentials with production access",
+      "See: https://hub.prowler.com/check/secretsmanager_automatic_rotation_enabled"
+    ]
+  },
+  {
+    "name": "AWS ElastiCache Cluster Encryption in Transit Not Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An ElastiCache cluster (Redis or Memcached) does not require TLS for client connections. Cache data (session tokens, PII, application secrets cached for performance) is transmitted in plaintext between the application and the cache tier. A VPC-internal attacker who compromises another resource in the same VPC can perform passive interception or active MITM on cache traffic.",
+    "target": "AWS ElastiCache Cluster",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable in-transit encryption on ElastiCache clusters — requires node restart on existing clusters",
+      "Use ElastiCache Redis AUTH token and require TLS for all client connections",
+      "Place ElastiCache in a dedicated security group allowing ingress only from application security groups",
+      "See: https://hub.prowler.com/check/elasticache_replication_group_encryption_in_transit_enabled"
+    ]
+  },
+  {
+    "name": "AWS DynamoDB Table Point-in-Time Recovery Not Enabled",
+    "stride_category": "Denial of Service",
+    "description": "A DynamoDB table does not have Point-in-Time Recovery (PITR) enabled. Without PITR, a ransomware attack, application bug, or misconfigured migration that deletes or corrupts table data has no recovery path short of restoring from a manually created backup (which may be days or weeks old). PITR enables restoration to any second within the last 35 days.",
+    "target": "AWS DynamoDB Table",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable PITR on all production DynamoDB tables — it has minimal cost impact and no performance overhead",
+      "Use AWS Backup to take additional scheduled full backups to a cross-account backup vault",
+      "Enable DynamoDB Streams for change-data-capture if audit trails of individual item changes are needed",
+      "See: https://hub.prowler.com/check/dynamodb_tables_pitr_enabled"
+    ]
+  },
+  {
+    "name": "AWS CloudWatch Alarm for Root Account Activity Not Configured",
+    "stride_category": "Repudiation",
+    "description": "There is no CloudWatch metric filter and alarm configured to alert on root account API activity. Any action taken with root credentials (key usage, console login, MFA change) should trigger an immediate alert. Without this alarm, root account abuse — whether by an attacker or unauthorized insider — may go undetected until a forensic investigation is triggered by other means.",
+    "target": "AWS CloudWatch",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Create a CloudTrail metric filter for root account usage and a CloudWatch alarm with SNS notification",
+      "Filter on eventName: ConsoleLogin with userIdentity.type: Root or any API call by root",
+      "Send alerts to an on-call security channel and require acknowledgment within 15 minutes",
+      "Use AWS Security Hub CIS Benchmark finding 3.3 to detect this control gap automatically",
+      "See: https://hub.prowler.com/check/cloudwatch_log_metric_filter_root_usage"
+    ]
+  }
+]

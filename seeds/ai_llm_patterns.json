@@ -1,0 +1,182 @@
+[
+  {
+    "name": "LangChain Tool Output Prompt Injection",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Attacker controlling content returned by a LangChain tool (web search, document retriever, API call) embeds adversarial instructions that hijack the agent's reasoning, causing it to exfiltrate data, invoke unintended tools, or override safety constraints.",
+    "target": "LangChain Agent Tool Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Treat all tool outputs as untrusted data — apply content filtering before feeding to the next LLM call",
+      "Use a separate validation step to check tool outputs for injection patterns before LLM consumption",
+      "Apply least-privilege tool permissions — agents should not have more capabilities than the task requires",
+      "Log all tool invocations and outputs for post-hoc audit of injection attempts"
+    ]
+  },
+  {
+    "name": "Vector Database Embedding Poisoning Attack",
+    "stride_category": "Tampering",
+    "maestro_category": "Data Security",
+    "description": "Attacker with write access to the vector store (Pinecone, Weaviate, Chroma) inserts adversarially crafted embeddings that are semantically similar to legitimate query embeddings, causing the RAG pipeline to retrieve and inject malicious context into LLM prompts.",
+    "target": "Vector Database",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict vector store write access to trusted ingestion pipelines only — deny direct client writes",
+      "Implement content validation and source verification before indexing documents",
+      "Monitor embedding insertion patterns and alert on bulk writes from unexpected sources",
+      "Use document provenance tracking to filter retrievals by trusted source metadata"
+    ]
+  },
+  {
+    "name": "RAG Pipeline Indirect Prompt Injection via Retrieved Documents",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Attacker embedding instruction-overriding text in publicly accessible documents (websites, PDFs, GitHub READMEs) that are indexed by the RAG pipeline causes the LLM to follow attacker-controlled instructions when those documents are retrieved as context.",
+    "target": "RAG Retrieval Pipeline",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Sanitize retrieved document content to remove HTML, markdown, and instruction-like patterns before injection",
+      "Use a separate classification model to detect and quarantine documents with injection patterns",
+      "Apply prompt templating that clearly separates system instructions from retrieved context",
+      "Limit retrieval to internal, curated document collections where possible"
+    ]
+  },
+  {
+    "name": "LangChain Agent Unrestricted Tool Access Enabling Arbitrary Code Execution",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "Pipeline Security",
+    "description": "LangChain agent configured with shell execution, file system, or Python REPL tools without sandboxing allows prompt injection or misaligned planning steps to run arbitrary OS commands, exfiltrate environment variables, or modify application files.",
+    "target": "LangChain Agent Tool Set",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Never give production agents shell, REPL, or direct file system tools",
+      "Sandbox code execution tools in isolated containers or with seccomp profiles",
+      "Implement a human-in-the-loop confirmation step before executing irreversible actions",
+      "Audit which tools are registered on each agent and enforce allowlisting via code review"
+    ]
+  },
+  {
+    "name": "Weaviate Unauthenticated GraphQL Endpoint",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "Pipeline Security",
+    "description": "Weaviate instance deployed without API key authentication or OIDC enabled exposes the full GraphQL API to any network-reachable client, allowing unauthorized reads of all indexed vectors and metadata, schema enumeration, and data modification.",
+    "target": "Weaviate Vector Database",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Weaviate's API key or OIDC authentication in the configuration before deployment",
+      "Bind Weaviate to a private network interface — never expose port 8080 to the public internet",
+      "Use a reverse proxy with auth enforcement in front of Weaviate for additional access control",
+      "Audit Weaviate schema and tenant access periodically"
+    ]
+  },
+  {
+    "name": "Pinecone API Key Exposed in Client-Side Code",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Supply Chain",
+    "description": "Developer embedding a Pinecone API key in browser-side JavaScript or a public repository gives any visitor full access to the Pinecone index — reading all vectors, upserting malicious entries, or deleting the entire dataset.",
+    "target": "Pinecone Vector Store",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Call Pinecone only from server-side code — proxy requests through a backend API that holds the key",
+      "Use Pinecone's organization-level API key scoping to limit what each key can access",
+      "Add Pinecone API key patterns to pre-commit secret scanning hooks (gitleaks, truffleHog)",
+      "Rotate the exposed key immediately and audit the index for unexpected operations"
+    ]
+  },
+  {
+    "name": "RAG Index Missing Access Control on Sensitive Documents",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Data Security",
+    "description": "RAG system indexing documents from multiple security levels (public + confidential) into a single vector store without per-document access control retrieves and injects confidential content into responses for users who should not have access to it.",
+    "target": "RAG Document Index",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Tag every indexed document with access level metadata and filter retrievals by user permissions",
+      "Maintain separate indexes per security classification level when metadata filtering is insufficient",
+      "Validate retrieval results against the requesting user's permissions before injecting into prompts",
+      "Audit what documents are retrievable by each user role as part of regular access reviews"
+    ]
+  },
+  {
+    "name": "LLM System Prompt Extraction via Jailbreak",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Attacker using jailbreak techniques (role-play framing, instruction override, encoded payloads) causes the LLM to repeat or paraphrase the system prompt, exposing proprietary instructions, business logic, customer data, or embedded secrets.",
+    "target": "LLM System Prompt",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Avoid embedding secrets, credentials, or sensitive business rules in system prompts",
+      "Instruct the model explicitly to never repeat the system prompt and test this boundary",
+      "Use input and output guardrails (Guardrails AI, LlamaGuard) to detect and block extraction attempts",
+      "Treat the system prompt as discoverable by determined attackers when designing the security model"
+    ]
+  },
+  {
+    "name": "LangChain Memory Chain User Session Bleeding",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "LLM Security",
+    "description": "Multi-tenant LangChain application reusing a shared ConversationBufferMemory or ConversationSummaryMemory across requests without proper session isolation leaks one user's conversation history into another user's LLM context window.",
+    "target": "LangChain Memory Store",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Instantiate a fresh memory object per user session — never share memory across requests",
+      "Use a session-scoped memory backend (Redis with per-session key) to enforce isolation",
+      "Add integration tests that verify memory is empty at the start of each new user session",
+      "Log memory object instantiation to detect unexpected reuse patterns"
+    ]
+  },
+  {
+    "name": "Vector Embedding Inversion Revealing Training Data",
+    "stride_category": "Information Disclosure",
+    "maestro_category": "Data Security",
+    "description": "Attacker with query access to a vector store containing embeddings of sensitive text (medical records, legal documents, source code) uses embedding inversion techniques to approximately reconstruct the original text from stored vectors, bypassing document-level access controls.",
+    "target": "Vector Embedding Store",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Apply differential privacy noise to embeddings before storage for highly sensitive content",
+      "Restrict vector query access — do not expose raw embeddings, only top-k similarity results",
+      "Use access-controlled retrieval that validates user permissions before returning results",
+      "Consider approximate quantized embeddings that degrade inversion quality for sensitive data"
+    ]
+  },
+  {
+    "name": "RAG Context Window Stuffing to Override System Instructions",
+    "stride_category": "Tampering",
+    "maestro_category": "LLM Security",
+    "description": "Attacker submitting queries that retrieve a large number of documents stuffs the LLM context window with attacker-controlled text, pushing the system prompt beyond effective attention range and causing the model to follow instructions embedded in the retrieved content instead.",
+    "target": "RAG Prompt Assembly",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Limit the number of retrieved chunks and their total token budget in prompt assembly",
+      "Place system instructions after retrieved context in the prompt to leverage recency bias",
+      "Apply a maximum token budget to retrieved content before injection",
+      "Use prompt templates that clearly delimit system instructions from user and retrieval content"
+    ]
+  },
+  {
+    "name": "Chroma Vector DB Unauthenticated HTTP API",
+    "stride_category": "Elevation of Privilege",
+    "maestro_category": "Pipeline Security",
+    "description": "ChromaDB instance deployed in server mode without authentication allows any network-reachable client to create, modify, and delete collections and documents, enabling data exfiltration, poisoning of the vector index, or complete data destruction.",
+    "target": "ChromaDB Vector Store",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Run ChromaDB in embedded mode for single-process use cases — avoid exposing the HTTP server",
+      "When using server mode, place ChromaDB behind an authenticated reverse proxy",
+      "Restrict ChromaDB's network interface to localhost or a private VPC subnet",
+      "Monitor ChromaDB HTTP access logs for unexpected client IPs or large bulk operations"
+    ]
+  }
+]

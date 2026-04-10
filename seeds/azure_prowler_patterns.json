@@ -1,0 +1,285 @@
+[
+  {
+    "name": "Azure Storage Account Blob Public Access Allowed",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure Storage account has allowBlobPublicAccess set to true, enabling any container within the account to be configured for anonymous public reads. An attacker can enumerate and download any container that a developer accidentally or intentionally marks public, exfiltrating blobs without any authentication or audit trail.",
+    "target": "Azure Storage Account",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Set allowBlobPublicAccess to false at the storage account level to block all anonymous access",
+      "Audit all storage accounts with az storage account list and filter for allowBlobPublicAccess: true",
+      "Use Azure Policy to deny creating storage accounts with public blob access enabled",
+      "For legitimate public content delivery, use Azure CDN with access controls instead of raw blob public access",
+      "See: https://hub.prowler.com/check/storage_blob_public_access_level_is_disabled"
+    ]
+  },
+  {
+    "name": "Azure Storage Account HTTP Traffic Not Restricted to HTTPS",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure Storage account does not enforce HTTPS-only access, allowing storage SDKs and REST clients to connect over plain HTTP. Any storage access token, SAS URL, or data in transit is exposed to network interception. SAS tokens intercepted over HTTP can be replayed to access storage resources until the token expires.",
+    "target": "Azure Storage Account",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set supportsHttpsTrafficOnly to true on all storage accounts",
+      "Use Azure Policy to enforce HTTPS-only as a denial control at resource creation",
+      "Rotate any SAS tokens that may have been transmitted over HTTP connections",
+      "See: https://learn.microsoft.com/en-us/azure/storage/common/storage-require-secure-transfer"
+    ]
+  },
+  {
+    "name": "Azure Storage Account TLS Version Below 1.2",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure Storage account allows TLS 1.0 or 1.1 connections. These protocol versions have known cryptographic weaknesses (BEAST, POODLE, CRIME) that can be exploited by a network-positioned attacker to downgrade and decrypt TLS-protected storage traffic, exposing data and authentication tokens.",
+    "target": "Azure Storage Account",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Set minimumTlsVersion to TLS1_2 on all storage accounts",
+      "Apply an Azure Policy initiative to enforce TLS 1.2 as minimum across all storage accounts",
+      "Test application compatibility with TLS 1.2 before enforcing — most modern SDKs support it",
+      "See: https://learn.microsoft.com/en-us/azure/storage/common/transport-layer-security-configure-minimum-version"
+    ]
+  },
+  {
+    "name": "Azure SQL Server Public Network Access Not Disabled",
+    "stride_category": "Spoofing",
+    "description": "An Azure SQL Server has public network access enabled, making it reachable from the internet via its database.windows.net endpoint. An attacker can directly attempt authentication, exploit SQL Server vulnerabilities, or conduct brute-force attacks against database accounts without needing to penetrate any other Azure resource first.",
+    "target": "Azure SQL Server",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Set publicNetworkAccess to Disabled on all Azure SQL Servers",
+      "Use private endpoints to connect applications to SQL Server over Azure private networking",
+      "If firewall rules are required, restrict to known application subnet CIDRs — never allow 0.0.0.0-255.255.255.255",
+      "Enable Azure Defender for SQL to detect brute-force and SQL injection attempts",
+      "See: https://hub.prowler.com/check/sqlserver_public_access_disabled"
+    ]
+  },
+  {
+    "name": "Azure SQL Server Transparent Data Encryption Not Enabled",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure SQL Database or Data Warehouse does not have Transparent Data Encryption (TDE) enabled. Database files, backups, and transaction logs are stored in plaintext on Azure infrastructure. An attacker who gains access to storage-layer backups or a snapshot can read all database content without needing valid database credentials.",
+    "target": "Azure SQL Database",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable TDE with a service-managed or customer-managed key on all Azure SQL databases",
+      "Use customer-managed keys (CMK) in Azure Key Vault for TDE when key control is required",
+      "Audit TDE status with az sql db tde show for all databases across all subscriptions",
+      "See: https://learn.microsoft.com/en-us/azure/azure-sql/database/transparent-data-encryption-tde-overview"
+    ]
+  },
+  {
+    "name": "Azure SQL Server Auditing Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "Azure SQL Server auditing is disabled, meaning there is no record of database queries, authentication attempts, schema changes, or privilege escalation within the database. Without auditing, an attacker who accesses the database directly can exfiltrate data, create backdoor accounts, or modify data without leaving a database-level audit trail.",
+    "target": "Azure SQL Server",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Azure SQL Server auditing and direct audit logs to a storage account, Log Analytics workspace, or Event Hub",
+      "Enable auditing at server level (inherited by all databases) and also at database level for sensitive databases",
+      "Set audit retention to at least 90 days to support forensic investigation",
+      "See: https://learn.microsoft.com/en-us/azure/azure-sql/database/auditing-overview"
+    ]
+  },
+  {
+    "name": "Azure Key Vault Soft Delete Not Enabled",
+    "stride_category": "Denial of Service",
+    "description": "An Azure Key Vault does not have soft delete enabled (now enforced by default for new vaults, but older vaults may lack it). Without soft delete, secrets, keys, and certificates deleted by an attacker or an operator error are permanently destroyed with no recovery path. Cryptographic keys used to encrypt data at rest become unrecoverable, causing permanent data loss.",
+    "target": "Azure Key Vault",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable soft delete on all Key Vaults — set retentionDays to at least 90 for production vaults",
+      "Enable purge protection to prevent permanent deletion even during the soft-delete retention period",
+      "Apply Azure RBAC to restrict who can delete vault objects — require justification and approval",
+      "See: https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview"
+    ]
+  },
+  {
+    "name": "Azure Key Vault Purge Protection Not Enabled",
+    "stride_category": "Denial of Service",
+    "description": "An Azure Key Vault has soft delete enabled but purge protection disabled. An attacker or malicious insider who achieves write access to the vault can soft-delete keys and then immediately purge them during the soft-delete retention window, permanently destroying encryption keys and making all data encrypted with those keys unrecoverable.",
+    "target": "Azure Key Vault",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable purge protection on all Key Vaults holding encryption keys or production secrets",
+      "Restrict Key Vault RBAC: apply separate Key Vault Administrator and Key Vault Secrets User roles",
+      "Enable diagnostic settings on Key Vault to log all cryptographic operations to Log Analytics",
+      "See: https://learn.microsoft.com/en-us/azure/key-vault/general/key-vault-recovery"
+    ]
+  },
+  {
+    "name": "Azure Entra ID MFA Not Required for All Users",
+    "stride_category": "Spoofing",
+    "description": "Azure Entra ID (Azure AD) does not require multi-factor authentication for all user accounts. An attacker who obtains a user's password through phishing, credential stuffing, or breach database lookup can authenticate without any additional factor. Single-factor authentication is the primary enabler of account takeover in cloud environments.",
+    "target": "Azure Entra ID",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Security Defaults or Conditional Access policies requiring MFA for all users",
+      "Require phishing-resistant MFA (FIDO2 or Windows Hello) for all privileged and administrative accounts",
+      "Use Conditional Access to block authentication from high-risk sign-ins and unfamiliar locations",
+      "See: https://learn.microsoft.com/en-us/entra/identity/authentication/concept-mfa-howitworks"
+    ]
+  },
+  {
+    "name": "Azure Entra ID Guest User Access Not Restricted",
+    "stride_category": "Information Disclosure",
+    "description": "Azure Entra ID allows guest (B2B) users with default access permissions, which in older tenants includes the ability to enumerate users, groups, and application registrations. An attacker who compromises a guest account can enumerate the directory to identify privileged accounts, service principals with high permissions, and organizational structure for targeted attacks.",
+    "target": "Azure Entra ID",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set guest user access restrictions to the most restrictive level: guests can only see their own profile",
+      "Apply Conditional Access policies to guest accounts restricting which applications and resources they can access",
+      "Review and remove inactive guest accounts regularly — automate with Entra ID Access Reviews",
+      "See: https://learn.microsoft.com/en-us/entra/identity/users/users-restrict-guest-permissions"
+    ]
+  },
+  {
+    "name": "Azure Monitor Activity Log Alert Not Configured for Critical Operations",
+    "stride_category": "Repudiation",
+    "description": "Azure Monitor does not have activity log alerts configured for high-risk operations such as: policy assignment changes, role assignment changes, security group rule modifications, or Key Vault deletions. Without alerts, a privileged insider or compromised admin account can make high-impact configuration changes that go undetected until a manual audit.",
+    "target": "Azure Monitor",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Create activity log alert rules for: Write/Delete on Microsoft.Authorization/policyAssignments, Microsoft.Authorization/roleAssignments, Microsoft.Security, and Microsoft.KeyVault",
+      "Route alerts to a security team notification channel with on-call escalation for critical operations",
+      "Use Microsoft Sentinel to correlate activity log events for advanced threat detection",
+      "See: https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-activity-log"
+    ]
+  },
+  {
+    "name": "Azure Monitor Diagnostic Settings Not Enabled for Subscriptions",
+    "stride_category": "Repudiation",
+    "description": "Azure Monitor diagnostic settings for subscription-level activity logs are not forwarded to a Log Analytics workspace, Storage Account, or Event Hub. Without centralized log collection, audit trails for Azure control-plane operations (resource creation, deletion, permission changes) are not searchable, and evidence preservation for security incidents is not guaranteed.",
+    "target": "Azure Monitor",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Configure diagnostic settings on the subscription to send activity logs to a central Log Analytics workspace",
+      "Set log retention to at least 90 days in Log Analytics and archive to cold storage for 1+ years",
+      "Use Azure Policy to enforce diagnostic settings across all subscriptions in the management group",
+      "See: https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/diagnostic-settings"
+    ]
+  },
+  {
+    "name": "Azure AKS RBAC Not Enabled on Cluster",
+    "stride_category": "Elevation of Privilege",
+    "description": "An AKS cluster has Kubernetes RBAC disabled. Without RBAC, any authenticated user or service account can perform any operation on any resource in the cluster — creating privileged pods, reading all secrets, or modifying deployments. A compromised application workload or service account can escalate to full cluster control.",
+    "target": "Azure AKS Cluster",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Azure RBAC for Kubernetes (azureRbacEnabled: true) and Kubernetes RBAC on all AKS clusters",
+      "Use Azure Entra ID integration to bind Kubernetes RBAC to Entra ID groups for centralized identity",
+      "Define namespace-scoped RoleBindings for workload service accounts using least-privilege ClusterRoles",
+      "Audit RBAC bindings regularly with kubectl auth can-i --list for all service accounts",
+      "See: https://hub.prowler.com/check/aks_rbac_enabled"
+    ]
+  },
+  {
+    "name": "Azure AKS API Server Authorized IP Ranges Not Configured",
+    "stride_category": "Spoofing",
+    "description": "An AKS cluster's Kubernetes API server is accessible from any IP address without IP restriction. The API server is the cluster control plane — an attacker who compromises a kubeconfig credential (from a leaked CI/CD secret, developer laptop, or git commit) can access the API server from anywhere in the world and gain full cluster control.",
+    "target": "Azure AKS Cluster",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure API server authorized IP ranges to restrict access to known CI/CD runner IPs, VPN CIDRs, and admin office IPs",
+      "Use private cluster mode (enablePrivateCluster: true) to restrict API server access to the VNet",
+      "Rotate all kubeconfig credentials and service account tokens if unrestricted API access was previously in place",
+      "See: https://learn.microsoft.com/en-us/azure/aks/api-server-authorized-ip-ranges"
+    ]
+  },
+  {
+    "name": "Azure AKS Network Policy Not Configured",
+    "stride_category": "Spoofing",
+    "description": "An AKS cluster does not have a Kubernetes Network Policy enforced. Without network policies, any pod can communicate with any other pod or external endpoint in the cluster. A compromised application pod can move laterally to reach database pods, internal services, or the Kubernetes metadata API endpoint for credential theft.",
+    "target": "Azure AKS Cluster",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure the AKS cluster with Azure Network Policy or Calico at creation time (cannot be added post-creation)",
+      "Deploy a default-deny NetworkPolicy in each namespace and explicitly allow only required pod-to-pod communication",
+      "Block egress from pods to the metadata service (169.254.169.254) unless explicitly needed",
+      "See: https://learn.microsoft.com/en-us/azure/aks/use-network-policies"
+    ]
+  },
+  {
+    "name": "Azure Container Registry Not Using Private Access",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure Container Registry is publicly accessible, meaning any IP can pull container images (if anonymous pull is enabled) or attempt authentication against the registry. An attacker can enumerate available repositories, attempt credential brute-force, or pull images to inspect them for embedded secrets, hardcoded credentials, and software bill of materials.",
+    "target": "Azure Container Registry",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Set publicNetworkAccess to Disabled and use private endpoints for registry access",
+      "Disable anonymous pull access — require authentication for all image pulls",
+      "Enable vulnerability scanning with Microsoft Defender for Containers on all registry images",
+      "See: https://learn.microsoft.com/en-us/azure/container-registry/container-registry-private-link"
+    ]
+  },
+  {
+    "name": "Azure Virtual Machine OS Disk Not Encrypted with Customer-Managed Key",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure Virtual Machine's OS disk uses platform-managed encryption (Azure-managed keys) rather than customer-managed keys (CMK) in Azure Key Vault. If the VM snapshot or disk is copied cross-account or accessed by Microsoft support, the data is protected only by Azure's key management, not by keys the customer controls. CMK is required for workloads that must maintain key custody.",
+    "target": "Azure Virtual Machine",
+    "impact": "Medium",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable Azure Disk Encryption (BitLocker/DM-Crypt) with CMK in Key Vault for sensitive VMs",
+      "Use Disk Encryption Sets to enforce CMK across all disks in a subscription",
+      "Enable Azure Policy to audit or deny VMs not using CMK for OS and data disks",
+      "See: https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview"
+    ]
+  },
+  {
+    "name": "Azure Microsoft Defender for Cloud Not Enabled",
+    "stride_category": "Repudiation",
+    "description": "Microsoft Defender for Cloud (formerly Azure Security Center) is not enabled on one or more Azure subscriptions. Without Defender, there is no continuous security posture assessment, no threat detection for VMs, SQL, Storage, containers, or App Service, and no integrated vulnerability scanning. Security misconfigurations and active attacks go undetected.",
+    "target": "Azure Microsoft Defender for Cloud",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Microsoft Defender for Cloud on all subscriptions with at least the Defender CSPM plan",
+      "Enable specific Defender plans for workload types in use: Servers, Databases, Storage, Containers, App Service",
+      "Connect Defender for Cloud to Microsoft Sentinel for SIEM-level threat correlation",
+      "See: https://learn.microsoft.com/en-us/azure/defender-for-cloud/get-started"
+    ]
+  },
+  {
+    "name": "Azure App Service HTTPS Only Not Enforced",
+    "stride_category": "Information Disclosure",
+    "description": "An Azure App Service web application or API does not enforce HTTPS-only communication. Session tokens, authentication cookies, and API credentials submitted by users or service clients are transmitted over plain HTTP, exposing them to interception by network-positioned attackers, corporate proxies, or ISPs.",
+    "target": "Azure App Service",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable HTTPS Only in App Service configuration (httpsOnly: true)",
+      "Add an HSTS header to all responses with a max-age of at least 1 year",
+      "Use Azure API Management in front of App Service with TLS termination and HSTS enforcement",
+      "See: https://learn.microsoft.com/en-us/azure/app-service/configure-ssl-bindings"
+    ]
+  },
+  {
+    "name": "Azure Function App Authentication Not Enabled",
+    "stride_category": "Spoofing",
+    "description": "An Azure Function App does not have Azure App Service Authentication (Easy Auth) enabled and has no other authentication mechanism at the function level. The function endpoint is publicly invocable by any client without credentials. An attacker can trigger the function, enumerate its behavior, inject malicious payloads, or use it as a proxy for further attacks.",
+    "target": "Azure Function App",
+    "impact": "High",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Azure App Service Authentication with Entra ID as the identity provider",
+      "Use function-level authorization keys for service-to-service calls that do not use Entra ID tokens",
+      "Deploy the Function App behind an API Management gateway with subscription key and JWT validation",
+      "See: https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization"
+    ]
+  }
+]

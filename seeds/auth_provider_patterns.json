@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Auth0 Misconfigured CORS Leaking JWTs",
+    "stride_category": "Information Disclosure",
+    "description": "Web application with misconfigured CORS on the Auth0 callback endpoint allows cross-origin requests from attacker-controlled domains, enabling JWT token exfiltration from authenticated sessions.",
+    "target": "Auth0 OAuth Callback",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Restrict allowed origins to known application domains only",
+      "Validate the state parameter on every OAuth callback",
+      "Set short JWT expiry (15 minutes) with refresh token rotation",
+      "Monitor Auth0 logs for unexpected origin patterns"
+    ]
+  },
+  {
+    "name": "Cognito User Pool Enumeration via Error Differentiation",
+    "stride_category": "Information Disclosure",
+    "description": "Unauthenticated attacker sending crafted requests to Cognito login endpoints can enumerate valid usernames by observing different error messages for existing vs. non-existing accounts.",
+    "target": "AWS Cognito User Pool",
+    "impact": "Medium",
+    "likelihood": "High",
+    "mitigations": [
+      "Enable Cognito's 'Prevent user existence errors' option",
+      "Return generic error messages regardless of account existence",
+      "Implement rate limiting and account lockout policies",
+      "Use email-only login to reduce enumerable surface"
+    ]
+  },
+  {
+    "name": "Firebase Anonymous Auth Privilege Escalation",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker exploiting Firebase anonymous authentication obtains a valid UID and can access Firestore documents whose security rules check only for authentication presence, not identity or role.",
+    "target": "Firebase Authentication",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Write Firestore security rules that check resource ownership, not just auth status",
+      "Disable anonymous sign-in unless explicitly required by the feature",
+      "Separate anonymous user quotas from authenticated user quotas",
+      "Audit security rules with the Firebase Rules Simulator regularly"
+    ]
+  },
+  {
+    "name": "Supabase Row Level Security Policy Bypass",
+    "stride_category": "Elevation of Privilege",
+    "description": "Developer disabling or incorrectly configuring Supabase Row Level Security (RLS) on a public table allows any authenticated user to read, update, or delete rows belonging to other users.",
+    "target": "Supabase PostgreSQL",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable RLS on every user-facing table — verify with FORCE ROW LEVEL SECURITY",
+      "Test RLS policies with both anon and authenticated roles before deployment",
+      "Use Supabase's Policy Editor to audit effective policies per table",
+      "Integrate automated RLS tests in CI using the Supabase CLI"
+    ]
+  },
+  {
+    "name": "OAuth Authorization Code Interception via Open Redirector",
+    "stride_category": "Spoofing",
+    "description": "Attacker exploiting an open redirector in the application's OAuth redirect_uri parameter intercepts the authorization code before exchange, gaining access to the victim's account.",
+    "target": "OAuth 2.0 Authorization Flow",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate redirect_uri against a strict allowlist — no wildcards or open redirectors",
+      "Implement PKCE (Proof Key for Code Exchange) for all public clients",
+      "Bind authorization codes to the client_id and redirect_uri at issue time",
+      "Set authorization code TTL to 60 seconds or less"
+    ]
+  },
+  {
+    "name": "Auth0 JWT Audience Claim Not Validated",
+    "stride_category": "Elevation of Privilege",
+    "description": "Backend service that skips JWT audience (aud) validation accepts tokens issued for other Auth0 applications, allowing lateral movement between services sharing the same identity provider.",
+    "target": "JWT Validation Middleware",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Validate the 'aud' claim matches the API identifier on every token verification",
+      "Use per-service API identifiers in Auth0, not a shared identifier",
+      "Fail closed on missing or unrecognized audience claims",
+      "Automate token validation with Auth0's official SDK"
+    ]
+  },
+  {
+    "name": "Clerk Webhook Signature Bypass via Replay",
+    "stride_category": "Tampering",
+    "description": "Attacker capturing a valid Clerk webhook with its signature replays the same event multiple times, triggering duplicate user provisioning, role grants, or billing credits if the receiver lacks idempotency checks.",
+    "target": "Clerk Webhook Handler",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Validate Clerk webhook signatures using svix or the Clerk SDK on every request",
+      "Reject webhooks with timestamps older than 5 minutes (included in Clerk headers)",
+      "Store and check webhook event IDs to enforce idempotency",
+      "Return 200 quickly and process events asynchronously to avoid double delivery"
+    ]
+  },
+  {
+    "name": "Magic Link One-Time Token Reuse",
+    "stride_category": "Spoofing",
+    "description": "Email-based magic link implementation that fails to invalidate the token after first use allows an attacker who intercepts the link (via email forwarding, log leakage, or referrer headers) to authenticate as the victim.",
+    "target": "Passwordless Authentication",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Invalidate magic link tokens immediately after first use",
+      "Set token TTL to 10-15 minutes maximum",
+      "Bind the token to the requesting browser's IP or fingerprint",
+      "Send email only over TLS and warn users to keep links private"
+    ]
+  },
+  {
+    "name": "SSO SAML Assertion Signature Wrapping Attack",
+    "stride_category": "Spoofing",
+    "description": "Attacker exploiting a SAML XML Signature Wrapping vulnerability crafts a SAML response that passes signature verification but contains a different assertion body, impersonating any user in the identity provider.",
+    "target": "SAML SSO Integration",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Use a well-maintained SAML library — avoid implementing SAML parsing manually",
+      "Validate the signed element's ID matches what the service provider expects",
+      "Enable strict schema validation on incoming SAML responses",
+      "Pin the IdP certificate and alert on certificate changes"
+    ]
+  },
+  {
+    "name": "Cognito JWT Algorithm Confusion",
+    "stride_category": "Spoofing",
+    "description": "Backend accepting Cognito JWTs without explicitly requiring RS256 algorithm can be exploited with algorithm confusion attacks (e.g., HS256 with the public key as the secret), forging valid tokens.",
+    "target": "Cognito Token Verification",
+    "impact": "Critical",
+    "likelihood": "Low",
+    "mitigations": [
+      "Explicitly specify RS256 (or the configured algorithm) in the JWT library — never use 'auto'",
+      "Verify tokens using Cognito's JWKS endpoint with key pinning",
+      "Reject tokens with unexpected algorithm headers before signature verification",
+      "Use Cognito's own SDK for token verification rather than generic JWT libraries"
+    ]
+  },
+  {
+    "name": "Firebase Firestore Rules Missing Field-Level Restriction",
+    "stride_category": "Information Disclosure",
+    "description": "Firestore security rules granting document-level read access without restricting which fields are exposed allow authenticated users to read sensitive fields (PII, payment info, internal flags) co-located in the same document.",
+    "target": "Firestore Database",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use Firestore's field-level security rules (resource.data.sensitiveField) to restrict access",
+      "Store sensitive data in a separate sub-collection with tighter rules",
+      "Audit document schema to ensure sensitive fields are not co-located with public data",
+      "Use Cloud Functions as a backend layer to filter fields before returning to clients"
+    ]
+  },
+  {
+    "name": "Supabase Service Role Key Exposed in Client Code",
+    "stride_category": "Elevation of Privilege",
+    "description": "Developer embedding the Supabase service role key (which bypasses RLS entirely) in client-side JavaScript or a public repository grants any user superuser-level database access.",
+    "target": "Supabase API Keys",
+    "impact": "Critical",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use only the anon key in client-side code — service role key belongs server-side only",
+      "Rotate service role keys immediately if exposure is suspected",
+      "Add Supabase key patterns to pre-commit secret scanning hooks",
+      "Use environment variables in server deployments, never hardcode in source"
+    ]
+  }
+]

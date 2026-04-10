@@ -57,6 +57,40 @@ _KEYWORD_PATTERNS: list[str] = [
     r"\b(encrypt(?:ion|ed)?|decrypt(?:ion)?|hash(?:ing)?|sign(?:ature)?|key[ -]?management|secret|private[ -]?key|public[ -]?key)\b",
     # Access control
     r"\b(role|permission|privilege|access[ -]?control|rbac|abac|acl|sudo|root)\b",
+    # Managed identity & auth providers
+    r"\b(auth0|clerk|cognito|firebase|supabase|okta|keycloak|identity[ -]?provider|magic[ -]?link|passkey)\b",
+    # ORMs & query builders
+    r"\b(prisma|sqlalchemy|mongoose|drizzle|sequelize|typeorm|hibernate|activerecord|orm)\b",
+    # Cloud messaging & object storage services
+    r"\b(sqs|sns|pub[ -]?sub|pubsub|blob[ -]?storage|gcs|kinesis|eventbridge|event[ -]?hub)\b",
+    # Web frameworks
+    r"\b(django|fastapi|express(?:js)?|rails|next(?:js|[ -]js)?|flask|spring(?:boot)?|laravel|nuxt)\b",
+    # Message brokers & stream processors
+    r"\b(kafka|rabbitmq|redis[ -]?stream|celery|bullmq|sidekiq|nats|pulsar)\b",
+    # Container & IaC infrastructure
+    r"\b(nginx|terraform|helm|istio|envoy|ingress|etcd|vault|consul|ansible)\b",
+    # AI/LLM tooling & vector stores
+    r"\b(langchain|pinecone|weaviate|qdrant|chroma(?:db)?|milvus|vector[ -]?store|vector[ -]?db|embedding[ -]?model)\b",
+    # Serialization, deserialization & data formats
+    r"\b(serial(?:iz(?:ation|e|ed))?|deserializ(?:ation|e|ed)|pickle|protobuf|avro|thrift|msgpack|yaml|xml|json(?:p)?|soap)\b",
+    # Supply chain & dependency management
+    r"\b(npm|pypi|maven|nuget|cargo|gem|package[ -]?lock|dependency|supply[ -]?chain|update[ -]?server|artifact)\b",
+    # Deep link, mobile & URL scheme
+    r"\b(deep[ -]?link|url[ -]?scheme|universal[ -]?link|app[ -]?link|intent|broadcast|webview)\b",
+    # Network & protocol attack surface
+    r"\b(arp|dhcp|bgp|ospf|ntp|snmp|icmp|ssrf|crlf|rfi|lfi|xxe|ssi|dn[s]?[ -]?rebind)\b",
+    # Browser & client-side security
+    r"\b(browser|extension|addon|plugin|iframe|cors|csp|sri|hsts|same[-]?origin|cookie[ -]?flag)\b",
+    # AWS service identifiers (EC2, RDS, EKS, KMS, etc.)
+    r"\b(ec2|rds|eks|ecs|fargate|sagemaker|bedrock|glue|athena|redshift|elasticache|aurora|cloudfront|route53|guardduty|securityhub|cloudtrail|cloudwatch|codecommit|codepipeline|codebuild|codeartifact|kms)\b",
+    # Azure service identifiers (AKS, Entra, Key Vault, Storage Account, etc.)
+    r"\b(aks|entra|app[-\s]?service|key[-\s]?vault|azure[-\s]?sql|azure[-\s]?ad|function[-\s]?app|azure[-\s]?container|azure[-\s]?devops|acr|ado|storage[-\s]?account)\b",
+    # GCP service identifiers (GKE, Cloud SQL, Cloud Storage, Compute Engine, etc.)
+    r"\b(gke|cloud[-\s]?sql|cloud[-\s]?run|cloud[-\s]?function|vertex[-\s]?ai|stackdriver|bigquery|cloud[-\s]?armor|cloud[-\s]?build|cloud[-\s]?spanner|cloud[-\s]?storage|compute[-\s]?engine|compute[-\s]?instance)\b",
+    # CI/CD pipeline security (T1677 Poisoned Pipeline Execution)
+    r"\b(ci[-/]?cd|github[-\s]?action|gitlab[-\s]?ci|jenkins|circleci|travis|buildkite|tekton|argo[-\s]?cd|artifact[-\s]?registry|ecr|ghcr|container[-\s]?registry)\b",
+    # Cloud identity & federation attack surface (T1552.005, T1606.002, T1548.005)
+    r"\b(imds|metadata[-\s]?api|instance[-\s]?metadata|federation|workload[-\s]?identity|oidc[-\s]?token|assume[-\s]?role|cross[-\s]?account|service[-\s]?principal|managed[-\s]?identity)\b",
 ]
 
 
@@ -87,7 +121,24 @@ def _load_seed_patterns() -> list[dict[str, Any]]:
     """
     all_patterns: list[dict[str, Any]] = []
 
-    for filename in ("stride_patterns.json", "maestro_patterns.json", "owasp_llm_top10.json"):
+    for filename in (
+        "stride_patterns.json",
+        "maestro_patterns.json",
+        "owasp_llm_top10.json",
+        "auth_provider_patterns.json",
+        "orm_patterns.json",
+        "cloud_service_patterns.json",
+        "framework_patterns.json",
+        "message_broker_patterns.json",
+        "infrastructure_patterns.json",
+        "ai_llm_patterns.json",
+        "capec_patterns.json",
+        "aws_prowler_patterns.json",
+        "azure_prowler_patterns.json",
+        "gcp_prowler_patterns.json",
+        "attack_cloud_patterns.json",
+        "atlas_patterns.json",
+    ):
         path = SEEDS_DIR / filename
         if not path.exists():
             logger.warning(f"Seed file not found: {path}")

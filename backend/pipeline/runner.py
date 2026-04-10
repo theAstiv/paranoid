@@ -17,7 +17,7 @@ from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
-from backend.providers.base import LLMProvider
+from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
 
@@ -88,7 +88,7 @@ class PipelineResult:
     threats: ThreatsList
     iterations_completed: int
     total_duration_seconds: float
-    stopped_reason: str  # "max_iterations" | "gap_satisfied" | "timeout"
+    stopped_reason: str  # "max_iterations" | "gap_satisfied" | "timeout" | "provider_offline"
 
 
 class PipelineRunner:
@@ -144,124 +144,159 @@ class PipelineRunner:
         """
         self.start_time = datetime.now()
 
-        try:
-            # Step 1: Summarize (+ code summarization if code context provided)
-            yield PipelineEvent(
-                step=PipelineStep.SUMMARIZE,
-                status="started",
-                message="Generating system summary...",
-            )
+        # Iteration state is initialized here (not inside the try) so that a
+        # ProviderError in the pre-loop steps can still fall through to the rule
+        # engine and complete event with sensible defaults.
+        provider_failed = False
+        current_threats: ThreatsList | None = None
+        cumulative_threats = ThreatsList(threats=[])
+        iteration = 1
+        iterations_completed = 0
+        stopped_reason = "max_iterations"
+        gaps: list[str] = []
+        code_summary = None
 
-            # Run summarize() and summarize_code() concurrently if code available
-            if code_context:
-                summary, code_summary = await asyncio.gather(
-                    nodes.summarize(
+        try:
+            # Steps 1-3: Summarize, Extract Assets, Extract Flows.
+            # A ProviderError here means the LLM is completely unreachable.
+            # Catch it before it propagates to the outer handler so the pipeline
+            # can continue in rule-engine-only mode.
+            try:
+                # Step 1: Summarize (+ code summarization if code context provided)
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE,
+                    status="started",
+                    message="Generating system summary...",
+                )
+
+                # Run summarize() and summarize_code() concurrently if code available
+                if code_context:
+                    summary, code_summary = await asyncio.gather(
+                        nodes.summarize(
+                            description=description,
+                            architecture_diagram=architecture_diagram,
+                            assumptions=assumptions,
+                            code_context=code_context,
+                            provider=self.provider,
+                            diagram_data=diagram_data,
+                            temperature=self.config.temperature,
+                        ),
+                        nodes.summarize_code(
+                            code_context=code_context,
+                            provider=self.provider,
+                            temperature=self.config.temperature,
+                        ),
+                    )
+
+                    yield PipelineEvent(
+                        step=PipelineStep.SUMMARIZE,
+                        status="completed",
+                        message=f"Summary generated: {len(summary.summary)} chars",
+                        data={"summary": summary.summary},
+                    )
+
+                    yield PipelineEvent(
+                        step=PipelineStep.SUMMARIZE_CODE,
+                        status="completed",
+                        message=f"Code summary: {len(code_summary.tech_stack)} technologies, {len(code_summary.entry_points)} entry points",
+                        data={
+                            "tech_stack": code_summary.tech_stack,
+                            "entry_points": code_summary.entry_points,
+                            "code_summary": code_summary,
+                        },
+                    )
+                else:
+                    summary = await nodes.summarize(
                         description=description,
                         architecture_diagram=architecture_diagram,
                         assumptions=assumptions,
-                        code_context=code_context,
+                        code_context=None,
                         provider=self.provider,
                         diagram_data=diagram_data,
                         temperature=self.config.temperature,
-                    ),
-                    nodes.summarize_code(
-                        code_context=code_context,
-                        provider=self.provider,
-                        temperature=self.config.temperature,
-                    ),
+                    )
+                    code_summary = None
+
+                    yield PipelineEvent(
+                        step=PipelineStep.SUMMARIZE,
+                        status="completed",
+                        message=f"Summary generated: {len(summary.summary)} chars",
+                        data={"summary": summary.summary},
+                    )
+
+                # Step 2: Extract Assets
+                yield PipelineEvent(
+                    step=PipelineStep.EXTRACT_ASSETS,
+                    status="started",
+                    message="Identifying assets and entities...",
                 )
 
-                yield PipelineEvent(
-                    step=PipelineStep.SUMMARIZE,
-                    status="completed",
-                    message=f"Summary generated: {len(summary.summary)} chars",
-                    data={"summary": summary.summary},
-                )
-
-                yield PipelineEvent(
-                    step=PipelineStep.SUMMARIZE_CODE,
-                    status="completed",
-                    message=f"Code summary: {len(code_summary.tech_stack)} technologies, {len(code_summary.entry_points)} entry points",
-                    data={
-                        "tech_stack": code_summary.tech_stack,
-                        "entry_points": code_summary.entry_points,
-                        "code_summary": code_summary,
-                    },
-                )
-            else:
-                summary = await nodes.summarize(
+                assets = await nodes.extract_assets(
+                    summary=summary.summary,
                     description=description,
                     architecture_diagram=architecture_diagram,
                     assumptions=assumptions,
-                    code_context=None,
+                    framework=framework,
                     provider=self.provider,
-                    diagram_data=diagram_data,
                     temperature=self.config.temperature,
+                    code_summary=code_summary,
+                    diagram_data=diagram_data,
                 )
-                code_summary = None
 
                 yield PipelineEvent(
-                    step=PipelineStep.SUMMARIZE,
+                    step=PipelineStep.EXTRACT_ASSETS,
                     status="completed",
-                    message=f"Summary generated: {len(summary.summary)} chars",
-                    data={"summary": summary.summary},
+                    message=f"Identified {len(assets.assets)} assets/entities",
+                    data={"asset_count": len(assets.assets), "assets": assets},
                 )
 
-            # Step 2: Extract Assets
-            yield PipelineEvent(
-                step=PipelineStep.EXTRACT_ASSETS,
-                status="started",
-                message="Identifying assets and entities...",
-            )
+                # Step 3: Extract Flows
+                yield PipelineEvent(
+                    step=PipelineStep.EXTRACT_FLOWS,
+                    status="started",
+                    message="Extracting data flows and trust boundaries...",
+                )
 
-            assets = await nodes.extract_assets(
-                summary=summary.summary,
-                description=description,
-                architecture_diagram=architecture_diagram,
-                assumptions=assumptions,
-                framework=framework,
-                provider=self.provider,
-                temperature=self.config.temperature,
-                code_summary=code_summary,
-                diagram_data=diagram_data,
-            )
+                flows = await nodes.extract_flows(
+                    summary=summary.summary,
+                    description=description,
+                    architecture_diagram=architecture_diagram,
+                    assumptions=assumptions,
+                    assets=assets,
+                    provider=self.provider,
+                    temperature=self.config.temperature,
+                    code_summary=code_summary,
+                    diagram_data=diagram_data,
+                )
 
-            yield PipelineEvent(
-                step=PipelineStep.EXTRACT_ASSETS,
-                status="completed",
-                message=f"Identified {len(assets.assets)} assets/entities",
-                data={"asset_count": len(assets.assets), "assets": assets},
-            )
+                yield PipelineEvent(
+                    step=PipelineStep.EXTRACT_FLOWS,
+                    status="completed",
+                    message=f"Identified {len(flows.data_flows)} flows, {len(flows.trust_boundaries)} boundaries",
+                    data={
+                        "flow_count": len(flows.data_flows),
+                        "boundary_count": len(flows.trust_boundaries),
+                        "flows": flows,
+                    },
+                )
 
-            # Step 3: Extract Flows
-            yield PipelineEvent(
-                step=PipelineStep.EXTRACT_FLOWS,
-                status="started",
-                message="Extracting data flows and trust boundaries...",
-            )
-
-            flows = await nodes.extract_flows(
-                summary=summary.summary,
-                description=description,
-                architecture_diagram=architecture_diagram,
-                assumptions=assumptions,
-                assets=assets,
-                provider=self.provider,
-                temperature=self.config.temperature,
-                code_summary=code_summary,
-                diagram_data=diagram_data,
-            )
-
-            yield PipelineEvent(
-                step=PipelineStep.EXTRACT_FLOWS,
-                status="completed",
-                message=f"Identified {len(flows.data_flows)} flows, {len(flows.trust_boundaries)} boundaries",
-                data={
-                    "flow_count": len(flows.data_flows),
-                    "boundary_count": len(flows.trust_boundaries),
-                    "flows": flows,
-                },
-            )
+            except ProviderError as e:
+                # LLM provider is offline — degrade gracefully to rule-engine-only.
+                # Use the original description as a minimal summary so the rule
+                # engine still has text to match keywords against.
+                provider_failed = True
+                stopped_reason = "provider_offline"
+                summary = SummaryState(summary=description)
+                assets = AssetsList(assets=[])
+                flows = FlowsList(data_flows=[], trust_boundaries=[], threat_sources=[])
+                yield PipelineEvent(
+                    step=PipelineStep.RULE_ENGINE,
+                    status="info",
+                    message=(
+                        f"LLM provider unavailable ({e}) — switching to rule-engine-only mode"
+                    ),
+                    data={"error": str(e)},
+                )
 
             # Step 4: Iterative Threat Generation
             # Iteration semantics:
@@ -271,252 +306,309 @@ class PipelineRunner:
             # - cumulative_threats = all threats from all iterations
             # - existing_threats passed to LLM = cumulative from previous iterations
             # - Gap analysis uses cumulative to assess full coverage
-            current_threats: ThreatsList | None = None
-            cumulative_threats = ThreatsList(threats=[])  # Track all threats across iterations
-            iteration = 1
-            iterations_completed = 0  # Track completed iterations (avoids off-by-one on early exit)
-            stopped_reason = "max_iterations"
-            gaps: list[str] = []
-
-            while iteration <= self.config.max_iterations:
-                # Check time limit
-                if self._check_time_limit():
-                    yield PipelineEvent(
-                        step=PipelineStep.ITERATE,
-                        status="info",
-                        message=f"Time limit reached after {iterations_completed} iterations",
-                        iteration=iteration,
-                    )
-                    stopped_reason = "timeout"
-                    break
-
-                # Generate threats
-                # If has_ai_components=True and framework=STRIDE, run both STRIDE and MAESTRO
-                if self.config.has_ai_components and framework == Framework.STRIDE:
-                    # Dual framework execution
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="started",
-                        message=f"Generating STRIDE threats (iteration {iteration}/{self.config.max_iterations})...",
-                        iteration=iteration,
-                    )
-
-                    if self.config.enable_rag:
-                        assets_text = " ".join(a.name for a in assets.assets)
-                        rag_context = await fetch_rag_context(description, assets_text=assets_text)
-                    else:
-                        rag_context = None
-
-                    # Generate STRIDE threats
-                    stride_threats = await nodes.generate_threats(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        assets=assets,
-                        flows=flows,
-                        framework=Framework.STRIDE,
-                        provider=self.provider,
-                        existing_threats=current_threats if iteration > 1 else None,
-                        gap_analysis=gaps[-1] if gaps else None,
-                        rag_context=rag_context,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
-                    )
-
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="completed",
-                        message=f"Generated {len(stride_threats.threats)} STRIDE threats",
-                        iteration=iteration,
-                        data={
-                            "threat_count": len(stride_threats.threats),
-                            "framework": "STRIDE",
-                            "threats": stride_threats,
-                        },
-                    )
-
-                    # Generate MAESTRO threats for AI/ML components
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="started",
-                        message=f"Generating MAESTRO threats for AI/ML components (iteration {iteration}/{self.config.max_iterations})...",
-                        iteration=iteration,
-                    )
-
-                    maestro_threats = await nodes.generate_threats(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        assets=assets,
-                        flows=flows,
-                        framework=Framework.MAESTRO,
-                        provider=self.provider,
-                        existing_threats=None,  # MAESTRO threats are separate
-                        gap_analysis=gaps[-1] if gaps else None,
-                        rag_context=rag_context,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
-                    )
-
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="completed",
-                        message=f"Generated {len(maestro_threats.threats)} MAESTRO threats",
-                        iteration=iteration,
-                        data={
-                            "threat_count": len(maestro_threats.threats),
-                            "framework": "MAESTRO",
-                            "threats": maestro_threats,
-                        },
-                    )
-
-                    # Merge and deduplicate across frameworks
-                    combined = stride_threats + maestro_threats
-                    dedup_result = deduplicate_threats(
-                        combined,
-                        threshold=self.config.similarity_threshold,
-                    )
-                    current_threats = dedup_result.threats
-
-                    if dedup_result.removed_count > 0:
+            if not provider_failed:
+                while iteration <= self.config.max_iterations:
+                    # Check time limit
+                    if self._check_time_limit():
                         yield PipelineEvent(
-                            step=PipelineStep.GENERATE_THREATS,
+                            step=PipelineStep.ITERATE,
                             status="info",
-                            message=f"Removed {dedup_result.removed_count} cross-framework duplicates",
+                            message=f"Time limit reached after {iterations_completed} iterations",
                             iteration=iteration,
-                            data={"duplicates_removed": dedup_result.removed_count},
                         )
-
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="info",
-                        message=f"Combined {len(current_threats.threats)} new threats (STRIDE + MAESTRO)",
-                        iteration=iteration,
-                        data={
-                            "threat_count": len(current_threats.threats),
-                            "threats": current_threats,
-                            "framework": "COMBINED",
-                        },
-                    )
-                else:
-                    # Single framework execution
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="started",
-                        message=f"Generating threats (iteration {iteration}/{self.config.max_iterations})...",
-                        iteration=iteration,
-                    )
-
-                    if self.config.enable_rag:
-                        assets_text = " ".join(a.name for a in assets.assets)
-                        rag_context = await fetch_rag_context(description, assets_text=assets_text)
-                    else:
-                        rag_context = None
-
-                    current_threats = await nodes.generate_threats(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        assets=assets,
-                        flows=flows,
-                        framework=framework,
-                        provider=self.provider,
-                        existing_threats=current_threats if iteration > 1 else None,
-                        gap_analysis=gaps[-1] if gaps else None,
-                        rag_context=rag_context,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
-                    )
-
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="completed",
-                        message=f"Generated {len(current_threats.threats)} new threats",
-                        iteration=iteration,
-                        data={
-                            "threat_count": len(current_threats.threats),
-                            "threats": current_threats,
-                        },
-                    )
-
-                # Deduplicate against cumulative threats from prior iterations
-                if iteration > 1:
-                    dedup_result = deduplicate_threats(
-                        current_threats,
-                        existing_threats=cumulative_threats,
-                        threshold=self.config.similarity_threshold,
-                    )
-                    cumulative_threats.threats.extend(dedup_result.threats.threats)
-                    if dedup_result.removed_count > 0:
-                        yield PipelineEvent(
-                            step=PipelineStep.GENERATE_THREATS,
-                            status="info",
-                            message=f"Removed {dedup_result.removed_count} cross-iteration duplicates",
-                            iteration=iteration,
-                            data={"duplicates_removed": dedup_result.removed_count},
-                        )
-                else:
-                    cumulative_threats.threats.extend(current_threats.threats)
-                iterations_completed = iteration  # Track before potential break in gap analysis
-
-                # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
-                if iteration > 1:
-                    yield PipelineEvent(
-                        step=PipelineStep.GENERATE_THREATS,
-                        status="info",
-                        message=f"Total threats across all iterations: {len(cumulative_threats.threats)}",
-                        iteration=iteration,
-                        data={"cumulative_threat_count": len(cumulative_threats.threats)},
-                    )
-
-                # Gap Analysis (only if not final iteration)
-                if iteration < self.config.max_iterations:
-                    yield PipelineEvent(
-                        step=PipelineStep.GAP_ANALYSIS,
-                        status="started",
-                        message="Analyzing threat coverage gaps...",
-                        iteration=iteration,
-                    )
-
-                    gap_result = await nodes.gap_analysis(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        assets=assets,
-                        flows=flows,
-                        threats=cumulative_threats,
-                        framework=framework,
-                        provider=self.provider,
-                        previous_gaps=gaps,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
-                    )
-
-                    if gap_result.stop:
-                        yield PipelineEvent(
-                            step=PipelineStep.GAP_ANALYSIS,
-                            status="completed",
-                            message="Gap analysis satisfied - stopping iterations",
-                            iteration=iteration,
-                            data={"stop": True, "gap": gap_result.gap},
-                        )
-                        stopped_reason = "gap_satisfied"
+                        stopped_reason = "timeout"
                         break
-                    else:
-                        gaps.append(gap_result.gap)
+
+                    # Generate threats
+                    # If has_ai_components=True and framework=STRIDE, run both STRIDE and MAESTRO
+                    if self.config.has_ai_components and framework == Framework.STRIDE:
+                        # Dual framework execution
                         yield PipelineEvent(
-                            step=PipelineStep.GAP_ANALYSIS,
-                            status="completed",
-                            message=f"Gap identified: {gap_result.gap[:100]}...",
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="started",
+                            message=f"Generating STRIDE threats (iteration {iteration}/{self.config.max_iterations})...",
                             iteration=iteration,
-                            data={"stop": False, "gap": gap_result.gap},
                         )
 
-                iteration += 1
+                        if self.config.enable_rag:
+                            assets_text = " ".join(a.name for a in assets.assets)
+                            rag_context = await fetch_rag_context(
+                                description, assets_text=assets_text
+                            )
+                        else:
+                            rag_context = None
+
+                        # Generate STRIDE threats
+                        try:
+                            stride_threats = await nodes.generate_threats(
+                                description=description,
+                                architecture_diagram=architecture_diagram,
+                                assumptions=assumptions,
+                                assets=assets,
+                                flows=flows,
+                                framework=Framework.STRIDE,
+                                provider=self.provider,
+                                existing_threats=current_threats if iteration > 1 else None,
+                                gap_analysis=gaps[-1] if gaps else None,
+                                rag_context=rag_context,
+                                temperature=self.config.temperature,
+                                code_summary=code_summary,
+                                diagram_data=diagram_data,
+                            )
+                        except ProviderError as e:
+                            provider_failed = True
+                            stopped_reason = "provider_offline"
+                            yield PipelineEvent(
+                                step=PipelineStep.RULE_ENGINE,
+                                status="info",
+                                message=(
+                                    f"LLM provider unavailable after {iterations_completed} completed "
+                                    f"iteration(s) ({e}) — switching to rule-engine-only mode"
+                                ),
+                                data={"error": str(e)},
+                            )
+                            break
+
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="completed",
+                            message=f"Generated {len(stride_threats.threats)} STRIDE threats",
+                            iteration=iteration,
+                            data={
+                                "threat_count": len(stride_threats.threats),
+                                "framework": "STRIDE",
+                                "threats": stride_threats,
+                            },
+                        )
+
+                        # Generate MAESTRO threats for AI/ML components
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="started",
+                            message=f"Generating MAESTRO threats for AI/ML components (iteration {iteration}/{self.config.max_iterations})...",
+                            iteration=iteration,
+                        )
+
+                        try:
+                            maestro_threats = await nodes.generate_threats(
+                                description=description,
+                                architecture_diagram=architecture_diagram,
+                                assumptions=assumptions,
+                                assets=assets,
+                                flows=flows,
+                                framework=Framework.MAESTRO,
+                                provider=self.provider,
+                                existing_threats=None,  # MAESTRO threats are separate
+                                gap_analysis=gaps[-1] if gaps else None,
+                                rag_context=rag_context,
+                                temperature=self.config.temperature,
+                                code_summary=code_summary,
+                                diagram_data=diagram_data,
+                            )
+                        except ProviderError as e:
+                            provider_failed = True
+                            stopped_reason = "provider_offline"
+                            # Preserve STRIDE threats from this iteration before yielding
+                            # so the event stream is monotonic (state updated, then announced).
+                            cumulative_threats.threats.extend(stride_threats.threats)
+                            yield PipelineEvent(
+                                step=PipelineStep.RULE_ENGINE,
+                                status="info",
+                                message=(
+                                    f"LLM provider unavailable after {iterations_completed} completed "
+                                    f"iteration(s) ({e}) — switching to rule-engine-only mode"
+                                ),
+                                data={"error": str(e)},
+                            )
+                            break
+
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="completed",
+                            message=f"Generated {len(maestro_threats.threats)} MAESTRO threats",
+                            iteration=iteration,
+                            data={
+                                "threat_count": len(maestro_threats.threats),
+                                "framework": "MAESTRO",
+                                "threats": maestro_threats,
+                            },
+                        )
+
+                        # Merge and deduplicate across frameworks
+                        combined = stride_threats + maestro_threats
+                        dedup_result = deduplicate_threats(
+                            combined,
+                            threshold=self.config.similarity_threshold,
+                        )
+                        current_threats = dedup_result.threats
+
+                        if dedup_result.removed_count > 0:
+                            yield PipelineEvent(
+                                step=PipelineStep.GENERATE_THREATS,
+                                status="info",
+                                message=f"Removed {dedup_result.removed_count} cross-framework duplicates",
+                                iteration=iteration,
+                                data={"duplicates_removed": dedup_result.removed_count},
+                            )
+
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="info",
+                            message=f"Combined {len(current_threats.threats)} new threats (STRIDE + MAESTRO)",
+                            iteration=iteration,
+                            data={
+                                "threat_count": len(current_threats.threats),
+                                "threats": current_threats,
+                                "framework": "COMBINED",
+                            },
+                        )
+                    else:
+                        # Single framework execution
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="started",
+                            message=f"Generating threats (iteration {iteration}/{self.config.max_iterations})...",
+                            iteration=iteration,
+                        )
+
+                        if self.config.enable_rag:
+                            assets_text = " ".join(a.name for a in assets.assets)
+                            rag_context = await fetch_rag_context(
+                                description, assets_text=assets_text
+                            )
+                        else:
+                            rag_context = None
+
+                        try:
+                            current_threats = await nodes.generate_threats(
+                                description=description,
+                                architecture_diagram=architecture_diagram,
+                                assumptions=assumptions,
+                                assets=assets,
+                                flows=flows,
+                                framework=framework,
+                                provider=self.provider,
+                                existing_threats=current_threats if iteration > 1 else None,
+                                gap_analysis=gaps[-1] if gaps else None,
+                                rag_context=rag_context,
+                                temperature=self.config.temperature,
+                                code_summary=code_summary,
+                                diagram_data=diagram_data,
+                            )
+                        except ProviderError as e:
+                            provider_failed = True
+                            stopped_reason = "provider_offline"
+                            yield PipelineEvent(
+                                step=PipelineStep.RULE_ENGINE,
+                                status="info",
+                                message=(
+                                    f"LLM provider unavailable after {iterations_completed} completed "
+                                    f"iteration(s) ({e}) — switching to rule-engine-only mode"
+                                ),
+                                data={"error": str(e)},
+                            )
+                            break
+
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="completed",
+                            message=f"Generated {len(current_threats.threats)} new threats",
+                            iteration=iteration,
+                            data={
+                                "threat_count": len(current_threats.threats),
+                                "threats": current_threats,
+                            },
+                        )
+
+                    # Deduplicate against cumulative threats from prior iterations
+                    if iteration > 1:
+                        dedup_result = deduplicate_threats(
+                            current_threats,
+                            existing_threats=cumulative_threats,
+                            threshold=self.config.similarity_threshold,
+                        )
+                        cumulative_threats.threats.extend(dedup_result.threats.threats)
+                        if dedup_result.removed_count > 0:
+                            yield PipelineEvent(
+                                step=PipelineStep.GENERATE_THREATS,
+                                status="info",
+                                message=f"Removed {dedup_result.removed_count} cross-iteration duplicates",
+                                iteration=iteration,
+                                data={"duplicates_removed": dedup_result.removed_count},
+                            )
+                    else:
+                        cumulative_threats.threats.extend(current_threats.threats)
+                    iterations_completed = iteration  # Track before potential break in gap analysis
+
+                    # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
+                    if iteration > 1:
+                        yield PipelineEvent(
+                            step=PipelineStep.GENERATE_THREATS,
+                            status="info",
+                            message=f"Total threats across all iterations: {len(cumulative_threats.threats)}",
+                            iteration=iteration,
+                            data={"cumulative_threat_count": len(cumulative_threats.threats)},
+                        )
+
+                    # Gap Analysis (only if not final iteration)
+                    if iteration < self.config.max_iterations:
+                        yield PipelineEvent(
+                            step=PipelineStep.GAP_ANALYSIS,
+                            status="started",
+                            message="Analyzing threat coverage gaps...",
+                            iteration=iteration,
+                        )
+
+                        try:
+                            gap_result = await nodes.gap_analysis(
+                                description=description,
+                                architecture_diagram=architecture_diagram,
+                                assumptions=assumptions,
+                                assets=assets,
+                                flows=flows,
+                                threats=cumulative_threats,
+                                framework=framework,
+                                provider=self.provider,
+                                previous_gaps=gaps,
+                                temperature=self.config.temperature,
+                                code_summary=code_summary,
+                                diagram_data=diagram_data,
+                            )
+                        except ProviderError as e:
+                            provider_failed = True
+                            stopped_reason = "provider_offline"
+                            yield PipelineEvent(
+                                step=PipelineStep.RULE_ENGINE,
+                                status="info",
+                                message=(
+                                    f"LLM provider unavailable during gap analysis ({e}) — "
+                                    "switching to rule-engine-only mode"
+                                ),
+                                data={"error": str(e)},
+                            )
+                            break
+
+                        if gap_result.stop:
+                            yield PipelineEvent(
+                                step=PipelineStep.GAP_ANALYSIS,
+                                status="completed",
+                                message="Gap analysis satisfied - stopping iterations",
+                                iteration=iteration,
+                                data={"stop": True, "gap": gap_result.gap},
+                            )
+                            stopped_reason = "gap_satisfied"
+                            break
+                        else:
+                            gaps.append(gap_result.gap)
+                            yield PipelineEvent(
+                                step=PipelineStep.GAP_ANALYSIS,
+                                status="completed",
+                                message=f"Gap identified: {gap_result.gap[:100]}...",
+                                iteration=iteration,
+                                data={"stop": False, "gap": gap_result.gap},
+                            )
+
+                    iteration += 1
 
             # Rule engine pass: run deterministic pattern matching and merge
             # unique findings into cumulative_threats. Runs regardless of LLM success

@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Kafka Topic Data Transmitted Without Encryption",
+    "stride_category": "Information Disclosure",
+    "description": "Kafka cluster configured without TLS on broker-to-client and broker-to-broker connections transmits messages in plaintext, allowing network-level attackers or compromised internal hosts to intercept sensitive event data in transit.",
+    "target": "Apache Kafka Cluster",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable TLS on all Kafka listeners (ssl.endpoint.identification.algorithm=https)",
+      "Configure inter-broker encryption with SSL keystores",
+      "Use client certificate authentication alongside TLS to prevent unauthorized connections",
+      "Rotate TLS certificates annually with automated tooling"
+    ]
+  },
+  {
+    "name": "Kafka Missing Topic-Level ACLs Allowing Unauthorized Reads",
+    "stride_category": "Information Disclosure",
+    "description": "Kafka cluster with no topic ACLs or with PLAINTEXT JAAS configuration allows any consumer group to subscribe to any topic, enabling unauthorized services to read sensitive event streams (PII, financial transactions, audit logs).",
+    "target": "Kafka Access Control",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable Kafka's ACL authorization (authorizer.class.name=kafka.security.auth.SimpleAclAuthorizer)",
+      "Define per-topic ACLs with minimum-necessary consumer groups",
+      "Use SASL/SCRAM or mTLS for client authentication before applying ACLs",
+      "Audit Kafka ACLs quarterly and remove stale consumer permissions"
+    ]
+  },
+  {
+    "name": "RabbitMQ Default Credentials on Management Interface",
+    "stride_category": "Spoofing",
+    "description": "RabbitMQ instance deployed with default credentials (guest/guest) on the management interface allows unauthenticated attackers to gain full administrative access, publish malicious messages, consume queues, and reconfigure the broker.",
+    "target": "RabbitMQ Management API",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Disable the guest account or change its password immediately on deployment",
+      "Restrict management interface access to internal network or VPN only",
+      "Use dedicated application credentials with minimum-necessary virtual host permissions",
+      "Enable TLS on the management interface and AMQP ports"
+    ]
+  },
+  {
+    "name": "RabbitMQ Vhost Misconfiguration Enabling Cross-Tenant Message Access",
+    "stride_category": "Elevation of Privilege",
+    "description": "Multi-tenant application using a single RabbitMQ vhost for all tenants with insufficiently scoped exchange/queue permissions allows one tenant's consumer to bind to another tenant's queue and read their messages.",
+    "target": "RabbitMQ Virtual Hosts",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Use separate RabbitMQ virtual hosts per tenant for strong isolation",
+      "Apply per-queue write and read permissions using RabbitMQ's user permission model",
+      "Prefix queue and exchange names with tenant identifiers to make confusion visible",
+      "Audit RabbitMQ permissions with rabbitmqctl list_permissions on each vhost"
+    ]
+  },
+  {
+    "name": "Redis No Authentication Allowing Unauthenticated Access",
+    "stride_category": "Spoofing",
+    "description": "Redis instance running without the requirepass configuration or without ACL authentication allows any host with network connectivity to read, write, or delete all keys, including session tokens, cached credentials, and application state.",
+    "target": "Redis Cache/Queue",
+    "impact": "Critical",
+    "likelihood": "High",
+    "mitigations": [
+      "Set requirepass or use Redis ACL (Redis 6+) with a strong password on all instances",
+      "Bind Redis to localhost or a private interface — never expose to public internet",
+      "Use Redis TLS mode (tls-port) for in-transit protection",
+      "Enable Redis protected-mode to reject external connections without credentials"
+    ]
+  },
+  {
+    "name": "Redis Stream Consumer Group Manipulation",
+    "stride_category": "Tampering",
+    "description": "Attacker with write access to Redis (via a compromised service or misconfigured ACL) manipulates consumer group offsets using XGROUP SETID, causing legitimate consumers to skip processing messages or reprocess already-handled events.",
+    "target": "Redis Streams Consumer Group",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Apply Redis ACL rules to restrict XGROUP SETID and XDEL to privileged admin accounts only",
+      "Monitor consumer group lag with Redis XINFO GROUPS and alert on unexpected resets",
+      "Implement idempotent message handlers that safely handle duplicate delivery",
+      "Log all Redis admin commands using Redis MONITOR in audit mode"
+    ]
+  },
+  {
+    "name": "Kafka Consumer Group Offset Manipulation",
+    "stride_category": "Tampering",
+    "description": "Attacker with Kafka admin privileges using kafka-consumer-groups.sh to reset offsets causes consumers to reprocess historical events or skip future events, disrupting data pipelines, billing systems, or audit trails.",
+    "target": "Kafka Consumer Groups",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Restrict KAFKA_ADMIN_ACTIONS permissions to dedicated operations accounts via ACLs",
+      "Require peer approval and audit logging for all offset reset operations",
+      "Alert on consumer group offset resets via Kafka metrics or a monitoring sidecar",
+      "Implement idempotent event processing to tolerate occasional redelivery"
+    ]
+  },
+  {
+    "name": "RabbitMQ Queue Flooding by Unthrottled Publisher",
+    "stride_category": "Denial of Service",
+    "description": "Publisher application without rate limiting or backpressure handling floods RabbitMQ queues with millions of messages, exhausting broker memory and disk, causing the broker to block connections and drop messages from all producers.",
+    "target": "RabbitMQ Message Broker",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Configure RabbitMQ memory and disk watermarks to activate publisher backpressure",
+      "Set per-queue message count or byte limits using queue arguments",
+      "Implement application-level rate limiting on publishers before enqueueing",
+      "Use lazy queues to page messages to disk and reduce broker memory pressure"
+    ]
+  },
+  {
+    "name": "Redis Keyspace Notification Leaking Sensitive Event Data",
+    "stride_category": "Information Disclosure",
+    "description": "Redis keyspace notifications enabled without ACL controls allow any subscriber to listen for key operations on sensitive namespaces (session:*, secret:*), inferring user activity patterns and potentially capturing key names containing sensitive identifiers.",
+    "target": "Redis Keyspace Notifications",
+    "impact": "Medium",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Disable Redis keyspace notifications unless explicitly required (notify-keyspace-events '')",
+      "Use ACL rules to restrict SUBSCRIBE and PSUBSCRIBE to authorized services only",
+      "Avoid encoding sensitive data in key names — use opaque identifiers",
+      "Monitor keyspace notification subscriber count and alert on unexpected subscribers"
+    ]
+  },
+  {
+    "name": "Kafka Schema Registry Unauthenticated Access",
+    "stride_category": "Tampering",
+    "description": "Confluent Schema Registry deployed without authentication allows any client to register malformed or malicious schemas, causing producers to serialize incompatible messages and consumers to crash on deserialization, disrupting data pipelines.",
+    "target": "Kafka Schema Registry",
+    "impact": "High",
+    "likelihood": "Medium",
+    "mitigations": [
+      "Enable Schema Registry authentication with HTTP Basic or OAuth2",
+      "Apply schema compatibility rules (FORWARD, BACKWARD, FULL) to prevent breaking changes",
+      "Restrict schema registration to CI/CD pipelines with dedicated service accounts",
+      "Monitor Schema Registry audit logs for unexpected schema registrations"
+    ]
+  },
+  {
+    "name": "RabbitMQ Shovel Plugin SSRF",
+    "stride_category": "Elevation of Privilege",
+    "description": "Attacker with RabbitMQ management API access configures the Shovel plugin to forward messages to an attacker-controlled AMQP endpoint, exfiltrating message content, or uses the shovel to probe internal AMQP services via SSRF.",
+    "target": "RabbitMQ Shovel Plugin",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Restrict shovel configuration to admin-only operations and require MFA for admin access",
+      "Use RabbitMQ's network partitioning settings to limit outbound connections from the broker",
+      "Audit shovel definitions via rabbitmqctl list_parameters and alert on new additions",
+      "Disable the Shovel plugin if dynamic message forwarding is not a business requirement"
+    ]
+  },
+  {
+    "name": "Redis Persistence Without Encryption at Rest",
+    "stride_category": "Information Disclosure",
+    "description": "Redis instance with RDB or AOF persistence enabled without filesystem encryption stores snapshots and append-only logs in plaintext on disk, exposing all cached data (session tokens, API keys, PII) if the disk or backup is compromised.",
+    "target": "Redis Persistence Layer",
+    "impact": "High",
+    "likelihood": "Low",
+    "mitigations": [
+      "Enable full-disk encryption (LUKS, BitLocker) on Redis data volumes",
+      "Encrypt Redis RDB/AOF files at rest using a dedicated encryption layer if full-disk encryption is unavailable",
+      "Store Redis snapshots in encrypted S3 buckets or GCS with server-side encryption",
+      "Treat Redis backups with the same sensitivity as database backups"
+    ]
+  }
+]
