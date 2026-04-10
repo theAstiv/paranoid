@@ -7,7 +7,7 @@ Collects events from the async generator and asserts step ordering and data.
 import pytest
 
 from backend.models.enums import Framework
-from backend.models.state import ThreatsList
+from backend.models.state import GapAnalysis, SummaryState, ThreatsList
 from backend.pipeline.runner import (
     PipelineConfig,
     PipelineEvent,
@@ -154,15 +154,104 @@ async def test_runner_emits_threat_count_in_events():
 
 
 @pytest.mark.asyncio
-async def test_runner_handles_provider_error():
-    """Provider error during pipeline should yield a failed COMPLETE event."""
+async def test_runner_provider_error_during_threats_degrades_gracefully():
+    """ProviderError during threat generation degrades to rule-engine-only mode.
+
+    Before the offline-fallback fix, this propagated as an exception. Now the
+    pipeline catches it, emits a warning info event, and completes normally with
+    stopped_reason='provider_offline'.
+    """
     provider = MockProvider()
     provider.error_types.add(ThreatsList)  # Fail on threat generation
     config = PipelineConfig(max_iterations=1)
     runner = PipelineRunner(provider=provider, config=config, model_id="test-error")
 
-    with pytest.raises(ProviderError):
-        await _collect_events(runner, "A web app", Framework.STRIDE)
+    events = await _collect_events(runner, "A web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.status == "completed"
+    assert complete.data["stopped_reason"] == "provider_offline"
+    assert complete.data["iterations_completed"] == 0
+
+    # A warning info event should mention the offline fallback
+    info_events = [e for e in events if e.status == "info" and e.step == PipelineStep.RULE_ENGINE]
+    assert any("rule-engine-only" in e.message for e in info_events)
+
+
+@pytest.mark.asyncio
+async def test_runner_provider_error_before_loop_skips_llm_steps():
+    """ProviderError during summarize skips all LLM steps, jumps to rule engine."""
+    provider = MockProvider()
+    provider.error_types.add(SummaryState)  # Fail at the very first LLM call
+    config = PipelineConfig(max_iterations=2)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-pre-loop")
+
+    events = await _collect_events(runner, "A payment processing service", Framework.STRIDE)
+
+    # No threat generation or gap analysis events — LLM was offline from step 1
+    assert not any(e.step == PipelineStep.GENERATE_THREATS for e in events)
+    assert not any(e.step == PipelineStep.GAP_ANALYSIS for e in events)
+
+    # Rule engine should still have run
+    assert any(e.step == PipelineStep.RULE_ENGINE and e.status == "completed" for e in events)
+
+    complete = events[-1]
+    assert complete.status == "completed"
+    assert complete.data["stopped_reason"] == "provider_offline"
+    assert complete.data["iterations_completed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_provider_error_mid_iterations_preserves_completed_threats():
+    """ProviderError on iteration 2 preserves threats from completed iteration 1."""
+    call_count = 0
+
+    class _FailOnSecondThreatCall(MockProvider):
+        async def generate_structured(self, prompt, response_model, **kwargs):
+            nonlocal call_count
+            if response_model is ThreatsList:
+                call_count += 1
+                if call_count >= 2:
+                    raise ProviderError("mock", "Rate limit on call 2")
+            return await super().generate_structured(prompt, response_model, **kwargs)
+
+    provider = _FailOnSecondThreatCall(gap_call_threshold=10)
+    config = PipelineConfig(max_iterations=3)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-mid")
+
+    events = await _collect_events(runner, "A database-backed web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.status == "completed"
+    assert complete.data["stopped_reason"] == "provider_offline"
+    # Iteration 1 completed before the failure
+    assert complete.data["iterations_completed"] == 1
+    # Threats from iteration 1 survive
+    assert complete.data["total_threats"] > 0
+
+
+@pytest.mark.asyncio
+async def test_runner_provider_error_during_gap_analysis_preserves_threats():
+    """ProviderError in gap analysis still yields the threats from that iteration."""
+    provider = MockProvider()
+    provider.error_types.add(GapAnalysis)  # Fail on gap analysis
+    config = PipelineConfig(max_iterations=3)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-gap-fail")
+
+    events = await _collect_events(runner, "A file-sharing web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.status == "completed"
+    assert complete.data["stopped_reason"] == "provider_offline"
+    # Threats from completed iteration 1 are preserved
+    assert complete.data["total_threats"] > 0
+
+    # Exactly 1 threat generation completed (iteration 1 finished before gap failed)
+    threat_completed = [
+        e for e in events if e.step == PipelineStep.GENERATE_THREATS and e.status == "completed"
+    ]
+    assert len(threat_completed) == 1
 
 
 @pytest.mark.asyncio
