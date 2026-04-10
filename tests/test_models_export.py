@@ -167,6 +167,32 @@ async def test_sarif_export_maestro_only_model(test_db, tmp_path: Path, capsys) 
 
 
 @pytest.mark.asyncio
+async def test_export_model_async_sarif_skips_maestro_threats(
+    test_db, tmp_path: Path, capsys
+) -> None:
+    """Mixed model: SARIF includes STRIDE threats, skips MAESTRO, prints warning for skipped count."""
+    model_id = await _make_stride_model("Mixed Model")
+    await _add_stride_threat(model_id)
+    await _add_maestro_threat(model_id)
+
+    out = tmp_path / "mixed.sarif"
+    await _export_model_async(model_id=model_id, output_format="sarif", output=out)
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    results = sarif["runs"][0]["results"]
+
+    # Only the STRIDE threat makes it into the SARIF output
+    assert len(results) == 1
+    assert results[0]["partialFingerprints"]["threatName"] == "SQL Injection"
+
+    # Warning printed for the skipped MAESTRO threat
+    captured = capsys.readouterr()
+    assert "Skipping" in captured.out
+    assert "MAESTRO" in captured.out
+    assert "1" in captured.out
+
+
+@pytest.mark.asyncio
 async def test_sarif_export_none_mitigations_does_not_crash(test_db, tmp_path: Path) -> None:
     """SARIF export handles a threat with empty mitigations list without crashing."""
     model_id = await _make_stride_model()
