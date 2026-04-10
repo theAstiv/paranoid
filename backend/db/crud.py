@@ -508,6 +508,22 @@ async def delete_threat(threat_id: str) -> None:
     logger.info(f"Deleted threat {threat_id}")
 
 
+async def get_asset(asset_id: str) -> dict[str, Any] | None:
+    """Get an asset by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def delete_asset(asset_id: str) -> None:
+    """Delete an asset by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+    await conn.commit()
+    logger.info(f"Deleted asset {asset_id}")
+
+
 async def delete_threat_model(model_id: str) -> None:
     """
     Delete a threat model and all associated data.
@@ -522,6 +538,55 @@ async def delete_threat_model(model_id: str) -> None:
     await conn.commit()
 
     logger.info(f"Deleted threat model {model_id}")
+
+
+async def find_threat_models_for_prune(
+    older_than_days: int | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """Find threat models matching prune criteria without deleting them.
+
+    Args:
+        older_than_days: Include models created more than N days ago.
+        status: Include only models with this status (pending/completed/failed).
+
+    Returns:
+        List of matching model dicts.
+    """
+    conditions = []
+    params: list[Any] = []
+
+    if older_than_days is not None:
+        conditions.append("created_at < datetime('now', ?)")
+        params.append(f"-{older_than_days} days")
+
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    query = f"SELECT * FROM threat_models {where} ORDER BY created_at"
+
+    conn = await db.get()
+    async with conn.execute(query, params) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_threat_models_batch(model_ids: list[str]) -> int:
+    """Delete a batch of threat models by ID list. Returns count deleted."""
+    if not model_ids:
+        return 0
+
+    placeholders = ",".join("?" * len(model_ids))
+    conn = await db.get()
+    cursor = await conn.execute(
+        f"DELETE FROM threat_models WHERE id IN ({placeholders})", model_ids
+    )
+    await conn.commit()
+    deleted = cursor.rowcount
+    logger.info(f"Batch deleted {deleted} threat model(s)")
+    return deleted
 
 
 # Threat Sources CRUD
@@ -558,6 +623,22 @@ async def list_threat_sources(model_id: str) -> list[dict[str, Any]]:
     ) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def get_threat_source(source_id: str) -> dict[str, Any] | None:
+    """Get a threat source by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM threat_sources WHERE id = ?", (source_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def delete_threat_source(source_id: str) -> None:
+    """Delete a threat source by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM threat_sources WHERE id = ?", (source_id,))
+    await conn.commit()
+    logger.info(f"Deleted threat source {source_id}")
 
 
 # Flows CRUD
@@ -597,6 +678,207 @@ async def list_flows(model_id: str) -> list[dict[str, Any]]:
     ) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+async def get_flow(flow_id: str) -> dict[str, Any] | None:
+    """Get a data flow by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM flows WHERE id = ?", (flow_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def update_flow(
+    flow_id: str,
+    flow_type: str | None = None,
+    flow_description: str | None = None,
+    source_entity: str | None = None,
+    target_entity: str | None = None,
+) -> None:
+    """Update flow details. Only provided fields will be updated."""
+    update_fields = []
+    params = []
+
+    if flow_type is not None:
+        update_fields.append("flow_type = ?")
+        params.append(flow_type)
+
+    if flow_description is not None:
+        update_fields.append("flow_description = ?")
+        params.append(flow_description)
+
+    if source_entity is not None:
+        update_fields.append("source_entity = ?")
+        params.append(source_entity)
+
+    if target_entity is not None:
+        update_fields.append("target_entity = ?")
+        params.append(target_entity)
+
+    if not update_fields:
+        logger.warning(f"No fields provided to update for flow {flow_id}")
+        return
+
+    params.append(flow_id)
+    query = f"UPDATE flows SET {', '.join(update_fields)} WHERE id = ?"
+
+    conn = await db.get()
+    await conn.execute(query, params)
+    await conn.commit()
+    logger.info(f"Updated flow {flow_id}")
+
+
+async def delete_flow(flow_id: str) -> None:
+    """Delete a data flow by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM flows WHERE id = ?", (flow_id,))
+    await conn.commit()
+    logger.info(f"Deleted flow {flow_id}")
+
+
+# Trust Boundaries CRUD
+
+
+async def create_trust_boundary(
+    model_id: str,
+    purpose: str,
+    source_entity: str,
+    target_entity: str,
+) -> str:
+    """Create a new trust boundary."""
+    boundary_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO trust_boundaries (id, model_id, purpose, source_entity, target_entity, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (boundary_id, model_id, purpose, source_entity, target_entity, now),
+    )
+    await conn.commit()
+    return boundary_id
+
+
+async def get_trust_boundary(boundary_id: str) -> dict[str, Any] | None:
+    """Get a trust boundary by ID."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM trust_boundaries WHERE id = ?", (boundary_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_trust_boundaries(model_id: str) -> list[dict[str, Any]]:
+    """List all trust boundaries for a model."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM trust_boundaries WHERE model_id = ? ORDER BY created_at", (model_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_trust_boundary(boundary_id: str) -> None:
+    """Delete a trust boundary by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM trust_boundaries WHERE id = ?", (boundary_id,))
+    await conn.commit()
+    logger.info(f"Deleted trust boundary {boundary_id}")
+
+
+# Attack Trees CRUD
+
+
+async def create_attack_tree(threat_id: str, mermaid_source: str) -> str:
+    """Create an attack tree diagram for a threat."""
+    tree_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO attack_trees (id, threat_id, mermaid_source, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (tree_id, threat_id, mermaid_source, now),
+    )
+    await conn.commit()
+    return tree_id
+
+
+async def get_attack_tree(tree_id: str) -> dict[str, Any] | None:
+    """Get an attack tree by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM attack_trees WHERE id = ?", (tree_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_attack_trees(threat_id: str) -> list[dict[str, Any]]:
+    """List all attack trees for a threat."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM attack_trees WHERE threat_id = ? ORDER BY created_at", (threat_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_attack_tree(tree_id: str) -> None:
+    """Delete an attack tree by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM attack_trees WHERE id = ?", (tree_id,))
+    await conn.commit()
+    logger.info(f"Deleted attack tree {tree_id}")
+
+
+# Test Cases CRUD
+
+
+async def create_test_case(threat_id: str, gherkin_source: str) -> str:
+    """Create a test case (Gherkin/BDD) for a threat."""
+    case_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO test_cases (id, threat_id, gherkin_source, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (case_id, threat_id, gherkin_source, now),
+    )
+    await conn.commit()
+    return case_id
+
+
+async def get_test_case(case_id: str) -> dict[str, Any] | None:
+    """Get a test case by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM test_cases WHERE id = ?", (case_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_test_cases(threat_id: str) -> list[dict[str, Any]]:
+    """List all test cases for a threat."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM test_cases WHERE threat_id = ? ORDER BY created_at", (threat_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def delete_test_case(case_id: str) -> None:
+    """Delete a test case by ID."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM test_cases WHERE id = ?", (case_id,))
+    await conn.commit()
+    logger.info(f"Deleted test case {case_id}")
 
 
 # Pipeline Runs CRUD
