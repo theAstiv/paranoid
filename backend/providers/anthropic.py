@@ -18,6 +18,10 @@ from backend.providers.base import (
 
 T = TypeVar("T", bound=BaseModel)
 
+# Module-level cache for model_json_schema() results — these are deterministic
+# per class and can be computed once rather than on every API call.
+_schema_cache: dict[type, dict] = {}
+
 
 class AnthropicProvider:
     """Anthropic Claude provider with structured output support.
@@ -75,13 +79,15 @@ class AnthropicProvider:
         Supports vision API for PNG/JPG images via content blocks.
         """
         try:
-            # Get JSON schema from Pydantic model
-            schema = response_model.model_json_schema()
+            # Get JSON schema from Pydantic model (cached per class — deterministic)
+            if response_model not in _schema_cache:
+                _schema_cache[response_model] = response_model.model_json_schema()
+            schema = _schema_cache[response_model]
 
-            # Construct system prompt for JSON output
+            # Construct system prompt for JSON output (compact JSON, no indent)
             system_prompt = (
                 f"You must respond with valid JSON matching this schema:\n"
-                f"{json.dumps(schema, indent=2)}\n\n"
+                f"{json.dumps(schema)}\n\n"
                 f"Respond ONLY with the JSON object, no other text."
             )
 

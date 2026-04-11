@@ -114,17 +114,20 @@ async def generate_threats(
         flows_text += f"- {boundary.source_entity} ↔ {boundary.target_entity}: {boundary.purpose}\n"
     prompt_parts.append(build_xml_tag("data_flow", flows_text))
 
-    # Add existing threats if improvement iteration
+    # Add existing threats if improvement iteration.
+    # Compact one-liner format keeps the LLM aware of what's already covered
+    # without repeating full mitigations (~30 tokens vs ~200 per threat).
     if existing_threats:
         threats_text = "## Existing Threats\n"
         for threat in existing_threats.threats:
-            threats_text += f"### {threat.name}\n"
-            threats_text += f"- **Category**: {threat.stride_category}\n"
-            threats_text += f"- **Target**: {threat.target}\n"
-            threats_text += f"- **Description**: {threat.description}\n"
-            threats_text += f"- **Impact**: {threat.impact}\n"
-            threats_text += f"- **Likelihood**: {threat.likelihood}\n"
-            threats_text += f"- **Mitigations**: {', '.join(threat.mitigations)}\n\n"
+            gist = (
+                threat.description[:100] + "..."
+                if len(threat.description) > 100
+                else threat.description
+            )
+            threats_text += (
+                f"- {threat.name} [{threat.stride_category.value} → {threat.target}]: {gist}\n"
+            )
         prompt_parts.append(build_xml_tag("threats", threats_text))
 
     # Add gap analysis if present
@@ -173,6 +176,7 @@ async def generate_threats(
         prompt=full_prompt,
         response_model=ThreatsList,
         temperature=temperature,
+        max_tokens=4096,
         images=images,
     )
 
@@ -256,15 +260,18 @@ async def gap_analysis(
         flows_text += f"- {boundary.source_entity} ↔ {boundary.target_entity}: {boundary.purpose}\n"
     prompt_parts.append(build_xml_tag("data_flow", flows_text))
 
-    # Add threats
+    # Add threats in compact one-liner format (gap analysis only needs coverage
+    # awareness, not the full mitigations list — saves ~120 tokens per threat).
     threats_text = "## Generated Threats\n"
     for threat in threats.threats:
-        threats_text += f"### {threat.name}\n"
-        threats_text += f"- **Category**: {threat.stride_category}\n"
-        threats_text += f"- **Target**: {threat.target}\n"
-        threats_text += f"- **Description**: {threat.description}\n"
-        threats_text += f"- **Impact**: {threat.impact}\n"
-        threats_text += f"- **Likelihood**: {threat.likelihood}\n\n"
+        gist = (
+            threat.description[:100] + "..."
+            if len(threat.description) > 100
+            else threat.description
+        )
+        threats_text += (
+            f"- {threat.name} [{threat.stride_category.value} → {threat.target}]: {gist}\n"
+        )
     prompt_parts.append(build_xml_tag("threats", threats_text))
 
     # Add previous gaps if present
@@ -307,6 +314,7 @@ async def gap_analysis(
         prompt=full_prompt,
         response_model=GapAnalysis,
         temperature=temperature,
+        max_tokens=1536,
         images=images,
     )
 

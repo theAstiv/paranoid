@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+# Module-level cache for model_json_schema() results — deterministic per class.
+_schema_cache: dict[type, dict] = {}
+
 
 class OllamaProvider:
     """Ollama provider for local/self-hosted models.
@@ -80,14 +83,16 @@ class OllamaProvider:
             )
 
         try:
-            # Get JSON schema from Pydantic model
-            schema = response_model.model_json_schema()
+            # Get JSON schema from Pydantic model (cached per class — deterministic)
+            if response_model not in _schema_cache:
+                _schema_cache[response_model] = response_model.model_json_schema()
+            schema = _schema_cache[response_model]
 
-            # Construct prompt with JSON schema guidance
+            # Construct prompt with JSON schema guidance (compact JSON, no indent)
             enhanced_prompt = (
                 f"{prompt}\n\n"
                 f"Respond with valid JSON matching this schema:\n"
-                f"{json.dumps(schema, indent=2)}\n\n"
+                f"{json.dumps(schema)}\n\n"
                 f"Output ONLY the JSON object, no additional text."
             )
 

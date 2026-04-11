@@ -306,6 +306,18 @@ class PipelineRunner:
             # - cumulative_threats = all threats from all iterations
             # - existing_threats passed to LLM = cumulative from previous iterations
             # - Gap analysis uses cumulative to assess full coverage
+
+            # RAG fetch is hoisted here: description + assets are stable across all
+            # iterations, so fetching once and reusing is semantically equivalent
+            # and saves (max_iterations - 1) vector queries + ~1-2k prompt tokens
+            # per iteration. Skip entirely when keywords produce no rule-engine hits
+            # (no RAG hits expected either in that case).
+            if self.config.enable_rag and not provider_failed:
+                assets_text = " ".join(a.name for a in assets.assets)
+                rag_context = await fetch_rag_context(description, assets_text=assets_text)
+            else:
+                rag_context = None
+
             if not provider_failed:
                 while iteration <= self.config.max_iterations:
                     # Check time limit
@@ -329,14 +341,6 @@ class PipelineRunner:
                             message=f"Generating STRIDE threats (iteration {iteration}/{self.config.max_iterations})...",
                             iteration=iteration,
                         )
-
-                        if self.config.enable_rag:
-                            assets_text = " ".join(a.name for a in assets.assets)
-                            rag_context = await fetch_rag_context(
-                                description, assets_text=assets_text
-                            )
-                        else:
-                            rag_context = None
 
                         # Generate STRIDE threats
                         try:
@@ -471,14 +475,6 @@ class PipelineRunner:
                             iteration=iteration,
                         )
 
-                        if self.config.enable_rag:
-                            assets_text = " ".join(a.name for a in assets.assets)
-                            rag_context = await fetch_rag_context(
-                                description, assets_text=assets_text
-                            )
-                        else:
-                            rag_context = None
-
                         try:
                             current_threats = await nodes.generate_threats(
                                 description=description,
@@ -569,7 +565,9 @@ class PipelineRunner:
                                 threats=cumulative_threats,
                                 framework=framework,
                                 provider=self.provider,
-                                previous_gaps=gaps,
+                                previous_gaps=gaps[
+                                    -2:
+                                ],  # cap: only last 2 gaps to bound prompt growth
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
                                 diagram_data=diagram_data,

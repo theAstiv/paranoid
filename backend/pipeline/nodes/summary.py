@@ -93,6 +93,7 @@ async def summarize(
         prompt=full_prompt,
         response_model=SummaryState,
         temperature=temperature,
+        max_tokens=512,
         images=images,
     )
 
@@ -273,6 +274,7 @@ async def summarize_code(
             prompt=full_prompt,
             response_model=CodeSummary,
             temperature=temperature,
+            max_tokens=1500,
         )
         return response
     except ProviderError as e:
