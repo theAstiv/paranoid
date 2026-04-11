@@ -21,6 +21,52 @@ def _get_likelihood_levels_string() -> str:
     return " | ".join([level.value for level in LikelihoodLevel])
 
 
+# Full DREAD scoring rubric — used in the initial threat generation call so the
+# model is fully calibrated on anchor values and boundary examples.
+_DREAD_RUBRIC = """\
+   ### DREAD SCORING RUBRIC
+   * **1. Damage Potential (How bad is the impact?)**
+     - 0 = No damage or impact.
+     - 2.5 = Minor disruption. Non-sensitive data disclosed.
+     - 5 = Individual user data compromised, or localized DoS.
+     - 7.5 = Significant disruption. Sensitive data compromised, privilege escalation.
+     - 10 = Complete system compromise, full database extraction.
+   * **2. Reproducibility (How reliably can the attack be executed?)**
+     - 0 = Cannot be reliably reproduced.
+     - 2.5 = Requires extremely specific, rare timing (race condition).
+     - 5 = Complex but predictable. Works under specific configurations.
+     - 7.5 = Consistently reproducible with a few simple steps.
+     - 10 = Guaranteed. Always reproduces on every single attempt.
+   * **3. Exploitability (How much skill/effort is required?)**
+     - 0 = Requires advanced theoretical knowledge, custom zero-day.
+     - 2.5 = Requires reverse engineering or writing custom exploits.
+     - 5 = Can be executed using standard security testing tools.
+     - 7.5 = Publicly available exploits or simple payloads. Script kiddie level.
+     - 10 = Anyone can exploit it using a standard web browser.
+   * **4. Affected Users (How wide is the blast radius?)**
+     - 0 = No users affected.
+     - 2.5 = Only the attacker's account or a single targeted user.
+     - 5 = A specific group or tenant is affected.
+     - 7.5 = Only administrative or highly privileged users are affected.
+     - 10 = Every user on the platform is affected.
+   * **5. Discoverability (How easy is the vulnerability to find?)**
+     - 0 = Requires deep access to source code. Invisible from the outside.
+     - 2.5 = Requires significant time investment, reverse engineering.
+     - 5 = Discovered by a skilled tester actively searching for it.
+     - 7.5 = Visible in standard network traffic, predictable API patterns.
+     - 10 = Glaringly obvious in the application UI, verbose stack traces."""
+
+# Abbreviated DREAD reminder — used in improve iterations. The model was already
+# calibrated on the full rubric during the initial call; anchor values suffice.
+_DREAD_RUBRIC_SHORT = """\
+   Use ONLY these anchor values: **0, 2.5, 5, 7.5, 10**.
+   * **Damage Potential**: 0 (None) to 10 (Complete system compromise).
+   * **Reproducibility**: 0 (Impossible) to 10 (Guaranteed).
+   * **Exploitability**: 0 (State-Actor Level) to 10 (Zero Skill).
+   * **Affected Users**: 0 (None) to 10 (All Users).
+   * **Discoverability**: 0 (Nearly Impossible) to 10 (Obvious)."""
+
+
 def stride_summary_prompt() -> str:
     """Generate prompt for system summary creation."""
     return f"""<instruction>
@@ -164,32 +210,6 @@ You are an expert in all security domains and threat modeling. Your goal is to s
    - Prioritize high-criticality flows involving sensitive data
    - Focus on trust boundaries with significant security implications
    - Emphasize threat actors with realistic access to the described architecture
-
-6. Quality control checklist:
-
-   **Data Flows**:
-   * [ ] Are all significant data movements between assets identified?
-   * [ ] Are both internal and cross-boundary flows covered?
-   * [ ] Is the criticality assessment based on data sensitivity and business impact?
-   * [ ] Are flow descriptions specific and technically accurate?
-
-   **Trust Boundaries**:
-   * [ ] Are all significant trust level transitions identified?
-   * [ ] Is the security purpose of each boundary clearly articulated?
-   * [ ] Are different types of boundaries (network, process, physical, etc.) considered?
-   * [ ] Do boundaries align with the described architecture?
-
-   **Threat Actors**:
-   * [ ] Are only architecturally-relevant threat actors included?
-   * [ ] Is the intent-capability-opportunity assessment realistic?
-   * [ ] Are examples specific to the system context?
-   * [ ] Are threat actors aligned with the organization's likely threat landscape?
-
-   **Overall Analysis**:
-   * [ ] Does the analysis cover all provided assets and entities?
-   * [ ] Is the analysis consistent with stated assumptions?
-   * [ ] Are security-critical elements prioritized appropriately?
-   * [ ] Would this analysis support effective threat modeling?
 </instructions>
 """
 
@@ -222,14 +242,6 @@ You are an expert in all security domains and threat modeling. Your goal is to v
 2. Assessment framework and criteria:
 
    * Use the **STRIDE model** as your assessment framework: {stride_cats}.
-
-   **STRIDE Categories Defined:**
-   - **Spoofing**: Impersonating users, systems, or services
-   - **Tampering**: Unauthorized modification of data, systems, or communications
-   - **Repudiation**: Denying actions, transactions, or events without proof
-   - **Information Disclosure**: Unauthorized access to confidential information
-   - **Denial of Service**: Preventing legitimate access to resources or services
-   - **Elevation of Privilege**: Gaining unauthorized access levels or permissions
 
    **Threat Actor Coverage Assessment:**
    Verify coverage across these threat actor types where architecturally relevant:
@@ -328,17 +340,23 @@ You are an expert in all security domains and threat modeling. Your goal is to v
 """
 
 
-def stride_threats_improve_prompt() -> str:
-    """Generate prompt for improving existing threat catalog."""
+def stride_threats_prompt(improve: bool = False) -> str:
+    """Generate prompt for threat identification or catalog improvement.
+
+    Args:
+        improve: When True, emit the improve-iteration variant which adds
+            deduplication guidance and a gap-coverage section, and uses a
+            short DREAD rubric (the model was calibrated on the full rubric
+            during the initial call). When False, emit the initial-generation
+            variant with the full DREAD rubric and target distribution.
+    """
     stride_cats = _get_stride_categories_string()
-    return f"""
-<task>
-You are an expert in all security domains and threat modeling. Your goal is to enrich an existing threat catalog by identifying new threats that may have been missed, using the STRIDE model. Your output must reflect plausible threats grounded in the described architecture and context.
-</task>
 
-<instructions>
-
-1. Review the inputs carefully:
+    if improve:
+        task_line = "Your goal is to enrich an existing threat catalog by identifying new threats that may have been missed, using the STRIDE model. Your output must reflect plausible threats grounded in the described architecture and context."
+        # Terse bullets restore the token savings from the earlier quick-win pass.
+        # <code_summary> is appended by the template (verbose description always kept).
+        inputs_section = """\
    * <architecture_diagram>: Architecture Diagram of the solution.
    * <identified_assets_and_entities>: Inventory of key assets and entities.
    * <data_flow>: Descriptions of data movements.
@@ -346,12 +364,8 @@ You are an expert in all security domains and threat modeling. Your goal is to e
    * <assumptions>: Security assumptions.
    * <threats>: The existing threat catalog to be enhanced.
    * <gap>: Leverage gap analysis information to improve the catalog.
-   * <code_summary>: Security-focused analysis of the system's source code (if available).
-     Ground threats in actual implementation details — specific framework versions with known
-     CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
-     error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
-     observed in the code.
-
+"""
+        dedup_section = """\
 2. Threat Similarity and Deduplication Guidelines (CRITICAL):
    **Before adding new threats, review existing threats to avoid duplication:**
    * **Near-duplicate check:** Don't add a threat if an existing threat already covers the same:
@@ -367,12 +381,10 @@ You are an expert in all security domains and threat modeling. Your goal is to e
    * **Consolidation:** If you identify 2-3 existing threats that could be merged into one comprehensive threat, note this in your gap analysis and merge them. Combine attack vectors into the description.
    * **Distinct value:** Each new threat should provide unique security insight, not just reword existing threats.
 
-3. DREAD Risk Scoring Model (Anchor Values: 0, 2.5, 5, 7.5, 10):
-   * **Damage Potential**: 0 (None) to 10 (Complete system compromise).
-   * **Reproducibility**: 0 (Impossible) to 10 (Guaranteed).
-   * **Exploitability**: 0 (State-Actor Level) to 10 (Zero Skill).
-   * **Affected Users**: 0 (None) to 10 (All Users).
-   * **Discoverability**: 0 (Nearly Impossible) to 10 (Obvious).
+"""
+        dread_section = f"""\
+3. DREAD Risk Scoring Model:
+{_DREAD_RUBRIC_SHORT}
 
 4. DREAD Severity Distribution and Balanced Scoring (Sum 0-50):
    * **Critical (40-50):** Stop the line.
@@ -388,105 +400,27 @@ You are an expert in all security domains and threat modeling. Your goal is to e
    * Look for **missing STRIDE categories** for critical assets.
    * Ensure **balanced category coverage** - aim for at least 2 threats in high-risk categories where applicable.
 
-6. Format each new or merged threat exactly as follows:
-
-   **Threat Name**: [Clear descriptive title]
-   **STRIDE Category**: [{stride_cats}]
-   **Severity Class**: [Critical / High / Medium / Low - this MUST match the DREAD total range]
-   **Description**: [Actor with specific access] can [attack method] by [technique], leading to [impact], affecting [asset].
-   **Target**: [Specific asset or component]
-   **DREAD Assessment**:
-     - Damage: [Value]
-     - Reproducibility: [Value]
-     - Exploitability: [Value]
-     - Affected Users: [Value]
-     - Discoverability: [Value]
-     - Total Score: [Sum of values: 0-50]
-   **Mitigations**:
-     1. [P] [Specific Preventive implementation to stop this entirely]
-     2. [D] [Specific Detective implementation to know if prevention fails]
-     3. [C] [Specific Containment implementation to limit blast radius]
-
-7. Mitigation Quality Requirements:
-   Ensure mitigations are:
-   * **Specific** to the described architecture and threat.
-   * **Categorized** using [P] preventive, [D] detective, or [C] containment tags.
-   * **Proportionate** to the threat severity and architectural context.
-   * **Implementable** given the described system constraints.
-
-</instructions>
 """
-
-
-def stride_threats_prompt() -> str:
-    """Generate prompt for initial threat identification."""
-    stride_cats = _get_stride_categories_string()
-    return f"""
-<task>
-You are an expert in all security domains and threat modeling. Your goal is to generate a focused, comprehensive, and realistic list of security threats for a given architecture by analyzing the provided inputs, using the STRIDE model. Your output must reflect plausible threats grounded in the described architecture and context.
-</task>
-
-<instructions>
-
-1. Review the inputs carefully:
+        threat_actor_section = ""
+        format_num = 6
+        format_scope = "each new or merged threat"
+        description_line = "   **Description**: [Actor with specific access] can [attack method] by [technique], leading to [impact], affecting [asset]."
+    else:
+        task_line = "Your goal is to generate a focused, comprehensive, and realistic list of security threats for a given architecture by analyzing the provided inputs, using the STRIDE model. Your output must reflect plausible threats grounded in the described architecture and context."
+        inputs_section = """\
    * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
    * <identified_assets_and_entities>: Inventory of key assets and entities in the architecture.
    * <data_flow>: Descriptions of data movements between components.
    * <description>: Contextual overview of the system (if provided).
    * <assumptions>: Security assumptions and boundary considerations (if provided).
-   * <code_summary>: Security-focused analysis of the system's source code (if available).
-     Ground threats in actual implementation details — specific framework versions with known
-     CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
-     error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
-     observed in the code.
-
-2. Threat modeling framework and scope:
-   * Use the **STRIDE model** as your framework: {stride_cats}.
-
-3. Threat actor categories and realism constraints:
-   * **Only include threats that are plausible** given the architecture, technologies, and trust boundaries described.
-   * **Avoid theoretical or unlikely threats** (e.g., highly improbable zero-days unless context supports it).
-
-4. Use this enhanced grammar template for the description:
-   <threat_grammar>
-   [Actor with specific access/capability] can [specific attack method] by [attack vector/technique], leading to [specific impact], affecting [asset/stakeholder].
-   </threat_grammar>
-
+"""
+        dedup_section = ""
+        dread_section = f"""\
 5. DREAD Risk Scoring Model:
    For each threat, provide a **DREAD score** (0-10) for each of the following dimensions.
    Use ONLY these anchor values: **0, 2.5, 5, 7.5, 10**.
 
-   ### DREAD SCORING RUBRIC
-   * **1. Damage Potential (How bad is the impact?)**
-     - 0 = No damage or impact.
-     - 2.5 = Minor disruption. Non-sensitive data disclosed.
-     - 5 = Individual user data compromised, or localized DoS.
-     - 7.5 = Significant disruption. Sensitive data compromised, privilege escalation.
-     - 10 = Complete system compromise, full database extraction.
-   * **2. Reproducibility (How reliably can the attack be executed?)**
-     - 0 = Cannot be reliably reproduced.
-     - 2.5 = Requires extremely specific, rare timing (race condition).
-     - 5 = Complex but predictable. Works under specific configurations.
-     - 7.5 = Consistently reproducible with a few simple steps.
-     - 10 = Guaranteed. Always reproduces on every single attempt.
-   * **3. Exploitability (How much skill/effort is required?)**
-     - 0 = Requires advanced theoretical knowledge, custom zero-day.
-     - 2.5 = Requires reverse engineering or writing custom exploits.
-     - 5 = Can be executed using standard security testing tools.
-     - 7.5 = Publicly available exploits or simple payloads. Script kiddie level.
-     - 10 = Anyone can exploit it using a standard web browser.
-   * **4. Affected Users (How wide is the blast radius?)**
-     - 0 = No users affected.
-     - 2.5 = Only the attacker's account or a single targeted user.
-     - 5 = A specific group or tenant is affected.
-     - 7.5 = Only administrative or highly privileged users are affected.
-     - 10 = Every user on the platform is affected.
-   * **5. Discoverability (How easy is the vulnerability to find?)**
-     - 0 = Requires deep access to source code. Invisible from the outside.
-     - 2.5 = Requires significant time investment, reverse engineering.
-     - 5 = Discovered by a skilled tester actively searching for it.
-     - 7.5 = Visible in standard network traffic, predictable API patterns.
-     - 10 = Glaringly obvious in the application UI, verbose stack traces.
+{_DREAD_RUBRIC}
 
 6. DREAD Severity Distribution and Balanced Scoring:
    **CRITICAL REQUIREMENT:** Generate threats across ALL severity levels, not just Critical/High.
@@ -505,12 +439,45 @@ You are an expert in all security domains and threat modeling. Your goal is to g
    * Low: 1-2 threats
    **ANTI-PATTERN WARNING:** DO NOT inflate DREAD scores to make threats seem more severe. Score honestly based on actual impact.
 
-7. Format each threat exactly as follows:
+"""
+        threat_actor_section = """\
+3. Threat actor categories and realism constraints:
+   * **Only include threats that are plausible** given the architecture, technologies, and trust boundaries described.
+   * **Avoid theoretical or unlikely threats** (e.g., highly improbable zero-days unless context supports it).
+
+4. Use this enhanced grammar template for the description:
+   <threat_grammar>
+   [Actor with specific access/capability] can [specific attack method] by [attack vector/technique], leading to [specific impact], affecting [asset/stakeholder].
+   </threat_grammar>
+
+"""
+        format_num = 7
+        format_scope = "each threat"
+        description_line = f"   **Description**: [Use <threat_grammar>; ensure {THREAT_DESCRIPTION_MIN_WORDS}–{THREAT_DESCRIPTION_MAX_WORDS} words]"
+
+    return f"""
+<task>
+You are an expert in all security domains and threat modeling. {task_line}
+</task>
+
+<instructions>
+
+1. Review the inputs carefully:
+{inputs_section}   * <code_summary>: Security-focused analysis of the system's source code (if available).
+     Ground threats in actual implementation details — specific framework versions with known
+     CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
+     error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
+     observed in the code.
+
+{dedup_section}2. Threat modeling framework and scope:
+   * Use the **STRIDE model** as your framework: {stride_cats}.
+
+{threat_actor_section}{dread_section}{format_num}. Format {format_scope} exactly as follows:
 
    **Threat Name**: [Clear descriptive title]
    **STRIDE Category**: [{stride_cats}]
    **Severity Class**: [Critical / High / Medium / Low - this MUST match the DREAD total range]
-   **Description**: [Use <threat_grammar>; ensure {THREAT_DESCRIPTION_MIN_WORDS}–{THREAT_DESCRIPTION_MAX_WORDS} words]
+{description_line}
    **Target**: [Specific asset or component]
    **DREAD Assessment**:
      - Damage: [Value]
@@ -524,11 +491,16 @@ You are an expert in all security domains and threat modeling. Your goal is to g
      2. [D] [Specific Detective implementation to know if prevention fails]
      3. [C] [Specific Containment implementation to limit blast radius]
 
-8. Mitigation Quality Requirements:
+{format_num + 1}. Mitigation Quality Requirements:
    * **Specific** to the described architecture and threat.
    * **Categorized** using [P] preventive, [D] detective, or [C] containment tags.
-   * **Proportionate** to the threat severity.
-   * **Formatted properly**: Each mitigation should start with the tag followed by implementation details.
+   * **Proportionate** to the threat severity and architectural context.
+   * **Implementable** given the described system constraints.
 
 </instructions>
 """
+
+
+def stride_threats_improve_prompt() -> str:
+    """Generate prompt for improving existing threat catalog."""
+    return stride_threats_prompt(improve=True)
