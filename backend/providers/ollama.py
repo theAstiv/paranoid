@@ -69,11 +69,15 @@ class OllamaProvider:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
+        shared_context: str | None = None,
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
         Note: Ollama does not support vision for most models. Images are ignored
         with a warning. Consider using Anthropic or OpenAI for vision-based threat modeling.
+
+        shared_context is prepended to the prompt text. Ollama has no native caching
+        mechanism, so this is semantically equivalent to a combined prompt.
         """
         # Graceful degradation: log warning if images provided
         if images:
@@ -88,9 +92,12 @@ class OllamaProvider:
                 _schema_cache[response_model] = response_model.model_json_schema()
             schema = _schema_cache[response_model]
 
+            # Prepend shared_context to prompt text (no native caching on Ollama)
+            full_prompt = f"{shared_context}\n\n{prompt}" if shared_context else prompt
+
             # Construct prompt with JSON schema guidance (compact JSON, no indent)
             enhanced_prompt = (
-                f"{prompt}\n\n"
+                f"{full_prompt}\n\n"
                 f"Respond with valid JSON matching this schema:\n"
                 f"{json.dumps(schema)}\n\n"
                 f"Output ONLY the JSON object, no additional text."

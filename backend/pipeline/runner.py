@@ -17,6 +17,7 @@ from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
+from backend.pipeline.nodes.helpers import build_shared_context
 from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
@@ -155,6 +156,7 @@ class PipelineRunner:
         stopped_reason = "max_iterations"
         gaps: list[str] = []
         code_summary = None
+        shared_ctx: str | None = None
 
         try:
             # Steps 1-3: Summarize, Extract Assets, Extract Flows.
@@ -280,6 +282,19 @@ class PipelineRunner:
                     },
                 )
 
+                # Build stable context once — reused as cacheable prefix for all
+                # generate_threats() and gap_analysis() calls in the iteration loop.
+                shared_ctx = build_shared_context(
+                    description=description,
+                    architecture_diagram=architecture_diagram,
+                    assumptions=assumptions,
+                    assets=assets,
+                    flows=flows,
+                    code_summary=code_summary,
+                    diagram_data=diagram_data,
+                    framework=framework,
+                )
+
             except ProviderError as e:
                 # LLM provider is offline — degrade gracefully to rule-engine-only.
                 # Use the original description as a minimal summary so the rule
@@ -358,6 +373,7 @@ class PipelineRunner:
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
                                 diagram_data=diagram_data,
+                                shared_context=shared_ctx,
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -408,6 +424,7 @@ class PipelineRunner:
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
                                 diagram_data=diagram_data,
+                                shared_context=shared_ctx,
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -490,6 +507,7 @@ class PipelineRunner:
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
                                 diagram_data=diagram_data,
+                                shared_context=shared_ctx,
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -571,6 +589,7 @@ class PipelineRunner:
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
                                 diagram_data=diagram_data,
+                                shared_context=shared_ctx,
                             )
                         except ProviderError as e:
                             provider_failed = True

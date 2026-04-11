@@ -68,6 +68,7 @@ class MockProvider:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list | None = None,
+        shared_context: str | None = None,
     ) -> Any:
         # Capture for diagram tests
         self.last_prompt = prompt
@@ -80,6 +81,7 @@ class MockProvider:
                 "temperature": temperature,
                 "prompt_length": len(prompt),
                 "images": images,
+                "shared_context": shared_context,
             }
         )
 

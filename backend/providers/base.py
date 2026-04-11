@@ -30,15 +30,21 @@ class LLMProvider(Protocol):
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
+        shared_context: str | None = None,
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
         Args:
-            prompt: The prompt text to send to the model
+            prompt: The prompt text to send to the model (iteration-specific parts)
             response_model: Pydantic model class for structured output
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens in response (None = provider default)
             images: Optional list of images for vision-enabled models (Claude/GPT-4 vision)
+            shared_context: Optional stable context block sent before prompt. When
+                provided, the Anthropic provider marks it with cache_control so it
+                is served from the prompt cache across all calls in the same run.
+                OpenAI and Ollama prepend it to the prompt (no caching benefit but
+                semantically equivalent output).
 
         Returns:
             Instance of response_model with LLM-generated data

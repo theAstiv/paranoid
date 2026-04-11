@@ -75,6 +75,7 @@ class OpenAIProvider:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
+        shared_context: str | None = None,
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
@@ -82,6 +83,10 @@ class OpenAIProvider:
 
         Note: OpenAI JSON mode + vision is only supported on gpt-4o and gpt-4o-mini.
         Models like gpt-4-vision-preview do not support JSON mode with images.
+
+        shared_context is prepended to the user prompt text. OpenAI does not support
+        prompt caching via content blocks, so the benefit here is semantic consistency
+        with the Anthropic path rather than a cost reduction.
         """
         try:
             # Get JSON schema from Pydantic model (cached per class — deterministic)
@@ -109,13 +114,9 @@ class OpenAIProvider:
                         }
                     )
 
-            # Add text prompt
-            user_content.append(
-                {
-                    "type": "text",
-                    "text": prompt,
-                }
-            )
+            # Prepend shared_context to prompt text (no native caching on OpenAI)
+            full_user_text = f"{shared_context}\n\n{prompt}" if shared_context else prompt
+            user_content.append({"type": "text", "text": full_user_text})
 
             # Call OpenAI API with JSON mode (async)
             response = await run_sync_in_executor(

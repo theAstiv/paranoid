@@ -4,15 +4,17 @@ Shared utilities for XML tag construction, assumption formatting, code context
 formatting, and structured input parsing used across all pipeline nodes.
 """
 
-from backend.models.enums import Framework
+from backend.models.enums import DiagramFormat, Framework
 from backend.models.extended import (
     CodeContext,
     CodeSummary,
+    DiagramData,
     MaestroAssumptions,
     MaestroComponentDescription,
     StrideAssumptions,
     StrideComponentDescription,
 )
+from backend.models.state import AssetsList, FlowsList
 from backend.pipeline import input_parser
 
 
@@ -188,3 +190,86 @@ def build_assumptions_section(
     if assumptions:
         return format_assumptions(assumptions)
     return ""
+
+
+def build_shared_context(
+    description: str,
+    architecture_diagram: str | None,
+    assumptions: list[str] | None,
+    assets: AssetsList,
+    flows: FlowsList,
+    code_summary: CodeSummary | None,
+    diagram_data: DiagramData | None,
+    framework: Framework,
+) -> str:
+    """Assemble the stable prompt context shared across all iteration calls.
+
+    Produces an XML-tagged block containing diagram, description, assumptions,
+    assets, flows, and code_summary — everything that is stable from the moment
+    extract_flows completes until the pipeline run ends.
+
+    When passed as shared_context to provider.generate_structured(), the Anthropic
+    provider marks this block with cache_control: ephemeral so it is served from
+    the prompt cache (5-minute TTL) for every subsequent call in the same run.
+    OpenAI and Ollama prepend it to the prompt text (semantically equivalent).
+
+    Args:
+        description: System description text
+        architecture_diagram: DEPRECATED legacy text diagram
+        assumptions: Optional list of assumption strings
+        assets: Extracted assets (stable after extract_assets)
+        flows: Extracted flows (stable after extract_flows)
+        code_summary: Optional condensed code summary (stable after summarize_code)
+        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        framework: STRIDE or MAESTRO (needed for structured input parsing)
+
+    Returns:
+        Concatenated XML-tagged string ready for use as a cacheable prefix
+    """
+    component_desc, structured_assumptions, plain_description = parse_structured_input(
+        description, framework
+    )
+
+    parts: list[str] = []
+
+    # Architecture diagram: Mermaid source inline; PNG/JPG gets a placeholder
+    # (actual image bytes are passed separately via the vision API).
+    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
+        parts.append(build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    elif diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+        parts.append(
+            build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]")
+        )
+    elif architecture_diagram:
+        parts.append(build_xml_tag("architecture_diagram", architecture_diagram))
+
+    if component_desc:
+        parts.append(
+            build_xml_tag(
+                "component_description", format_structured_component_for_prompt(component_desc)
+            )
+        )
+
+    parts.append(build_xml_tag("description", plain_description))
+
+    assumptions_text = build_assumptions_section(assumptions, structured_assumptions)
+    if assumptions_text:
+        parts.append(build_xml_tag("assumptions", assumptions_text))
+
+    assets_text = "## Assets\n"
+    for asset in assets.assets:
+        assets_text += f"- **{asset.name}** ({asset.type.value}): {asset.description}\n"
+    parts.append(build_xml_tag("identified_assets_and_entities", assets_text))
+
+    flows_text = "## Data Flows\n"
+    for flow in flows.data_flows:
+        flows_text += f"- {flow.source_entity} → {flow.target_entity}: {flow.flow_description}\n"
+    flows_text += "\n## Trust Boundaries\n"
+    for boundary in flows.trust_boundaries:
+        flows_text += f"- {boundary.source_entity} ↔ {boundary.target_entity}: {boundary.purpose}\n"
+    parts.append(build_xml_tag("data_flow", flows_text))
+
+    if code_summary:
+        parts.append(build_xml_tag("code_summary", format_code_summary(code_summary)))
+
+    return "".join(parts)
