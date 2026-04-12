@@ -10,9 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.config import settings
+from backend.config import VERSION, settings
 from backend.db.connection import db
 from backend.db.seed import load_all_seeds
+from backend.routes.config import router as config_router
+from backend.routes.export import router as export_router
+from backend.routes.models import router as models_router
+from backend.routes.threats import router as threats_router
 
 
 # Configure logging
@@ -52,7 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Paranoid",
     description="Open-source, self-hosted, iterative threat modeling powered by LLMs",
-    version="1.1.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 
@@ -75,11 +79,18 @@ async def health_check() -> JSONResponse:
     return JSONResponse(
         content={
             "status": "healthy",
-            "version": "1.1.0",
+            "version": VERSION,
             "provider": settings.default_provider,
             "model": settings.default_model,
         }
     )
+
+
+# API routers
+app.include_router(models_router, prefix="/api")
+app.include_router(threats_router, prefix="/api")
+app.include_router(export_router, prefix="/api")
+app.include_router(config_router, prefix="/api")
 
 
 @app.get("/")
