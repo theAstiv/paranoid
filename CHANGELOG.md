@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] - 2026-04-12
+
 ### Added
+
+#### Provider Offline Fallback
+- Pipeline degrades gracefully to rule-engine-only mode when the LLM provider is unavailable (rate limit, auth error, timeout)
+- `stopped_reason: "provider_offline"` reported in the COMPLETE SSE event; threats from any completed iterations are preserved
+- **7 tests** in `tests/test_pipeline_runner.py` covering pre-loop failure, mid-iteration failure, gap-analysis failure, and provider-error-during-threats degradation
+
+#### Seed Pattern Expansion
+- **229 new seed patterns** across 8 attack categories (authentication, APIs, cloud infrastructure, data storage, ML/AI, microservices, cryptography, access control) — all 6 STRIDE categories covered for each
+- **121 additional patterns**: 67 cloud-native misconfigurations (AWS S3, IAM, Lambda, GCP, Azure), 37 MITRE ATT&CK techniques mapped to STRIDE, 17 ATLAS AI/ML adversarial patterns (training-data poisoning, model inversion, prompt injection)
 
 #### Markdown Export
 - **`backend/export/markdown.py`** — `export_markdown()` produces human-readable `.md` reports suitable for PRs, Confluence, and Notion
@@ -70,6 +83,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Test Coverage Additions
 - **`tests/test_models_export.py`** (+1 test) — `test_export_model_async_sarif_skips_maestro_threats`: mixed STRIDE+MAESTRO model; verifies `stride_rows` filter passes only STRIDE threats to `model_construct`, MAESTRO threat is skipped, warning output includes skip count
+
+### Performance
+
+#### Anthropic Prompt Caching
+- `build_shared_context()` assembles a stable XML prefix (diagram, description, assumptions, assets, data flows, code summary) once after `extract_flows` — sent as a `cache_control: ephemeral` block in every downstream LLM call
+- Cache hit rate ~90% on cached tokens for iterations 2–N of a multi-iteration run; ~20% overall token spend reduction for 3-iteration runs, scaling to ~30% at 10+ iterations
+- Non-Anthropic providers (OpenAI, Ollama) receive the shared context as a plain string — no provider-API changes required
+
+#### Prompt Diet (~440 tokens removed per call)
+- Removed 26-line QC checklist (~350 tokens) from the flow extraction prompt
+- Removed STRIDE category definitions (~90 tokens per call) from the gap analysis prompt
+- `stride_threats_prompt()` unified to a single function (`improve: bool`): short DREAD rubric (6 lines) on the initial pass, full rubric (25 lines) on improvement passes
+
+#### Structural Optimisations
+- **Deterministic code summary**: `_deterministic_code_summary()` replaces `asyncio.gather(summarize(), summarize_code())` — saves one LLM API call per code-context run; `summarize_code()` retained as an opt-in upgrade path in `backend/pipeline/nodes/summary.py`
+- **Drop iteration images**: vision image intentionally omitted from `generate_threats()` and `gap_analysis()` iteration calls — nodes rely on assets/flows extracted during the initial vision passes, eliminating repeated image encoding overhead
+- **STRIDE coverage gate**: `_is_stride_coverage_balanced()` short-circuits gap analysis when all 6 STRIDE categories reach ≥ 2 threats — skips a 1 536-token LLM round-trip and terminates the iteration loop early with `stopped_reason: "gap_satisfied"`
+
+### Fixed
+- **sqlite-vec Windows loading**: replaced bare `load_extension("vec0")` with `sqlite_vec.loadable_path()` — resolves the full absolute path to `vec0.dll`, fixing "The specified module could not be found" errors on Windows where `site-packages/sqlite_vec/` is not on the DLL search path
 
 ---
 
