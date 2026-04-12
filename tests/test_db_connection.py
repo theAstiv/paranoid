@@ -130,8 +130,15 @@ async def test_initialize_with_nonexistent_parent_raises(clean_manager):
 
 
 @pytest.mark.asyncio
-async def test_initialize_loads_vec0_on_first_attempt(clean_manager, mock_aiosqlite_connection):
-    """Initialize loads vec0 extension on first attempt."""
+async def test_initialize_loads_vec0_via_package_path(clean_manager, mock_aiosqlite_connection):
+    """Initialize loads sqlite-vec via sqlite_vec.loadable_path() (full path, not bare name).
+
+    On Windows a bare 'vec0' name fails because site-packages is not on the DLL
+    search path. Using the full path from sqlite_vec.loadable_path() resolves the
+    correct vec0.dll on all platforms.
+    """
+    import sqlite_vec
+
     with (
         patch("aiosqlite.connect", AsyncMock(return_value=mock_aiosqlite_connection)),
         patch("backend.db.schema.init_database_with_connection", AsyncMock()),
@@ -139,37 +146,17 @@ async def test_initialize_loads_vec0_on_first_attempt(clean_manager, mock_aiosql
         await clean_manager.initialize("./test.db")
 
         mock_aiosqlite_connection.enable_load_extension.assert_called_once_with(True)
-        mock_aiosqlite_connection.load_extension.assert_any_call("vec0")
+        # Must use the full path, never the bare name "vec0"
+        mock_aiosqlite_connection.load_extension.assert_called_once_with(
+            sqlite_vec.loadable_path()
+        )
 
 
 @pytest.mark.asyncio
-async def test_initialize_falls_back_to_sqlite_vec(clean_manager, mock_aiosqlite_connection):
-    """Initialize falls back to sqlite-vec when vec0 fails."""
-
-    async def load_extension_side_effect(name):
-        if name == "vec0":
-            raise Exception("vec0 not found")
-        # sqlite-vec succeeds
-
-    mock_aiosqlite_connection.load_extension.side_effect = load_extension_side_effect
-
-    with (
-        patch("aiosqlite.connect", AsyncMock(return_value=mock_aiosqlite_connection)),
-        patch("backend.db.schema.init_database_with_connection", AsyncMock()),
-    ):
-        await clean_manager.initialize("./test.db")
-
-        # Should have tried both
-        assert mock_aiosqlite_connection.load_extension.call_count == 2
-        mock_aiosqlite_connection.load_extension.assert_any_call("vec0")
-        mock_aiosqlite_connection.load_extension.assert_any_call("sqlite-vec")
-
-
-@pytest.mark.asyncio
-async def test_initialize_raises_when_both_extensions_fail(
+async def test_initialize_raises_when_extension_fails(
     clean_manager, mock_aiosqlite_connection
 ):
-    """Initialize raises when both vec0 and sqlite-vec fail."""
+    """Initialize raises when sqlite-vec extension fails to load."""
     mock_aiosqlite_connection.load_extension.side_effect = Exception("Extension not found")
 
     with (

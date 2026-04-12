@@ -471,6 +471,23 @@ paranoid run system.md --diagram arch.png --code /path/to/repo  # combined
 
 4. **Deterministic extraction**: `_deterministic_code_summary()` covers tech stack from file extensions, HTTP routes from decorator patterns, auth/DB/HTTP-client keywords, and security anti-patterns (`eval()`, `pickle.load`, `shell=True`, SQL string concatenation). The pipeline never silently drops code context.
 
+**Installing context-link:**
+
+context-link is a standalone Go binary that indexes your repository and serves an MCP tool interface over stdio. Get it from [github.com/context-link-mcp/context-link](https://github.com/context-link-mcp/context-link):
+
+```bash
+# Option 1: pre-built binary (recommended — no Go toolchain required)
+# Download the binary for your platform from the GitHub Releases page:
+# https://github.com/context-link-mcp/context-link/releases/latest
+# Then place it at bin/context-link or add it to PATH.
+
+# Option 2: build from source (requires Go 1.22+)
+git clone https://github.com/context-link-mcp/context-link
+cd context-link
+CGO_ENABLED=1 go build -o context-link ./cmd/context-link
+# Move the resulting binary to bin/context-link or PATH
+```
+
 **Requirements:**
 
 - context-link binary at `bin/context-link` (relative to working directory), on `PATH`, or at the path set by `CONTEXT_LINK_BINARY`
@@ -543,7 +560,7 @@ Paranoid supports rich XML-tagged templates for better context and assumption en
 
 ## Architecture
 
-- **Backend**: FastAPI + SQLite + sqlite-vec
+- **Backend**: FastAPI + SQLite + sqlite-vec (loaded via `sqlite_vec.loadable_path()` — works on Windows without manual DLL installation)
 - **Frontend**: Planned (v1.0 is CLI-only)
 - **LLM Providers**: Anthropic / OpenAI / Ollama (protocol-based, swappable)
 - **Pipeline**: Plain async functions (no LangChain, no LangGraph)
@@ -605,6 +622,9 @@ ollama serve  # start Ollama first, then run paranoid
 ```
 
 **`--code` flag: context-link binary not found:**
+
+Install context-link from [github.com/context-link-mcp/context-link](https://github.com/context-link-mcp/context-link) (pre-built binaries on the Releases page), then make it available to Paranoid:
+
 ```bash
 # Option 1: set env var pointing to the binary
 export CONTEXT_LINK_BINARY=/path/to/context-link
@@ -614,6 +634,10 @@ export CONTEXT_LINK_BINARY=/path/to/context-link
 # Option 3: add context-link to PATH
 ```
 If the binary is missing, Paranoid logs a warning and continues without code context.
+
+**sqlite-vec not loading (Windows "module not found"):**
+
+This was a known issue on Windows where a bare `vec0` extension name was used. It is fixed in the current release — the extension is now loaded via the absolute path from the bundled `sqlite-vec` Python package (`sqlite_vec.loadable_path()`), which resolves correctly on all platforms. No manual DLL installation required; `pip install paranoid-cli` includes everything.
 
 **`--diagram` with OpenAI and vision errors:**
 Only `gpt-4o` and `gpt-4o-mini` support JSON structured output together with vision. Other OpenAI models that support vision do not support JSON mode simultaneously. Switch to `gpt-4o` or use Anthropic.
