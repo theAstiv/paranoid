@@ -57,3 +57,7 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Single source of truth for the application version.
+# Keep in sync with pyproject.toml when bumping releases.
+VERSION = "1.4.0"
