@@ -4,8 +4,6 @@ Uses AsyncClient with ASGITransport — no lifespan triggered.
 The test_db fixture sets up DB state before each test so db.get() works.
 """
 
-import json
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
