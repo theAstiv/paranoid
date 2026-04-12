@@ -10,13 +10,13 @@ Runs comprehensive checks before pushing a release to GitHub:
 - Version consistency
 """
 
-import os
 import platform
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
 
 # Colors for terminal output
 GREEN = "\033[92m"
@@ -29,9 +29,9 @@ BOLD = "\033[1m"
 
 def print_step(msg: str) -> None:
     """Print a test step header."""
-    print(f"\n{BLUE}{BOLD}{'='*70}{RESET}")
+    print(f"\n{BLUE}{BOLD}{'=' * 70}{RESET}")
     print(f"{BLUE}{BOLD}>> {msg}{RESET}")
-    print(f"{BLUE}{BOLD}{'='*70}{RESET}\n")
+    print(f"{BLUE}{BOLD}{'=' * 70}{RESET}\n")
 
 
 def print_success(msg: str) -> None:
@@ -49,7 +49,9 @@ def print_warning(msg: str) -> None:
     print(f"{YELLOW}[WARN] {msg}{RESET}")
 
 
-def run_command(cmd: list[str], check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
+def run_command(
+    cmd: list[str], check: bool = True, capture: bool = False
+) -> subprocess.CompletedProcess:
     """Run a command and handle errors."""
     print(f"  Running: {' '.join(cmd)}")
 
@@ -63,7 +65,7 @@ def run_command(cmd: list[str], check: bool = True, capture: bool = False) -> su
         kwargs["text"] = True
 
     try:
-        result = subprocess.run(cmd, **kwargs)
+        result = subprocess.run(cmd, check=False, **kwargs)
         if result.returncode == 0:
             print_success(f"Command succeeded: {cmd[0]}")
         return result
@@ -103,7 +105,9 @@ def check_version_consistency() -> str:
         if match:
             code_version = match.group(1)
             if code_version != pyproject_version:
-                print_error(f"Version mismatch: pyproject.toml={pyproject_version}, __version__.py={code_version}")
+                print_error(
+                    f"Version mismatch: pyproject.toml={pyproject_version}, __version__.py={code_version}"
+                )
                 sys.exit(1)
 
     print_success(f"Version is consistent: {pyproject_version}")
@@ -124,8 +128,7 @@ def run_linting() -> None:
 
     # Check if ruff is available
     try:
-        subprocess.run([sys.executable, "-m", "ruff", "--version"],
-                      check=True, capture_output=True)
+        subprocess.run([sys.executable, "-m", "ruff", "--version"], check=True, capture_output=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         print_warning("ruff not installed, skipping linting")
         return
@@ -135,6 +138,7 @@ def run_linting() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "ruff", "check", "backend/", "cli/", "tests/"],
         cwd=Path(__file__).parent.parent,
+        check=False,
     )
     if result.returncode != 0:
         print_warning("Ruff found some issues (non-blocking)")
@@ -146,6 +150,7 @@ def run_linting() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "ruff", "format", "--check", "backend/", "cli/", "tests/"],
         cwd=Path(__file__).parent.parent,
+        check=False,
     )
     if result.returncode != 0:
         print_warning("Some files need formatting (non-blocking)")
@@ -193,8 +198,9 @@ def build_binary(version: str) -> Path:
 
     # Check if PyInstaller is available
     try:
-        subprocess.run([sys.executable, "-m", "PyInstaller", "--version"],
-                      check=True, capture_output=True)
+        subprocess.run(
+            [sys.executable, "-m", "PyInstaller", "--version"], check=True, capture_output=True
+        )
     except (subprocess.CalledProcessError, FileNotFoundError):
         print_error("PyInstaller not installed. Install with: pip install pyinstaller")
         sys.exit(1)
@@ -221,12 +227,7 @@ def build_binary(version: str) -> Path:
         create_pyinstaller_spec(repo_root)
 
     # Build binary
-    run_command([
-        sys.executable, "-m", "PyInstaller",
-        "--clean",
-        "--noconfirm",
-        str(spec_file)
-    ])
+    run_command([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(spec_file)])
 
     # Find the built binary (single-file executable in dist/)
     if system == "windows":
@@ -245,6 +246,7 @@ def build_binary(version: str) -> Path:
 
     # Copy instead of rename to preserve original
     import shutil
+
     shutil.copy2(binary_path, final_binary)
 
     print_success(f"Binary built: {binary_name}")
@@ -253,7 +255,7 @@ def build_binary(version: str) -> Path:
 
 def create_pyinstaller_spec(repo_root: Path) -> None:
     """Create a basic PyInstaller spec file."""
-    spec_content = '''# -*- mode: python ; coding: utf-8 -*-
+    spec_content = """# -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
 
@@ -318,7 +320,7 @@ coll = COLLECT(
     upx_exclude=[],
     name='paranoid',
 )
-'''
+"""
 
     spec_path = repo_root / "paranoid.spec"
     spec_path.write_text(spec_content)
@@ -404,15 +406,18 @@ def test_pypi_install() -> None:
         else:
             venv_python = venv_dir / "bin" / "python"
 
-        print(f"\n  Installing wheel in test venv...")
-        subprocess.run([
-            str(venv_python), "-m", "pip", "install", "--quiet", str(wheel_path)
-        ], check=True)
+        print("\n  Installing wheel in test venv...")
+        subprocess.run(
+            [str(venv_python), "-m", "pip", "install", "--quiet", str(wheel_path)], check=True
+        )
 
         print("\n  Testing CLI entrypoint...")
-        result = subprocess.run([
-            str(venv_python), "-m", "cli.main", "--help"
-        ], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            [str(venv_python), "-m", "cli.main", "--help"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
         if "Usage:" not in result.stdout:
             print_error("Installed package CLI doesn't work")
@@ -454,8 +459,8 @@ def main() -> None:
         print(f"  • PyPI wheel: {wheel_path.name}")
         print(f"  • Binary: {binary_path.name}")
         print(f"\n{GREEN}You can now:{RESET}")
-        print(f"  1. Push to GitHub: git push && git push --tags")
-        print(f"  2. Upload to PyPI: twine upload dist/*.whl dist/*.tar.gz")
+        print("  1. Push to GitHub: git push && git push --tags")
+        print("  2. Upload to PyPI: twine upload dist/*.whl dist/*.tar.gz")
         print(f"  3. Create GitHub release with binary: {binary_path.name}")
 
     except Exception as e:

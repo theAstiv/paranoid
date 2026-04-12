@@ -71,9 +71,7 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
 @router.post("/", status_code=201)
 async def create_model(body: CreateModelRequest) -> JSONResponse:
     """Create a new threat model record."""
-    provider_type, model_id_str = resolve_provider(
-        body.provider.value if body.provider else None
-    )
+    provider_type, model_id_str = resolve_provider(body.provider.value if body.provider else None)
 
     model_id = await crud.create_threat_model(
         title=body.title,

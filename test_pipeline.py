@@ -31,7 +31,7 @@ async def test_basic_pipeline():
 
     # Load settings
     settings = Settings()
-    print(f"[OK] Configuration loaded")
+    print("[OK] Configuration loaded")
     print(f"  Provider: {settings.default_provider}")
     print(f"  Model: {settings.default_model}")
     print(f"  Max Iterations: {settings.default_iterations}")
@@ -136,12 +136,14 @@ Users can:
                 elif event.step.value == "extract_assets":
                     print(f"    Assets: {event.data.get('asset_count', 0)}")
                 elif event.step.value == "extract_flows":
-                    print(f"    Flows: {event.data.get('flow_count', 0)}, Boundaries: {event.data.get('boundary_count', 0)}")
+                    print(
+                        f"    Flows: {event.data.get('flow_count', 0)}, Boundaries: {event.data.get('boundary_count', 0)}"
+                    )
                 elif event.step.value == "generate_threats":
                     print(f"    Threats: {event.data.get('threat_count', 0)}")
                 elif event.step.value == "gap_analysis":
                     if event.data.get("stop"):
-                        print(f"    Decision: STOP (coverage satisfied)")
+                        print("    Decision: STOP (coverage satisfied)")
                     else:
                         gap_text = event.data.get("gap", "")[:100]
                         print(f"    Decision: CONTINUE - Gap: {gap_text}...")
@@ -180,7 +182,7 @@ Users can:
         print("ERROR DURING PIPELINE EXECUTION")
         print("=" * 80)
         print(f"Exception: {type(e).__name__}")
-        print(f"Message: {str(e)}")
+        print(f"Message: {e!s}")
         import traceback
 
         print()
@@ -199,7 +201,7 @@ async def test_structured_stride():
 
     # Load settings
     settings = Settings()
-    print(f"[OK] Configuration loaded")
+    print("[OK] Configuration loaded")
     print(f"  Provider: {settings.default_provider}")
     print(f"  Model: {settings.default_model}")
     print(f"  Max Iterations: {settings.default_iterations}")
@@ -232,14 +234,14 @@ async def test_structured_stride():
         print("Please ensure examples/stride-example-api-gateway.md exists")
         sys.exit(1)
 
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         structured_description = f.read()
 
     print("Test Scenario: E-commerce API Gateway (Structured Input)")
     print("-" * 80)
-    print(f"Input format: XML-tagged structured template")
-    print(f"Framework: STRIDE only")
-    print(f"Has AI components: No")
+    print("Input format: XML-tagged structured template")
+    print("Framework: STRIDE only")
+    print("Has AI components: No")
     print()
     print("=" * 80)
     print("STARTING PIPELINE EXECUTION")
@@ -275,7 +277,7 @@ async def test_dual_framework():
 
     # Load settings
     settings = Settings()
-    print(f"[OK] Configuration loaded")
+    print("[OK] Configuration loaded")
     print(f"  Provider: {settings.default_provider}")
     print(f"  Model: {settings.default_model}")
     print(f"  Max Iterations: {settings.default_iterations}")
@@ -308,14 +310,14 @@ async def test_dual_framework():
         print("Please ensure examples/maestro-example-rag-chatbot.md exists")
         sys.exit(1)
 
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         maestro_description = f.read()
 
     print("Test Scenario: RAG-Powered Customer Support Chatbot (AI/ML System)")
     print("-" * 80)
-    print(f"Input format: MAESTRO XML-tagged template")
-    print(f"Framework: STRIDE + MAESTRO (dual)")
-    print(f"Has AI components: Yes")
+    print("Input format: MAESTRO XML-tagged template")
+    print("Framework: STRIDE + MAESTRO (dual)")
+    print("Has AI components: Yes")
     print()
     print("Expected output:")
     print("  - STRIDE threats (traditional security)")
@@ -383,7 +385,7 @@ def _print_event(event):
                 print(f"    Threats: {threat_count}")
         elif event.step.value == "gap_analysis":
             if event.data.get("stop"):
-                print(f"    Decision: STOP (coverage satisfied)")
+                print("    Decision: STOP (coverage satisfied)")
             else:
                 gap_text = event.data.get("gap", "")[:100]
                 print(f"    Decision: CONTINUE - Gap: {gap_text}...")
@@ -414,7 +416,7 @@ def _print_error(e):
     print("ERROR DURING PIPELINE EXECUTION")
     print("=" * 80)
     print(f"Exception: {type(e).__name__}")
-    print(f"Message: {str(e)}")
+    print(f"Message: {e!s}")
     import traceback
 
     print()

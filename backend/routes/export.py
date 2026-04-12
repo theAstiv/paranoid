@@ -32,9 +32,7 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
     stride_rows = [r for r in threat_rows if r.get("stride_category")]
     skipped = len(threat_rows) - len(stride_rows)
     if skipped:
-        logger.warning(
-            "%d MAESTRO-only threat(s) skipped — SARIF export is STRIDE-only", skipped
-        )
+        logger.warning("%d MAESTRO-only threat(s) skipped — SARIF export is STRIDE-only", skipped)
 
     built = []
     for row in stride_rows:
