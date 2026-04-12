@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -13,6 +14,7 @@ from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif
 from backend.models.api import ExportFormat
 from backend.models.state import Threat, ThreatsList
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,8 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
 @router.get("/{model_id}")
 async def export_model(
     model_id: str,
-    format: ExportFormat = Query(default="markdown"),
-    status_filter: str | None = Query(default=None),
+    export_format: Annotated[ExportFormat, Query(alias="format")] = "markdown",
+    status_filter: Annotated[str | None, Query()] = None,
 ) -> Response:
     """Export a threat model in the requested format.
 
@@ -66,9 +68,9 @@ async def export_model(
     framework = model.get("framework", "STRIDE")
     # Strip characters that would break Content-Disposition or filesystem paths.
     raw = title or model_id[:8]
-    safe_title = re.sub(r'[^\w\-]', '_', raw).lower().strip("_") or "export"
+    safe_title = re.sub(r"[^\w\-]", "_", raw).lower().strip("_") or "export"
 
-    if format == "markdown":
+    if export_format == "markdown":
         content = export_markdown(
             threats=threats,
             model_id=model_id,
@@ -83,7 +85,7 @@ async def export_model(
             },
         )
 
-    if format == "pdf":
+    if export_format == "pdf":
         pdf_bytes = export_pdf(
             threats=threats,
             model_id=model_id,
@@ -98,7 +100,7 @@ async def export_model(
             },
         )
 
-    if format == "sarif":
+    if export_format == "sarif":
         threats_list = _build_threats_list(threats)
         sarif_data = export_sarif(
             threats=threats_list,

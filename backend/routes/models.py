@@ -18,6 +18,7 @@ from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_fo
 from backend.providers.base import create_provider
 from backend.routes._helpers import get_api_key, resolve_provider
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -151,7 +152,6 @@ async def delete_model(model_id: str) -> None:
 async def run_pipeline(
     model_id: str,
     assumptions: Annotated[str, Form()] = "[]",
-    temperature: Annotated[float, Form()] = 0.2,
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
 ) -> StreamingResponse:
@@ -159,7 +159,6 @@ async def run_pipeline(
 
     Accepts multipart/form-data:
     - assumptions: JSON array string, e.g. '["TLS is enforced","Auth is OAuth2"]'
-    - temperature: float 0.0–1.0 (default 0.2)
     - has_ai_components: bool, enables MAESTRO alongside STRIDE
     - diagram: optional PNG/JPG/Mermaid file upload
     """

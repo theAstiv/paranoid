@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import VERSION, settings
 
+
 router = APIRouter(prefix="/config", tags=["config"])
 
 
