@@ -45,9 +45,7 @@ def _make_test_threat(category: StrideCategory) -> Threat:
 def _balanced_threats(per_category: int = 2) -> ThreatsList:
     """ThreatsList with `per_category` threats for every STRIDE category."""
     return ThreatsList(
-        threats=[
-            _make_test_threat(cat) for cat in StrideCategory for _ in range(per_category)
-        ]
+        threats=[_make_test_threat(cat) for cat in StrideCategory for _ in range(per_category)]
     )
 
 
@@ -376,7 +374,9 @@ async def test_runner_stride_short_circuit_skips_gap_analysis():
     assert complete.data["iterations_completed"] == 1
 
     # The deterministic gate should fire before any LLM gap call
-    gap_started = [e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "started"]
+    gap_started = [
+        e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "started"
+    ]
     assert len(gap_started) == 0, "No LLM gap-analysis call should have been made"
 
     # Verify no GapAnalysis generate_structured call was issued to the provider

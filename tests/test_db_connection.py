@@ -147,15 +147,11 @@ async def test_initialize_loads_vec0_via_package_path(clean_manager, mock_aiosql
 
         mock_aiosqlite_connection.enable_load_extension.assert_called_once_with(True)
         # Must use the full path, never the bare name "vec0"
-        mock_aiosqlite_connection.load_extension.assert_called_once_with(
-            sqlite_vec.loadable_path()
-        )
+        mock_aiosqlite_connection.load_extension.assert_called_once_with(sqlite_vec.loadable_path())
 
 
 @pytest.mark.asyncio
-async def test_initialize_raises_when_extension_fails(
-    clean_manager, mock_aiosqlite_connection
-):
+async def test_initialize_raises_when_extension_fails(clean_manager, mock_aiosqlite_connection):
     """Initialize raises when sqlite-vec extension fails to load."""
     mock_aiosqlite_connection.load_extension.side_effect = Exception("Extension not found")
 
