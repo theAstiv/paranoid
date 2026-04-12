@@ -196,8 +196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--code PATH`** CLI flag — extracts semantically relevant code from a local repository and threads it through all pipeline nodes
 - **`MCPCodeExtractor`** async context manager (`backend/mcp/client.py`) — manages context-link subprocess lifecycle over MCP stdio transport
 - **Three-tier extraction funnel**: semantic symbol search → code body extraction → file skeletons, capped at 50KB (~12.5K tokens)
-- **`summarize_code()` pipeline node** — condenses raw `CodeContext` into a ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, external dependencies, security observations); runs concurrently with `summarize()` via `asyncio.gather()`
-- **`_deterministic_code_summary()` fallback** — when `summarize_code()` LLM call fails, extracts `CodeSummary` from file extensions, import patterns, and keyword matches; never returns `None`
+- **`_deterministic_code_summary()` extractor** — default code-summary path; extracts ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, external dependencies, security observations) from file extensions, import scanning, and keyword matching without an LLM call; replaces the previous `asyncio.gather(summarize(), summarize_code())` concurrent pattern to save one API call per run
+- **`summarize_code()` pipeline node** — LLM-backed code summarization retained as an opt-in upgrade path in `backend/pipeline/nodes/summary.py`; not called by the runner by default
 - **`CodeSummary` Pydantic model** (`backend/models/extended.py`) — structured condensed code representation threaded through `extract_assets`, `extract_flows`, `generate_threats`, `gap_analysis`
 - **`CONTEXT_LINK_BINARY` env var** — override binary path; auto-detection order: env var → `./bin/context-link` → `shutil.which("context-link")`
 - **MCP error hierarchy** (`backend/mcp/errors.py`): `MCPError` → `MCPBinaryNotFoundError`, `MCPConnectionError`, `MCPToolError`, `MCPTimeoutError`

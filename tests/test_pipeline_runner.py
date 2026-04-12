@@ -6,17 +6,47 @@ Collects events from the async generator and asserts step ordering and data.
 
 import pytest
 
-from backend.models.enums import Framework
-from backend.models.state import GapAnalysis, SummaryState, ThreatsList
+from backend.models.enums import Framework, StrideCategory
+from backend.models.state import GapAnalysis, SummaryState, Threat, ThreatsList
 from backend.pipeline.runner import (
     PipelineConfig,
     PipelineEvent,
     PipelineRunner,
     PipelineStep,
+    _is_stride_coverage_balanced,
     run_pipeline_for_model,
 )
 from backend.providers.base import ProviderError
 from tests.mock_provider import MockProvider
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_test_threat(category: StrideCategory) -> Threat:
+    """Minimal valid Threat for unit tests — description length is not validated."""
+    return Threat(
+        name=f"Test {category.value} threat",
+        stride_category=category,
+        description=(
+            "An attacker could exploit this vulnerability to gain unauthorized access "
+            "by manipulating the system data flows and bypassing authentication mechanisms "
+            "causing harm."
+        ),
+        target="Test Target",
+        impact="medium",
+        likelihood="medium",
+        mitigations=["Mitigation A", "Mitigation B"],
+    )
+
+
+def _balanced_threats(per_category: int = 2) -> ThreatsList:
+    """ThreatsList with `per_category` threats for every STRIDE category."""
+    return ThreatsList(
+        threats=[_make_test_threat(cat) for cat in StrideCategory for _ in range(per_category)]
+    )
 
 
 async def _collect_events(
@@ -271,3 +301,91 @@ async def test_run_pipeline_for_model_convenience():
     assert len(events) > 0
     assert events[-1].step == PipelineStep.COMPLETE
     assert events[-1].status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: _is_stride_coverage_balanced
+# ---------------------------------------------------------------------------
+
+
+def test_stride_coverage_balanced_all_categories_met():
+    """Returns True when every STRIDE category has at least min_per_category threats."""
+    assert _is_stride_coverage_balanced(_balanced_threats(per_category=2)) is True
+
+
+def test_stride_coverage_balanced_one_per_category_not_enough():
+    """Returns False with exactly 1 threat per category (default threshold is 2)."""
+    one_each = ThreatsList(threats=[_make_test_threat(cat) for cat in StrideCategory])
+    assert _is_stride_coverage_balanced(one_each) is False
+
+
+def test_stride_coverage_balanced_one_category_short():
+    """Returns False when any single STRIDE category is below the threshold."""
+    # Build 2 per category for everything except SPOOFING (only 1)
+    threats = ThreatsList(
+        threats=[
+            _make_test_threat(cat)
+            for cat in StrideCategory
+            for _ in range(2)
+            if cat != StrideCategory.SPOOFING
+        ]
+        + [_make_test_threat(StrideCategory.SPOOFING)]  # only 1
+    )
+    assert _is_stride_coverage_balanced(threats) is False
+
+
+def test_stride_coverage_balanced_empty_list():
+    """Returns False for an empty threat catalog."""
+    assert _is_stride_coverage_balanced(ThreatsList(threats=[])) is False
+
+
+def test_stride_coverage_balanced_custom_threshold():
+    """Respects a non-default min_per_category argument."""
+    # 2 per category passes the default threshold of 2 but not 3
+    threats = _balanced_threats(per_category=2)
+    assert _is_stride_coverage_balanced(threats, min_per_category=2) is True
+    assert _is_stride_coverage_balanced(threats, min_per_category=3) is False
+
+
+# ---------------------------------------------------------------------------
+# Integration test: STRIDE short-circuit skips LLM gap analysis
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_runner_stride_short_circuit_skips_gap_analysis():
+    """When all STRIDE categories reach min coverage, gap analysis LLM call is skipped.
+
+    The gate fires before the gap-analysis started event, emits a synthetic
+    GAP_ANALYSIS completed event with stop=True, and stops the iteration loop.
+    """
+    provider = MockProvider(gap_call_threshold=10)  # Would never auto-stop via LLM
+    # Override ThreatsList responses to return 2 threats per STRIDE category (12 total)
+    provider.response_overrides[ThreatsList] = _balanced_threats(per_category=2)
+
+    config = PipelineConfig(max_iterations=5)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-short-circuit")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] == "gap_satisfied"
+    assert complete.data["iterations_completed"] == 1
+
+    # The deterministic gate should fire before any LLM gap call
+    gap_started = [
+        e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "started"
+    ]
+    assert len(gap_started) == 0, "No LLM gap-analysis call should have been made"
+
+    # Verify no GapAnalysis generate_structured call was issued to the provider
+    gap_provider_calls = [c for c in provider.calls if c["response_model"] is GapAnalysis]
+    assert len(gap_provider_calls) == 0, "Provider should not have received a GapAnalysis request"
+
+    # Exactly one synthetic GAP_ANALYSIS completed event must have been emitted
+    gap_completed = [
+        e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "completed"
+    ]
+    assert len(gap_completed) == 1
+    assert gap_completed[0].data["stop"] is True

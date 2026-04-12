@@ -54,19 +54,19 @@ class ConnectionManager:
         self._connection.row_factory = aiosqlite.Row
 
         try:
-            # Load sqlite-vec extension (cascading fallback: vec0 → sqlite-vec)
+            # Load sqlite-vec extension via its Python package path so the full
+            # path to vec0.dll is resolved correctly on all platforms (on Windows,
+            # a bare name like "vec0" is not found because the site-packages
+            # directory is not on the DLL search path).
+            import sqlite_vec
+
             await self._connection.enable_load_extension(True)
             try:
-                await self._connection.load_extension("vec0")
-                logger.info("Loaded sqlite-vec extension as 'vec0'")
+                await self._connection.load_extension(sqlite_vec.loadable_path())
+                logger.info("Loaded sqlite-vec extension via sqlite_vec.loadable_path()")
             except Exception as e:
-                logger.warning(f"Could not load vec0 extension: {e}")
-                try:
-                    await self._connection.load_extension("sqlite-vec")
-                    logger.info("Loaded sqlite-vec extension as 'sqlite-vec'")
-                except Exception as e2:
-                    logger.error(f"Could not load sqlite-vec extension: {e2}")
-                    raise
+                logger.error(f"Could not load sqlite-vec extension: {e}")
+                raise
 
             # Enable foreign keys for all operations
             await self._connection.execute("PRAGMA foreign_keys = ON;")

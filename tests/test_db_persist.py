@@ -343,10 +343,13 @@ async def test_persist_handles_none_assets_flows_threats(test_db):
 @pytest.mark.asyncio
 async def test_persist_returns_none_on_db_failure(test_db):
     """Non-fatal wrapper returns None (not raises) when DB operation fails."""
-    # Close the connection to force a DB failure
     from backend.db.connection import db
 
     await db.close()
+    # Force the "initialized but no connection" state so db.get() raises
+    # RuntimeError immediately, bypassing lazy re-init (which would otherwise
+    # succeed now that sqlite_vec.loadable_path() loads the extension correctly).
+    db._initialized = True
 
     result = await persist_pipeline_result(
         title="test",

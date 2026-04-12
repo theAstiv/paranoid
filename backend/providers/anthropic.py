@@ -18,6 +18,10 @@ from backend.providers.base import (
 
 T = TypeVar("T", bound=BaseModel)
 
+# Module-level cache for model_json_schema() results — these are deterministic
+# per class and can be computed once rather than on every API call.
+_schema_cache: dict[type, dict] = {}
+
 
 class AnthropicProvider:
     """Anthropic Claude provider with structured output support.
@@ -69,46 +73,64 @@ class AnthropicProvider:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         images: list[ImageContent] | None = None,
+        shared_context: str | None = None,
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
         Supports vision API for PNG/JPG images via content blocks.
+
+        When shared_context is provided it is sent as a separate content block
+        marked with cache_control: ephemeral so Anthropic's prompt cache can
+        serve it from cache for every call in the same pipeline run (5-min TTL).
+        The system prompt block is always marked cacheable; images are marked
+        cacheable when shared_context is also present (they are stable too).
         """
         try:
-            # Get JSON schema from Pydantic model
-            schema = response_model.model_json_schema()
+            # Get JSON schema from Pydantic model (cached per class — deterministic)
+            if response_model not in _schema_cache:
+                _schema_cache[response_model] = response_model.model_json_schema()
+            schema = _schema_cache[response_model]
 
-            # Construct system prompt for JSON output
-            system_prompt = (
+            # Construct system prompt for JSON output (compact JSON, no indent).
+            # Passed as a list of blocks so cache_control can be applied — Anthropic
+            # caches the system block across calls that share the exact same content.
+            schema_text = (
                 f"You must respond with valid JSON matching this schema:\n"
-                f"{json.dumps(schema, indent=2)}\n\n"
+                f"{json.dumps(schema)}\n\n"
                 f"Respond ONLY with the JSON object, no other text."
             )
+            system = [{"type": "text", "text": schema_text, "cache_control": {"type": "ephemeral"}}]
 
-            # Build message content (images + text)
-            content = []
+            # Build user content blocks.
+            # Order: images → shared_context (cacheable) → dynamic prompt (not cached).
+            # Images and shared_context get cache_control when shared_context is present
+            # so the entire stable prefix is served from cache on subsequent calls.
+            content: list[dict] = []
 
-            # Add images first (recommended by Anthropic docs)
             if images:
                 for img in images:
-                    content.append(
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": img.media_type,
-                                "data": img.data,
-                            },
-                        }
-                    )
+                    block: dict = {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.media_type,
+                            "data": img.data,
+                        },
+                    }
+                    if shared_context:
+                        block["cache_control"] = {"type": "ephemeral"}
+                    content.append(block)
 
-            # Add text prompt
-            content.append(
-                {
-                    "type": "text",
-                    "text": prompt,
-                }
-            )
+            if shared_context:
+                content.append(
+                    {
+                        "type": "text",
+                        "text": shared_context,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                )
+
+            content.append({"type": "text", "text": prompt})
 
             # Call Anthropic API in thread pool (sync SDK)
             response = await run_sync_in_executor(
@@ -116,7 +138,7 @@ class AnthropicProvider:
                 model=self._model,
                 max_tokens=max_tokens or 4096,
                 temperature=temperature,
-                system=system_prompt,
+                system=system,
                 messages=[{"role": "user", "content": content}],
             )
 
