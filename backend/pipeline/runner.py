@@ -4,23 +4,46 @@ The runner coordinates all pipeline nodes, manages the iteration loop,
 and emits server-sent events for real-time progress tracking.
 """
 
-import asyncio
 import json
 import time
+from collections import Counter
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
 from backend.dedup import deduplicate_threats
-from backend.models.enums import Framework
+from backend.models.enums import Framework, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.pipeline.nodes.helpers import build_shared_context
+from backend.pipeline.nodes.summary import _deterministic_code_summary
 from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
+
+
+def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2) -> bool:
+    """Return True when all STRIDE categories have at least min_per_category threats.
+
+    Used as a cheap deterministic gate before the LLM gap-analysis call. When every
+    category is covered at the minimum level, the gap call (max_tokens=1536) would
+    just return stop=True. The gate avoids that round trip.
+
+    Note: MAESTRO threats also carry stride_category and feed the same counter in
+    dual-framework runs, so the gate is conservative — it only fires when both
+    frameworks have jointly covered all six STRIDE categories.
+
+    Args:
+        threats: Cumulative threat catalog from all completed iterations.
+        min_per_category: Minimum threats per STRIDE category to consider balanced.
+
+    Returns:
+        True if every StrideCategory value appears at least min_per_category times.
+    """
+    counts = Counter(t.stride_category for t in threats.threats)
+    return all(counts.get(cat, 0) >= min_per_category for cat in StrideCategory)
 
 
 class PipelineStep(str, Enum):
@@ -171,23 +194,20 @@ class PipelineRunner:
                     message="Generating system summary...",
                 )
 
-                # Run summarize() and summarize_code() concurrently if code available
+                # Run summarize; extract code summary deterministically if code available.
+                # The LLM-backed summarize_code() is replaced by _deterministic_code_summary()
+                # to save one API call per run. Pattern matching covers the security-relevant
+                # signals (tech stack, entry points, auth patterns, anti-patterns) without
+                # the token cost of a second LLM call at this stage.
                 if code_context:
-                    summary, code_summary = await asyncio.gather(
-                        nodes.summarize(
-                            description=description,
-                            architecture_diagram=architecture_diagram,
-                            assumptions=assumptions,
-                            code_context=code_context,
-                            provider=self.provider,
-                            diagram_data=diagram_data,
-                            temperature=self.config.temperature,
-                        ),
-                        nodes.summarize_code(
-                            code_context=code_context,
-                            provider=self.provider,
-                            temperature=self.config.temperature,
-                        ),
+                    summary = await nodes.summarize(
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        code_context=code_context,
+                        provider=self.provider,
+                        diagram_data=diagram_data,
+                        temperature=self.config.temperature,
                     )
 
                     yield PipelineEvent(
@@ -197,10 +217,12 @@ class PipelineRunner:
                         data={"summary": summary.summary},
                     )
 
+                    code_summary = _deterministic_code_summary(code_context)
+
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE_CODE,
                         status="completed",
-                        message=f"Code summary: {len(code_summary.tech_stack)} technologies, {len(code_summary.entry_points)} entry points",
+                        message=f"Code analyzed: {len(code_summary.tech_stack)} technologies, {len(code_summary.entry_points)} entry points",
                         data={
                             "tech_stack": code_summary.tech_stack,
                             "entry_points": code_summary.entry_points,
@@ -372,7 +394,7 @@ class PipelineRunner:
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
-                                diagram_data=diagram_data,
+                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                 shared_context=shared_ctx,
                             )
                         except ProviderError as e:
@@ -423,7 +445,7 @@ class PipelineRunner:
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
-                                diagram_data=diagram_data,
+                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                 shared_context=shared_ctx,
                             )
                         except ProviderError as e:
@@ -506,7 +528,7 @@ class PipelineRunner:
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
-                                diagram_data=diagram_data,
+                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                 shared_context=shared_ctx,
                             )
                         except ProviderError as e:
@@ -566,6 +588,26 @@ class PipelineRunner:
 
                     # Gap Analysis (only if not final iteration)
                     if iteration < self.config.max_iterations:
+                        # Deterministic short-circuit: if every STRIDE category has >= 2
+                        # threats the catalog is structurally balanced and LLM gap analysis
+                        # is unlikely to find meaningful holes (saves ~1536 max-token call).
+                        # Only applies to STRIDE framework; MAESTRO coverage is asymmetric.
+                        if framework == Framework.STRIDE and _is_stride_coverage_balanced(
+                            cumulative_threats
+                        ):
+                            yield PipelineEvent(
+                                step=PipelineStep.GAP_ANALYSIS,
+                                status="completed",
+                                message="All STRIDE categories covered — skipping gap analysis",
+                                iteration=iteration,
+                                data={
+                                    "stop": True,
+                                    "gap": "Coverage balanced across all STRIDE categories",
+                                },
+                            )
+                            stopped_reason = "gap_satisfied"
+                            break
+
                         yield PipelineEvent(
                             step=PipelineStep.GAP_ANALYSIS,
                             status="started",
@@ -588,7 +630,7 @@ class PipelineRunner:
                                 ],  # cap: only last 2 gaps to bound prompt growth
                                 temperature=self.config.temperature,
                                 code_summary=code_summary,
-                                diagram_data=diagram_data,
+                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                 shared_context=shared_ctx,
                             )
                         except ProviderError as e:

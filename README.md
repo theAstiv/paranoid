@@ -465,11 +465,11 @@ paranoid run system.md --diagram arch.png --code /path/to/repo  # combined
    - Code body extraction: `get_code_by_symbol` fetches full source for top results
    - File skeletons: `get_file_skeleton` fills remaining budget with structural outlines
 
-2. **Code summary step**: A `summarize_code()` node condenses the raw 50KB `CodeContext` into a focused ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, security observations). This runs concurrently with `summarize()` to hide latency.
+2. **Code summary step**: `_deterministic_code_summary()` extracts a focused ~2KB `CodeSummary` (tech stack, entry points, auth patterns, data stores, security observations) from `CodeContext` using file-extension mapping, import scanning, and keyword matching — no LLM call required. `summarize_code()` (LLM-backed) is available as an opt-in upgrade path when pattern matching isn't sufficient.
 
 3. **Full pipeline threading**: The `CodeSummary` is passed to all downstream nodes — `extract_assets`, `extract_flows`, `generate_threats`, and `gap_analysis` — so threats reference actual implementation details.
 
-4. **Deterministic fallback**: If the `summarize_code()` LLM call fails, a code-metadata extractor produces the `CodeSummary` from file extensions, import patterns, and keyword matches. The pipeline never silently drops code context.
+4. **Deterministic extraction**: `_deterministic_code_summary()` covers tech stack from file extensions, HTTP routes from decorator patterns, auth/DB/HTTP-client keywords, and security anti-patterns (`eval()`, `pickle.load`, `shell=True`, SQL string concatenation). The pipeline never silently drops code context.
 
 **Requirements:**
 

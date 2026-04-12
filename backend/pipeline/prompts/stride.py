@@ -383,17 +383,17 @@ def stride_threats_prompt(improve: bool = False) -> str:
 
 """
         dread_section = f"""\
-3. DREAD Risk Scoring Model:
+4. DREAD Risk Scoring Model:
 {_DREAD_RUBRIC_SHORT}
 
-4. DREAD Severity Distribution and Balanced Scoring (Sum 0-50):
+5. DREAD Severity Distribution and Balanced Scoring (Sum 0-50):
    * **Critical (40-50):** Stop the line.
    * **High (25-39):** Mitigate before production.
    * **Medium (11-24):** Scheduled resolution.
    * **Low (1-10):** Standard backlog.
    **CRITICAL REQUIREMENT:** Prioritize adding Medium and Low severity threats if the existing catalog is dominated by Critical/High threats. A realistic threat model needs configuration issues and best practice violations. DO NOT inflate DREAD scores.
 
-5. Gap analysis and coverage approach:
+6. Gap analysis and coverage approach:
    * **Analyze existing threats carefully** to avoid duplication and identify coverage gaps.
    * Address each asset or entity that may be **under-represented** in the existing catalog.
    * For each **data flow**, verify threats to data **in transit** and between **trust boundaries** are adequately covered.
@@ -402,7 +402,8 @@ def stride_threats_prompt(improve: bool = False) -> str:
 
 """
         threat_actor_section = ""
-        format_num = 6
+        framework_num = 3
+        format_num = 7
         format_scope = "each new or merged threat"
         description_line = "   **Description**: [Actor with specific access] can [attack method] by [technique], leading to [impact], affecting [asset]."
     else:
@@ -440,6 +441,7 @@ def stride_threats_prompt(improve: bool = False) -> str:
    **ANTI-PATTERN WARNING:** DO NOT inflate DREAD scores to make threats seem more severe. Score honestly based on actual impact.
 
 """
+        framework_num = 2
         threat_actor_section = """\
 3. Threat actor categories and realism constraints:
    * **Only include threats that are plausible** given the architecture, technologies, and trust boundaries described.
@@ -469,7 +471,7 @@ You are an expert in all security domains and threat modeling. {task_line}
      error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
      observed in the code.
 
-{dedup_section}2. Threat modeling framework and scope:
+{dedup_section}{framework_num}. Threat modeling framework and scope:
    * Use the **STRIDE model** as your framework: {stride_cats}.
 
 {threat_actor_section}{dread_section}{format_num}. Format {format_scope} exactly as follows:

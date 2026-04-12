@@ -245,6 +245,10 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
     )
 
 
+# NOTE: The pipeline runner calls _deterministic_code_summary() directly instead of
+# summarize_code() to save one LLM API call per run. This function is intentionally
+# kept as an upgrade path for when LLM-quality code summarization is needed (e.g.,
+# when code context is too ambiguous for pattern-matching heuristics alone).
 async def summarize_code(
     code_context: CodeContext,
     provider: LLMProvider,
