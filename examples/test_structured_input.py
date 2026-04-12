@@ -13,7 +13,6 @@ Usage:
 """
 
 import asyncio
-import json
 from pathlib import Path
 
 from backend.models.enums import Framework
@@ -29,7 +28,7 @@ async def test_stride_only():
 
     # Read the STRIDE example
     example_path = Path(__file__).parent / "stride-example-api-gateway.md"
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         description = f.read()
 
     # Initialize provider
@@ -45,8 +44,8 @@ async def test_stride_only():
     # Run pipeline
     print("Starting STRIDE pipeline...")
     print(f"Input length: {len(description)} characters")
-    print(f"Framework: STRIDE only")
-    print(f"Has AI components: False\n")
+    print("Framework: STRIDE only")
+    print("Has AI components: False\n")
 
     threats_generated = 0
     iteration_count = 0
@@ -73,14 +72,14 @@ async def test_stride_only():
                 gap_preview = event.data.get("gap", "")[:100]
                 print(f"  --> Gap detected: {gap_preview}...")
             else:
-                print(f"  [OK] Gap analysis satisfied - catalog complete")
+                print("  [OK] Gap analysis satisfied - catalog complete")
 
         elif step == "complete":
             if status == "completed":
                 total_threats = event.data.get("threat_count", 0)
                 iterations = event.data.get("iterations", 0)
                 duration = event.data.get("duration_seconds", 0)
-                print(f"\n[SUCCESS] Pipeline complete!")
+                print("\n[SUCCESS] Pipeline complete!")
                 print(f"   Total threats: {total_threats}")
                 print(f"   Iterations: {iterations}")
                 print(f"   Duration: {duration:.1f}s")
@@ -97,7 +96,7 @@ async def test_stride_maestro_dual():
 
     # Read the MAESTRO example
     example_path = Path(__file__).parent / "maestro-example-rag-chatbot.md"
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         description = f.read()
 
     # Initialize provider
@@ -113,8 +112,8 @@ async def test_stride_maestro_dual():
     # Run pipeline
     print("Starting STRIDE+MAESTRO dual framework pipeline...")
     print(f"Input length: {len(description)} characters")
-    print(f"Framework: STRIDE + MAESTRO (dual)")
-    print(f"Has AI components: True\n")
+    print("Framework: STRIDE + MAESTRO (dual)")
+    print("Has AI components: True\n")
 
     stride_threats = 0
     maestro_threats = 0
@@ -139,10 +138,14 @@ async def test_stride_maestro_dual():
 
             if framework_type == "STRIDE":
                 stride_threats = threat_count
-                print(f"  [OK] Iteration {iteration_count}: Generated {stride_threats} STRIDE threats")
+                print(
+                    f"  [OK] Iteration {iteration_count}: Generated {stride_threats} STRIDE threats"
+                )
             elif framework_type == "MAESTRO":
                 maestro_threats = threat_count
-                print(f"  [OK] Iteration {iteration_count}: Generated {maestro_threats} MAESTRO threats")
+                print(
+                    f"  [OK] Iteration {iteration_count}: Generated {maestro_threats} MAESTRO threats"
+                )
             else:
                 # Combined count
                 total_threats = threat_count
@@ -160,14 +163,14 @@ async def test_stride_maestro_dual():
                 gap_preview = event.data.get("gap", "")[:100]
                 print(f"  --> Gap detected: {gap_preview}...")
             else:
-                print(f"  [OK] Gap analysis satisfied - catalog complete")
+                print("  [OK] Gap analysis satisfied - catalog complete")
 
         elif step == "complete":
             if status == "completed":
                 total_threats = event.data.get("threat_count", 0)
                 iterations = event.data.get("iterations", 0)
                 duration = event.data.get("duration_seconds", 0)
-                print(f"\n[SUCCESS] Pipeline complete!")
+                print("\n[SUCCESS] Pipeline complete!")
                 print(f"   Total threats: {total_threats}")
                 print(f"   STRIDE threats: ~{stride_threats * iterations}")
                 print(f"   MAESTRO threats: ~{maestro_threats * iterations}")
@@ -184,12 +187,11 @@ async def test_input_parser():
     print("TEST 3: Input Parser Validation")
     print("=" * 80 + "\n")
 
-    from backend.models.enums import Framework
     from backend.pipeline import input_parser
 
     # Test STRIDE example
     example_path = Path(__file__).parent / "stride-example-api-gateway.md"
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         stride_content = f.read()
 
     print("Testing STRIDE example parsing...")
@@ -216,7 +218,7 @@ async def test_input_parser():
     # Test MAESTRO example
     print("\nTesting MAESTRO example parsing...")
     example_path = Path(__file__).parent / "maestro-example-rag-chatbot.md"
-    with open(example_path, "r", encoding="utf-8") as f:
+    with open(example_path, encoding="utf-8") as f:
         maestro_content = f.read()
 
     input_format = input_parser.detect_input_format(maestro_content)

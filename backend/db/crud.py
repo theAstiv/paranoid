@@ -142,21 +142,40 @@ async def update_threat_model(
     logger.info(f"Updated threat model {model_id}")
 
 
-async def list_threat_models(limit: int = 50) -> list[dict[str, Any]]:
-    """List all threat models with per-model threat counts."""
+async def list_threat_models(
+    limit: int = 50,
+    framework: str | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """List threat models with per-model threat counts, optionally filtered."""
+    conditions = []
+    params: list[Any] = []
+
+    if framework is not None:
+        conditions.append("tm.framework = ?")
+        params.append(framework)
+
+    if status is not None:
+        conditions.append("tm.status = ?")
+        params.append(status)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.append(limit)
+
     conn = await db.get()
     async with conn.execute(
-        """
+        f"""
         SELECT
             tm.*,
             COUNT(t.id) AS threat_count
         FROM threat_models tm
         LEFT JOIN threats t ON t.model_id = tm.id
+        {where}
         GROUP BY tm.id
         ORDER BY tm.created_at DESC
         LIMIT ?
         """,
-        (limit,),
+        params,
     ) as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

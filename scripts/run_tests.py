@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 # Colors
 GREEN = "\033[92m"
 RED = "\033[91m"
@@ -27,9 +28,9 @@ BOLD = "\033[1m"
 
 def print_header(msg: str) -> None:
     """Print section header."""
-    print(f"\n{BLUE}{BOLD}{'='*70}{RESET}")
+    print(f"\n{BLUE}{BOLD}{'=' * 70}{RESET}")
     print(f"{BLUE}{BOLD}>> {msg}{RESET}")
-    print(f"{BLUE}{BOLD}{'='*70}{RESET}\n")
+    print(f"{BLUE}{BOLD}{'=' * 70}{RESET}\n")
 
 
 def print_success(msg: str) -> None:
@@ -75,7 +76,9 @@ def run_linting() -> bool:
 
     # Run ruff check
     print("\n  Linting code...")
-    if not run_command([sys.executable, "-m", "ruff", "check", "backend/", "cli/", "tests/"], check=False):
+    if not run_command(
+        [sys.executable, "-m", "ruff", "check", "backend/", "cli/", "tests/"], check=False
+    ):
         print_error("Linting failed")
         success = False
     else:
