@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### REST API
+- **`backend/routes/`** — Full FastAPI REST API: `models.py` (14 routes: create, list, get, update, delete, run, list threats/assets/flows, stats), `threats.py` (7 routes: get, update, delete, generate attack trees/test cases), `export.py` (multi-format export endpoint), `config.py` (configuration endpoint)
+- **SSE pipeline endpoint** — `POST /api/models/{id}/run` streams real-time pipeline progress as `text/event-stream`
+- **Pydantic request/response models** in `backend/models/api.py` for all endpoints
+
+#### Frontend
+- **Svelte SPA** with svelte-spa-router and Tailwind CSS (`frontend/`)
+  - Pages: `Home.svelte`, `NewModel.svelte`, `Results.svelte`, `Review.svelte`, `AttackTree.svelte`, `Library.svelte`, `TestCases.svelte`, `Settings.svelte`
+  - Components: `Wizard.svelte`, `ThreatCard.svelte`, `DreadBadge.svelte`, `ExportMenu.svelte`, `ResourceList.svelte`, `PipelineProgress.svelte`, `McpConfig.svelte`
+  - `frontend/src/lib/api.js` — fetch wrapper with SSE subscription helper
+  - `frontend/src/lib/stores.js` — Svelte writable stores for shared state
+
 ---
 
 ## [1.4.0] - 2026-04-12
@@ -390,12 +404,13 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-## [Planned] - v2.0+
+## [Planned]
 
-- REST API routes (model CRUD, pipeline SSE, threat approval)
-- Frontend UI with Svelte + Tailwind
-- Provider offline fallback (rule-engine-only mode when LLM unavailable)
-- PDF export (reportlab)
+### v1.5+
+- Docker Compose deployment (`docker compose up` single-command startup)
+- Web interface integration — frontend + backend served from one container, static files served by FastAPI
+
+### v2.0+
 - Multi-user collaboration features
 
 ---
