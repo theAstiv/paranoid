@@ -200,9 +200,7 @@ _BOUNDARY = {"source_entity": "Internet", "target_entity": "DMZ", "purpose": "Pe
 
 def test_assets_section_renders_table() -> None:
     """Assets list produces a Markdown table with name/type/description columns."""
-    md = export_markdown(
-        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", assets=[_ASSET]
-    )
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", assets=[_ASSET])
     assert "## Assets" in md
     assert "| Name |" in md
     assert "User DB" in md
@@ -218,9 +216,7 @@ def test_assets_section_absent_when_empty() -> None:
 
 def test_flows_section_renders_table() -> None:
     """Data flows list produces a Markdown table with source/target/type/description columns."""
-    md = export_markdown(
-        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", flows=[_FLOW]
-    )
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", flows=[_FLOW])
     assert "## Data Flows" in md
     assert "| Source |" in md
     assert "Reads user records" in md
@@ -247,9 +243,7 @@ def test_markdown_pipe_characters_escaped_in_cells() -> None:
 
 def test_trust_boundaries_section_renders_table() -> None:
     """Trust boundaries list produces a Markdown table with source/target/purpose columns."""
-    md = export_markdown(
-        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", trust_boundaries=[_BOUNDARY]
-    )
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", trust_boundaries=[_BOUNDARY])
     assert "## Trust Boundaries" in md
     assert "| Source |" in md
     assert "Perimeter" in md

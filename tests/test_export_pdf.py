@@ -189,9 +189,7 @@ def test_pdf_with_all_supplementary_sections() -> None:
 
 def test_pdf_empty_supplementary_sections_no_error() -> None:
     """Explicitly passing empty lists for supplementary sections produces valid PDF."""
-    result = export_pdf(
-        [_STRIDE_FLAT], "mid", "STRIDE", assets=[], flows=[], trust_boundaries=[]
-    )
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assets=[], flows=[], trust_boundaries=[])
     assert isinstance(result, bytes)
     assert result[:4] == b"%PDF"
 

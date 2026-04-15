@@ -555,9 +555,7 @@ async def test_delete_trust_boundary_returns_204(client, saved_model):
     boundary_id = await crud.create_trust_boundary(
         model_id=saved_model["id"], purpose="", source_entity="A", target_entity="B"
     )
-    resp = await client.delete(
-        f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}"
-    )
+    resp = await client.delete(f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}")
     assert resp.status_code == 204
     boundaries = await crud.list_trust_boundaries(saved_model["id"])
     assert not any(b["id"] == boundary_id for b in boundaries)
@@ -565,9 +563,7 @@ async def test_delete_trust_boundary_returns_204(client, saved_model):
 
 @pytest.mark.asyncio
 async def test_delete_trust_boundary_not_found_404(client, saved_model):
-    resp = await client.delete(
-        f"/api/models/{saved_model['id']}/trust-boundaries/missing-id"
-    )
+    resp = await client.delete(f"/api/models/{saved_model['id']}/trust-boundaries/missing-id")
     assert resp.status_code == 404
 
 
@@ -580,8 +576,12 @@ async def test_delete_trust_boundary_not_found_404(client, saved_model):
 async def test_patch_asset_from_wrong_model_returns_404(client, saved_model):
     """PATCH /models/{A}/assets/{id} must 404 when the asset belongs to model B."""
     other_id = await crud.create_threat_model(
-        title="Other", description="Ownership isolation model", provider="anthropic",
-        model="claude-sonnet-4", framework="STRIDE", iteration_count=1,
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
     )
     asset_id = await crud.create_asset(
         model_id=other_id, asset_type="Asset", name="Foreign Asset", description=""
@@ -597,12 +597,19 @@ async def test_patch_asset_from_wrong_model_returns_404(client, saved_model):
 async def test_patch_flow_from_wrong_model_returns_404(client, saved_model):
     """PATCH /models/{A}/flows/{id} must 404 when the flow belongs to model B."""
     other_id = await crud.create_threat_model(
-        title="Other", description="Ownership isolation model", provider="anthropic",
-        model="claude-sonnet-4", framework="STRIDE", iteration_count=1,
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
     )
     flow_id = await crud.create_flow(
-        model_id=other_id, flow_type="data", flow_description="Foreign flow",
-        source_entity="A", target_entity="B",
+        model_id=other_id,
+        flow_type="data",
+        flow_description="Foreign flow",
+        source_entity="A",
+        target_entity="B",
     )
     resp = await client.patch(
         f"/api/models/{saved_model['id']}/flows/{flow_id}",
@@ -615,11 +622,18 @@ async def test_patch_flow_from_wrong_model_returns_404(client, saved_model):
 async def test_patch_trust_boundary_from_wrong_model_returns_404(client, saved_model):
     """PATCH /models/{A}/trust-boundaries/{id} must 404 when the boundary belongs to model B."""
     other_id = await crud.create_threat_model(
-        title="Other", description="Ownership isolation model", provider="anthropic",
-        model="claude-sonnet-4", framework="STRIDE", iteration_count=1,
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
     )
     boundary_id = await crud.create_trust_boundary(
-        model_id=other_id, purpose="Foreign boundary", source_entity="X", target_entity="Y",
+        model_id=other_id,
+        purpose="Foreign boundary",
+        source_entity="X",
+        target_entity="Y",
     )
     resp = await client.patch(
         f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}",

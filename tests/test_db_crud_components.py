@@ -262,9 +262,7 @@ async def test_delete_trust_boundary_removes_record(test_db) -> None:
 async def test_update_trust_boundary_changes_fields(test_db) -> None:
     """update_trust_boundary updates only the provided fields."""
     model_id = await _make_model()
-    boundary_id = await crud.create_trust_boundary(
-        model_id, "Old purpose", "Internet", "DMZ"
-    )
+    boundary_id = await crud.create_trust_boundary(model_id, "Old purpose", "Internet", "DMZ")
 
     await crud.update_trust_boundary(boundary_id, purpose="New purpose", target_entity="LAN")
 
