@@ -160,11 +160,13 @@ _TABLE_STYLE_BASE = [
 def _build_assets_table(assets: list[dict[str, Any]]) -> Table:
     rows = [["Name", "Type", "Description"]]
     for a in assets:
-        rows.append([
-            a.get("name") or "—",
-            a.get("type") or "—",
-            a.get("description") or "—",
-        ])
+        rows.append(
+            [
+                a.get("name") or "—",
+                a.get("type") or "—",
+                a.get("description") or "—",
+            ]
+        )
     col_widths = [1.5 * inch, 1.2 * inch, 3.6 * inch]
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(_TABLE_STYLE_BASE))
@@ -174,12 +176,14 @@ def _build_assets_table(assets: list[dict[str, Any]]) -> Table:
 def _build_flows_table(flows: list[dict[str, Any]]) -> Table:
     rows = [["Source", "Target", "Type", "Description"]]
     for f in flows:
-        rows.append([
-            f.get("source_entity") or "—",
-            f.get("target_entity") or "—",
-            f.get("flow_type") or "—",
-            f.get("flow_description") or "—",
-        ])
+        rows.append(
+            [
+                f.get("source_entity") or "—",
+                f.get("target_entity") or "—",
+                f.get("flow_type") or "—",
+                f.get("flow_description") or "—",
+            ]
+        )
     col_widths = [1.4 * inch, 1.4 * inch, 1.0 * inch, 2.5 * inch]
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(_TABLE_STYLE_BASE))
@@ -189,11 +193,13 @@ def _build_flows_table(flows: list[dict[str, Any]]) -> Table:
 def _build_trust_boundaries_table(trust_boundaries: list[dict[str, Any]]) -> Table:
     rows = [["Source", "Target", "Purpose"]]
     for tb in trust_boundaries:
-        rows.append([
-            tb.get("source_entity") or "—",
-            tb.get("target_entity") or "—",
-            tb.get("purpose") or "—",
-        ])
+        rows.append(
+            [
+                tb.get("source_entity") or "—",
+                tb.get("target_entity") or "—",
+                tb.get("purpose") or "—",
+            ]
+        )
     col_widths = [1.6 * inch, 1.6 * inch, 3.1 * inch]
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(_TABLE_STYLE_BASE))
