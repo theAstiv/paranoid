@@ -182,3 +182,100 @@ def test_untagged_mitigations_render_without_label() -> None:
 
     assert "- Apply input validation" in md
     assert "[M]" not in md  # no spurious tag
+
+
+# ---------------------------------------------------------------------------
+# Assets / Flows / Trust Boundaries sections
+# ---------------------------------------------------------------------------
+
+_ASSET = {"name": "User DB", "type": "Asset", "description": "Stores user records"}
+_FLOW = {
+    "source_entity": "API",
+    "target_entity": "DB",
+    "flow_type": "data",
+    "flow_description": "Reads user records",
+}
+_BOUNDARY = {"source_entity": "Internet", "target_entity": "DMZ", "purpose": "Perimeter"}
+
+
+def test_assets_section_renders_table() -> None:
+    """Assets list produces a Markdown table with name/type/description columns."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", assets=[_ASSET]
+    )
+    assert "## Assets" in md
+    assert "| Name |" in md
+    assert "User DB" in md
+    assert "Asset" in md
+    assert "Stores user records" in md
+
+
+def test_assets_section_absent_when_empty() -> None:
+    """No assets → no Assets section in output."""
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", assets=[])
+    assert "## Assets" not in md
+
+
+def test_flows_section_renders_table() -> None:
+    """Data flows list produces a Markdown table with source/target/type/description columns."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", flows=[_FLOW]
+    )
+    assert "## Data Flows" in md
+    assert "| Source |" in md
+    assert "Reads user records" in md
+    assert "| data |" in md
+
+
+def test_flows_section_absent_when_empty() -> None:
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", flows=[])
+    assert "## Data Flows" not in md
+
+
+def test_markdown_pipe_characters_escaped_in_cells() -> None:
+    """Pipe chars in field values are escaped so they don't break the Markdown table."""
+    flow_with_pipe = {
+        "source_entity": "User | Database",
+        "target_entity": "API",
+        "flow_type": "data",
+        "flow_description": "Multi-step | operation",
+    }
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", flows=[flow_with_pipe])
+    assert "User \\| Database" in md
+    assert "Multi-step \\| operation" in md
+
+
+def test_trust_boundaries_section_renders_table() -> None:
+    """Trust boundaries list produces a Markdown table with source/target/purpose columns."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", trust_boundaries=[_BOUNDARY]
+    )
+    assert "## Trust Boundaries" in md
+    assert "| Source |" in md
+    assert "Perimeter" in md
+    assert "Internet" in md
+    assert "DMZ" in md
+
+
+def test_trust_boundaries_section_absent_when_empty() -> None:
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", trust_boundaries=[])
+    assert "## Trust Boundaries" not in md
+
+
+def test_all_sections_appear_before_summary() -> None:
+    """Assets / Flows / Trust Boundaries sections come before the Summary table."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        assets=[_ASSET],
+        flows=[_FLOW],
+        trust_boundaries=[_BOUNDARY],
+    )
+    assets_pos = md.index("## Assets")
+    flows_pos = md.index("## Data Flows")
+    tb_pos = md.index("## Trust Boundaries")
+    summary_pos = md.index("## Summary")
+    assert assets_pos < summary_pos
+    assert flows_pos < summary_pos
+    assert tb_pos < summary_pos
