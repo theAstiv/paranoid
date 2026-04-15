@@ -28,6 +28,9 @@ def export_pdf(
     framework: str,
     title: str | None = None,
     source_file: str | None = None,
+    assets: list[dict[str, Any]] | None = None,
+    flows: list[dict[str, Any]] | None = None,
+    trust_boundaries: list[dict[str, Any]] | None = None,
 ) -> bytes:
     """Export threats to PDF format.
 
@@ -38,6 +41,9 @@ def export_pdf(
         framework: Framework used (STRIDE or MAESTRO).
         title: Optional display title. Falls back to model_id[:8].
         source_file: Optional path to the analyzed input file.
+        assets: Optional list of asset dicts from the DB.
+        flows: Optional list of data flow dicts from the DB.
+        trust_boundaries: Optional list of trust boundary dicts from the DB.
 
     Returns:
         PDF content as bytes, ready to write to a .pdf file.
@@ -74,6 +80,33 @@ def export_pdf(
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#374151")))
     story.append(Spacer(1, 12))
 
+    # --- Assets ---
+    if assets:
+        story.append(Paragraph("Assets", styles["h2"]))
+        story.append(Spacer(1, 6))
+        story.append(_build_assets_table(assets))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
+    # --- Data Flows ---
+    if flows:
+        story.append(Paragraph("Data Flows", styles["h2"]))
+        story.append(Spacer(1, 6))
+        story.append(_build_flows_table(flows))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
+    # --- Trust Boundaries ---
+    if trust_boundaries:
+        story.append(Paragraph("Trust Boundaries", styles["h2"]))
+        story.append(Spacer(1, 6))
+        story.append(_build_trust_boundaries_table(trust_boundaries))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
     # --- Summary table ---
     story.append(Paragraph("Summary", styles["h2"]))
     story.append(Spacer(1, 6))
@@ -106,6 +139,65 @@ def export_pdf(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+_TABLE_STYLE_BASE = [
+    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+    ("FONTSIZE", (0, 0), (-1, 0), 8),
+    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+    ("TOPPADDING", (0, 0), (-1, 0), 6),
+    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+    ("FONTSIZE", (0, 1), (-1, -1), 8),
+    ("TOPPADDING", (0, 1), (-1, -1), 4),
+    ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
+    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+]
+
+
+def _build_assets_table(assets: list[dict[str, Any]]) -> Table:
+    rows = [["Name", "Type", "Description"]]
+    for a in assets:
+        rows.append([
+            a.get("name") or "—",
+            a.get("type") or "—",
+            a.get("description") or "—",
+        ])
+    col_widths = [1.5 * inch, 1.2 * inch, 3.6 * inch]
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle(_TABLE_STYLE_BASE))
+    return table
+
+
+def _build_flows_table(flows: list[dict[str, Any]]) -> Table:
+    rows = [["Source", "Target", "Type", "Description"]]
+    for f in flows:
+        rows.append([
+            f.get("source_entity") or "—",
+            f.get("target_entity") or "—",
+            f.get("flow_type") or "—",
+            f.get("flow_description") or "—",
+        ])
+    col_widths = [1.4 * inch, 1.4 * inch, 1.0 * inch, 2.5 * inch]
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle(_TABLE_STYLE_BASE))
+    return table
+
+
+def _build_trust_boundaries_table(trust_boundaries: list[dict[str, Any]]) -> Table:
+    rows = [["Source", "Target", "Purpose"]]
+    for tb in trust_boundaries:
+        rows.append([
+            tb.get("source_entity") or "—",
+            tb.get("target_entity") or "—",
+            tb.get("purpose") or "—",
+        ])
+    col_widths = [1.6 * inch, 1.6 * inch, 3.1 * inch]
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle(_TABLE_STYLE_BASE))
+    return table
 
 
 def _build_styles() -> dict[str, ParagraphStyle]:

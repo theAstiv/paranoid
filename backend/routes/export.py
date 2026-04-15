@@ -61,6 +61,9 @@ async def export_model(
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
     threats = await crud.list_threats(model_id, status=status_filter)
+    assets = await crud.list_assets(model_id)
+    flows = await crud.list_flows(model_id)
+    trust_boundaries = await crud.list_trust_boundaries(model_id)
 
     title = model.get("title")
     framework = model.get("framework", "STRIDE")
@@ -74,6 +77,9 @@ async def export_model(
             model_id=model_id,
             framework=framework,
             title=title,
+            assets=assets,
+            flows=flows,
+            trust_boundaries=trust_boundaries,
         )
         return Response(
             content=content,
@@ -89,6 +95,9 @@ async def export_model(
             model_id=model_id,
             framework=framework,
             title=title,
+            assets=assets,
+            flows=flows,
+            trust_boundaries=trust_boundaries,
         )
         return Response(
             content=pdf_bytes,
@@ -115,7 +124,13 @@ async def export_model(
 
     # format == "json"
     return JSONResponse(
-        content={"model": model, "threats": threats},
+        content={
+            "model": model,
+            "threats": threats,
+            "assets": assets,
+            "flows": flows,
+            "trust_boundaries": trust_boundaries,
+        },
         headers={
             "Content-Disposition": f'attachment; filename="{safe_title}.json"',
         },

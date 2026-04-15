@@ -14,6 +14,9 @@ def export_markdown(
     title: str | None = None,
     source_file: str | None = None,
     include_header: bool = True,
+    assets: list[dict[str, Any]] | None = None,
+    flows: list[dict[str, Any]] | None = None,
+    trust_boundaries: list[dict[str, Any]] | None = None,
 ) -> str:
     """Export threats to Markdown format.
 
@@ -26,6 +29,9 @@ def export_markdown(
         source_file: Optional path to the analyzed input file.
         include_header: If False, skips the H1 heading and metadata block.
                         Useful when embedding into an existing document.
+        assets: Optional list of asset dicts from the DB.
+        flows: Optional list of data flow dicts from the DB.
+        trust_boundaries: Optional list of trust boundary dicts from the DB.
 
     Returns:
         Markdown string ready to write to a .md file.
@@ -43,6 +49,52 @@ def export_markdown(
         )
         if source_file:
             lines.append(f"**Source:** `{source_file}`")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # Assets
+    if assets:
+        lines.append("## Assets")
+        lines.append("")
+        lines.append("| Name | Type | Description |")
+        lines.append("|------|------|-------------|")
+        for a in assets:
+            name = (a.get("name") or "—").replace("|", "\\|")
+            atype = (a.get("type") or "—").replace("|", "\\|")
+            desc = (a.get("description") or "—").replace("|", "\\|")
+            lines.append(f"| {name} | {atype} | {desc} |")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # Data Flows
+    if flows:
+        lines.append("## Data Flows")
+        lines.append("")
+        lines.append("| Source | Target | Type | Description |")
+        lines.append("|--------|--------|------|-------------|")
+        for f in flows:
+            src = (f.get("source_entity") or "—").replace("|", "\\|")
+            tgt = (f.get("target_entity") or "—").replace("|", "\\|")
+            ftype = (f.get("flow_type") or "—").replace("|", "\\|")
+            desc = (f.get("flow_description") or "—").replace("|", "\\|")
+            lines.append(f"| {src} | {tgt} | {ftype} | {desc} |")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # Trust Boundaries
+    if trust_boundaries:
+        lines.append("## Trust Boundaries")
+        lines.append("")
+        lines.append("| Source | Target | Purpose |")
+        lines.append("|--------|--------|---------|")
+        for tb in trust_boundaries:
+            src = (tb.get("source_entity") or "—").replace("|", "\\|")
+            tgt = (tb.get("target_entity") or "—").replace("|", "\\|")
+            purpose = (tb.get("purpose") or "—").replace("|", "\\|")
+            lines.append(f"| {src} | {tgt} | {purpose} |")
         lines.append("")
         lines.append("---")
         lines.append("")
