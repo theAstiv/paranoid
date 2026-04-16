@@ -183,6 +183,7 @@ data/
 *.mcp.json
 node_modules/
 frontend/dist/
+frontend/.vite/
 .context-link.db
 *.db
 *.db-shm
