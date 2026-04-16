@@ -60,8 +60,8 @@ async def test_load_seed_file_missing():
 
 
 def test_count_expected_seeds():
-    """Expected count should match sum of all seed files."""
-    assert _count_expected_seeds() == 109
+    """Expected count should match sum of all 16 seed files."""
+    assert _count_expected_seeds() == 362
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_count_expected_seeds():
 
 @pytest.mark.asyncio
 async def test_load_all_seeds_first_run(test_db):
-    """First run with empty DB should import all three seed types."""
+    """First run with empty DB should import all 16 seed files."""
     with patch(
         "backend.db.seed.bulk_insert_seed_vectors",
         new_callable=AsyncMock,
@@ -79,13 +79,13 @@ async def test_load_all_seeds_first_run(test_db):
     ):
         results = await load_all_seeds(force=True)
 
-    assert "stride" in results
-    assert "maestro" in results
-    assert "owasp" in results
-    assert results["stride"] == 53
-    assert results["maestro"] == 46
-    assert results["owasp"] == 10
-    assert results["total"] == 109
+    assert "stride_patterns.json" in results
+    assert "maestro_patterns.json" in results
+    assert "owasp_llm_top10.json" in results
+    assert results["stride_patterns.json"] == 53
+    assert results["maestro_patterns.json"] == 46
+    assert results["owasp_llm_top10.json"] == 10
+    assert results["total"] == 362
 
 
 @pytest.mark.asyncio
@@ -95,18 +95,18 @@ async def test_load_all_seeds_skips_when_complete(test_db):
         patch(
             "backend.db.seed.get_vector_stats",
             new_callable=AsyncMock,
-            return_value={"seed": 109, "total": 109},
+            return_value={"seed": 362, "total": 362},
         ),
         patch(
-            "backend.db.seed.import_stride_patterns",
+            "backend.db.seed._import_patterns_file",
             new_callable=AsyncMock,
-        ) as mock_stride,
+        ) as mock_import,
     ):
         results = await load_all_seeds()
 
     assert "skipped" in results
-    assert results["skipped"] == 109
-    mock_stride.assert_not_called()
+    assert results["skipped"] == 362
+    mock_import.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,7 @@ async def test_partial_load_triggers_cleanup(test_db):
         results = await load_all_seeds()
 
     mock_cleanup.assert_called_once_with()
-    assert results["total"] == 109
+    assert results["total"] == 362
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_force_reload(test_db):
         results = await load_all_seeds(force=True)
 
     mock_cleanup.assert_called_once_with()
-    assert results["total"] == 109
+    assert results["total"] == 362
 
 
 # ---------------------------------------------------------------------------
@@ -172,10 +172,10 @@ async def test_check_seeds_status_partial():
     assert status["partial"] is True
     assert status["loaded"] is False
     assert status["seed_count"] == 50
-    assert status["expected_count"] == 109
-    assert status["files_exist"]["stride"] is True
-    assert status["files_exist"]["maestro"] is True
-    assert status["files_exist"]["owasp"] is True
+    assert status["expected_count"] == 362
+    assert status["files_exist"]["stride_patterns.json"] is True
+    assert status["files_exist"]["maestro_patterns.json"] is True
+    assert status["files_exist"]["owasp_llm_top10.json"] is True
 
 
 @pytest.mark.asyncio
@@ -184,10 +184,10 @@ async def test_check_seeds_status_complete():
     with patch(
         "backend.db.seed.get_vector_stats",
         new_callable=AsyncMock,
-        return_value={"seed": 109, "total": 109},
+        return_value={"seed": 362, "total": 362},
     ):
         status = await check_seeds_status()
 
     assert status["loaded"] is True
     assert status["partial"] is False
-    assert status["seed_count"] == 109
+    assert status["seed_count"] == 362
