@@ -856,12 +856,8 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
     if preserve_user_edits:
-        await conn.execute(
-            "DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,)
-        )
-        await conn.execute(
-            "DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,)
-        )
+        await conn.execute("DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,))
+        await conn.execute("DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,))
         await conn.execute(
             "DELETE FROM trust_boundaries WHERE model_id = ? AND user_edited = 0", (model_id,)
         )
@@ -871,8 +867,7 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
         await conn.execute("DELETE FROM trust_boundaries WHERE model_id = ?", (model_id,))
     await conn.commit()
     logger.info(
-        f"Cleared pipeline data for model {model_id} "
-        f"(preserve_user_edits={preserve_user_edits})"
+        f"Cleared pipeline data for model {model_id} (preserve_user_edits={preserve_user_edits})"
     )
 
 
