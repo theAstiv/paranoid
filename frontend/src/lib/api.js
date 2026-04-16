@@ -80,35 +80,37 @@ export function getModelStats(id) {
 // ── Pipeline SSE ──────────────────────────────────────────────────────────────
 
 /**
- * Stream pipeline SSE events.
- * Uses fetch + ReadableStream because EventSource does not support POST.
+ * POSTs to `path` and streams the SSE response through the callbacks.
+ * Used by both /run and /extract — both emit the same event format.
+ * `onDone` fires exactly once, regardless of whether the stream ended via a
+ * 'complete' event, reader EOF, or an error.
  *
- * @param {string} modelId
- * @param {FormData} formData  – assumptions (JSON str), has_ai_components, diagram (optional)
+ * @param {string} path  – relative to BASE, e.g. `/models/abc/run`
+ * @param {RequestInit} init  – fetch init (method, body, headers)
  * @param {(event: object) => void} onEvent
  * @param {(err: Error) => void} onError
  * @param {() => void} onDone
- * @returns {() => void}  abort function
+ * @returns {() => void} abort function
  */
-export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
+function subscribeSSE(path, init, onEvent, onError, onDone) {
   const controller = new AbortController()
+  let doneFired = false
+  const fireDone = () => { if (!doneFired) { doneFired = true; onDone() } }
 
   ;(async () => {
     let res
     try {
-      res = await fetch(`${BASE}/models/${modelId}/run`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      })
+      res = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal })
     } catch (err) {
       if (err.name !== 'AbortError') onError(err)
+      fireDone()
       return
     }
 
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ detail: res.statusText }))
       onError(new Error(detail.detail || res.statusText))
+      fireDone()
       return
     }
 
@@ -131,7 +133,7 @@ export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
             const parsed = JSON.parse(dataLine.slice(5).trim())
             onEvent(parsed)
             if (parsed.step === 'complete') {
-              onDone()
+              fireDone()
               return
             }
           } catch {
@@ -142,11 +144,30 @@ export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
     } catch (err) {
       if (err.name !== 'AbortError') onError(err)
     } finally {
-      onDone()
+      fireDone()
     }
   })()
 
   return () => controller.abort()
+}
+
+/**
+ * Stream pipeline SSE events.
+ * Uses fetch + ReadableStream because EventSource does not support POST.
+ *
+ * @param {string} modelId
+ * @param {FormData} formData  – assumptions (JSON str), has_ai_components, diagram (optional)
+ * @param {(event: object) => void} onEvent
+ * @param {(err: Error) => void} onError
+ * @param {() => void} onDone
+ * @returns {() => void}  abort function
+ */
+export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
+  return subscribeSSE(
+    `/models/${modelId}/run`,
+    { method: 'POST', body: formData },
+    onEvent, onError, onDone,
+  )
 }
 
 // ── Threats ───────────────────────────────────────────────────────────────────
@@ -235,6 +256,34 @@ export function updateTrustBoundary(modelId, boundaryId, body) {
 /** @param {string} modelId @param {string} boundaryId */
 export function deleteTrustBoundary(modelId, boundaryId) {
   return request('DELETE', `/models/${modelId}/trust-boundaries/${boundaryId}`)
+}
+
+// ── Pre-flight & context extraction ──────────────────────────────────────────
+
+/**
+ * Analyze the model description for completeness gaps.
+ * Returns { gaps: [{ field, severity, message }], is_sufficient: bool }
+ * @param {string} id
+ */
+export function analyzeDescription(id) {
+  return request('POST', `/models/${id}/analyze`)
+}
+
+/**
+ * Run extraction-only pipeline (summarize + assets + flows), streaming SSE.
+ *
+ * @param {string} modelId
+ * @param {(event: object) => void} onEvent
+ * @param {(err: Error) => void} onError
+ * @param {() => void} onDone
+ * @returns {() => void} abort function
+ */
+export function subscribeToExtract(modelId, onEvent, onError, onDone) {
+  return subscribeSSE(
+    `/models/${modelId}/extract`,
+    { method: 'POST' },
+    onEvent, onError, onDone,
+  )
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────

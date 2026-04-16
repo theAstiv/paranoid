@@ -7,6 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
+    subscribeToRun,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify,
@@ -126,6 +127,35 @@
     completed: 'bg-green-100 text-green-700',
     failed: 'bg-red-100 text-red-700',
   }
+
+  function rerun() {
+    const fd = new FormData()
+    fd.append('assumptions', '[]')
+    fd.append('has_ai_components', 'false')
+    pipelineEvents.set([])
+    pipelineRunning.set(true)
+    threats.set([])
+    const abort = subscribeToRun(
+      params.id,
+      fd,
+      evt => {
+        pipelineEvents.update(es => [...es, evt])
+        if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
+      },
+      err => { notify('error', `Re-run error: ${err.message}`); pipelineRunning.set(false) },
+      async () => {
+        pipelineRunning.set(false)
+        try {
+          const refreshed = await getModel(params.id)
+          model = refreshed
+          currentModel.set(refreshed)
+          threats.set(refreshed.threats ?? [])
+          await loadSupplementary()
+        } catch { /* ignore */ }
+      },
+    )
+    abortRun.set(abort)
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -147,6 +177,16 @@
       </div>
       <div class="flex items-center gap-2">
         <ExportMenu modelId={params.id} />
+        <a href="/models/{params.id}/context" use:link
+          class="px-3 py-1.5 text-sm font-medium text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors">
+          Edit Context
+        </a>
+        {#if model.status === 'completed' || model.status === 'failed'}
+          <button type="button" on:click={rerun} disabled={$pipelineRunning}
+            class="px-3 py-1.5 text-sm font-medium text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-colors">
+            Re-run
+          </button>
+        {/if}
         {#if model.status === 'completed'}
           <a href="/models/{params.id}/review" use:link
             class="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors">
