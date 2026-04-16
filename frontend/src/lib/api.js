@@ -1,7 +1,7 @@
 const BASE = '/api'
 
-async function request(method, path, body) {
-  const opts = { method, headers: {} }
+async function request(method, path, body, extraHeaders = {}) {
+  const opts = { method, headers: { ...extraHeaders } }
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
@@ -307,6 +307,16 @@ export function exportUrl(modelId, format, statusFilter) {
 
 export function getConfig() {
   return request('GET', '/config')
+}
+
+/**
+ * Patch runtime settings (in-memory; resets on backend restart).
+ * @param {{ default_provider?: string, model?: string, fast_model?: string, default_iterations?: number, similarity_threshold?: number, ollama_base_url?: string }} body
+ * @param {string} [secret]  Value for X-Config-Secret header (required when CONFIG_SECRET env var is set on the backend)
+ */
+export function updateConfig(body, secret) {
+  const headers = secret ? { 'X-Config-Secret': secret } : {}
+  return request('PATCH', '/config', body, headers)
 }
 
 export function getHealth() {

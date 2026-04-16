@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -27,7 +28,11 @@ from backend.models.extended import DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
-from backend.routes._helpers import build_provider_from_record, resolve_provider
+from backend.routes._helpers import (
+    build_fast_provider,
+    build_provider_from_record,
+    resolve_provider,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -287,6 +292,7 @@ async def run_pipeline(
         diagram_data = await _build_diagram_data(diagram)
 
     provider = build_provider_from_record(record)
+    fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
     max_iterations = record.get("iteration_count", settings.default_iterations)
 
@@ -295,12 +301,16 @@ async def run_pipeline(
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
         try:
-            async with provider:
+            async with AsyncExitStack() as stack:
+                await stack.enter_async_context(provider)
+                if fast_provider is not None and fast_provider is not provider:
+                    await stack.enter_async_context(fast_provider)
                 async for event in run_pipeline_for_model(
                     model_id=model_id,
                     description=record["description"],
                     framework=framework,
                     provider=provider,
+                    fast_provider=fast_provider,
                     assumptions=parsed_assumptions or None,
                     diagram_data=diagram_data,
                     max_iterations=max_iterations,
@@ -577,17 +587,22 @@ async def extract_model_context(model_id: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
     provider = build_provider_from_record(record)
+    fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
 
     async def event_generator() -> AsyncGenerator[str, None]:
         await crud.clear_model_data(model_id, preserve_user_edits=True)
         try:
-            async with provider:
+            async with AsyncExitStack() as stack:
+                await stack.enter_async_context(provider)
+                if fast_provider is not None and fast_provider is not provider:
+                    await stack.enter_async_context(fast_provider)
                 async for event in run_pipeline_for_model(
                     model_id=model_id,
                     description=record["description"],
                     framework=framework,
                     provider=provider,
+                    fast_provider=fast_provider,
                     stop_after="extraction",
                 ):
                     await _persist_pipeline_event(model_id, event)

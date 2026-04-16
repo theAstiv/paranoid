@@ -71,6 +71,24 @@ async def export_model(
     raw = title or model_id[:8]
     safe_title = re.sub(r"[^\w\-]", "_", raw).lower().strip("_") or "export"
 
+    # Collect enrichment data (attack trees, test cases) per threat.
+    # The export functions render them only when present — no-op when not enriched.
+    attack_trees: dict = {}
+    test_suites: dict = {}
+    if export_format in ("markdown", "pdf"):
+        for t in threats:
+            tid = t.get("id") or ""
+            if not tid:
+                continue
+            trees = await crud.list_attack_trees(tid)
+            if trees:
+                attack_trees[tid] = trees[-1]  # most recent tree per threat
+            cases = await crud.list_test_cases(tid)
+            if cases:
+                gherkin = "\n\n".join(c["gherkin_source"] for c in cases if c.get("gherkin_source"))
+                if gherkin:
+                    test_suites[tid] = {"gherkin_source": gherkin}
+
     if export_format == "markdown":
         content = export_markdown(
             threats=threats,
@@ -80,6 +98,8 @@ async def export_model(
             assets=assets,
             flows=flows,
             trust_boundaries=trust_boundaries,
+            attack_trees=attack_trees or None,
+            test_suites=test_suites or None,
         )
         return Response(
             content=content,
@@ -98,6 +118,8 @@ async def export_model(
             assets=assets,
             flows=flows,
             trust_boundaries=trust_boundaries,
+            attack_trees=attack_trees or None,
+            test_suites=test_suites or None,
         )
         return Response(
             content=pdf_bytes,

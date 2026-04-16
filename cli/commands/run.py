@@ -5,6 +5,7 @@ Main CLI command that runs the threat modeling pipeline on an input file.
 
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import click
@@ -14,10 +15,15 @@ from backend.export.sarif import export_sarif
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
-from backend.models.extended import CodeContext
+from backend.models.extended import AttackTree, CodeContext, TestSuite
 from backend.models.state import ThreatsList
 from backend.pipeline.pre_flight import analyze_description_gaps
-from backend.pipeline.runner import PipelineStep, run_pipeline_for_model
+from backend.pipeline.runner import (
+    PipelineConfig,
+    PipelineRunner,
+    PipelineStep,
+    run_pipeline_for_model,
+)
 from backend.providers import (
     ProviderAuthError,
     ProviderRateLimitError,
@@ -317,6 +323,12 @@ async def _extract_code_context(
     default=False,
     help="Exit with code 2 if the description has error-severity gaps (CI enforcement).",
 )
+@click.option(
+    "--enrich",
+    is_flag=True,
+    default=False,
+    help="After the pipeline, generate attack trees and test cases for all threats. Included in markdown/pdf output. Skipped for sarif format.",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -331,6 +343,7 @@ def run(
     provider_override: str | None,
     model_override: str | None,
     strict: bool,
+    enrich: bool,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -449,6 +462,22 @@ def run(
         except Exception as e:
             raise ConfigurationError(f"Failed to initialize LLM provider: {e}") from e
 
+        # Build an optional fast provider for extraction and enrichment steps.
+        # Mirrors build_fast_provider() in backend/routes/_helpers.py.
+        fast_provider: LLMProvider | None = None
+        if settings.default_provider == "anthropic" and settings.fast_model:
+            _fast_model = settings.fast_model
+            if _fast_model != settings.default_model:
+                try:
+                    fast_provider = create_provider(
+                        provider_type="anthropic",
+                        model=_fast_model,
+                        api_key=settings.anthropic_api_key or None,
+                        base_url=None,
+                    )
+                except Exception:
+                    pass  # fast provider is optional — falls back to main provider
+
         # Show configuration (unless quiet mode)
         if not quiet:
             click.echo()
@@ -508,7 +537,9 @@ def run(
                 has_ai_components=maestro,
                 settings=settings,
                 strict=strict,
+                enrich=enrich,
                 provider=provider,
+                fast_provider=fast_provider,
                 renderer=renderer,
                 input_file=input_file,
                 output_path=output_path,
@@ -557,6 +588,8 @@ async def _run_pipeline_async(
     diagram_path: Path | None,
     content: str,
     strict: bool = False,
+    enrich: bool = False,
+    fast_provider: LLMProvider | None = None,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -581,7 +614,11 @@ async def _run_pipeline_async(
     # Keep the provider's HTTP client open for the entire run — closing between
     # gap analysis and the main pipeline would break the Ollama provider, which
     # aclose()s its httpx client on __aexit__.
-    async with provider:
+    # Open fast_provider's context only when it's a distinct object.
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(provider)
+        if fast_provider is not None:
+            await stack.enter_async_context(fast_provider)
         await _run_pipeline_inside_provider(
             model_id=model_id,
             description=description,
@@ -590,6 +627,7 @@ async def _run_pipeline_async(
             has_ai_components=has_ai_components,
             settings=settings,
             provider=provider,
+            fast_provider=fast_provider,
             renderer=renderer,
             input_file=input_file,
             output_path=output_path,
@@ -599,6 +637,7 @@ async def _run_pipeline_async(
             diagram_path=diagram_path,
             content=content,
             strict=strict,
+            enrich=enrich,
         )
 
 
@@ -610,6 +649,7 @@ async def _run_pipeline_inside_provider(
     has_ai_components: bool,
     settings: Settings,
     provider: LLMProvider,
+    fast_provider: LLMProvider | None,
     renderer: ConsoleRenderer | None,
     input_file: Path,
     output_path: Path | None,
@@ -619,6 +659,7 @@ async def _run_pipeline_inside_provider(
     diagram_path: Path | None,
     content: str,
     strict: bool,
+    enrich: bool = False,
 ) -> None:
     # Pre-flight gap analysis — always runs; --strict enforces blocking on errors
     gap_result = await analyze_description_gaps(description=description, provider=provider)
@@ -687,6 +728,7 @@ async def _run_pipeline_inside_provider(
             description=description,
             framework=framework,
             provider=provider,
+            fast_provider=fast_provider,
             assumptions=assumptions,
             max_iterations=settings.default_iterations,
             has_ai_components=has_ai_components,
@@ -766,6 +808,70 @@ async def _run_pipeline_inside_provider(
     # Calculate duration
     duration = asyncio.get_running_loop().time() - start_time
 
+    # Enrichment — generate attack trees + test cases for all threats when --enrich
+    # is set and the output format is not sarif (SARIF has no enrichment schema).
+    attack_trees: dict[str, AttackTree] = {}
+    test_suites: dict[str, TestSuite] = {}
+    if enrich and output_format != "sarif" and json_writer.threats and json_writer.threats.threats:
+        runner = PipelineRunner(
+            provider=provider,
+            fast_provider=fast_provider,
+            config=PipelineConfig(),
+            model_id=model_id,
+        )
+        threat_list = json_writer.threats.threats
+        if not quiet:
+            click.echo()
+            click.secho(
+                f"Enriching {len(threat_list)} threats (attack trees + test cases)...",
+                fg="cyan",
+            )
+        for i, t in enumerate(threat_list):
+            # Threat has no id field in-memory; use loop index as a stable key
+            # that matches the synthetic id injected into threats_dicts at export time.
+            tid = str(i)
+            mitigations = list(t.mitigations) if t.mitigations else []
+            # maestro_category is absent on plain Threat objects (STRIDE-only runs)
+            maestro_cat = getattr(t, "maestro_category", None)
+            try:
+                tree = await runner.generate_attack_tree_for_threat(
+                    threat_id=tid,
+                    threat_name=t.name,
+                    threat_description=t.description,
+                    target=t.target or "",
+                    stride_category=t.stride_category.value if t.stride_category else None,
+                    maestro_category=maestro_cat.value if maestro_cat else None,
+                    mitigations=mitigations,
+                )
+                attack_trees[tid] = tree
+            except Exception as e:
+                if not quiet:
+                    click.secho(
+                        f"  Warning: attack tree failed for '{t.name}': {type(e).__name__}: {e}",
+                        fg="yellow",
+                    )
+            try:
+                suite = await runner.generate_test_cases_for_threat(
+                    threat_id=tid,
+                    threat_name=t.name,
+                    threat_description=t.description,
+                    target=t.target or "",
+                    mitigations=mitigations,
+                )
+                test_suites[tid] = suite
+            except Exception as e:
+                if not quiet:
+                    click.secho(
+                        f"  Warning: test cases failed for '{t.name}': {type(e).__name__}: {e}",
+                        fg="yellow",
+                    )
+
+        if not quiet:
+            click.secho(
+                f"Enrichment complete: {len(attack_trees)} attack trees, {len(test_suites)} test suites",
+                fg="green",
+            )
+
     # Export output if requested
     output_file_str = None
     if output_path:
@@ -820,13 +926,19 @@ async def _run_pipeline_inside_provider(
                 if json_writer and json_writer.threats:
                     from backend.export.markdown import export_markdown
 
-                    threats_dicts = [t.model_dump() for t in json_writer.threats.threats]
+                    # Inject synthetic "id" matching the index used as enrichment key.
+                    threats_dicts = [
+                        {**t.model_dump(), "id": str(i)}
+                        for i, t in enumerate(json_writer.threats.threats)
+                    ]
                     md_content = export_markdown(
                         threats=threats_dicts,
                         model_id=model_id,
                         framework=framework.value,
                         title=input_file.stem,
                         source_file=str(input_file),
+                        attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
+                        test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(output_path, "w", encoding="utf-8") as f:
@@ -840,13 +952,19 @@ async def _run_pipeline_inside_provider(
                 if json_writer and json_writer.threats:
                     from backend.export.pdf import export_pdf
 
-                    threats_dicts = [t.model_dump() for t in json_writer.threats.threats]
+                    # Inject synthetic "id" matching the index used as enrichment key.
+                    threats_dicts = [
+                        {**t.model_dump(), "id": str(i)}
+                        for i, t in enumerate(json_writer.threats.threats)
+                    ]
                     pdf_bytes = export_pdf(
                         threats=threats_dicts,
                         model_id=model_id,
                         framework=framework.value,
                         title=input_file.stem,
                         source_file=str(input_file),
+                        attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
+                        test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_bytes(pdf_bytes)
