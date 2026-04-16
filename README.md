@@ -19,6 +19,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration), Markdown (PRs / Confluence / Notion), PDF (security review sign-off)
 - **Post-Run Export**: Re-export any saved model in any format with `paranoid models export` — run once, export many times
 - **Model Management**: `paranoid models delete` removes a saved model and all its data; `paranoid models prune` bulk-deletes by age or status
+- **Pre-flight Gap Analysis**: Description completeness check before running — warns about missing auth, trust boundaries, data flows, and external integrations; `--strict` exits CI with code 2 on error-severity gaps
+- **Edit Context Before Threats**: Review and edit extracted assets, flows, and trust boundaries at `/models/:id/context` before or after a run; "Re-extract" re-runs only the extraction steps without regenerating threats
+- **DREAD Score Editing**: Edit any threat's DREAD scores inline from the Review page — no page reload required
 - **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
 
 ## Quick Start
@@ -236,6 +239,12 @@ paranoid run system.md --diagram flow.mmd
 
 # Combined: description + diagram + code context
 paranoid run system.md --diagram arch.png --code /path/to/repo
+
+# Strict mode: exit code 2 if description has error-severity gaps (for CI gates)
+paranoid run system.md --strict
+
+# Gap warnings are always printed to stderr; --strict makes errors blocking
+paranoid run system.md --strict --format sarif -o findings.sarif
 ```
 
 ### Inspecting Saved Models

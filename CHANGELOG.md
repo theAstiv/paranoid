@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Gap Analysis & Description Pre-flight
+- **`backend/pipeline/pre_flight.py`** — `analyze_description_gaps()` runs before every pipeline execution to surface missing description context
+  - Deterministic regex checks: authentication/auth mechanism, trust boundary definitions, data flows, external integrations
+  - LLM pass identifies subtler gaps (e.g. missing encryption posture, storage details); falls back gracefully to deterministic-only on `ProviderError`
+  - Returns `AnalyzeDescriptionResponse` with a list of `DescriptionGap` entries (`field`, `severity: warning|error`, `message`) and an `is_sufficient` bool
+- **`POST /api/models/{id}/analyze`** — pre-flight endpoint; fast check before committing to a full pipeline run
+- **`paranoid run --strict`** — exits with code 2 when any error-severity gap is found; gaps are printed to stderr so JSON/SARIF stdout stays clean; SARIF output gains a `description-completeness` rule (PNR001) with per-gap results
+- **NewModel.svelte gap panel** — client-side reactive analysis (four regex checks, no API round-trip) shown once description ≥ 80 chars; green border when clear, yellow with icons when gaps exist
+
+#### Review Context Page & Edit-then-Rerun
+- **`ReviewContext.svelte`** (`/models/:id/context`) — new page for reviewing and editing extracted context before running threat generation
+  - Full inline CRUD for assets (name, type, description), data flows (source → target, description, type), and trust boundaries
+  - **"Re-extract from description"** button streams `POST /api/models/{id}/extract` SSE events into a live progress log; re-runs only the summarise + extract steps without generating threats
+  - **"Go to Review"** link navigates to the threat review page when ready
+- **`POST /api/models/{id}/extract`** — SSE endpoint that runs the pipeline with `stop_after="extraction"`; clears only non-user-edited rows (`preserve_user_edits=True`) so manual edits survive re-extraction
+- **Results.svelte** — adds "Edit Context" button (→ `/models/:id/context`) and "Re-run" button that rebuilds `FormData` and starts a new full pipeline SSE stream; disabled while a run is in progress
+
+#### DREAD Score Inline Editing
+- **ThreatCard.svelte** — pencil icon opens five 1–10 number inputs (Damage, Reproducibility, Exploitability, Affected Users, Discoverability); save calls `PATCH /api/threats/{id}`, updates local state optimistically, and dispatches a `dread-updated` event
+- **Review.svelte** — `on:dread-updated` handler syncs the `threats` store so filter counts stay accurate without a page reload
+
+#### Database: `user_edited` Column
+- **`backend/db/schema.py`** — `user_edited INTEGER DEFAULT 0` added to `assets`, `flows`, `trust_boundaries` tables; auto-migration via `ALTER TABLE` on startup for existing databases
+- **`backend/db/crud.py`** — `clear_model_data(preserve_user_edits=False)`: when `True`, deletes only rows with `user_edited = 0`; pipeline re-runs that carry forward user edits call this with `preserve_user_edits=True`
+
+#### Frontend Tests (Vitest)
+- **`frontend/src/components/DreadBadge.test.js`** (7 tests) — renders score and labels, applies colour classes for low/medium/high/critical thresholds, handles null/undefined score
+- **`frontend/src/lib/stores.test.js`** (9 tests) — `notify()` sets store and auto-clears after 4 s; initial values for all shared stores; store writes accepted
+- **`frontend/src/setupTests.js`** — imports `@testing-library/jest-dom` matchers
+
+#### CI: Frontend and Docker Jobs
+- **`.github/workflows/ci.yml`** — new jobs alongside the existing Python lint/test/build jobs:
+  - `frontend-test` (Node 20): `npm ci && npm test` — runs the Vitest suite
+  - `frontend-build` (Node 20): `npm ci && npm run build` — verifies Vite production build; uploads `frontend/dist/` as a 1-day artifact
+  - `docker` (needs `frontend-test` + `frontend-build`): builds `--target frontend-builder` (hard fail, also catches Dockerfile syntax errors); then builds the full multi-stage image
+- Added `concurrency` group (`ci-${{ github.ref }}`, `cancel-in-progress: true`) to cancel superseded runs on rapid pushes
+- `--ignore=tests/test_pipeline_e2e.py` with explanatory comment (requires live LLM provider + context-link binary, absent in CI runners)
+
 #### Docker deployment
 - **`Dockerfile`** — 3-stage multi-stage build:
   - `context-link-builder` (golang:1.22-bookworm, CGO) — clones and compiles the context-link MCP binary; `ARG CONTEXT_LINK_REF=main` pins the branch/tag
