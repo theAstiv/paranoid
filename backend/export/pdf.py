@@ -31,6 +31,8 @@ def export_pdf(
     assets: list[dict[str, Any]] | None = None,
     flows: list[dict[str, Any]] | None = None,
     trust_boundaries: list[dict[str, Any]] | None = None,
+    attack_trees: dict[str, dict[str, Any]] | None = None,
+    test_suites: dict[str, dict[str, Any]] | None = None,
 ) -> bytes:
     """Export threats to PDF format.
 
@@ -44,6 +46,8 @@ def export_pdf(
         assets: Optional list of asset dicts from the DB.
         flows: Optional list of data flow dicts from the DB.
         trust_boundaries: Optional list of trust boundary dicts from the DB.
+        attack_trees: Optional mapping of threat_id -> AttackTree.model_dump().
+        test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
 
     Returns:
         PDF content as bytes, ready to write to a .pdf file.
@@ -128,7 +132,12 @@ def export_pdf(
             story.append(Paragraph(category, styles["h3"]))
             story.append(Spacer(1, 4))
             for t in category_threats:
-                story.extend(_threat_flowables(t, global_idx, styles))
+                tid = str(t.get("id") or "")
+                tree = attack_trees.get(tid) if attack_trees else None
+                suite = test_suites.get(tid) if test_suites else None
+                story.extend(
+                    _threat_flowables(t, global_idx, styles, attack_tree=tree, test_suite=suite)
+                )
                 global_idx += 1
             story.append(Spacer(1, 6))
 
@@ -342,6 +351,8 @@ def _threat_flowables(
     t: dict[str, Any],
     idx: int,
     styles: dict[str, ParagraphStyle],
+    attack_tree: dict[str, Any] | None = None,
+    test_suite: dict[str, Any] | None = None,
 ) -> list[Any]:
     parts: list[Any] = []
 
@@ -373,6 +384,37 @@ def _threat_flowables(
                 parts.append(Paragraph(f"[{label[0]}] {clean}", styles["mitigation"]))
             else:
                 parts.append(Paragraph(clean, styles["mitigation"]))
+
+    # Attack tree (Mermaid source shown as preformatted text; PDF has no native Mermaid renderer)
+    if attack_tree:
+        mermaid_src = (attack_tree.get("mermaid_source") or "").strip()
+        if mermaid_src:
+            parts.append(Spacer(1, 4))
+            parts.append(Paragraph("<b>Attack Tree (Mermaid):</b>", styles["body"]))
+            # Render each line as a small monospaced paragraph
+            for line in mermaid_src.splitlines():
+                parts.append(
+                    Paragraph(
+                        line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        or "&nbsp;",
+                        styles["mitigation"],
+                    )
+                )
+
+    # Test cases (Gherkin source)
+    if test_suite:
+        gherkin_src = (test_suite.get("gherkin_source") or "").strip()
+        if gherkin_src:
+            parts.append(Spacer(1, 4))
+            parts.append(Paragraph("<b>Test Cases (Gherkin):</b>", styles["body"]))
+            for line in gherkin_src.splitlines():
+                parts.append(
+                    Paragraph(
+                        line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        or "&nbsp;",
+                        styles["mitigation"],
+                    )
+                )
 
     parts.append(Spacer(1, 6))
     return parts

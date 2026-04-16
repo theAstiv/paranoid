@@ -17,6 +17,8 @@ def export_markdown(
     assets: list[dict[str, Any]] | None = None,
     flows: list[dict[str, Any]] | None = None,
     trust_boundaries: list[dict[str, Any]] | None = None,
+    attack_trees: dict[str, dict[str, Any]] | None = None,
+    test_suites: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Export threats to Markdown format.
 
@@ -32,6 +34,8 @@ def export_markdown(
         assets: Optional list of asset dicts from the DB.
         flows: Optional list of data flow dicts from the DB.
         trust_boundaries: Optional list of trust boundary dicts from the DB.
+        attack_trees: Optional mapping of threat_id -> AttackTree.model_dump().
+        test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
 
     Returns:
         Markdown string ready to write to a .md file.
@@ -167,6 +171,31 @@ def export_markdown(
                     else:
                         lines.append(f"- {clean}")
                 lines.append("")
+
+            # Attack tree (Mermaid graph)
+            tid = str(t.get("id") or "")
+            if attack_trees and tid in attack_trees:
+                tree = attack_trees[tid]
+                mermaid_src = (tree.get("mermaid_source") or "").strip()
+                if mermaid_src:
+                    lines.append("**Attack Tree:**")
+                    lines.append("")
+                    lines.append("```mermaid")
+                    lines.append(mermaid_src)
+                    lines.append("```")
+                    lines.append("")
+
+            # Test cases (Gherkin)
+            if test_suites and tid in test_suites:
+                suite = test_suites[tid]
+                gherkin_src = (suite.get("gherkin_source") or "").strip()
+                if gherkin_src:
+                    lines.append("**Test Cases:**")
+                    lines.append("")
+                    lines.append("```gherkin")
+                    lines.append(gherkin_src)
+                    lines.append("```")
+                    lines.append("")
 
             global_idx += 1
 
