@@ -4,6 +4,7 @@ Main CLI command that runs the threat modeling pipeline on an input file.
 """
 
 import asyncio
+import json
 from pathlib import Path
 
 import click
@@ -14,6 +15,8 @@ from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
 from backend.models.extended import CodeContext
+from backend.models.state import ThreatsList
+from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineStep, run_pipeline_for_model
 from backend.providers import (
     ProviderAuthError,
@@ -308,6 +311,12 @@ async def _extract_code_context(
     default=None,
     help="Override configured model name (e.g. claude-opus-4-5, gpt-4o)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit with code 2 if the description has error-severity gaps (CI enforcement).",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -321,6 +330,7 @@ def run(
     diagram: Path | None,
     provider_override: str | None,
     model_override: str | None,
+    strict: bool,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -497,6 +507,7 @@ def run(
                 framework=detected_framework,
                 has_ai_components=maestro,
                 settings=settings,
+                strict=strict,
                 provider=provider,
                 renderer=renderer,
                 input_file=input_file,
@@ -545,6 +556,7 @@ async def _run_pipeline_async(
     code_path: Path | None,
     diagram_path: Path | None,
     content: str,
+    strict: bool = False,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -564,7 +576,72 @@ async def _run_pipeline_async(
         code_path: Optional path to code repository for MCP extraction
         diagram_path: Optional path to architecture diagram (.png, .jpg, .jpeg, .mmd)
         content: Input file content for code context extraction
+        strict: Exit with code 2 if error-severity gaps found
     """
+    # Keep the provider's HTTP client open for the entire run — closing between
+    # gap analysis and the main pipeline would break the Ollama provider, which
+    # aclose()s its httpx client on __aexit__.
+    async with provider:
+        await _run_pipeline_inside_provider(
+            model_id=model_id,
+            description=description,
+            assumptions=assumptions,
+            framework=framework,
+            has_ai_components=has_ai_components,
+            settings=settings,
+            provider=provider,
+            renderer=renderer,
+            input_file=input_file,
+            output_path=output_path,
+            output_format=output_format,
+            quiet=quiet,
+            code_path=code_path,
+            diagram_path=diagram_path,
+            content=content,
+            strict=strict,
+        )
+
+
+async def _run_pipeline_inside_provider(
+    model_id: str,
+    description: str,
+    assumptions: list[str] | None,
+    framework: Framework,
+    has_ai_components: bool,
+    settings: Settings,
+    provider: LLMProvider,
+    renderer: ConsoleRenderer | None,
+    input_file: Path,
+    output_path: Path | None,
+    output_format: str,
+    quiet: bool,
+    code_path: Path | None,
+    diagram_path: Path | None,
+    content: str,
+    strict: bool,
+) -> None:
+    # Pre-flight gap analysis — always runs; --strict enforces blocking on errors
+    gap_result = await analyze_description_gaps(description=description, provider=provider)
+
+    if gap_result.gaps:
+        for gap in gap_result.gaps:
+            prefix = "error" if gap.severity == "error" else "warning"
+            click.echo(
+                click.style(
+                    f"[{prefix}] {gap.field}: {gap.message}",
+                    fg="red" if prefix == "error" else "yellow",
+                ),
+                err=True,
+            )
+        click.echo("", err=True)
+
+    if strict and not gap_result.is_sufficient:
+        click.secho(
+            "Description has error-severity gaps. Fix them or remove --strict to continue.",
+            fg="red",
+            err=True,
+        )
+        raise SystemExit(2)
     # Extract code context if --code flag provided
     code_context = None
     if code_path:
@@ -694,23 +771,50 @@ async def _run_pipeline_async(
     if output_path:
         try:
             if output_format == "sarif":
-                # SARIF export
-                if json_writer.threats:
-                    import json
-
-                    sarif_data = export_sarif(
-                        threats=json_writer.threats,
-                        model_id=model_id,
-                        framework=framework.value,
-                        source_file=str(input_file),
-                    )
+                sarif_data = export_sarif(
+                    threats=json_writer.threats if json_writer.threats else ThreatsList(threats=[]),
+                    model_id=model_id,
+                    framework=framework.value,
+                    source_file=str(input_file),
+                )
+                # Append description-completeness findings from gap analysis
+                if gap_result.gaps:
+                    gap_rule = {
+                        "id": "description-completeness",
+                        "name": "DescriptionCompleteness",
+                        "shortDescription": {"text": "System description completeness check"},
+                        "fullDescription": {
+                            "text": "Checks whether the system description provides enough detail for thorough threat modeling."
+                        },
+                        "defaultConfiguration": {"level": "warning"},
+                    }
+                    run_block = sarif_data["runs"][0]
+                    run_block["tool"]["driver"]["rules"].append(gap_rule)
+                    for gap in gap_result.gaps:
+                        level = "error" if gap.severity == "error" else "warning"
+                        run_block["results"].append(
+                            {
+                                "ruleId": "description-completeness",
+                                "level": level,
+                                "message": {"text": f"[{gap.field}] {gap.message}"},
+                                "locations": [
+                                    {
+                                        "physicalLocation": {
+                                            "artifactLocation": {"uri": str(input_file)},
+                                            "region": {"startLine": 1},
+                                        }
+                                    }
+                                ],
+                            }
+                        )
+                if json_writer.threats or gap_result.gaps:
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(output_path, "w", encoding="utf-8") as f:
                         json.dump(sarif_data, f, indent=2, ensure_ascii=False)
                     output_file_str = str(output_path)
                 else:
                     click.echo()
-                    click.secho("⚠ Warning: No threats to export to SARIF", fg="yellow")
+                    click.secho("⚠ Warning: No threats or gaps to export to SARIF", fg="yellow")
                     click.echo()
             elif output_format == "markdown":
                 if json_writer and json_writer.threats:
