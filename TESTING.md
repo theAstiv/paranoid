@@ -117,50 +117,31 @@ git push --no-verify
 
 ## 🚀 GitHub Actions (CI/CD)
 
-### 1. Test Workflow (`.github/workflows/test.yml`)
+### 1. CI Workflow (`.github/workflows/ci.yml`)
 
 **Triggers:**
-- Push to `main` or `develop` branches
-- Pull requests to `main` or `develop`
+- Push to `main`
+- Pull requests to `main`
 
-**What it does:**
-- Runs on Ubuntu, Windows, macOS
-- Tests Python 3.12 and 3.13
-- Runs linting (ruff check + format check)
-- Runs full test suite
-- Uploads coverage reports (Ubuntu only)
+**Concurrency:** cancels in-progress runs for the same ref on rapid pushes.
 
-**Matrix testing:**
-```
-OS: [ubuntu-latest, windows-latest, macos-latest]
-Python: [3.12, 3.13]
-= 6 test jobs total
-```
+**Jobs:**
 
-### 2. PR Validation Workflow (`.github/workflows/pr-validation.yml`)
+| Job | Needs | What it does |
+|-----|-------|-------------|
+| `lint` | — | `ruff check` + `ruff format --check` on `backend/`, `cli/`, `tests/` |
+| `test` | `lint` | `pytest` excluding E2E test (requires live LLM + context-link binary) |
+| `build-check` | — | `python -m build` + `twine check` |
+| `frontend-test` | — | `npm ci && npm test` (Vitest) |
+| `frontend-build` | — | `npm ci && npm run build`; uploads `frontend/dist/` artifact (1 day) |
+| `docker` | `frontend-test`, `frontend-build` | Builds `--target frontend-builder` (hard fail); then builds full multi-stage image |
 
-**Triggers:**
-- Pull request opened, synchronized, or reopened
-- Skips draft PRs
+**Notes:**
+- `tests/test_pipeline_e2e.py` is excluded from the `test` job — it requires a live LLM provider (`ANTHROPIC_API_KEY`) and the `context-link` binary, neither of which are present in CI runners
+- The Docker `frontend-builder` stage build also validates Dockerfile syntax across all stages
+- The full Docker build includes the `context-link` binary download from GitHub Releases; if that URL becomes unreachable, update `CONTEXT_LINK_VERSION` in the Dockerfile
 
-**What it does:**
-- Version consistency check
-- Linting (ruff)
-- Full test suite with JUnit XML output
-- Publishes test results to PR
-- Checks for new TODO/FIXME comments
-- Generates PR summary
-
-**PR checks visible in GitHub:**
-```
-✓ validate-pr / Validate Pull Request
-  ├─ Version consistency
-  ├─ Linting
-  ├─ Full test suite
-  └─ PR summary
-```
-
-### 3. Release Workflow (`.github/workflows/release.yml`)
+### 2. Release Workflow (`.github/workflows/release.yml`)
 
 **Triggers:**
 - Git tag push: `v*.*.*` (e.g., `v1.2.1`)
@@ -201,20 +182,24 @@ paranoid_cli-1.2.1.tar.gz
 Current test suite breakdown:
 
 ```
-Total tests: 172+
+Total tests: 230+
 
-By category:
+Backend (pytest):
 - CLI tests: 16
-- Database tests: 12
+- Database / CRUD tests: 31
 - Model tests: 24
 - Pipeline tests: 38
 - Provider tests: 7
 - Deduplication tests: 16
-- Export tests: 6
+- Export tests (markdown, PDF, SARIF): 37
 - Image/diagram tests: 36
 - MCP tests: 8
-- SARIF tests: 6
+- Routes / API tests: 4
 - Other: 3+
+
+Frontend (Vitest):
+- DreadBadge component: 7
+- Svelte stores: 9
 ```
 
 ## 🔍 Test Types

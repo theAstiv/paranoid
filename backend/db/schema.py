@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS assets (
     type TEXT NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
+    user_edited INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     FOREIGN KEY (model_id) REFERENCES threat_models(id) ON DELETE CASCADE
 );
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS flows (
     flow_description TEXT NOT NULL,
     source_entity TEXT NOT NULL,
     target_entity TEXT NOT NULL,
+    user_edited INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     FOREIGN KEY (model_id) REFERENCES threat_models(id) ON DELETE CASCADE
 );
@@ -91,6 +93,7 @@ CREATE TABLE IF NOT EXISTS trust_boundaries (
     purpose TEXT NOT NULL,
     source_entity TEXT NOT NULL,
     target_entity TEXT NOT NULL,
+    user_edited INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     FOREIGN KEY (model_id) REFERENCES threat_models(id) ON DELETE CASCADE
 );
@@ -200,6 +203,15 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
         logger.info("Migrated threat_metadata: added vector_rowid column")
     except Exception:
         pass  # Column already exists — normal on fresh or already-migrated DBs
+
+    # Migrate existing assets/flows/trust_boundaries tables that lack user_edited column
+    for table in ("assets", "flows", "trust_boundaries"):
+        try:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN user_edited INTEGER DEFAULT 0")
+            await conn.commit()
+            logger.info(f"Migrated {table}: added user_edited column")
+        except Exception:
+            pass  # Column already exists
 
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable

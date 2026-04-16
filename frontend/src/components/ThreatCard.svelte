@@ -1,7 +1,8 @@
 <script>
   import { createEventDispatcher } from 'svelte'
-  import { link, push } from 'svelte-spa-router'
+  import { link } from 'svelte-spa-router'
   import DreadBadge from './DreadBadge.svelte'
+  import { updateThreat } from '../lib/api.js'
 
   /** @type {object} */
   export let threat = {}
@@ -9,6 +10,58 @@
   export let readonly = false
 
   const dispatch = createEventDispatcher()
+
+  // ── DREAD editing state ───────────────────────────────────────────────────────
+  let editingDread = false
+  let savingDread = false
+  let dreadError = ''
+  let draftDread = {}
+
+  const DREAD_DIMS = [
+    ['Damage', 'dread_damage'],
+    ['Reproducibility', 'dread_reproducibility'],
+    ['Exploitability', 'dread_exploitability'],
+    ['Affected Users', 'dread_affected_users'],
+    ['Discoverability', 'dread_discoverability'],
+  ]
+
+  function startEditDread() {
+    draftDread = {
+      dread_damage: threat.dread_damage ?? '',
+      dread_reproducibility: threat.dread_reproducibility ?? '',
+      dread_exploitability: threat.dread_exploitability ?? '',
+      dread_affected_users: threat.dread_affected_users ?? '',
+      dread_discoverability: threat.dread_discoverability ?? '',
+    }
+    dreadError = ''
+    editingDread = true
+  }
+
+  async function saveDread() {
+    const body = {}
+    for (const [, key] of DREAD_DIMS) {
+      const v = draftDread[key]
+      if (v === '' || v == null) continue
+      const n = Number(v)
+      if (!Number.isInteger(n) || n < 1 || n > 10) {
+        dreadError = 'All scores must be integers between 1 and 10.'
+        return
+      }
+      body[key] = n
+    }
+    dreadError = ''
+    savingDread = true
+    try {
+      await updateThreat(threat.id, body)
+      threat = { ...threat, ...body }
+      dispatch('dread-updated', threat)
+      editingDread = false
+    } catch (e) {
+      dreadError = e.message
+    } finally {
+      savingDread = false
+    }
+  }
 
   const STRIDE_COLORS = {
     Spoofing: 'bg-purple-100 text-purple-700',
@@ -56,10 +109,58 @@
           </span>
         {/if}
         <DreadBadge {threat} />
+        {#if !readonly && threat.id && !editingDread}
+          <button
+            type="button"
+            on:click={startEditDread}
+            title="Edit DREAD scores"
+            class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors">
+            <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+            DREAD
+          </button>
+        {/if}
       </div>
       <h3 class="font-semibold text-slate-900 text-sm">{threat.name}</h3>
     </div>
   </div>
+
+  <!-- DREAD edit form -->
+  {#if editingDread}
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Edit DREAD scores <span class="font-normal normal-case text-slate-400">(1–10 each)</span></p>
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {#each DREAD_DIMS as [label, key]}
+          <label class="flex items-center justify-between gap-2 text-xs">
+            <span class="text-slate-600">{label}</span>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              bind:value={draftDread[key]}
+              class="w-14 border border-slate-300 rounded px-1.5 py-0.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+          </label>
+        {/each}
+      </div>
+      {#if dreadError}
+        <p class="text-xs text-red-600">{dreadError}</p>
+      {/if}
+      <div class="flex gap-2 pt-1">
+        <button
+          type="button"
+          on:click={saveDread}
+          disabled={savingDread}
+          class="px-3 py-1 text-xs font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+          {savingDread ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          on:click={() => { editingDread = false; dreadError = '' }}
+          class="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded hover:bg-slate-200 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <!-- Description -->
   <p class="text-sm text-slate-600 leading-relaxed">{threat.description}</p>

@@ -31,6 +31,25 @@
   // Step 6
   let hasAiComponents = false
 
+  // Client-side gap regexes mirror backend/pipeline/pre_flight.py so the wizard
+  // can flag gaps before the model is created (and before /analyze is reachable).
+  // Backend is authoritative at run time; keep these in sync when editing.
+  const AUTH_RE = /\b(auth(?:entication|orization)?|oauth|jwt|token|saml|sso|password|credential|api.?key|bearer|session|login|mfa|2fa)\b/i
+  const BOUNDARY_RE = /\b(trust.?boundary|network.?segment|dmz|firewall|vlan|subnet|vpc|perimeter|internet.?facing|internal|external|public|private)\b/i
+  const FLOW_RE = /\b(sends?|receives?|transfers?|communicates?|calls?|requests?|responses?|reads?|writes?|stores?|fetches?|connects?|publishes?|subscribes?)\b/i
+  const EXTERNAL_RE = /\b(third.?party|external|vendor|api|webhook|integration|partner|upstream|downstream|database|db|queue|broker|cache|cdn|dns|smtp|email)\b/i
+
+  $: descriptionGaps = (() => {
+    const d = description.trim()
+    if (d.length < 80) return []
+    const gaps = []
+    if (!AUTH_RE.test(d)) gaps.push({ field: 'authentication', message: 'No auth mechanism mentioned (OAuth, JWT, API key, etc.)' })
+    if (!BOUNDARY_RE.test(d)) gaps.push({ field: 'trust boundaries', message: 'No trust boundaries described (internet-facing, internal, VPC, etc.)' })
+    if (!FLOW_RE.test(d)) gaps.push({ field: 'data flows', message: 'No data flows mentioned (sends, receives, stores, etc.)' })
+    if (!EXTERNAL_RE.test(d)) gaps.push({ field: 'external systems', message: 'No external systems named (DB, queue, 3rd-party API, etc.)' })
+    return gaps
+  })()
+
   $: nextDisabled = (() => {
     if (step === 0) return !title.trim() || title.length > 200
     if (step === 1) return description.trim().length < 10
@@ -180,18 +199,42 @@
 
     {:else if step === 1}
       <!-- Description -->
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1" for="description">System description</label>
-        <textarea
-          id="description"
-          bind:value={description}
-          rows="6"
-          placeholder="Describe your system architecture, components, data flows, and trust boundaries. The more detail you provide, the more targeted the threat model will be."
-          class="block w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none"
-        ></textarea>
-        <p class="mt-1 text-xs {description.trim().length < 10 ? 'text-red-400' : 'text-slate-400'}">
-          {description.trim().length} chars (min 10)
-        </p>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1" for="description">System description</label>
+          <textarea
+            id="description"
+            bind:value={description}
+            rows="6"
+            placeholder="Describe your system architecture, components, data flows, and trust boundaries. The more detail you provide, the more targeted the threat model will be."
+            class="block w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none"
+          ></textarea>
+          <p class="mt-1 text-xs {description.trim().length < 10 ? 'text-red-400' : 'text-slate-400'}">
+            {description.trim().length} chars (min 10)
+          </p>
+        </div>
+
+        <!-- Pre-flight gap panel (shows once description is long enough to analyze) -->
+        {#if description.trim().length >= 80}
+          <div class="rounded-lg border {descriptionGaps.length === 0 ? 'border-green-200 bg-green-50' : 'border-yellow-200 bg-yellow-50'} px-3 py-2.5 space-y-1.5">
+            {#if descriptionGaps.length === 0}
+              <p class="text-xs font-medium text-green-700 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Description looks complete
+              </p>
+            {:else}
+              <p class="text-xs font-medium text-yellow-800">Coverage gaps detected — consider adding:</p>
+              <ul class="space-y-1">
+                {#each descriptionGaps as gap}
+                  <li class="text-xs text-yellow-700 flex items-start gap-1.5">
+                    <svg class="w-3 h-3 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <span><span class="font-medium">{gap.field}:</span> {gap.message}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
       </div>
 
     {:else if step === 2}

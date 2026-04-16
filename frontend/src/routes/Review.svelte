@@ -119,7 +119,12 @@
   {:else}
     <div class="space-y-4">
       {#each filtered as threat (threat.id)}
-        <ThreatCard {threat} readonly={false} on:approve={handleApprove} on:reject={handleReject} />
+        <ThreatCard
+          {threat}
+          readonly={false}
+          on:approve={handleApprove}
+          on:reject={handleReject}
+          on:dread-updated={e => threats.update(ts => ts.map(t => t.id === e.detail.id ? { ...t, ...e.detail } : t))} />
       {/each}
     </div>
   {/if}

@@ -9,6 +9,7 @@
   import TestCases from './routes/TestCases.svelte'
   import Library from './routes/Library.svelte'
   import Settings from './routes/Settings.svelte'
+  import ReviewContext from './routes/ReviewContext.svelte'
   import { notification } from './lib/stores.js'
 
   const routes = {
@@ -16,6 +17,7 @@
     '/models/new': NewModel,
     '/models/:id': Results,
     '/models/:id/review': Review,
+    '/models/:id/context': ReviewContext,
     '/library': Library,
     '/settings': Settings,
     '/threats/:id/attack-tree': AttackTree,

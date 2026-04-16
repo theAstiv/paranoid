@@ -843,18 +843,32 @@ async def delete_trust_boundary(boundary_id: str) -> None:
     logger.info(f"Deleted trust boundary {boundary_id}")
 
 
-async def clear_model_data(model_id: str) -> None:
+async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> None:
     """Delete all pipeline-generated data for a model (threats, assets, flows, trust boundaries).
 
     Called before each pipeline run so that re-running a model starts from a clean slate.
+
+    Args:
+        model_id: The model whose data to clear.
+        preserve_user_edits: When True, rows with user_edited=1 in assets, flows, and
+            trust_boundaries are kept so that manually-corrected context survives a re-run.
     """
     conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
-    await conn.execute("DELETE FROM assets WHERE model_id = ?", (model_id,))
-    await conn.execute("DELETE FROM flows WHERE model_id = ?", (model_id,))
-    await conn.execute("DELETE FROM trust_boundaries WHERE model_id = ?", (model_id,))
+    if preserve_user_edits:
+        await conn.execute("DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,))
+        await conn.execute("DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,))
+        await conn.execute(
+            "DELETE FROM trust_boundaries WHERE model_id = ? AND user_edited = 0", (model_id,)
+        )
+    else:
+        await conn.execute("DELETE FROM assets WHERE model_id = ?", (model_id,))
+        await conn.execute("DELETE FROM flows WHERE model_id = ?", (model_id,))
+        await conn.execute("DELETE FROM trust_boundaries WHERE model_id = ?", (model_id,))
     await conn.commit()
-    logger.info(f"Cleared pipeline data for model {model_id}")
+    logger.info(
+        f"Cleared pipeline data for model {model_id} (preserve_user_edits={preserve_user_edits})"
+    )
 
 
 # Attack Trees CRUD

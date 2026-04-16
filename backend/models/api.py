@@ -107,3 +107,18 @@ class UpdateTrustBoundaryRequest(BaseModel):
 
 
 ExportFormat = Literal["markdown", "pdf", "sarif", "json"]
+
+
+class DescriptionGap(BaseModel):
+    """A single gap found in the system description or extracted context."""
+
+    field: str  # e.g. "trust_boundaries", "authentication", "data_flows"
+    severity: Literal["warning", "error"]
+    message: str  # human-readable explanation of what is missing or ambiguous
+
+
+class AnalyzeDescriptionResponse(BaseModel):
+    """Response body for POST /api/models/{model_id}/analyze."""
+
+    gaps: list[DescriptionGap]
+    is_sufficient: bool  # True when len(errors) == 0

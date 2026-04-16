@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework, StrideCategory
@@ -22,6 +23,9 @@ from backend.pipeline.nodes.summary import _deterministic_code_summary
 from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
+
+
+StopAfter = Literal["extraction"]
 
 
 def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2) -> bool:
@@ -152,6 +156,9 @@ class PipelineRunner:
         assumptions: list[str] | None = None,
         code_context: CodeContext | None = None,
         diagram_data: DiagramData | None = None,
+        stop_after: StopAfter | None = None,
+        seeded_assets: AssetsList | None = None,
+        seeded_flows: FlowsList | None = None,
     ) -> AsyncGenerator[PipelineEvent, None]:
         """Run the complete threat modeling pipeline with SSE events.
 
@@ -162,6 +169,13 @@ class PipelineRunner:
             assumptions: Optional list of assumptions
             code_context: Optional code context from MCP
             diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+            stop_after: If "extraction", stop after assets/flows are extracted and
+                persisted, then yield a complete event. Used by the /extract endpoint
+                to populate context without running threat generation.
+            seeded_assets: Pre-edited assets to use instead of running LLM extraction.
+                When provided the EXTRACT_ASSETS step is skipped.
+            seeded_flows: Pre-edited flows/boundaries to use instead of running LLM
+                extraction. When provided the EXTRACT_FLOWS step is skipped.
 
         Yields:
             PipelineEvent for each step and iteration
@@ -248,61 +262,97 @@ class PipelineRunner:
                         data={"summary": summary.summary},
                     )
 
-                # Step 2: Extract Assets
-                yield PipelineEvent(
-                    step=PipelineStep.EXTRACT_ASSETS,
-                    status="started",
-                    message="Identifying assets and entities...",
-                )
+                # Step 2: Extract Assets (skip if pre-edited assets injected)
+                if seeded_assets is not None:
+                    assets = seeded_assets
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_ASSETS,
+                        status="completed",
+                        message=f"Using {len(assets.assets)} pre-edited assets",
+                        data={"asset_count": len(assets.assets), "assets": assets},
+                    )
+                else:
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_ASSETS,
+                        status="started",
+                        message="Identifying assets and entities...",
+                    )
 
-                assets = await nodes.extract_assets(
-                    summary=summary.summary,
-                    description=description,
-                    architecture_diagram=architecture_diagram,
-                    assumptions=assumptions,
-                    framework=framework,
-                    provider=self.provider,
-                    temperature=self.config.temperature,
-                    code_summary=code_summary,
-                    diagram_data=diagram_data,
-                )
+                    assets = await nodes.extract_assets(
+                        summary=summary.summary,
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        framework=framework,
+                        provider=self.provider,
+                        temperature=self.config.temperature,
+                        code_summary=code_summary,
+                        diagram_data=diagram_data,
+                    )
 
-                yield PipelineEvent(
-                    step=PipelineStep.EXTRACT_ASSETS,
-                    status="completed",
-                    message=f"Identified {len(assets.assets)} assets/entities",
-                    data={"asset_count": len(assets.assets), "assets": assets},
-                )
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_ASSETS,
+                        status="completed",
+                        message=f"Identified {len(assets.assets)} assets/entities",
+                        data={"asset_count": len(assets.assets), "assets": assets},
+                    )
 
-                # Step 3: Extract Flows
-                yield PipelineEvent(
-                    step=PipelineStep.EXTRACT_FLOWS,
-                    status="started",
-                    message="Extracting data flows and trust boundaries...",
-                )
+                # Step 3: Extract Flows (skip if pre-edited flows injected)
+                if seeded_flows is not None:
+                    flows = seeded_flows
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_FLOWS,
+                        status="completed",
+                        message=f"Using {len(flows.data_flows)} pre-edited flows, {len(flows.trust_boundaries)} boundaries",
+                        data={
+                            "flow_count": len(flows.data_flows),
+                            "boundary_count": len(flows.trust_boundaries),
+                            "flows": flows,
+                        },
+                    )
+                else:
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_FLOWS,
+                        status="started",
+                        message="Extracting data flows and trust boundaries...",
+                    )
 
-                flows = await nodes.extract_flows(
-                    summary=summary.summary,
-                    description=description,
-                    architecture_diagram=architecture_diagram,
-                    assumptions=assumptions,
-                    assets=assets,
-                    provider=self.provider,
-                    temperature=self.config.temperature,
-                    code_summary=code_summary,
-                    diagram_data=diagram_data,
-                )
+                    flows = await nodes.extract_flows(
+                        summary=summary.summary,
+                        description=description,
+                        architecture_diagram=architecture_diagram,
+                        assumptions=assumptions,
+                        assets=assets,
+                        provider=self.provider,
+                        temperature=self.config.temperature,
+                        code_summary=code_summary,
+                        diagram_data=diagram_data,
+                    )
 
-                yield PipelineEvent(
-                    step=PipelineStep.EXTRACT_FLOWS,
-                    status="completed",
-                    message=f"Identified {len(flows.data_flows)} flows, {len(flows.trust_boundaries)} boundaries",
-                    data={
-                        "flow_count": len(flows.data_flows),
-                        "boundary_count": len(flows.trust_boundaries),
-                        "flows": flows,
-                    },
-                )
+                    yield PipelineEvent(
+                        step=PipelineStep.EXTRACT_FLOWS,
+                        status="completed",
+                        message=f"Identified {len(flows.data_flows)} flows, {len(flows.trust_boundaries)} boundaries",
+                        data={
+                            "flow_count": len(flows.data_flows),
+                            "boundary_count": len(flows.trust_boundaries),
+                            "flows": flows,
+                        },
+                    )
+
+                # stop_after="extraction" — persist and return without threat generation
+                if stop_after == "extraction":
+                    yield PipelineEvent(
+                        step=PipelineStep.COMPLETE,
+                        status="completed",
+                        message="Extraction complete. Context is ready for review.",
+                        data={
+                            "asset_count": len(assets.assets),
+                            "flow_count": len(flows.data_flows),
+                            "boundary_count": len(flows.trust_boundaries),
+                        },
+                    )
+                    return
 
                 # Build stable context once — reused as cacheable prefix for all
                 # generate_threats() and gap_analysis() calls in the iteration loop.
@@ -811,6 +861,9 @@ async def run_pipeline_for_model(
     max_iterations: int = 3,
     has_ai_components: bool = False,
     similarity_threshold: float = 0.85,
+    stop_after: StopAfter | None = None,
+    seeded_assets: AssetsList | None = None,
+    seeded_flows: FlowsList | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -826,6 +879,9 @@ async def run_pipeline_for_model(
         max_iterations: Maximum iteration count (1-15)
         has_ai_components: Whether to run MAESTRO alongside STRIDE
         similarity_threshold: Cosine similarity threshold for threat deduplication
+        stop_after: Stop pipeline after "extraction" step (for context preview).
+        seeded_assets: Pre-edited assets to skip LLM extraction.
+        seeded_flows: Pre-edited flows to skip LLM extraction.
 
     Yields:
         PipelineEvent for progress tracking
@@ -852,5 +908,8 @@ async def run_pipeline_for_model(
         assumptions=assumptions,
         code_context=code_context,
         diagram_data=diagram_data,
+        stop_after=stop_after,
+        seeded_assets=seeded_assets,
+        seeded_flows=seeded_flows,
     ):
         yield event

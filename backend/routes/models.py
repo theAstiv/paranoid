@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from backend.config import settings
 from backend.db import crud
 from backend.models.api import (
+    AnalyzeDescriptionResponse,
     CreateAssetRequest,
     CreateFlowRequest,
     CreateModelRequest,
@@ -24,9 +25,9 @@ from backend.models.api import (
 from backend.models.enums import DiagramFormat, Framework, ModelStatus, ThreatStatus
 from backend.models.extended import DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
-from backend.providers.base import create_provider
-from backend.routes._helpers import get_api_key, resolve_provider
+from backend.routes._helpers import build_provider_from_record, resolve_provider
 
 
 logger = logging.getLogger(__name__)
@@ -285,22 +286,7 @@ async def run_pipeline(
     if diagram is not None and diagram.filename:
         diagram_data = await _build_diagram_data(diagram)
 
-    # Resolve provider
-    provider_type = record.get("provider") or settings.default_provider
-    model_str = record.get("model") or settings.default_model
-    api_key = get_api_key(provider_type)
-    base_url = settings.ollama_base_url if provider_type == "ollama" else None
-
-    try:
-        provider = create_provider(
-            provider_type=provider_type,
-            model=model_str,
-            api_key=api_key,
-            base_url=base_url,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
+    provider = build_provider_from_record(record)
     framework = Framework(record.get("framework", "STRIDE"))
     max_iterations = record.get("iteration_count", settings.default_iterations)
 
@@ -552,3 +538,73 @@ async def delete_trust_boundary(model_id: str, boundary_id: str) -> None:
     if boundary is None or boundary.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Trust boundary '{boundary_id}' not found")
     await crud.delete_trust_boundary(boundary_id)
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight and context-extraction endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{model_id}/analyze")
+async def analyze_model_description(model_id: str) -> AnalyzeDescriptionResponse:
+    """Analyze the model's description for completeness gaps.
+
+    Runs fast deterministic checks plus an LLM pass to identify what is missing
+    before committing to a full pipeline run. Returns a list of gaps with severity
+    and an is_sufficient flag.
+    """
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    description = record.get("description", "")
+    provider = build_provider_from_record(record)
+
+    async with provider:
+        return await analyze_description_gaps(description=description, provider=provider)
+
+
+@router.post("/{model_id}/extract")
+async def extract_model_context(model_id: str) -> StreamingResponse:
+    """Run only the summarize + extract steps (no threat generation), streaming SSE.
+
+    Populates assets, flows, and trust boundaries in the DB so the user can
+    review and edit them before triggering a full pipeline run. The SSE stream
+    ends with a 'complete' event once extraction is done.
+    """
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    provider = build_provider_from_record(record)
+    framework = Framework(record.get("framework", "STRIDE"))
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        await crud.clear_model_data(model_id, preserve_user_edits=True)
+        try:
+            async with provider:
+                async for event in run_pipeline_for_model(
+                    model_id=model_id,
+                    description=record["description"],
+                    framework=framework,
+                    provider=provider,
+                    stop_after="extraction",
+                ):
+                    await _persist_pipeline_event(model_id, event)
+                    yield event.to_sse_format()
+        except Exception:
+            logger.exception("Extraction pipeline failed for model %s", model_id)
+            yield PipelineEvent(
+                step=PipelineStep.COMPLETE,
+                status="failed",
+                message="Extraction failed; see server logs.",
+            ).to_sse_format()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
