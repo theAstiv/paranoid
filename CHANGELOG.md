@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Fast Provider Routing
+- **`FAST_MODEL` setting** (default: `claude-haiku-4-5-20251001`) — cheap Haiku-class model used for extraction steps (assets, flows) and enrichment steps (attack trees, test cases); main threat generation keeps the primary model
+- **`PipelineRunner`** accepts `fast_provider: LLMProvider | None`; falls back to main provider transparently
+- **`build_fast_provider()`** in `backend/routes/_helpers.py` — constructs the fast provider when provider is Anthropic, `FAST_MODEL` is set, and differs from main model
+- **`AsyncExitStack`** in `run_pipeline` and `extract_model_context` routes manages both provider HTTP contexts; identity check avoids double-entry when fast provider falls back to main
+- CLI `paranoid run` builds and threads `fast_provider` through the same paths as the web route
+
+#### CLI `--enrich` Flag
+- **`paranoid run --enrich`** — after the main pipeline completes, generates an attack tree and test suite for every threat; results are included in markdown and PDF exports; skipped for `--format sarif`
+- Enrichment keyed by loop index (synthetic `id`) since in-memory `Threat` objects have no `id` field; the same index is injected into `threats_dicts` at export time so exporter lookups resolve correctly
+- Fixed silent `AttributeError` on `t.maestro_category` for STRIDE-only runs — replaced with `getattr(t, "maestro_category", None)`
+- Exception warnings now include `type(e).__name__` so failures are visible in output
+
+#### Export Enrichment (Markdown and PDF)
+- **`export_markdown()`** and **`export_pdf()`** gain `attack_trees` and `test_suites` optional params
+- Markdown: Mermaid source rendered in fenced `mermaid` block; Gherkin in fenced `gherkin` block
+- PDF: both rendered as monospaced line-by-line paragraphs (PDF has no native Mermaid renderer)
+- **Web export route** (`GET /api/export/{id}`) now fetches attack trees and test cases from the DB per threat for markdown and PDF formats; no-op when no enrichment has been generated
+
+#### Runtime Config Editing (`PATCH /config`)
+- **`PATCH /api/config`** — mutates `default_provider`, `model`, `fast_model`, `default_iterations`, `similarity_threshold`, `ollama_base_url` in-memory (resets on restart)
+- **`CONFIG_SECRET` env var** — when set, PATCH requires a matching `X-Config-Secret` request header; requests without it receive 403; GET response exposes `config_secret_required: bool` without leaking the value
+- **Settings.svelte** rewritten as an editable form: draft state, save/reset, disabled state during save; CONFIG_SECRET password field shown only when `config_secret_required` is true
+- `api.js`: `updateConfig(body, secret)` forwards the secret as `X-Config-Secret` header when provided
+
+#### Frontend
+- **ThreatCard.svelte** — "Test cases →" link appears alongside "Attack tree →" for approved threats
+
 #### Gap Analysis & Description Pre-flight
 - **`backend/pipeline/pre_flight.py`** — `analyze_description_gaps()` runs before every pipeline execution to surface missing description context
   - Deterministic regex checks: authentication/auth mechanism, trust boundary definitions, data flows, external integrations

@@ -22,6 +22,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Pre-flight Gap Analysis**: Description completeness check before running — warns about missing auth, trust boundaries, data flows, and external integrations; `--strict` exits CI with code 2 on error-severity gaps
 - **Edit Context Before Threats**: Review and edit extracted assets, flows, and trust boundaries at `/models/:id/context` before or after a run; "Re-extract" re-runs only the extraction steps without regenerating threats
 - **DREAD Score Editing**: Edit any threat's DREAD scores inline from the Review page — no page reload required
+- **Fast Provider Routing**: Configurable `FAST_MODEL` uses a Haiku-class model for extraction and enrichment, reserving Sonnet/Opus for threat generation — cuts API cost without sacrificing quality
+- **Attack Tree & Test Case Enrichment**: `--enrich` generates STRIDE/MAESTRO attack trees and Gherkin test cases per threat after the main pipeline run; included automatically in Markdown and PDF exports
+- **Editable Settings (Web UI)**: Runtime configuration editing at `/settings` — change provider, model, iterations, and more without restarting; protected by optional `CONFIG_SECRET` shared secret
 - **CI/CD Ready**: CLI + GitHub Action with SARIF upload for automated threat detection
 
 ## Quick Start
@@ -120,6 +123,14 @@ DEFAULT_MODEL=llama3
 # Optional: path to context-link binary for --code flag
 # If unset, Paranoid looks for bin/context-link then PATH
 CONTEXT_LINK_BINARY=/usr/local/bin/context-link
+
+# Optional: fast model for extraction/enrichment steps (Anthropic only)
+# Defaults to claude-haiku-4-5-20251001; set to same value as DEFAULT_MODEL to disable fast routing
+FAST_MODEL=claude-haiku-4-5-20251001
+
+# Optional: shared secret to protect PATCH /config (web UI settings page)
+# If set, the Settings page requires this value to save any configuration change
+CONFIG_SECRET=your-secret-here
 
 # Optional: restrict CORS origins (default: * allows all)
 # Comma-separated for multiple origins
@@ -245,6 +256,16 @@ paranoid run system.md --strict
 
 # Gap warnings are always printed to stderr; --strict makes errors blocking
 paranoid run system.md --strict --format sarif -o findings.sarif
+
+# Generate attack trees + Gherkin test cases per threat after the pipeline run
+# Requires Anthropic provider; uses FAST_MODEL (claude-haiku-4-5-20251001) if configured
+paranoid run system.md --enrich
+
+# Enrich and export to Markdown (attack trees + test cases included in output)
+paranoid run system.md --enrich --format markdown -o enriched-report.md
+
+# Enrich and export to PDF
+paranoid run system.md --enrich --format pdf -o enriched-report.pdf
 ```
 
 ### Inspecting Saved Models
@@ -387,6 +408,12 @@ PORT=8000
 LOG_LEVEL=info
 CORS_ORIGINS=*
 SIMILARITY_THRESHOLD=0.85
+
+# Fast model for extraction/enrichment (Anthropic only, optional)
+FAST_MODEL=claude-haiku-4-5-20251001
+
+# Shared secret to protect the Settings PATCH /config endpoint (optional)
+CONFIG_SECRET=your-secret-here
 ```
 
 All variables are documented in `.env.example`.
@@ -662,7 +689,7 @@ Paranoid supports rich XML-tagged templates for better context and assumption en
 | Model | Status | Notes |
 |-------|--------|-------|
 | `claude-sonnet-4-20250514` | Recommended | Validated end-to-end, reliable for production |
-| `claude-haiku-4-5-20251001` | Not recommended | Fails with JSON parsing errors on complex outputs |
+| `claude-haiku-4-5-20251001` | Not recommended as main model | Fails with JSON parsing errors on complex threat outputs; recommended as `FAST_MODEL` for extraction/enrichment steps |
 | `gpt-4o` | Supported | Works well, also supports vision (`--diagram`) |
 | Ollama (Llama 3 70B+) | Supported | Fully local, no external API calls |
 
@@ -789,7 +816,7 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 **v1.4.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (362 curated patterns across 16 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (362 curated patterns across 16 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation, fast provider routing (`FAST_MODEL` for extraction/enrichment), `--enrich` CLI flag (attack trees + Gherkin test cases per threat), enrichment included in Markdown/PDF exports, editable Settings UI with `CONFIG_SECRET` protection.
 
 **Future (v2.0+):** Multi-user collaboration.
 

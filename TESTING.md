@@ -182,11 +182,11 @@ paranoid_cli-1.2.1.tar.gz
 Current test suite breakdown:
 
 ```
-Total tests: 230+
+Total tests: 534 passed, 5 skipped
 
 Backend (pytest):
 - CLI tests: 16
-- Database / CRUD tests: 31
+- Database / CRUD tests: 57
 - Model tests: 24
 - Pipeline tests: 38
 - Provider tests: 7
@@ -194,8 +194,9 @@ Backend (pytest):
 - Export tests (markdown, PDF, SARIF): 37
 - Image/diagram tests: 36
 - MCP tests: 8
-- Routes / API tests: 4
-- Other: 3+
+- Routes / API tests: 76
+- Seeds integrity: 96
+- Other: 123+
 
 Frontend (Vitest):
 - DreadBadge component: 7
