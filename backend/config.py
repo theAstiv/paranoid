@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://host.docker.internal:11434"
     default_provider: Literal["anthropic", "openai", "ollama"] = "anthropic"
     default_model: str = "claude-sonnet-4-20250514"
+    # Fast model is used for cheaper extraction steps (assets/flows) and
+    # enrichment (attack trees / test cases).  Only applies when
+    # default_provider == 'anthropic'.  Set FAST_MODEL="" to disable.
+    fast_model: str = "claude-haiku-4-5-20251001"
     default_iterations: int = 3
 
     # Embedding settings
@@ -53,6 +57,11 @@ class Settings(BaseSettings):
 
     # Deduplication threshold for rule engine
     similarity_threshold: float = 0.85
+
+    # Optional shared secret for PATCH /config.  When set, callers must
+    # supply a matching X-Config-Secret header.  Empty string = no auth
+    # required (default; safe for local / Docker single-user deployments).
+    config_secret: str = ""
 
 
 # Global settings instance

@@ -127,15 +127,20 @@ class PipelineRunner:
         provider: LLMProvider,
         config: PipelineConfig,
         model_id: str,
+        fast_provider: LLMProvider | None = None,
     ):
         """Initialize pipeline runner.
 
         Args:
-            provider: LLM provider for all generation steps
-            config: Pipeline configuration
-            model_id: Threat model ID for tracking
+            provider: LLM provider for threat generation, gap analysis, and summarization.
+            config: Pipeline configuration.
+            model_id: Threat model ID for tracking.
+            fast_provider: Optional cheaper/faster provider for extraction steps
+                (assets, flows) and enrichment (attack trees, test cases).
+                Falls back to ``provider`` when not set.
         """
         self.provider = provider
+        self.fast_provider = fast_provider or provider
         self.config = config
         self.model_id = model_id
         self.start_time: datetime | None = None
@@ -284,7 +289,7 @@ class PipelineRunner:
                         architecture_diagram=architecture_diagram,
                         assumptions=assumptions,
                         framework=framework,
-                        provider=self.provider,
+                        provider=self.fast_provider,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
                         diagram_data=diagram_data,
@@ -323,7 +328,7 @@ class PipelineRunner:
                         architecture_diagram=architecture_diagram,
                         assumptions=assumptions,
                         assets=assets,
-                        provider=self.provider,
+                        provider=self.fast_provider,
                         temperature=self.config.temperature,
                         code_summary=code_summary,
                         diagram_data=diagram_data,
@@ -815,7 +820,7 @@ class PipelineRunner:
             stride_category=stride_category,
             maestro_category=maestro_category,
             mitigations=mitigations,
-            provider=self.provider,
+            provider=self.fast_provider,
             temperature=0.3,  # Slightly higher for creativity
         )
 
@@ -844,7 +849,7 @@ class PipelineRunner:
             threat_description=threat_description,
             target=target,
             mitigations=mitigations,
-            provider=self.provider,
+            provider=self.fast_provider,
             temperature=0.3,
         )
 
@@ -864,6 +869,7 @@ async def run_pipeline_for_model(
     stop_after: StopAfter | None = None,
     seeded_assets: AssetsList | None = None,
     seeded_flows: FlowsList | None = None,
+    fast_provider: LLMProvider | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -871,7 +877,7 @@ async def run_pipeline_for_model(
         model_id: Threat model ID
         description: System description
         framework: STRIDE or MAESTRO
-        provider: LLM provider
+        provider: LLM provider for threat generation and gap analysis
         architecture_diagram: DEPRECATED - use diagram_data instead
         assumptions: Optional assumptions
         code_context: Optional code context
@@ -882,6 +888,8 @@ async def run_pipeline_for_model(
         stop_after: Stop pipeline after "extraction" step (for context preview).
         seeded_assets: Pre-edited assets to skip LLM extraction.
         seeded_flows: Pre-edited flows to skip LLM extraction.
+        fast_provider: Optional cheaper provider for extraction and enrichment steps.
+            Falls back to ``provider`` when not set.
 
     Yields:
         PipelineEvent for progress tracking
@@ -899,6 +907,7 @@ async def run_pipeline_for_model(
         provider=provider,
         config=config,
         model_id=model_id,
+        fast_provider=fast_provider,
     )
 
     async for event in runner.run(
