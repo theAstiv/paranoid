@@ -14,7 +14,7 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Code-as-Input**: Semantic code extraction via context-link MCP — `--code /path/to/repo` grounds threats in actual implementation
 - **Image-as-Input**: Architecture diagram support via `--diagram arch.png` (vision API) or `--diagram flow.mmd` (Mermaid text)
-- **Deterministic Rule Engine**: 459 curated patterns (STRIDE, MAESTRO, OWASP, MITRE ATT&CK, ATLAS, CAPEC, cloud misconfigurations) across 17 seed files — run alongside the LLM and merged into the final output
+- **Deterministic Rule Engine**: 362 curated patterns (STRIDE, MAESTRO, OWASP, MITRE ATT&CK, ATLAS, CAPEC, cloud misconfigurations) across 16 seed files — run alongside the LLM and merged into the final output
 - **Persistent Results**: Every run is saved to SQLite automatically — inspect past models with `paranoid models list` / `paranoid models show`
 - **Export Formats**: JSON (simple/full), SARIF (GitHub Security integration), Markdown (PRs / Confluence / Notion), PDF (security review sign-off)
 - **Post-Run Export**: Re-export any saved model in any format with `paranoid models export` — run once, export many times
@@ -780,7 +780,7 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 **v1.4.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (459 curated patterns across 17 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (362 curated patterns across 16 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation.
 
 **Future (v2.0+):** Multi-user collaboration.
 

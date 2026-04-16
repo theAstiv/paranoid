@@ -93,7 +93,8 @@ TextEmbedding('${EMBEDDING_MODEL}', cache_dir='/app/.cache/fastembed')" \
 
 # ── Permissions ───────────────────────────────────────────────────────────────
 RUN mkdir -p /app/data && \
-    chown -R app:app /app/data /app/.cache /app/bin /app/frontend
+    chown -R app:app /app/data /app/.cache /app/bin /app/frontend && \
+    chmod +x /app/bin/context-link
 
 USER app
 
