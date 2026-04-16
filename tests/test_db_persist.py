@@ -190,7 +190,7 @@ async def test_persist_saves_assets(test_db):
 
 @pytest.mark.asyncio
 async def test_persist_saves_data_flows(test_db):
-    """Data flows are persisted with flow_type='data_flow'."""
+    """Data flows are persisted with flow_type='data'."""
     model_id = await persist_pipeline_result(
         title="test",
         description="desc",
@@ -204,7 +204,7 @@ async def test_persist_saves_data_flows(test_db):
     )
 
     flows = await crud.list_flows(model_id)
-    data_flows = [f for f in flows if f["flow_type"] == "data_flow"]
+    data_flows = [f for f in flows if f["flow_type"] == "data"]
     assert len(data_flows) == 1
     assert data_flows[0]["source_entity"] == "REST API"
     assert data_flows[0]["target_entity"] == "PostgreSQL DB"
@@ -212,8 +212,8 @@ async def test_persist_saves_data_flows(test_db):
 
 
 @pytest.mark.asyncio
-async def test_persist_saves_trust_boundaries_as_flows(test_db):
-    """Trust boundaries are persisted as flows with flow_type='trust_boundary'."""
+async def test_persist_saves_trust_boundaries(test_db):
+    """Trust boundaries are persisted to the trust_boundaries table (not flows)."""
     model_id = await persist_pipeline_result(
         title="test",
         description="desc",
@@ -226,12 +226,15 @@ async def test_persist_saves_trust_boundaries_as_flows(test_db):
         threats=_make_threats(),
     )
 
-    flows = await crud.list_flows(model_id)
-    boundaries = [f for f in flows if f["flow_type"] == "trust_boundary"]
+    boundaries = await crud.list_trust_boundaries(model_id)
     assert len(boundaries) == 1
     assert boundaries[0]["source_entity"] == "Public Internet"
     assert boundaries[0]["target_entity"] == "API Gateway"
-    assert "internal services" in boundaries[0]["flow_description"]
+    assert "internal services" in boundaries[0]["purpose"]
+
+    # Confirm trust boundaries are NOT stored as flows
+    flows = await crud.list_flows(model_id)
+    assert all(f["flow_type"] != "trust_boundary" for f in flows)
 
 
 @pytest.mark.asyncio

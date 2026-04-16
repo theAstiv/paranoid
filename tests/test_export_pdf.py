@@ -139,6 +139,83 @@ def test_pdf_multiple_categories() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Assets / Flows / Trust Boundaries sections in PDF
+# ---------------------------------------------------------------------------
+
+_ASSET = {"name": "User DB", "type": "Asset", "description": "Stores user records"}
+_FLOW = {
+    "source_entity": "API",
+    "target_entity": "DB",
+    "flow_type": "data",
+    "flow_description": "Reads user records",
+}
+_BOUNDARY = {"source_entity": "Internet", "target_entity": "DMZ", "purpose": "Perimeter"}
+
+
+def test_pdf_with_assets_produces_valid_pdf() -> None:
+    """export_pdf() renders an Assets table without error when assets provided."""
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assets=[_ASSET])
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_with_flows_produces_valid_pdf() -> None:
+    """export_pdf() renders a Data Flows table without error when flows provided."""
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", flows=[_FLOW])
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_with_trust_boundaries_produces_valid_pdf() -> None:
+    """export_pdf() renders a Trust Boundaries table without error when boundaries provided."""
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", trust_boundaries=[_BOUNDARY])
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_with_all_supplementary_sections() -> None:
+    """export_pdf() accepts all three supplementary sections together without error."""
+    result = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        assets=[_ASSET],
+        flows=[_FLOW],
+        trust_boundaries=[_BOUNDARY],
+    )
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_empty_supplementary_sections_no_error() -> None:
+    """Explicitly passing empty lists for supplementary sections produces valid PDF."""
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assets=[], flows=[], trust_boundaries=[])
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_assets_section_adds_content() -> None:
+    """A PDF with an Assets section is larger than one without — verifies the table is rendered."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assets=[_ASSET])
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_flows_section_adds_content() -> None:
+    """A PDF with a Data Flows section is larger than one without."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", flows=[_FLOW])
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_trust_boundaries_section_adds_content() -> None:
+    """A PDF with a Trust Boundaries section is larger than one without."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", trust_boundaries=[_BOUNDARY])
+    assert len(pdf_with) > len(pdf_without)
+
+
+# ---------------------------------------------------------------------------
 # Integration test: _export_model_async PDF format
 # ---------------------------------------------------------------------------
 

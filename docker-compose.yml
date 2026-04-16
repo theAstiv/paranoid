@@ -1,26 +1,61 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # context-link release to download (see github.com/context-link-mcp/context-link/releases)
+        CONTEXT_LINK_VERSION: ${CONTEXT_LINK_VERSION:-1.0.0}
+        # fastembed model to pre-bake into the image
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     volumes:
+      # SQLite database — persisted across container restarts and upgrades
       - ./data:/app/data
+
+      # Optional: mount a context-link binary from the host instead of the
+      # one baked into the image (e.g. for a different version or arch).
+      # - /path/to/context-link:/app/bin/context-link:ro
+
     environment:
+      # ── LLM Provider ──────────────────────────────────────────────────────
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-anthropic}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-claude-sonnet-4-20250514}
       - DEFAULT_ITERATIONS=${DEFAULT_ITERATIONS:-3}
+
+      # ── Database ──────────────────────────────────────────────────────────
+      - DB_PATH=${DB_PATH:-/app/data/paranoid.db}
+
+      # ── Embeddings ────────────────────────────────────────────────────────
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
-      - DB_PATH=${DB_PATH:-./data/paranoid.db}
+      - FASTEMBED_CACHE_PATH=/app/.cache/fastembed
+      - SIMILARITY_THRESHOLD=${SIMILARITY_THRESHOLD:-0.85}
+
+      # ── Server ────────────────────────────────────────────────────────────
+      - HOST=0.0.0.0
+      - PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - HOST=${HOST:-0.0.0.0}
-      - PORT=${PORT:-8000}
+      # Default * is fine for self-hosted single-user use.
+      # For a publicly accessible deployment set this explicitly, e.g.:
+      #   CORS_ORIGINS=https://your-domain.com
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+
+      # ── MCP / context-link ────────────────────────────────────────────────
+      # Leave empty to use the binary baked into the image (bin/context-link).
+      # Set to an absolute path to use a binary mounted from the host.
+      - CONTEXT_LINK_BINARY=${CONTEXT_LINK_BINARY:-}
+
+      # ── Pipeline ──────────────────────────────────────────────────────────
+      - MAX_ITERATION_COUNT=${MAX_ITERATION_COUNT:-15}
+      - MIN_ITERATION_COUNT=${MIN_ITERATION_COUNT:-1}
+
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s

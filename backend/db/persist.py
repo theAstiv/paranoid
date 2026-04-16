@@ -1,4 +1,9 @@
-"""Pipeline result persistence — writes all artifacts from a run to SQLite.
+"""Pipeline result persistence — CLI path only.
+
+This module is invoked by the CLI runner (cli/main.py) after a pipeline run
+completes. It is NOT used by the API path: the FastAPI route in
+backend/routes/models.py streams events via SSE and persists data
+incrementally through _persist_pipeline_event() instead.
 
 Single entry point: persist_pipeline_result(). Designed to be non-fatal:
 any DB error is logged as a warning and does not propagate to the caller.
@@ -12,6 +17,7 @@ from backend.db.crud import (
     create_threat,
     create_threat_model,
     create_threat_source,
+    create_trust_boundary,
     update_threat_model_status,
 )
 from backend.models.enums import Framework
@@ -109,17 +115,16 @@ async def _persist(
         for flow in flows.data_flows:
             await create_flow(
                 model_id=model_id,
-                flow_type="data_flow",
+                flow_type="data",
                 flow_description=flow.flow_description,
                 source_entity=flow.source_entity,
                 target_entity=flow.target_entity,
             )
 
         for boundary in flows.trust_boundaries:
-            await create_flow(
+            await create_trust_boundary(
                 model_id=model_id,
-                flow_type="trust_boundary",
-                flow_description=boundary.purpose,
+                purpose=boundary.purpose,
                 source_entity=boundary.source_entity,
                 target_entity=boundary.target_entity,
             )

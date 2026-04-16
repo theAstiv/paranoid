@@ -496,11 +496,11 @@ async def update_asset(
         update_fields.append("type = ?")
         params.append(asset_type)
 
-    params.append(asset_id)
-
     if not update_fields:
         logger.warning(f"No fields provided to update for asset {asset_id}")
         return
+
+    params.append(asset_id)
 
     query = f"UPDATE assets SET {', '.join(update_fields)} WHERE id = ?"
 
@@ -800,12 +800,61 @@ async def list_trust_boundaries(model_id: str) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+async def update_trust_boundary(
+    boundary_id: str,
+    purpose: str | None = None,
+    source_entity: str | None = None,
+    target_entity: str | None = None,
+) -> None:
+    """Update trust boundary details. Only provided fields will be updated."""
+    update_fields = []
+    params = []
+
+    if purpose is not None:
+        update_fields.append("purpose = ?")
+        params.append(purpose)
+
+    if source_entity is not None:
+        update_fields.append("source_entity = ?")
+        params.append(source_entity)
+
+    if target_entity is not None:
+        update_fields.append("target_entity = ?")
+        params.append(target_entity)
+
+    if not update_fields:
+        logger.warning(f"No fields provided to update for trust boundary {boundary_id}")
+        return
+
+    params.append(boundary_id)
+    query = f"UPDATE trust_boundaries SET {', '.join(update_fields)} WHERE id = ?"
+
+    conn = await db.get()
+    await conn.execute(query, params)
+    await conn.commit()
+    logger.info(f"Updated trust boundary {boundary_id}")
+
+
 async def delete_trust_boundary(boundary_id: str) -> None:
     """Delete a trust boundary by ID."""
     conn = await db.get()
     await conn.execute("DELETE FROM trust_boundaries WHERE id = ?", (boundary_id,))
     await conn.commit()
     logger.info(f"Deleted trust boundary {boundary_id}")
+
+
+async def clear_model_data(model_id: str) -> None:
+    """Delete all pipeline-generated data for a model (threats, assets, flows, trust boundaries).
+
+    Called before each pipeline run so that re-running a model starts from a clean slate.
+    """
+    conn = await db.get()
+    await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
+    await conn.execute("DELETE FROM assets WHERE model_id = ?", (model_id,))
+    await conn.execute("DELETE FROM flows WHERE model_id = ?", (model_id,))
+    await conn.execute("DELETE FROM trust_boundaries WHERE model_id = ?", (model_id,))
+    await conn.commit()
+    logger.info(f"Cleared pipeline data for model {model_id}")
 
 
 # Attack Trees CRUD

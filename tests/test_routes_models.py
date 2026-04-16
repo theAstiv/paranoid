@@ -300,3 +300,343 @@ async def test_get_stats_returns_dict(client, saved_model):
 async def test_get_stats_404(client):
     resp = await client.get("/api/models/bad-id/stats")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Asset CRUD routes  POST/PATCH/DELETE /api/models/{id}/assets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_asset_returns_201(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/assets",
+        json={"name": "User Database", "type": "Asset", "description": "Stores user records"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "User Database"
+    assert data["type"] == "Asset"
+    assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_create_asset_defaults_type(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/assets",
+        json={"name": "Payment Service"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["type"] == "Asset"
+
+
+@pytest.mark.asyncio
+async def test_create_asset_invalid_type_422(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/assets",
+        json={"name": "X", "type": "Widget"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_asset_missing_name_422(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/assets",
+        json={"type": "Asset", "description": "no name provided"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_asset_model_not_found_404(client):
+    resp = await client.post(
+        "/api/models/no-such-model/assets",
+        json={"name": "X"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_asset_changes_fields(client, saved_model):
+    asset_id = await crud.create_asset(
+        model_id=saved_model["id"],
+        asset_type="Asset",
+        name="Old Name",
+        description="Old desc",
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/assets/{asset_id}",
+        json={"name": "New Name"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "New Name"
+    assert resp.json()["type"] == "Asset"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_update_asset_not_found_404(client, saved_model):
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/assets/missing-id",
+        json={"name": "X"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_returns_204(client, saved_model):
+    asset_id = await crud.create_asset(
+        model_id=saved_model["id"], asset_type="Asset", name="To Delete", description=""
+    )
+    resp = await client.delete(f"/api/models/{saved_model['id']}/assets/{asset_id}")
+    assert resp.status_code == 204
+    assets = await crud.list_assets(saved_model["id"])
+    assert not any(a["id"] == asset_id for a in assets)
+
+
+@pytest.mark.asyncio
+async def test_delete_asset_not_found_404(client, saved_model):
+    resp = await client.delete(f"/api/models/{saved_model['id']}/assets/missing-id")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Flow CRUD routes  POST/PATCH/DELETE /api/models/{id}/flows
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_flow_returns_201(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/flows",
+        json={"source_entity": "User", "target_entity": "API", "flow_description": "Login"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_entity"] == "User"
+    assert data["target_entity"] == "API"
+    assert data["flow_type"] == "data"
+
+
+@pytest.mark.asyncio
+async def test_create_flow_model_not_found_404(client):
+    resp = await client.post(
+        "/api/models/no-such-model/flows",
+        json={"source_entity": "A", "target_entity": "B"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_flow_missing_source_entity_422(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/flows",
+        json={"target_entity": "API", "flow_description": "no source"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_flow_changes_fields(client, saved_model):
+    flow_id = await crud.create_flow(
+        model_id=saved_model["id"],
+        flow_type="data",
+        flow_description="Original",
+        source_entity="A",
+        target_entity="B",
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/flows/{flow_id}",
+        json={"flow_description": "Updated", "target_entity": "C"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["flow_description"] == "Updated"
+    assert data["target_entity"] == "C"
+    assert data["source_entity"] == "A"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_update_flow_not_found_404(client, saved_model):
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/flows/missing-id",
+        json={"flow_description": "X"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_flow_returns_204(client, saved_model):
+    flow_id = await crud.create_flow(
+        model_id=saved_model["id"],
+        flow_type="data",
+        flow_description="",
+        source_entity="A",
+        target_entity="B",
+    )
+    resp = await client.delete(f"/api/models/{saved_model['id']}/flows/{flow_id}")
+    assert resp.status_code == 204
+    flows = await crud.list_flows(saved_model["id"])
+    assert not any(f["id"] == flow_id for f in flows)
+
+
+@pytest.mark.asyncio
+async def test_delete_flow_not_found_404(client, saved_model):
+    resp = await client.delete(f"/api/models/{saved_model['id']}/flows/missing-id")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Trust Boundary CRUD routes  POST/PATCH/DELETE /api/models/{id}/trust-boundaries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_trust_boundary_returns_201(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/trust-boundaries",
+        json={"source_entity": "Internet", "target_entity": "DMZ", "purpose": "Perimeter"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["source_entity"] == "Internet"
+    assert data["target_entity"] == "DMZ"
+    assert data["purpose"] == "Perimeter"
+    assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_create_trust_boundary_model_not_found_404(client):
+    resp = await client.post(
+        "/api/models/no-such-model/trust-boundaries",
+        json={"source_entity": "A", "target_entity": "B"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_trust_boundary_missing_source_entity_422(client, saved_model):
+    resp = await client.post(
+        f"/api/models/{saved_model['id']}/trust-boundaries",
+        json={"target_entity": "DMZ", "purpose": "no source"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_trust_boundary_changes_fields(client, saved_model):
+    boundary_id = await crud.create_trust_boundary(
+        model_id=saved_model["id"],
+        purpose="Old purpose",
+        source_entity="Internet",
+        target_entity="DMZ",
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}",
+        json={"purpose": "Updated purpose"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["purpose"] == "Updated purpose"
+    assert data["source_entity"] == "Internet"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_update_trust_boundary_not_found_404(client, saved_model):
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/trust-boundaries/missing-id",
+        json={"purpose": "X"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_trust_boundary_returns_204(client, saved_model):
+    boundary_id = await crud.create_trust_boundary(
+        model_id=saved_model["id"], purpose="", source_entity="A", target_entity="B"
+    )
+    resp = await client.delete(f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}")
+    assert resp.status_code == 204
+    boundaries = await crud.list_trust_boundaries(saved_model["id"])
+    assert not any(b["id"] == boundary_id for b in boundaries)
+
+
+@pytest.mark.asyncio
+async def test_delete_trust_boundary_not_found_404(client, saved_model):
+    resp = await client.delete(f"/api/models/{saved_model['id']}/trust-boundaries/missing-id")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Cross-model ownership — a resource from model B is unreachable via model A
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_asset_from_wrong_model_returns_404(client, saved_model):
+    """PATCH /models/{A}/assets/{id} must 404 when the asset belongs to model B."""
+    other_id = await crud.create_threat_model(
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    asset_id = await crud.create_asset(
+        model_id=other_id, asset_type="Asset", name="Foreign Asset", description=""
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/assets/{asset_id}",
+        json={"name": "Hijacked"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_flow_from_wrong_model_returns_404(client, saved_model):
+    """PATCH /models/{A}/flows/{id} must 404 when the flow belongs to model B."""
+    other_id = await crud.create_threat_model(
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    flow_id = await crud.create_flow(
+        model_id=other_id,
+        flow_type="data",
+        flow_description="Foreign flow",
+        source_entity="A",
+        target_entity="B",
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/flows/{flow_id}",
+        json={"flow_description": "Hijacked"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_trust_boundary_from_wrong_model_returns_404(client, saved_model):
+    """PATCH /models/{A}/trust-boundaries/{id} must 404 when the boundary belongs to model B."""
+    other_id = await crud.create_threat_model(
+        title="Other",
+        description="Ownership isolation model",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    boundary_id = await crud.create_trust_boundary(
+        model_id=other_id,
+        purpose="Foreign boundary",
+        source_entity="X",
+        target_entity="Y",
+    )
+    resp = await client.patch(
+        f"/api/models/{saved_model['id']}/trust-boundaries/{boundary_id}",
+        json={"purpose": "Hijacked"},
+    )
+    assert resp.status_code == 404

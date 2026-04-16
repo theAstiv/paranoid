@@ -15,17 +15,30 @@ logger = logging.getLogger(__name__)
 
 SEEDS_DIR = Path(__file__).parent.parent.parent / "seeds"
 
+# Every seed file that should be imported, in load order.
+# (title, framework) — framework is metadata on the seed threat-model record.
+_SEED_FILE_META: dict[str, tuple[str, str]] = {
+    "stride_patterns.json": ("STRIDE Seed Patterns", "STRIDE"),
+    "maestro_patterns.json": ("MAESTRO Seed Patterns", "MAESTRO"),
+    "owasp_llm_top10.json": ("OWASP LLM Top 10", "OWASP"),
+    "atlas_patterns.json": ("MITRE ATLAS Patterns", "ATLAS"),
+    "capec_patterns.json": ("CAPEC Attack Patterns", "CAPEC"),
+    "aws_prowler_patterns.json": ("AWS Cloud Patterns", "STRIDE"),
+    "azure_prowler_patterns.json": ("Azure Cloud Patterns", "STRIDE"),
+    "gcp_prowler_patterns.json": ("GCP Cloud Patterns", "STRIDE"),
+    "attack_cloud_patterns.json": ("ATT&CK Cloud Patterns", "STRIDE"),
+    "ai_llm_patterns.json": ("AI/LLM Attack Patterns", "MAESTRO"),
+    "framework_patterns.json": ("Framework Patterns", "STRIDE"),
+    "auth_provider_patterns.json": ("Auth Provider Patterns", "STRIDE"),
+    "cloud_service_patterns.json": ("Cloud Service Patterns", "STRIDE"),
+    "infrastructure_patterns.json": ("Infrastructure Patterns", "STRIDE"),
+    "message_broker_patterns.json": ("Message Broker Patterns", "STRIDE"),
+    "orm_patterns.json": ("ORM Patterns", "STRIDE"),
+}
+
 
 async def load_seed_file(file_path: Path) -> list[dict[str, Any]]:
-    """
-    Load a seed JSON file.
-
-    Args:
-        file_path: Path to JSON file
-
-    Returns:
-        List of threat pattern dictionaries
-    """
+    """Load a seed JSON file and return the list of pattern dicts."""
     if not file_path.exists():
         logger.warning(f"Seed file not found: {file_path}")
         return []
@@ -40,28 +53,35 @@ async def load_seed_file(file_path: Path) -> list[dict[str, Any]]:
         return []
 
 
-async def import_stride_patterns() -> int:
+async def _import_patterns_file(filename: str, title: str, framework: str) -> int:
     """
-    Import STRIDE threat patterns from seeds/stride_patterns.json.
+    Import all patterns from a single seed JSON file.
+
+    Creates one seed threat-model record per file and bulk-inserts
+    embedding vectors for every pattern.
+
+    Args:
+        filename: Basename of the JSON file inside SEEDS_DIR.
+        title:    Human-readable title for the seed threat-model record.
+        framework: Framework label stored on the threat-model record.
 
     Returns:
-        Number of patterns imported
+        Number of patterns successfully imported.
     """
-    patterns = await load_seed_file(SEEDS_DIR / "stride_patterns.json")
+    patterns = await load_seed_file(SEEDS_DIR / filename)
     if not patterns:
         return 0
 
-    # Create a seed threat model to associate patterns with
     model_id = await create_threat_model(
-        title="STRIDE Seed Patterns",
-        description="Curated STRIDE threat patterns for RAG",
+        title=title,
+        description=f"Curated {title} for RAG-based threat modeling",
         provider="seed",
         model="seed",
-        framework="STRIDE",
+        framework=framework,
     )
 
     count = 0
-    threat_vectors = []
+    threat_vectors: list[dict[str, str]] = []
 
     for pattern in patterns:
         try:
@@ -74,149 +94,32 @@ async def import_stride_patterns() -> int:
                 likelihood=pattern.get("likelihood", "Medium"),
                 mitigations=pattern.get("mitigations", []),
                 stride_category=pattern.get("stride_category"),
+                maestro_category=pattern.get("maestro_category"),
                 iteration_number=0,  # Seed patterns are iteration 0
             )
-
-            # Prepare for vector insertion
             threat_vectors.append(
-                {
-                    "id": threat_id,
-                    "text": f"{pattern['name']} {pattern['description']}",
-                }
+                {"id": threat_id, "text": f"{pattern['name']} {pattern['description']}"}
             )
-
             count += 1
         except Exception as e:
-            logger.error(f"Failed to import STRIDE pattern {pattern.get('name')}: {e}")
-
-    # Bulk insert vectors
-    if threat_vectors:
-        await bulk_insert_seed_vectors(threat_vectors)
-
-    logger.info(f"Imported {count} STRIDE seed patterns")
-    return count
-
-
-async def import_maestro_patterns() -> int:
-    """
-    Import MAESTRO threat patterns from seeds/maestro_patterns.json.
-
-    Returns:
-        Number of patterns imported
-    """
-    patterns = await load_seed_file(SEEDS_DIR / "maestro_patterns.json")
-    if not patterns:
-        return 0
-
-    model_id = await create_threat_model(
-        title="MAESTRO Seed Patterns",
-        description="Curated MAESTRO (ML/AI) threat patterns for RAG",
-        provider="seed",
-        model="seed",
-        framework="MAESTRO",
-    )
-
-    count = 0
-    threat_vectors = []
-
-    for pattern in patterns:
-        try:
-            threat_id = await create_threat(
-                model_id=model_id,
-                name=pattern["name"],
-                description=pattern["description"],
-                target=pattern.get("target", "AI/ML System"),
-                impact=pattern.get("impact", "Medium"),
-                likelihood=pattern.get("likelihood", "Medium"),
-                mitigations=pattern.get("mitigations", []),
-                maestro_category=pattern.get("maestro_category"),
-                iteration_number=0,
-            )
-
-            threat_vectors.append(
-                {
-                    "id": threat_id,
-                    "text": f"{pattern['name']} {pattern['description']}",
-                }
-            )
-
-            count += 1
-        except Exception as e:
-            logger.error(f"Failed to import MAESTRO pattern {pattern.get('name')}: {e}")
+            logger.error(f"Failed to import pattern '{pattern.get('name')}' from {filename}: {e}")
 
     if threat_vectors:
         await bulk_insert_seed_vectors(threat_vectors)
 
-    logger.info(f"Imported {count} MAESTRO seed patterns")
-    return count
-
-
-async def import_owasp_patterns() -> int:
-    """
-    Import OWASP LLM Top 10 patterns from seeds/owasp_llm_top10.json.
-
-    Returns:
-        Number of patterns imported
-    """
-    patterns = await load_seed_file(SEEDS_DIR / "owasp_llm_top10.json")
-    if not patterns:
-        return 0
-
-    model_id = await create_threat_model(
-        title="OWASP LLM Top 10",
-        description="OWASP Top 10 for LLM Applications",
-        provider="seed",
-        model="seed",
-        framework="OWASP",
-    )
-
-    count = 0
-    threat_vectors = []
-
-    for pattern in patterns:
-        try:
-            threat_id = await create_threat(
-                model_id=model_id,
-                name=pattern["name"],
-                description=pattern["description"],
-                target=pattern.get("target", "LLM Application"),
-                impact=pattern.get("impact", "High"),
-                likelihood=pattern.get("likelihood", "Medium"),
-                mitigations=pattern.get("mitigations", []),
-                stride_category=pattern.get("stride_category"),
-                maestro_category=pattern.get("maestro_category"),
-                iteration_number=0,
-            )
-
-            threat_vectors.append(
-                {
-                    "id": threat_id,
-                    "text": f"{pattern['name']} {pattern['description']}",
-                }
-            )
-
-            count += 1
-        except Exception as e:
-            logger.error(f"Failed to import OWASP pattern {pattern.get('name')}: {e}")
-
-    if threat_vectors:
-        await bulk_insert_seed_vectors(threat_vectors)
-
-    logger.info(f"Imported {count} OWASP LLM patterns")
+    logger.info(f"Imported {count} patterns from {filename}")
     return count
 
 
 def _count_expected_seeds() -> int:
-    """Count total patterns across all seed files."""
+    """Count total patterns across every seed JSON file in SEEDS_DIR."""
     total = 0
-    for filename in ("stride_patterns.json", "maestro_patterns.json", "owasp_llm_top10.json"):
-        path = SEEDS_DIR / filename
-        if path.exists():
-            try:
-                with path.open("r", encoding="utf-8") as f:
-                    total += len(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                pass
+    for path in sorted(SEEDS_DIR.glob("*.json")):
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                total += len(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            pass
     return total
 
 
@@ -227,8 +130,6 @@ async def _cleanup_seed_data() -> None:
     count = (await cursor.fetchone())[0]
 
     await conn.execute("DELETE FROM threat_models WHERE provider = ?", ("seed",))
-
-    # Clean orphaned seed vectors from threat_metadata
     await conn.execute("DELETE FROM threat_metadata WHERE source = ?", ("seed",))
     await conn.commit()
 
@@ -238,22 +139,22 @@ async def _cleanup_seed_data() -> None:
 
 async def load_all_seeds(force: bool = False) -> dict[str, int]:
     """
-    Load all seed patterns into the database.
+    Load all seed patterns from every file in _SEED_FILE_META into the database.
 
-    Detects partial loads by comparing actual seed count against expected
-    count from seed files. If counts don't match, cleans up and reloads.
+    Detects partial loads by comparing the actual vector count against the
+    total pattern count across all seed files on disk. Re-loads automatically
+    when a mismatch is found (e.g. after adding new seed files).
 
     Args:
-        force: If True, reload even if seeds already exist
+        force: If True, wipe and reload even when counts match.
 
     Returns:
-        Dictionary with counts per seed type
+        Dict mapping filename → imported count, plus a "total" key.
     """
     logger.info("Loading seed patterns")
 
     expected = _count_expected_seeds()
 
-    # Check if seeds already loaded (and complete)
     if not force:
         stats = await get_vector_stats()
         actual = stats.get("seed", 0)
@@ -267,33 +168,21 @@ async def load_all_seeds(force: bool = False) -> dict[str, int]:
                 f"Partial seed load detected ({actual}/{expected} vectors). "
                 "Cleaning up and reloading."
             )
-            force = True  # Trigger cleanup and reload
+            force = True
 
-    # Clean up existing seed data before reimporting
     if force:
         await _cleanup_seed_data()
 
-    results = {}
+    results: dict[str, int] = {}
 
-    try:
-        results["stride"] = await import_stride_patterns()
-    except Exception as e:
-        logger.error(f"Failed to import STRIDE patterns: {e}")
-        results["stride"] = 0
+    for filename, (title, framework) in _SEED_FILE_META.items():
+        try:
+            results[filename] = await _import_patterns_file(filename, title, framework)
+        except Exception as e:
+            logger.error(f"Failed to import {filename}: {e}")
+            results[filename] = 0
 
-    try:
-        results["maestro"] = await import_maestro_patterns()
-    except Exception as e:
-        logger.error(f"Failed to import MAESTRO patterns: {e}")
-        results["maestro"] = 0
-
-    try:
-        results["owasp"] = await import_owasp_patterns()
-    except Exception as e:
-        logger.error(f"Failed to import OWASP patterns: {e}")
-        results["owasp"] = 0
-
-    results["total"] = sum(results.values())
+    results["total"] = sum(v for k, v in results.items() if k != "total")
 
     if results["total"] < expected:
         logger.warning(f"Seed load incomplete: {results['total']}/{expected} patterns imported")
@@ -305,18 +194,15 @@ async def load_all_seeds(force: bool = False) -> dict[str, int]:
 
 async def check_seeds_status() -> dict[str, Any]:
     """
-    Check the status of seed data.
+    Return a status snapshot of the seed data.
 
     Returns:
-        Dictionary with seed status information
+        Dict with loaded/partial flags, actual and expected counts,
+        total vector count, and per-file existence flags.
     """
     stats = await get_vector_stats()
     actual = stats.get("seed", 0)
     expected = _count_expected_seeds()
-
-    stride_file = SEEDS_DIR / "stride_patterns.json"
-    maestro_file = SEEDS_DIR / "maestro_patterns.json"
-    owasp_file = SEEDS_DIR / "owasp_llm_top10.json"
 
     return {
         "loaded": actual > 0 and actual >= expected,
@@ -324,9 +210,5 @@ async def check_seeds_status() -> dict[str, Any]:
         "seed_count": actual,
         "expected_count": expected,
         "total_vectors": stats.get("total", 0),
-        "files_exist": {
-            "stride": stride_file.exists(),
-            "maestro": maestro_file.exists(),
-            "owasp": owasp_file.exists(),
-        },
+        "files_exist": {filename: (SEEDS_DIR / filename).exists() for filename in _SEED_FILE_META},
     }

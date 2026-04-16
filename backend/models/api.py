@@ -56,4 +56,54 @@ class UpdateThreatRequest(BaseModel):
     dread_discoverability: float | None = Field(default=None, ge=0, le=10)
 
 
+class CreateAssetRequest(BaseModel):
+    """Request body for POST /api/models/{model_id}/assets."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    type: str = Field(default="Asset", pattern="^(Asset|Entity)$")
+    description: str = Field(default="")
+
+
+class UpdateAssetRequest(BaseModel):
+    """Request body for PATCH /api/models/{model_id}/assets/{asset_id}."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    type: str | None = Field(default=None, pattern="^(Asset|Entity)$")
+    description: str | None = None
+
+
+class CreateFlowRequest(BaseModel):
+    """Request body for POST /api/models/{model_id}/flows."""
+
+    source_entity: str = Field(..., min_length=1)
+    target_entity: str = Field(..., min_length=1)
+    flow_description: str = Field(default="")
+    flow_type: str = Field(default="data")
+
+
+class UpdateFlowRequest(BaseModel):
+    """Request body for PATCH /api/models/{model_id}/flows/{flow_id}."""
+
+    source_entity: str | None = None
+    target_entity: str | None = None
+    flow_description: str | None = None
+    flow_type: str | None = None
+
+
+class CreateTrustBoundaryRequest(BaseModel):
+    """Request body for POST /api/models/{model_id}/trust-boundaries."""
+
+    source_entity: str = Field(..., min_length=1)
+    target_entity: str = Field(..., min_length=1)
+    purpose: str = Field(default="")
+
+
+class UpdateTrustBoundaryRequest(BaseModel):
+    """Request body for PATCH /api/models/{model_id}/trust-boundaries/{boundary_id}."""
+
+    source_entity: str | None = None
+    target_entity: str | None = None
+    purpose: str | None = None
+
+
 ExportFormat = Literal["markdown", "pdf", "sarif", "json"]
