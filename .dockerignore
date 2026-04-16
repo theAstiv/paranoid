@@ -1,0 +1,37 @@
+# Version control
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Frontend — rebuilt from source inside Docker; exclude cached artefacts
+frontend/node_modules/
+frontend/dist/
+
+# Python byte-code and build artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Runtime data
+data/
+*.db
+
+# Dev-tooling caches
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage*
+
+# Not shipped inside the image
+tests/
+examples/
+scripts/
+action/
+bin/
+.claude/
