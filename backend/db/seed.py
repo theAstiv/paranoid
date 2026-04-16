@@ -18,22 +18,22 @@ SEEDS_DIR = Path(__file__).parent.parent.parent / "seeds"
 # Every seed file that should be imported, in load order.
 # (title, framework) — framework is metadata on the seed threat-model record.
 _SEED_FILE_META: dict[str, tuple[str, str]] = {
-    "stride_patterns.json":         ("STRIDE Seed Patterns",       "STRIDE"),
-    "maestro_patterns.json":        ("MAESTRO Seed Patterns",      "MAESTRO"),
-    "owasp_llm_top10.json":         ("OWASP LLM Top 10",           "OWASP"),
-    "atlas_patterns.json":          ("MITRE ATLAS Patterns",       "ATLAS"),
-    "capec_patterns.json":          ("CAPEC Attack Patterns",      "CAPEC"),
-    "aws_prowler_patterns.json":    ("AWS Cloud Patterns",         "STRIDE"),
-    "azure_prowler_patterns.json":  ("Azure Cloud Patterns",       "STRIDE"),
-    "gcp_prowler_patterns.json":    ("GCP Cloud Patterns",         "STRIDE"),
-    "attack_cloud_patterns.json":   ("ATT&CK Cloud Patterns",      "STRIDE"),
-    "ai_llm_patterns.json":         ("AI/LLM Attack Patterns",     "MAESTRO"),
-    "framework_patterns.json":      ("Framework Patterns",         "STRIDE"),
-    "auth_provider_patterns.json":  ("Auth Provider Patterns",     "STRIDE"),
-    "cloud_service_patterns.json":  ("Cloud Service Patterns",     "STRIDE"),
-    "infrastructure_patterns.json": ("Infrastructure Patterns",    "STRIDE"),
-    "message_broker_patterns.json": ("Message Broker Patterns",    "STRIDE"),
-    "orm_patterns.json":            ("ORM Patterns",               "STRIDE"),
+    "stride_patterns.json": ("STRIDE Seed Patterns", "STRIDE"),
+    "maestro_patterns.json": ("MAESTRO Seed Patterns", "MAESTRO"),
+    "owasp_llm_top10.json": ("OWASP LLM Top 10", "OWASP"),
+    "atlas_patterns.json": ("MITRE ATLAS Patterns", "ATLAS"),
+    "capec_patterns.json": ("CAPEC Attack Patterns", "CAPEC"),
+    "aws_prowler_patterns.json": ("AWS Cloud Patterns", "STRIDE"),
+    "azure_prowler_patterns.json": ("Azure Cloud Patterns", "STRIDE"),
+    "gcp_prowler_patterns.json": ("GCP Cloud Patterns", "STRIDE"),
+    "attack_cloud_patterns.json": ("ATT&CK Cloud Patterns", "STRIDE"),
+    "ai_llm_patterns.json": ("AI/LLM Attack Patterns", "MAESTRO"),
+    "framework_patterns.json": ("Framework Patterns", "STRIDE"),
+    "auth_provider_patterns.json": ("Auth Provider Patterns", "STRIDE"),
+    "cloud_service_patterns.json": ("Cloud Service Patterns", "STRIDE"),
+    "infrastructure_patterns.json": ("Infrastructure Patterns", "STRIDE"),
+    "message_broker_patterns.json": ("Message Broker Patterns", "STRIDE"),
+    "orm_patterns.json": ("ORM Patterns", "STRIDE"),
 }
 
 
@@ -126,9 +126,7 @@ def _count_expected_seeds() -> int:
 async def _cleanup_seed_data() -> None:
     """Remove existing seed threat models and their cascaded data."""
     conn = await db.get()
-    cursor = await conn.execute(
-        "SELECT COUNT(*) FROM threat_models WHERE provider = ?", ("seed",)
-    )
+    cursor = await conn.execute("SELECT COUNT(*) FROM threat_models WHERE provider = ?", ("seed",))
     count = (await cursor.fetchone())[0]
 
     await conn.execute("DELETE FROM threat_models WHERE provider = ?", ("seed",))
@@ -187,9 +185,7 @@ async def load_all_seeds(force: bool = False) -> dict[str, int]:
     results["total"] = sum(v for k, v in results.items() if k != "total")
 
     if results["total"] < expected:
-        logger.warning(
-            f"Seed load incomplete: {results['total']}/{expected} patterns imported"
-        )
+        logger.warning(f"Seed load incomplete: {results['total']}/{expected} patterns imported")
     else:
         logger.info(f"Loaded {results['total']} total seed patterns")
 
@@ -214,8 +210,5 @@ async def check_seeds_status() -> dict[str, Any]:
         "seed_count": actual,
         "expected_count": expected,
         "total_vectors": stats.get("total", 0),
-        "files_exist": {
-            filename: (SEEDS_DIR / filename).exists()
-            for filename in _SEED_FILE_META
-        },
+        "files_exist": {filename: (SEEDS_DIR / filename).exists() for filename in _SEED_FILE_META},
     }
