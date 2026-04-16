@@ -211,10 +211,16 @@
         </button>
       {/if}
       {#if threat.status === 'approved' && threat.id}
-        <a href="/threats/{threat.id}/attack-tree" use:link
-          class="ml-auto text-xs text-indigo-600 hover:underline">
-          Attack tree →
-        </a>
+        <div class="ml-auto flex items-center gap-3">
+          <a href="/threats/{threat.id}/attack-tree" use:link
+            class="text-xs text-indigo-600 hover:underline">
+            Attack tree →
+          </a>
+          <a href="/threats/{threat.id}/test-cases" use:link
+            class="text-xs text-indigo-600 hover:underline">
+            Test cases →
+          </a>
+        </div>
       {/if}
     </div>
   {/if}
