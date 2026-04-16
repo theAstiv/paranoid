@@ -33,16 +33,25 @@ pip install paranoid-cli
 paranoid --version
 ```
 
-**Docker [Coming Soon]:**
+**Docker (self-hosted, web UI + CLI):**
 ```bash
-docker pull theastiv/paranoid:latest
+git clone https://github.com/theAstiv/paranoid && cd paranoid
 
-docker run --rm \
-  -v $(pwd):/workspace \
-  -e ANTHROPIC_API_KEY=sk-ant-xxx \
-  theastiv/paranoid:latest \
-  paranoid run /workspace/system.md
+# Configure your LLM provider
+cp .env.example .env
+# Edit .env — at minimum set ANTHROPIC_API_KEY (or OPENAI_API_KEY)
+
+# Build and start (first build: ~5-10 min for Go + Node + Python stages)
+docker compose up --build
+
+# Web UI
+open http://localhost:8000/app
+
+# API docs (OpenAPI)
+open http://localhost:8000/docs
 ```
+
+See [Running with Docker](#running-with-docker) for build args, offline builds, and CLI usage inside the container.
 
 **Standalone Binary (No Python Required):**
 
@@ -335,6 +344,96 @@ paranoid config show
 # Show version, Python version, dependencies, and current configuration
 paranoid version
 ```
+
+## Running with Docker
+
+The Docker image bundles all three components — FastAPI backend, Svelte frontend, and the context-link MCP binary — into a single container. The frontend is served as static files from FastAPI at `/app`.
+
+### Standard build
+
+```bash
+git clone https://github.com/theAstiv/paranoid && cd paranoid
+cp .env.example .env           # copy and edit with your API key
+docker compose up --build      # builds all three stages, then starts the server
+```
+
+First build takes roughly 5–10 minutes (Go toolchain download + Node modules + Python dependencies + fastembed model pre-bake).  Subsequent builds are fast due to Docker layer caching.
+
+**Open the web UI:** `http://localhost:8000/app`  
+**Open the API docs:** `http://localhost:8000/docs`
+
+### Configuration
+
+Set environment variables in `.env` (picked up automatically by `docker compose`):
+
+```bash
+# Minimum — set at least one provider key
+ANTHROPIC_API_KEY=sk-ant-api03-xxx
+DEFAULT_PROVIDER=anthropic
+DEFAULT_MODEL=claude-sonnet-4-20250514
+
+# Optional overrides (defaults shown)
+DEFAULT_ITERATIONS=3
+PORT=8000
+LOG_LEVEL=info
+CORS_ORIGINS=*
+SIMILARITY_THRESHOLD=0.85
+```
+
+All variables are documented in `.env.example`.
+
+### Build arguments
+
+| Argument | Default | Purpose |
+|---|---|---|
+| `CONTEXT_LINK_VERSION` | `1.0.0` | context-link release to download from [GitHub releases](https://github.com/context-link-mcp/context-link/releases) |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | fastembed model to pre-bake into the image |
+
+```bash
+# Pin to a specific context-link release
+CONTEXT_LINK_VERSION=1.0.0 docker compose build
+
+# Build with a different embedding model
+EMBEDDING_MODEL=BAAI/bge-base-en-v1.5 docker compose build
+```
+
+### Building without context-link (offline / no Go toolchain)
+
+If you can't reach GitHub at build time, remove the Go stage:
+
+1. Comment out or delete the `context-link-builder` stage in `Dockerfile`.
+2. Remove the `COPY --from=context-link-builder` line in the `final` stage.
+3. Mount your own pre-built binary at runtime:
+
+```yaml
+# docker-compose.yml — uncomment this volume entry
+volumes:
+  - ./data:/app/data
+  - /path/to/context-link:/app/bin/context-link:ro
+```
+
+The app works without the binary — the `--code` flag just logs a warning and runs without code context.
+
+### Using the CLI inside the container
+
+```bash
+# Run a threat model against a file already inside the container
+docker compose exec app paranoid run /app/examples/stride-example-api-gateway.md
+
+# Mount a local file and run it
+docker run --rm \
+  -v $(pwd)/my-system.md:/workspace/system.md \
+  -v $(pwd)/data:/app/data \
+  -e ANTHROPIC_API_KEY=sk-ant-xxx \
+  paranoid-app-1 \
+  paranoid run /workspace/system.md --format markdown -o /app/data/out.md
+```
+
+### Persistent data
+
+The SQLite database is stored at `/app/data/paranoid.db` inside the container, bind-mounted to `./data/` on the host. This directory persists threat models across container restarts and image upgrades.
+
+---
 
 ## Output Formats
 
@@ -681,9 +780,7 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 **v1.4.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (459 curated patterns across 17 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), packaging and release automation.
-
-**In Progress (v1.5+):** Docker Compose deployment, web interface integration (frontend + backend served together in one container).
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (459 curated patterns across 17 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation.
 
 **Future (v2.0+):** Multi-user collaboration.
 
