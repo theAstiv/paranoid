@@ -13,7 +13,9 @@ import logging
 
 from backend.db.crud import (
     create_asset,
+    create_attack_tree,
     create_flow,
+    create_test_case,
     create_threat,
     create_threat_model,
     create_threat_source,
@@ -21,6 +23,7 @@ from backend.db.crud import (
     update_threat_model_status,
 )
 from backend.models.enums import Framework
+from backend.models.extended import AttackTree, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 
 
@@ -37,12 +40,14 @@ async def persist_pipeline_result(
     assets: AssetsList | None,
     flows: FlowsList | None,
     threats: ThreatsList | None,
+    attack_trees: dict[str, AttackTree] | None = None,
+    test_suites: dict[str, TestSuite] | None = None,
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
     Writes in dependency order: threat_model → assets → flows →
-    trust_boundaries → threat_sources → threats. Sets model status
-    to "completed" on success.
+    trust_boundaries → threat_sources → threats → attack_trees → test_cases.
+    Sets model status to "completed" on success.
 
     Non-fatal: any exception is caught and logged — the caller always
     receives either a model_id string or None on failure.
@@ -57,6 +62,8 @@ async def persist_pipeline_result(
         assets: Extracted assets, or None if extraction failed
         flows: Extracted flows and trust boundaries, or None
         threats: Final merged threat list, or None
+        attack_trees: Map of synthetic threat index → AttackTree (from --enrich), or None
+        test_suites: Map of synthetic threat index → TestSuite (from --enrich), or None
 
     Returns:
         model_id string on success, None on failure
@@ -72,6 +79,8 @@ async def persist_pipeline_result(
             assets=assets,
             flows=flows,
             threats=threats,
+            attack_trees=attack_trees,
+            test_suites=test_suites,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -90,6 +99,8 @@ async def _persist(
     assets: AssetsList | None,
     flows: FlowsList | None,
     threats: ThreatsList | None,
+    attack_trees: dict[str, AttackTree] | None = None,
+    test_suites: dict[str, TestSuite] | None = None,
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -143,6 +154,9 @@ async def _persist(
             f"{len(flows.threat_sources)} threat sources"
         )
 
+    # threat_db_ids maps synthetic index → real DB UUID so attack trees and
+    # test suites (keyed by str(i)) can be saved against the correct threat.
+    threat_db_ids: list[str] = []
     if threats:
         for threat in threats.threats:
             dread_damage = None
@@ -160,7 +174,7 @@ async def _persist(
                 dread_discoverability = threat.dread.discoverability
                 dread_score = threat.dread.score
 
-            await create_threat(
+            threat_db_id = await create_threat(
                 model_id=model_id,
                 name=threat.name,
                 description=threat.description,
@@ -176,8 +190,33 @@ async def _persist(
                 dread_affected_users=dread_affected_users,
                 dread_discoverability=dread_discoverability,
             )
+            threat_db_ids.append(threat_db_id)
 
         logger.debug(f"Persisted {len(threats.threats)} threats")
+
+    if attack_trees and threat_db_ids:
+        saved = 0
+        for idx_str, tree in attack_trees.items():
+            idx = int(idx_str)
+            if idx < len(threat_db_ids):
+                await create_attack_tree(
+                    threat_id=threat_db_ids[idx],
+                    mermaid_source=tree.mermaid_source,
+                )
+                saved += 1
+        logger.debug(f"Persisted {saved} attack trees")
+
+    if test_suites and threat_db_ids:
+        saved = 0
+        for idx_str, suite in test_suites.items():
+            idx = int(idx_str)
+            if idx < len(threat_db_ids):
+                await create_test_case(
+                    threat_id=threat_db_ids[idx],
+                    gherkin_source=suite.gherkin_source,
+                )
+                saved += 1
+        logger.debug(f"Persisted {saved} test cases")
 
     await update_threat_model_status(model_id, "completed")
     return model_id

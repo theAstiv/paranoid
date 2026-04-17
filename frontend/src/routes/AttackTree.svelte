@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { link } from 'svelte-spa-router'
   import { getThreat, listAttackTrees, generateAttackTree } from '../lib/api.js'
   import { currentModel, notify } from '../lib/stores.js'
@@ -16,21 +16,22 @@
   onMount(async () => {
     try {
       threat = await getThreat(params.id)
-      await loadTree()
+      const trees = await listAttackTrees(params.id)
+      if (trees.length > 0) {
+        tree = trees[trees.length - 1]
+      }
     } catch (err) {
       notify('error', `Failed to load threat: ${err.message}`)
     } finally {
       loading = false
     }
-  })
-
-  async function loadTree() {
-    const trees = await listAttackTrees(params.id)
-    if (trees.length > 0) {
-      tree = trees[0]
+    // tick() waits for the DOM to update (svgContainer is inside {:else}, so it
+    // only exists after loading = false flips the block).
+    if (tree) {
+      await tick()
       await renderMermaid(tree.mermaid_source)
     }
-  }
+  })
 
   async function generate() {
     generating = true

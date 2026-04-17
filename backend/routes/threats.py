@@ -9,7 +9,7 @@ from backend.config import settings
 from backend.db import crud
 from backend.models.api import UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
-from backend.providers.base import create_provider
+from backend.providers.base import ProviderError, create_provider
 from backend.routes._helpers import get_api_key
 
 
@@ -102,18 +102,26 @@ async def generate_attack_tree(threat_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
 
     model_id = threat.get("model_id", "")
-    runner = _default_runner(model_id)
 
-    async with runner.provider:
-        attack_tree = await runner.generate_attack_tree_for_threat(
-            threat_id=threat_id,
-            threat_name=threat["name"],
-            threat_description=threat["description"],
-            target=threat["target"],
-            stride_category=threat.get("stride_category"),
-            maestro_category=threat.get("maestro_category"),
-            mitigations=threat["mitigations"],
-        )
+    try:
+        runner = _default_runner(model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    try:
+        async with runner.provider:
+            attack_tree = await runner.generate_attack_tree_for_threat(
+                threat_id=threat_id,
+                threat_name=threat["name"],
+                threat_description=threat["description"],
+                target=threat["target"],
+                stride_category=threat.get("stride_category"),
+                maestro_category=threat.get("maestro_category"),
+                mitigations=threat["mitigations"],
+            )
+    except ProviderError as exc:
+        logger.error("Provider error generating attack tree for %s: %s", threat_id, exc)
+        raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
 
     tree_id = await crud.create_attack_tree(
         threat_id=threat_id,
@@ -147,16 +155,24 @@ async def generate_test_cases(threat_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
 
     model_id = threat.get("model_id", "")
-    runner = _default_runner(model_id)
 
-    async with runner.provider:
-        test_suite = await runner.generate_test_cases_for_threat(
-            threat_id=threat_id,
-            threat_name=threat["name"],
-            threat_description=threat["description"],
-            target=threat["target"],
-            mitigations=threat["mitigations"],
-        )
+    try:
+        runner = _default_runner(model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    try:
+        async with runner.provider:
+            test_suite = await runner.generate_test_cases_for_threat(
+                threat_id=threat_id,
+                threat_name=threat["name"],
+                threat_description=threat["description"],
+                target=threat["target"],
+                mitigations=threat["mitigations"],
+            )
+    except ProviderError as exc:
+        logger.error("Provider error generating test cases for %s: %s", threat_id, exc)
+        raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
 
     case_id = await crud.create_test_case(
         threat_id=threat_id,

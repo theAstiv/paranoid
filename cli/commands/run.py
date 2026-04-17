@@ -1023,6 +1023,8 @@ async def _run_pipeline_inside_provider(
             assets=json_writer.assets,
             flows=json_writer.flows,
             threats=json_writer.threats,
+            attack_trees=attack_trees or None,
+            test_suites=test_suites or None,
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")
