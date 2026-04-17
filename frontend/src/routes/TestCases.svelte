@@ -16,7 +16,7 @@
     try {
       threat = await getThreat(params.id)
       const cases = await listTestCases(params.id)
-      testCase = cases[0] ?? null
+      testCase = cases[cases.length - 1] ?? null
     } catch (err) {
       notify('error', `Failed to load: ${err.message}`)
     } finally {
