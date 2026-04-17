@@ -1,0 +1,47 @@
+## Example workflow: run Paranoid threat modeling and upload findings to GitHub Security
+##
+## Copy this file into YOUR repository (not this one) and adapt as needed.
+## This file is intentionally not triggered automatically — it uses workflow_dispatch
+## so it only runs when you explicitly start it.
+##
+## To use the live action from this repo:
+##   uses: theAstiv/paranoid@v1
+
+name: Threat Model (example)
+
+on:
+  workflow_dispatch:
+    inputs:
+      description-file:
+        description: 'Path to system description file'
+        required: true
+        default: 'docs/system-description.md'
+
+permissions:
+  security-events: write   # required to upload SARIF to GitHub Security tab
+  contents: read
+
+jobs:
+  threat-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Paranoid threat modeling
+        id: paranoid
+        uses: theAstiv/paranoid@main        # pin to a release tag in production, e.g. @v1.4.0
+        with:
+          description-file: ${{ github.event.inputs.description-file }}
+          provider: anthropic
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          framework: STRIDE
+          iterations: 3
+          sarif-output: paranoid-results.sarif
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()                        # upload even if threat-model step fails
+        with:
+          sarif_file: ${{ steps.paranoid.outputs.sarif-file }}
+          category: paranoid-threat-model

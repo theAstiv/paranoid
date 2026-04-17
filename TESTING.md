@@ -134,12 +134,15 @@ git push --no-verify
 | `build-check` | — | `python -m build` + `twine check` |
 | `frontend-test` | — | `npm ci && npm test` (Vitest) |
 | `frontend-build` | — | `npm ci && npm run build`; uploads `frontend/dist/` artifact (1 day) |
+| `action-version-sync` | — | Asserts `ARG PARANOID_VERSION` in `action/Dockerfile` matches `pyproject.toml` version |
+| `action-docker-build` | `action-version-sync` | Builds `action/` Docker image (no push) to catch Dockerfile/entrypoint regressions |
 | `docker` | `frontend-test`, `frontend-build` | Builds `--target frontend-builder` (hard fail); then builds full multi-stage image |
 
 **Notes:**
 - `tests/test_pipeline_e2e.py` is excluded from the `test` job — it requires a live LLM provider (`ANTHROPIC_API_KEY`) and the `context-link` binary, neither of which are present in CI runners
 - The Docker `frontend-builder` stage build also validates Dockerfile syntax across all stages
 - The full Docker build includes the `context-link` binary download from GitHub Releases; if that URL becomes unreachable, update `CONTEXT_LINK_VERSION` in the Dockerfile
+- **`action-docker-build`** builds a local wheel from the checkout via `build-contexts: wheels-ctx=dist`, so it never depends on PyPI — version-bump PRs go green before the release is published
 
 ### 2. Release Workflow (`.github/workflows/release.yml`)
 

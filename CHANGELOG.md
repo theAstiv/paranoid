@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### GitHub Action (`action/`)
+- **`action/action.yml`** — Docker container action: inputs `description-file`, `provider`, `api-key`, `model`, `framework`, `iterations`, `sarif-output`, `strict`, `fail-on-findings`; output `sarif-file`; branding `shield / purple`
+- **`action/Dockerfile`** — builds on `python:3.12-slim`; installs `paranoid-cli==${PARANOID_VERSION}` from PyPI (ARG, default `1.4.0`); pre-bakes the fastembed BAAI/bge-small-en-v1.5 model; copies `entrypoint.sh`
+- **`action/entrypoint.sh`** — resolves relative paths via `$GITHUB_WORKSPACE`; validates inputs; wires `api-key` to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; skips key validation for Ollama; runs `paranoid run --format sarif --quiet`; sets `GITHUB_OUTPUT`; emits `::notice::` with threat count; exits 1 on `fail-on-findings: true` when threats found
+- **`.github/workflows/example-threat-model.yml`** — `workflow_dispatch` sample showing checkout → paranoid action → `upload-sarif`
+- **CI: `action-version-sync`** — asserts `ARG PARANOID_VERSION` in `action/Dockerfile` matches `pyproject.toml` version on every PR
+- **CI: `action-docker-build`** — builds `action/` Docker image on every PR to catch Dockerfile/entrypoint regressions
+
+> **Release**: bump `pyproject.toml` and `action/Dockerfile ARG PARANOID_VERSION` together in one PR. `action-docker-build` installs from a local wheel (not PyPI), so the bump PR goes green before the tag is published.
+
+
+
 #### Fast Provider Routing
 - **`FAST_MODEL` setting** (default: `claude-haiku-4-5-20251001`) — cheap Haiku-class model used for extraction steps (assets, flows) and enrichment steps (attack trees, test cases); main threat generation keeps the primary model
 - **`PipelineRunner`** accepts `fast_provider: LLMProvider | None`; falls back to main provider transparently

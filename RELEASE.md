@@ -24,22 +24,32 @@ paranoid run examples/stride-example-api-gateway.md
 ./scripts/build_package.sh
 pip install dist/paranoid_cli-*.whl && paranoid version && pip uninstall paranoid-cli
 
-# Test Docker build
+# Test main Docker build
 docker build -t paranoid:test .
 docker run --rm paranoid:test paranoid --help
+
+# Test action Docker build (local wheel path — same as CI)
+python -m build --wheel --outdir dist/
+docker build action/ --build-context wheels-ctx=dist -t paranoid-action:test
+docker run --rm paranoid-action:test paranoid --help
 ```
 
 Update before tagging:
 - [ ] Version in `pyproject.toml`
+- [ ] `ARG PARANOID_VERSION` in `action/Dockerfile` (must match `pyproject.toml`)
 - [ ] `CHANGELOG.md` with release notes
 - [ ] `README.md` if needed
 - [ ] Verify examples still work
 
 ## Release
 
+Bump `pyproject.toml` and `action/Dockerfile` together in one PR.
+`action-version-sync` checks both match; `action-docker-build` installs from
+the local wheel (no PyPI dependency), so the PR goes green before PyPI is live.
+
 ```bash
 # Commit version bump
-git add pyproject.toml CHANGELOG.md
+git add pyproject.toml action/Dockerfile CHANGELOG.md
 git commit -m "chore: bump version to vX.Y.Z"
 git push origin main
 
@@ -70,6 +80,10 @@ docker run --rm theastiv/paranoid:vX.Y.Z paranoid version
 
 # GitHub Release — check all artifacts attached:
 #   Source .tar.gz, .whl, paranoid-linux-x64, paranoid-macos-arm64, paranoid-windows-x64.exe
+
+# Action image (production PyPI path)
+docker build action/ --build-arg PARANOID_VERSION=X.Y.Z -t paranoid-action:vX.Y.Z
+docker run --rm paranoid-action:vX.Y.Z paranoid version
 ```
 
 ## Post-Release
