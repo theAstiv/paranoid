@@ -559,10 +559,16 @@ paranoid run system.md --format sarif -o threats.sarif
 
 **GitHub Actions Integration:**
 
+Use the official Paranoid action for zero-config SARIF upload to the GitHub Security tab:
+
 ```yaml
 name: Threat Model
 
 on: [push, pull_request]
+
+permissions:
+  security-events: write
+  contents: read
 
 jobs:
   threat-model:
@@ -570,18 +576,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run threat modeling
-        run: |
-          pip install paranoid-cli
-          paranoid run system.md --format sarif -o threats.sarif
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Upload to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Run Paranoid threat modeling
+        id: paranoid
+        uses: theAstiv/paranoid@v1.4.0
         with:
-          sarif_file: threats.sarif
+          description-file: docs/system-description.md
+          provider: anthropic
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          framework: STRIDE
+          iterations: 3
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.paranoid.outputs.sarif-file }}
 ```
+
+**Action inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `description-file` | — | Path to system description (`.md` / `.txt`), relative to repo root |
+| `provider` | `anthropic` | `anthropic`, `openai`, or `ollama` |
+| `api-key` | — | Provider API key; omit for Ollama |
+| `model` | provider default | Model override (e.g. `claude-sonnet-4-5`, `gpt-4o`) |
+| `framework` | `STRIDE` | `STRIDE` or `MAESTRO` |
+| `iterations` | `3` | Pipeline iterations (1–15) |
+| `sarif-output` | `paranoid-results.sarif` | SARIF output path |
+| `strict` | `false` | Exit 2 on error-severity description gaps |
+| `fail-on-findings` | `false` | Fail the step if any threats are found |
 
 ## Code-as-Input (`--code`)
 

@@ -1,0 +1,52 @@
+name: 'Paranoid Threat Modeling'
+description: 'Run STRIDE + MAESTRO threat modeling on your system description and upload findings to GitHub Security'
+author: 'theAstiv'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  description-file:
+    description: 'Path to the system description file (.md or .txt), relative to the repository root'
+    required: true
+  provider:
+    description: 'LLM provider: anthropic, openai, or ollama'
+    required: false
+    default: 'anthropic'
+  api-key:
+    description: 'API key for the LLM provider. Required for anthropic and openai; omit for ollama.'
+    required: false
+    default: ''
+  model:
+    description: 'Model override (e.g. claude-sonnet-4-5, gpt-4o). Uses provider default when omitted.'
+    required: false
+    default: ''
+  framework:
+    description: 'Threat modeling framework: STRIDE or MAESTRO'
+    required: false
+    default: 'STRIDE'
+  iterations:
+    description: 'Number of pipeline iterations (1–15). Higher values give broader threat coverage.'
+    required: false
+    default: '3'
+  sarif-output:
+    description: 'Path to write the SARIF output file, relative to the repository root'
+    required: false
+    default: 'paranoid-results.sarif'
+  strict:
+    description: 'Exit with code 2 if the description has error-severity gaps (missing auth, no trust boundaries, etc.)'
+    required: false
+    default: 'false'
+  fail-on-findings:
+    description: 'Fail the workflow step if any threats are identified'
+    required: false
+    default: 'false'
+
+outputs:
+  sarif-file:
+    description: 'Absolute path to the generated SARIF file'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
