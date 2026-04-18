@@ -1097,3 +1097,184 @@ async def delete_config_value(key: str) -> None:
     conn = await db.get()
     await conn.execute("DELETE FROM config WHERE key = ?", (key,))
     await conn.commit()
+
+
+# Code sources CRUD
+#
+# Clone path is NOT stored — it is derived from the source id at read time
+# via backend.sources.paths.clone_dir_for. The row stores just the inputs
+# (git_url, optional ref, optional encrypted PAT) and the last run's
+# status/diagnostics.
+
+
+# Routes store diagnostic stderr; keep it bounded so /api/sources list
+# responses don't balloon. Writers (clone manager) should pre-truncate
+# before calling into CRUD, but we defend in depth here too.
+_LAST_INDEX_ERROR_MAX_CHARS = 4096
+
+
+def _truncate_error(text: str | None) -> str | None:
+    if text is None:
+        return None
+    if len(text) <= _LAST_INDEX_ERROR_MAX_CHARS:
+        return text
+    return text[:_LAST_INDEX_ERROR_MAX_CHARS] + "\n... [truncated]"
+
+
+def _row_to_code_source(row: Any) -> dict[str, Any]:
+    """Row dict with ``has_pat`` derived and ``pat_ciphertext`` stripped.
+
+    Kept in the CRUD layer so ciphertext never escapes this module — the
+    route layer receives a clean dict it can feed straight into the
+    ``CodeSource`` Pydantic model.
+    """
+    d = dict(row)
+    d["has_pat"] = d.get("pat_ciphertext") is not None
+    d.pop("pat_ciphertext", None)
+    # Normalise the sentinel empty-string ref back to None for the public API.
+    if d.get("ref") == "":
+        d["ref"] = None
+    return d
+
+
+async def create_code_source(
+    *,
+    name: str,
+    git_url: str,
+    ref: str | None,
+    pat: str | None,
+) -> str:
+    """Insert a new code_sources row. Returns the new UUID4 hex id.
+
+    When ``pat`` is non-None it is encrypted under the active Fernet key
+    and the deployment's key source is recorded for future switch
+    detection. Callers should pass an already-stripped value.
+    """
+    from backend.security.source_key import (
+        assert_pat_key_source_matches,
+        encrypt_pat,
+        record_pat_key_source,
+    )
+
+    source_id = uuid.uuid4().hex
+    now = now_iso()
+    pat_ciphertext: bytes | None = None
+    if pat:
+        await assert_pat_key_source_matches()
+        pat_ciphertext = encrypt_pat(pat)
+        await record_pat_key_source()
+
+    # Normalise None → "" so the UNIQUE (git_url, ref) constraint treats
+    # "same URL, no ref" as a genuine duplicate. SQLite treats NULLs as
+    # distinct, so NULL ≠ NULL in a UNIQUE index.
+    stored_ref = ref if ref is not None else ""
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO code_sources (
+            id, name, git_url, ref, pat_ciphertext, pat_last_used_at,
+            last_indexed_at, last_index_status, last_index_error,
+            resolved_sha, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', NULL, NULL, NULL, ?, ?)
+        """,
+        (source_id, name, git_url, stored_ref, pat_ciphertext, now, now),
+    )
+    await conn.commit()
+    logger.info(f"Created code source {source_id} ({git_url})")
+    return source_id
+
+
+async def get_code_source(source_id: str) -> dict[str, Any] | None:
+    """Return the public dict for a single source, or ``None`` if absent."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM code_sources WHERE id = ?", (source_id,)) as cursor:
+        row = await cursor.fetchone()
+    return _row_to_code_source(row) if row else None
+
+
+async def list_code_sources() -> list[dict[str, Any]]:
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM code_sources ORDER BY created_at DESC") as cursor:
+        rows = await cursor.fetchall()
+    return [_row_to_code_source(r) for r in rows]
+
+
+async def get_code_source_pat(source_id: str) -> str | None:
+    """Return the decrypted PAT or ``None`` when no PAT is stored.
+
+    Raises ``PATDecryptionError`` on ciphertext that cannot be decrypted
+    (rotated key, corrupt row). Raises ``KeySourceChangedError`` when the
+    active Fernet source doesn't match the one the PAT was stored under —
+    routes should map that to 409 with the actionable message.
+    """
+    from backend.security.source_key import assert_pat_key_source_matches, decrypt_pat
+
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT pat_ciphertext FROM code_sources WHERE id = ?", (source_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row is None or row[0] is None:
+        return None
+    await assert_pat_key_source_matches()
+    return decrypt_pat(bytes(row[0]))
+
+
+async def update_code_source_status(
+    source_id: str,
+    *,
+    status: str,
+    error: str | None = None,
+    resolved_sha: str | None = None,
+    indexed_at: str | None = None,
+) -> None:
+    """Record a clone/index lifecycle transition. Fields default to no change."""
+    now = now_iso()
+    fields = ["last_index_status = ?", "updated_at = ?"]
+    params: list[Any] = [status, now]
+
+    # Route the error through the truncator so writers can paste raw stderr.
+    fields.append("last_index_error = ?")
+    params.append(_truncate_error(error))
+
+    if resolved_sha is not None:
+        fields.append("resolved_sha = ?")
+        params.append(resolved_sha)
+    if indexed_at is not None:
+        fields.append("last_indexed_at = ?")
+        params.append(indexed_at)
+    params.append(source_id)
+
+    conn = await db.get()
+    await conn.execute(
+        f"UPDATE code_sources SET {', '.join(fields)} WHERE id = ?",
+        params,
+    )
+    await conn.commit()
+
+
+async def mark_code_source_pat_used(source_id: str) -> None:
+    """Bump ``pat_last_used_at`` after a successful clone using the stored PAT."""
+    now = now_iso()
+    conn = await db.get()
+    await conn.execute(
+        "UPDATE code_sources SET pat_last_used_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, source_id),
+    )
+    await conn.commit()
+
+
+async def delete_code_source(source_id: str) -> bool:
+    """Delete a source row. Returns True if a row existed.
+
+    FK ``threat_models.code_source_id`` is declared ``ON DELETE SET NULL``,
+    so historical threat models keep their assets/threats but lose the
+    link. Rmtree of the clone dir is the route/manager's job — this
+    function is DB-only.
+    """
+    conn = await db.get()
+    async with conn.execute("DELETE FROM code_sources WHERE id = ?", (source_id,)) as cur:
+        deleted = cur.rowcount
+    await conn.commit()
+    return bool(deleted)

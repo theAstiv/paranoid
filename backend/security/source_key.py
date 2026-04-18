@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from backend.config import settings
+from backend.sources.paths import data_dir
 
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,9 @@ class PATDecryptionError(RuntimeError):
     """Decryption failed — wrong key, corrupt ciphertext, or key-source switch."""
 
 
-def _data_dir() -> Path:
-    return Path(settings.db_path).parent
+class KeySourceChangedError(RuntimeError):
+    """The active Fernet source no longer matches the source under which existing
+    PATs were encrypted. Re-save PATs after confirming the intended rotation."""
 
 
 def _derive_key_from_secret(secret: str) -> bytes:
@@ -88,7 +90,7 @@ def _resolve() -> tuple[Fernet, str]:
     secret = os.environ.get("CONFIG_SECRET", "").strip() or settings.config_secret.strip()
     if secret:
         return Fernet(_derive_key_from_secret(secret)), "config_secret"
-    key = _load_or_create_file_key(_data_dir())
+    key = _load_or_create_file_key(data_dir())
     return Fernet(key), "file"
 
 
@@ -142,3 +144,45 @@ def _reset_cache_for_tests() -> None:
     global _fernet_cache, _cached_source
     _fernet_cache = None
     _cached_source = None
+
+
+# ---------------------------------------------------------------------------
+# PAT key-source tracking
+#
+# The Fernet key itself is derived per-deployment (CONFIG_SECRET vs file);
+# it is NOT per-record. That means a deployment cannot switch sources
+# mid-life without invalidating every stored ciphertext. We don't attempt
+# transparent migration — rotating a source is rare and user-visible — but
+# we refuse to act on PATs whose active source silently changed.
+#
+# First PAT save records ``pat_key_source`` in the config table. Subsequent
+# encrypt/decrypt calls check that row; a mismatch raises
+# ``KeySourceChangedError`` which routes map to 409 with an actionable
+# message ("delete and re-add all private code sources after rotation").
+# ---------------------------------------------------------------------------
+
+_PAT_KEY_SOURCE_ROW = "pat_key_source"
+
+
+async def record_pat_key_source() -> None:
+    """Persist the active Fernet source on first PAT save. No-op thereafter."""
+    from backend.db.crud import get_config_value, set_config_value  # local: break import cycle
+
+    stored = await get_config_value(_PAT_KEY_SOURCE_ROW)
+    if stored is None:
+        await set_config_value(_PAT_KEY_SOURCE_ROW, key_source(), encrypted=False)
+
+
+async def assert_pat_key_source_matches() -> None:
+    """Raise ``KeySourceChangedError`` if a stored source exists and differs.
+
+    Safe to call on empty DBs — absent row means no PATs have been stored
+    yet, so there is nothing to mismatch.
+    """
+    from backend.db.crud import get_config_value  # local: break import cycle
+
+    stored = await get_config_value(_PAT_KEY_SOURCE_ROW)
+    if stored is not None and stored != key_source():
+        raise KeySourceChangedError(
+            "PAT key source changed; delete and re-add all private code sources after rotation."
+        )

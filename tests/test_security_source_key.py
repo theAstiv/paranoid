@@ -82,3 +82,20 @@ def test_encrypt_is_non_deterministic():
     b = source_key.encrypt_pat("same-value")
     assert a != b
     assert source_key.decrypt_pat(a) == source_key.decrypt_pat(b) == "same-value"
+
+
+@pytest.mark.asyncio
+async def test_key_source_switch_rejected(test_db, monkeypatch):
+    """First PAT save records the source; a later switch raises
+    KeySourceChangedError on any subsequent PAT operation."""
+    # Start with the file-key fallback (no CONFIG_SECRET).
+    await source_key.record_pat_key_source()
+    assert source_key.key_source() == "file"
+
+    # Simulate a restart with a CONFIG_SECRET set.
+    monkeypatch.setenv("CONFIG_SECRET", "now-i-have-an-env-secret")
+    source_key._reset_cache_for_tests()
+    assert source_key.key_source() == "config_secret"
+
+    with pytest.raises(source_key.KeySourceChangedError):
+        await source_key.assert_pat_key_source_matches()

@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS threat_models (
     status TEXT NOT NULL DEFAULT 'pending',
     iteration_count INTEGER DEFAULT 1,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    code_source_id TEXT REFERENCES code_sources(id) ON DELETE SET NULL,
+    created_by TEXT
 );
 """
 
@@ -178,6 +180,36 @@ CREATE TABLE IF NOT EXISTS config (
 """
 
 
+# Persistent code sources — git URL + optional PAT + cached index status.
+# Clone location is derived at read time (see backend.sources.paths), not
+# stored, so a volume remount doesn't break the row. pat_ciphertext is
+# Fernet-encrypted; CRUD is the only layer that touches plaintext.
+# UNIQUE (git_url, ref) is the concurrency guard — two simultaneous POSTs
+# with the same target get a unique-violation which the route maps to 409.
+# SQLite treats NULLs as distinct in UNIQUE constraints, so two rows with
+# the same git_url and ref=NULL are both allowed. The CRUD layer rejects
+# this at the application level by normalising ref=None to ref="" (empty
+# string) before insert, which the UNIQUE constraint treats uniformly.
+CREATE_CODE_SOURCES_TABLE = """
+CREATE TABLE IF NOT EXISTS code_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    git_url TEXT NOT NULL,
+    ref TEXT,
+    pat_ciphertext BLOB,
+    pat_last_used_at TEXT,
+    last_indexed_at TEXT,
+    last_index_status TEXT,
+    last_index_error TEXT,
+    resolved_sha TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (git_url, ref)
+);
+"""
+
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -209,14 +241,35 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_THREAT_METADATA_TABLE)
     await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
     await conn.execute(CREATE_CONFIG_TABLE)
+    await conn.execute(CREATE_CODE_SOURCES_TABLE)
+
+    # Add columns to threat_models that link to a code source and (reserved
+    # for v2) record the creating user. Wrapped in try/except to stay
+    # idempotent on databases that already ran this migration — same
+    # pattern as the threat_metadata / user_edited migrations above.
+    # Fresh DBs get these columns from CREATE_THREAT_MODELS_TABLE; only
+    # pre-Task-4 DBs need the ALTER path.
+    for column_sql in (
+        "ALTER TABLE threat_models ADD COLUMN code_source_id TEXT "
+        "REFERENCES code_sources(id) ON DELETE SET NULL",
+        "ALTER TABLE threat_models ADD COLUMN created_by TEXT",
+    ):
+        try:
+            await conn.execute(column_sql)
+            await conn.commit()
+            logger.info(f"Applied schema migration: {column_sql.split(' ADD COLUMN ', 1)[1]}")
+        except aiosqlite.OperationalError as exc:
+            if "duplicate column name" not in str(exc):
+                logger.warning("Unexpected error during schema migration: %s", exc)
 
     # Migrate existing threat_metadata tables that lack vector_rowid column
     try:
         await conn.execute("ALTER TABLE threat_metadata ADD COLUMN vector_rowid INTEGER")
         await conn.commit()
         logger.info("Migrated threat_metadata: added vector_rowid column")
-    except Exception:
-        pass  # Column already exists — normal on fresh or already-migrated DBs
+    except aiosqlite.OperationalError as exc:
+        if "duplicate column name" not in str(exc):
+            logger.warning("Unexpected error during schema migration: %s", exc)
 
     # Migrate existing assets/flows/trust_boundaries tables that lack user_edited column
     for table in ("assets", "flows", "trust_boundaries"):
@@ -224,8 +277,9 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN user_edited INTEGER DEFAULT 0")
             await conn.commit()
             logger.info(f"Migrated {table}: added user_edited column")
-        except Exception:
-            pass  # Column already exists
+        except aiosqlite.OperationalError as exc:
+            if "duplicate column name" not in str(exc):
+                logger.warning("Unexpected error during schema migration: %s", exc)
 
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
@@ -273,6 +327,7 @@ async def init_database(db_path: str) -> None:
         await db.execute(CREATE_THREAT_METADATA_TABLE)
         await db.execute(CREATE_PIPELINE_RUNS_TABLE)
         await db.execute(CREATE_CONFIG_TABLE)
+        await db.execute(CREATE_CODE_SOURCES_TABLE)
 
         # Create indices
         for index_sql in CREATE_INDICES:

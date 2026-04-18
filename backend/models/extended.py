@@ -1,9 +1,9 @@
 """Extended Pydantic models for Paranoid-specific functionality."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from backend.models.enums import (
     DiagramFormat,
@@ -416,3 +416,44 @@ class ExportConfig(BaseModel):
         ThreatStatus | None,
         Field(description="Optional filter by threat status"),
     ] = None
+
+
+# Status values emitted by the clone/index manager (Task 5). Kept here with
+# the model so a future v2 can't silently introduce a value the route
+# consumers don't know about.
+SourceStatus = Literal["queued", "cloning", "indexing", "ready", "failed"]
+
+
+class CodeSource(BaseModel):
+    """Public view of a code_sources row.
+
+    Used for both list (``GET /api/sources``) and detail
+    (``GET /api/sources/{id}``) — identical shape. The raw PAT ciphertext
+    is never serialised; callers get ``has_pat: bool`` and
+    ``pat_last_used_at`` so the UI can render "last used 2h ago" without
+    leaking the credential.
+    """
+
+    id: str
+    name: str
+    git_url: str
+    ref: str | None = None
+    has_pat: bool
+    pat_last_used_at: str | None = None
+    last_indexed_at: str | None = None
+    last_index_status: SourceStatus | None = None
+    last_index_error: str | None = None
+    resolved_sha: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class CreateCodeSourceRequest(BaseModel):
+    """POST /api/sources body. ``id`` is server-generated and cannot be
+    supplied by the client — reserved so a future multi-user build can't
+    be tricked into letting callers pick arbitrary IDs."""
+
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    git_url: Annotated[str, Field(min_length=1)]
+    ref: str | None = None
+    pat: SecretStr | None = None
