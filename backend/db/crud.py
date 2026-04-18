@@ -1030,3 +1030,70 @@ async def get_pipeline_stats(model_id: str) -> dict[str, Any]:
                 "avg_duration_ms": row[3],
             }
         return {}
+
+
+# Config KV store
+#
+# Keys ending in "_api_key" or "_pat" are always encrypted at rest using the
+# Fernet key from backend.security.source_key. Other keys are stored as UTF-8
+# plaintext bytes so non-sensitive runtime overrides don't pay the crypto tax.
+
+
+def _is_secret_key(key: str) -> bool:
+    return key.endswith("_api_key") or key.endswith("_pat")
+
+
+async def get_config_value(key: str) -> str | None:
+    """Fetch a config value, decrypting if stored encrypted.
+
+    Raises:
+        PATDecryptionError: ciphertext present but cannot be decrypted under
+            the active Fernet key (wrong CONFIG_SECRET, key-source switch,
+            or corrupted value).
+    """
+    from backend.security.source_key import decrypt_str
+
+    conn = await db.get()
+    async with conn.execute("SELECT value, encrypted FROM config WHERE key = ?", (key,)) as cursor:
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    # aiosqlite returns BLOB columns as bytes; we rely on that invariant here.
+    raw, encrypted = row[0], row[1]
+    if encrypted:
+        return decrypt_str(raw)
+    return raw.decode("utf-8")
+
+
+async def set_config_value(key: str, value: str, *, encrypted: bool) -> None:
+    """Upsert a config value. Forces encrypted=True for keys ending ``_api_key``/``_pat``."""
+    from backend.security.source_key import encrypt_str
+
+    if _is_secret_key(key) and not encrypted:
+        # Defensive — callers always pass encrypted=True for secret keys.
+        # If this fires a caller is wrong; log at error so it's visible.
+        logger.error(f"set_config_value({key}) called with encrypted=False; forcing encryption")
+        encrypted = True
+
+    stored: bytes = encrypt_str(value) if encrypted else value.encode("utf-8")
+    now = now_iso()
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO config (key, value, encrypted, updated_at)
+             VALUES (?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            encrypted = excluded.encrypted,
+            updated_at = excluded.updated_at
+        """,
+        (key, stored, 1 if encrypted else 0, now),
+    )
+    await conn.commit()
+
+
+async def delete_config_value(key: str) -> None:
+    """Delete a config row. Idempotent — absent key is a no-op."""
+    conn = await db.get()
+    await conn.execute("DELETE FROM config WHERE key = ?", (key,))
+    await conn.commit()

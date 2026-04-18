@@ -310,9 +310,19 @@ export function getConfig() {
 }
 
 /**
- * Patch runtime settings (in-memory; resets on backend restart).
- * @param {{ default_provider?: string, model?: string, fast_model?: string, default_iterations?: number, similarity_threshold?: number, ollama_base_url?: string }} body
- * @param {string} [secret]  Value for X-Config-Secret header (required when CONFIG_SECRET env var is set on the backend)
+ * Patch runtime settings. Non-key fields are in-memory (reset on restart);
+ * API keys are persisted encrypted and survive restarts.
+ *
+ * For key fields (`anthropic_api_key`, `openai_api_key`):
+ *   omit  → no change
+ *   null  → clear
+ *   "abc" → set
+ *   ""    → 400 (use null to clear)
+ *
+ * Returns the parsed response body including the recomputed `first_run`.
+ *
+ * @param {object} body
+ * @param {string} [secret] Value for X-Config-Secret header (required when CONFIG_SECRET env var is set on the backend)
  */
 export function updateConfig(body, secret) {
   const headers = secret ? { 'X-Config-Secret': secret } : {}

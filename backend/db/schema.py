@@ -165,6 +165,19 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 """
 
 
+# Runtime key/value store for config fields seeded at runtime (e.g. API keys
+# entered via Settings UI). Values may be plaintext (encrypted=0) or Fernet
+# ciphertext (encrypted=1). CRUD enforces encrypted=1 for *_api_key keys.
+CREATE_CONFIG_TABLE = """
+CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value BLOB NOT NULL,
+    encrypted INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+"""
+
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -195,6 +208,7 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_TEST_CASES_TABLE)
     await conn.execute(CREATE_THREAT_METADATA_TABLE)
     await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
+    await conn.execute(CREATE_CONFIG_TABLE)
 
     # Migrate existing threat_metadata tables that lack vector_rowid column
     try:
@@ -258,6 +272,7 @@ async def init_database(db_path: str) -> None:
         await db.execute(CREATE_TEST_CASES_TABLE)
         await db.execute(CREATE_THREAT_METADATA_TABLE)
         await db.execute(CREATE_PIPELINE_RUNS_TABLE)
+        await db.execute(CREATE_CONFIG_TABLE)
 
         # Create indices
         for index_sql in CREATE_INDICES:

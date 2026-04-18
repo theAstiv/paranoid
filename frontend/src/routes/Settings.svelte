@@ -11,6 +11,15 @@
   let configSecret = ''
   let configSecretRequired = false
 
+  // API-key UI state. `input` holds a new value the user is typing.
+  // `replacing` toggles between the masked "••••••••" display and the
+  // editable input when a key is already stored. `clearPending` is set
+  // when the user clicks "Clear" — saves send null to delete the DB row.
+  let keys = {
+    anthropic: { set: false, source: null, input: '', replacing: false, clearPending: false },
+    openai:    { set: false, source: null, input: '', replacing: false, clearPending: false },
+  }
+
   // Local draft — only committed on "Save"
   let draft = {
     default_provider: 'anthropic',
@@ -47,25 +56,58 @@
       similarity_threshold: cfg.similarity_threshold ?? 0.85,
       ollama_base_url: cfg.ollama_base_url ?? '',
     }
+    keys = {
+      anthropic: {
+        set: cfg.anthropic_api_key_set ?? false,
+        source: cfg.anthropic_api_key_source ?? null,
+        input: '', replacing: false, clearPending: false,
+      },
+      openai: {
+        set: cfg.openai_api_key_set ?? false,
+        source: cfg.openai_api_key_source ?? null,
+        input: '', replacing: false, clearPending: false,
+      },
+    }
+  }
+
+  function startReplace(provider) {
+    keys[provider] = { ...keys[provider], replacing: true, clearPending: false, input: '' }
+  }
+  function cancelReplace(provider) {
+    keys[provider] = { ...keys[provider], replacing: false, clearPending: false, input: '' }
+  }
+  function markClear(provider) {
+    keys[provider] = { ...keys[provider], clearPending: true, replacing: false, input: '' }
+  }
+
+  function buildKeyPayload(provider) {
+    // Returns either { [field]: value } or {}. Using bracket-notation lets
+    // JSON serialise an explicit null to clear the DB value.
+    const state = keys[provider]
+    const field = `${provider}_api_key`
+    if (state.source === 'env') return {}
+    if (state.clearPending) return { [field]: null }
+    if (state.input && state.input.trim() !== '') return { [field]: state.input.trim() }
+    return {}
   }
 
   async function save() {
     saving = true
     try {
-      const updated = await updateConfig(
-        {
-          default_provider: draft.default_provider,
-          model: draft.model || undefined,
-          fast_model: draft.fast_model || undefined,
-          default_iterations: Number(draft.default_iterations),
-          similarity_threshold: Number(draft.similarity_threshold),
-          ollama_base_url: draft.ollama_base_url || undefined,
-        },
-        configSecret || undefined,
-      )
+      const payload = {
+        default_provider: draft.default_provider,
+        model: draft.model || undefined,
+        fast_model: draft.fast_model || undefined,
+        default_iterations: Number(draft.default_iterations),
+        similarity_threshold: Number(draft.similarity_threshold),
+        ollama_base_url: draft.ollama_base_url || undefined,
+        ...buildKeyPayload('anthropic'),
+        ...buildKeyPayload('openai'),
+      }
+      const updated = await updateConfig(payload, configSecret || undefined)
       config.set(updated)
       syncDraft(updated)
-      notify('success', 'Settings saved (active until backend restart)')
+      notify('success', 'Settings saved')
     } catch (err) {
       notify('error', `Failed to save settings: ${err.message}`)
     } finally {
@@ -194,6 +236,76 @@
             class="col-span-2 border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
         </div>
 
+        <!-- API keys — per provider. Env-sourced keys are locked; DB-sourced
+             keys show a masked placeholder with a Replace button. -->
+        {#each [['anthropic', 'Anthropic', 'ANTHROPIC_API_KEY'], ['openai', 'OpenAI', 'OPENAI_API_KEY']] as [prov, label, envName]}
+          <div class="grid grid-cols-3 items-center gap-4">
+            <label for={`cfg-${prov}-key`} class="text-sm text-slate-600 text-right">
+              {label} API key
+              <span class="block text-xs text-slate-400 font-normal">
+                {#if keys[prov].source === 'env'}
+                  managed via env
+                {:else if keys[prov].clearPending}
+                  will be cleared on save
+                {:else if keys[prov].set && !keys[prov].replacing}
+                  stored (encrypted)
+                {:else}
+                  paste to save
+                {/if}
+              </span>
+            </label>
+
+            <div class="col-span-2 flex items-center gap-2">
+              {#if keys[prov].source === 'env'}
+                <input
+                  id={`cfg-${prov}-key`}
+                  type="password"
+                  value="••••••••"
+                  disabled
+                  aria-describedby={`cfg-${prov}-key-lock`}
+                  class="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono bg-slate-100 text-slate-400 cursor-not-allowed"
+                />
+                <span id={`cfg-${prov}-key-lock`} class="text-xs text-slate-400" title={`Managed by ${envName} environment variable`}>🔒 env</span>
+              {:else if keys[prov].set && !keys[prov].replacing && !keys[prov].clearPending}
+                <input
+                  id={`cfg-${prov}-key`}
+                  type="password"
+                  value="••••••••"
+                  disabled
+                  class="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono bg-slate-50 text-slate-400"
+                />
+                <button type="button" on:click={() => startReplace(prov)}
+                  class="text-xs font-medium text-indigo-600 hover:text-indigo-800">Replace</button>
+                <button type="button" on:click={() => markClear(prov)}
+                  class="text-xs font-medium text-slate-500 hover:text-red-600">Clear</button>
+              {:else if keys[prov].clearPending}
+                <input
+                  id={`cfg-${prov}-key`}
+                  type="password"
+                  value=""
+                  disabled
+                  class="flex-1 border border-red-300 rounded-md px-3 py-1.5 text-sm font-mono bg-red-50 text-red-500"
+                />
+                <button type="button" on:click={() => cancelReplace(prov)}
+                  class="text-xs font-medium text-slate-500 hover:text-slate-700">Undo</button>
+              {:else}
+                <input
+                  id={`cfg-${prov}-key`}
+                  type="password"
+                  bind:value={keys[prov].input}
+                  placeholder={prov === 'anthropic' ? 'sk-ant-…' : 'sk-…'}
+                  autocomplete="off"
+                  class="flex-1 border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                {#if keys[prov].set}
+                  <button type="button" on:click={() => cancelReplace(prov)}
+                    class="text-xs font-medium text-slate-500 hover:text-slate-700">Cancel</button>
+                {/if}
+              {/if}
+            </div>
+          </div>
+        {/each}
+
         <!-- Config secret (only shown / required when backend has CONFIG_SECRET set) -->
         {#if configSecretRequired}
         <div class="grid grid-cols-3 items-center gap-4">
@@ -241,7 +353,8 @@
           ['DEFAULT_ITERATIONS', '1–15 (default: 3)'],
           ['DB_PATH', 'SQLite path (default: ./data/paranoid.db)'],
           ['SIMILARITY_THRESHOLD', 'Dedup cosine threshold (default: 0.85)'],
-          ['CONFIG_SECRET', 'If set, PATCH /config requires X-Config-Secret header (default: empty = no auth)'],
+          ['CONFIG_SECRET', 'If set, also stretched into the Fernet key that encrypts API keys stored in the config DB. Rotating invalidates all stored keys.'],
+          ['ALLOWED_ORIGINS', 'Concrete origins (no *) allowed to issue mutating requests. Default: http://localhost:8000,http://127.0.0.1:8000. Empty disables CSRF.'],
         ] as [key, desc]}
           <div class="flex items-start gap-3">
             <code class="flex-shrink-0 font-mono text-xs bg-slate-50 border border-slate-200 px-2 py-0.5 rounded text-slate-700">{key}</code>
