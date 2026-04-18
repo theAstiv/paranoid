@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getConfig, updateConfig, getHealth } from '../lib/api.js'
+  import { getConfig, updateConfig, getHealth, testProvider } from '../lib/api.js'
   import { config, notify } from '../lib/stores.js'
   import McpConfig from '../components/McpConfig.svelte'
 
@@ -15,9 +15,11 @@
   // `replacing` toggles between the masked "••••••••" display and the
   // editable input when a key is already stored. `clearPending` is set
   // when the user clicks "Clear" — saves send null to delete the DB row.
+  // `testing` / `testResult` drive the per-provider "Test connection"
+  // spinner + badge. testResult is {ok, latency_ms, error, message} | null.
   let keys = {
-    anthropic: { set: false, source: null, input: '', replacing: false, clearPending: false },
-    openai:    { set: false, source: null, input: '', replacing: false, clearPending: false },
+    anthropic: { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
+    openai:    { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
   }
 
   // Local draft — only committed on "Save"
@@ -60,14 +62,41 @@
       anthropic: {
         set: cfg.anthropic_api_key_set ?? false,
         source: cfg.anthropic_api_key_source ?? null,
-        input: '', replacing: false, clearPending: false,
+        input: '', replacing: false, clearPending: false, testing: false, testResult: null,
       },
       openai: {
         set: cfg.openai_api_key_set ?? false,
         source: cfg.openai_api_key_source ?? null,
-        input: '', replacing: false, clearPending: false,
+        input: '', replacing: false, clearPending: false, testing: false, testResult: null,
       },
     }
+  }
+
+  async function runTest(provider, apiKey) {
+    // When the user just pasted a key, test with that value (not what's
+    // in the DB yet). Otherwise the backend falls back to env/DB.
+    keys[provider] = { ...keys[provider], testing: true, testResult: null }
+    try {
+      const payload = { provider }
+      if (apiKey) payload.api_key = apiKey
+      if (provider === 'anthropic' && draft.model) payload.model = draft.model
+      if (provider === 'ollama' && draft.ollama_base_url) payload.ollama_base_url = draft.ollama_base_url
+      const result = await testProvider(payload)
+      keys[provider] = { ...keys[provider], testing: false, testResult: result }
+    } catch (err) {
+      keys[provider] = {
+        ...keys[provider],
+        testing: false,
+        testResult: { ok: false, error: 'request_failed', message: err.message, latency_ms: 0 },
+      }
+    }
+  }
+
+  function testButtonClick(provider) {
+    const state = keys[provider]
+    // Prefer the live input (unsaved new value); otherwise let the backend
+    // resolve env → DB.  Env-locked provider still tests the env-sourced key.
+    runTest(provider, state.input?.trim() || null)
   }
 
   function startReplace(provider) {
@@ -93,6 +122,12 @@
 
   async function save() {
     saving = true
+    // Capture which providers are about to get a new key so we can auto-
+    // test them after the PATCH succeeds (spec: "auto-runs on save if key
+    // value changed").
+    const changedProviders = ['anthropic', 'openai'].filter(
+      p => keys[p].input && keys[p].input.trim() !== '',
+    )
     try {
       const payload = {
         default_provider: draft.default_provider,
@@ -108,6 +143,8 @@
       config.set(updated)
       syncDraft(updated)
       notify('success', 'Settings saved')
+      // Fire-and-forget — the test result shows up inline below the field.
+      for (const p of changedProviders) runTest(p, null)
     } catch (err) {
       notify('error', `Failed to save settings: ${err.message}`)
     } finally {
@@ -302,7 +339,26 @@
                     class="text-xs font-medium text-slate-500 hover:text-slate-700">Cancel</button>
                 {/if}
               {/if}
+
+              {#if keys[prov].set || (keys[prov].input && keys[prov].input.trim() !== '')}
+                <button type="button" on:click={() => testButtonClick(prov)}
+                  disabled={keys[prov].testing}
+                  aria-label={`Test ${label} connection`}
+                  class="text-xs font-medium text-slate-500 hover:text-indigo-600 disabled:opacity-50">
+                  {keys[prov].testing ? 'Testing…' : 'Test'}
+                </button>
+              {/if}
             </div>
+
+            {#if keys[prov].testResult}
+              <div class="col-start-2 col-span-2 text-xs">
+                {#if keys[prov].testResult.ok}
+                  <span class="text-green-700">✓ Connected ({keys[prov].testResult.latency_ms} ms)</span>
+                {:else}
+                  <span class="text-red-700">✗ {keys[prov].testResult.message || keys[prov].testResult.error || 'Connection failed'}</span>
+                {/if}
+              </div>
+            {/if}
           </div>
         {/each}
 

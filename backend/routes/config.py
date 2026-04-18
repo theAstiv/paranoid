@@ -14,12 +14,26 @@ from backend.db.crud import (
     get_config_value,
     set_config_value,
 )
+from backend.providers.healthcheck import (
+    ProbeResult,
+    ping_anthropic,
+    ping_ollama,
+    ping_openai,
+    rate_limit_check,
+)
+from backend.routes._helpers import get_api_key
 from backend.security.source_key import PATDecryptionError
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+
+# Shared across UpdateConfigRequest.default_provider and
+# TestProviderRequest.provider — keep as one source of truth so a new
+# provider lands in both places at once.
+ProviderName = Literal["anthropic", "openai", "ollama"]
 
 
 async def _api_key_source(provider: str) -> str | None:
@@ -106,7 +120,7 @@ class UpdateConfigRequest(BaseModel):
     - Empty string ``""`` → rejected with 400.
     """
 
-    default_provider: Literal["anthropic", "openai", "ollama"] | None = None
+    default_provider: ProviderName | None = None
     model: str | None = Field(None, description="Main model identifier")
     fast_model: str | None = Field(None, description="Fast model for extraction and enrichment")
     default_iterations: int | None = Field(None, ge=1, le=15)
@@ -189,3 +203,66 @@ async def update_config(
         await _apply_key_update("openai", body.openai_api_key)
 
     return JSONResponse(content=await _config_payload())
+
+
+class TestProviderRequest(BaseModel):
+    """One-shot provider liveness probe. Body key overrides stored key."""
+
+    provider: ProviderName
+    api_key: SecretStr | None = None
+    model: str | None = None
+    # Only used when provider == "ollama"; falls back to settings if absent.
+    ollama_base_url: str | None = None
+
+
+def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
+    """Body > settings (env → DB hydrated at boot + kept live by PATCH).
+
+    Returns an empty string when no key is available so callers can do a
+    single ``if not key`` check. Ollama is exempt and never reaches here.
+    """
+    if body_key is not None:
+        return body_key.get_secret_value().strip()
+    return (get_api_key(provider) or "").strip()
+
+
+@router.post("/test-provider")
+async def test_provider(body: TestProviderRequest) -> JSONResponse:
+    """Liveness probe for a provider. Always returns 200 with ``ok`` bool
+    (unless rate-limited → 429). Never logs or echoes the supplied key.
+    """
+    retry_after = await rate_limit_check()
+    if retry_after is not None:
+        retry_s = max(1, int(retry_after))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many test-connection requests. Try again in {retry_s}s.",
+        )
+
+    if body.provider == "ollama":
+        base_url = body.ollama_base_url or settings.ollama_base_url
+        result = await ping_ollama(base_url)
+    else:
+        key = _resolve_probe_key(body.provider, body.api_key)
+        if not key:
+            result = ProbeResult(
+                ok=False,
+                latency_ms=0,
+                error="config_error",
+                message=f"No {body.provider.title()} API key available (body, env, or DB).",
+            )
+        elif body.provider == "anthropic":
+            model = body.model or settings.default_model
+            result = await ping_anthropic(key, model)
+        else:  # openai
+            result = await ping_openai(key, body.model)
+
+    return JSONResponse(
+        content={
+            "ok": result.ok,
+            "latency_ms": result.latency_ms,
+            "provider": body.provider,
+            "error": result.error,
+            "message": result.message,
+        }
+    )

@@ -329,6 +329,17 @@ export function updateConfig(body, secret) {
   return request('PATCH', '/config', body, headers)
 }
 
+/**
+ * Liveness probe for a provider. Body key overrides env/DB precedence.
+ * Always resolves with { ok, latency_ms, provider, error, message } unless
+ * the backend rate-limits (throws Error with retry-after detail).
+ *
+ * @param {{ provider: 'anthropic'|'openai'|'ollama', api_key?: string, model?: string, ollama_base_url?: string }} body
+ */
+export function testProvider(body) {
+  return request('POST', '/config/test-provider', body)
+}
+
 export function getHealth() {
   return fetch('/health').then(r => r.json())
 }
