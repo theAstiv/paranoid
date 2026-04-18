@@ -1,8 +1,23 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { getConfig, updateConfig, getHealth, testProvider } from '../lib/api.js'
   import { config, notify } from '../lib/stores.js'
   import McpConfig from '../components/McpConfig.svelte'
+
+  // Derived from the `config` store — kept reactive so saving a key flips
+  // the banner off immediately without a page reload.
+  $: firstRun = $config?.first_run === true
+  let providerSelect
+  let autoFocusedOnce = false
+
+  // Reactive auto-focus: the <select bind:this=providerSelect> lives inside
+  // {#if !loading}, so it doesn't exist yet when onMount runs. Waiting for
+  // loading to flip false (and for the DOM to catch up via tick()) is the
+  // only moment the ref is defined.
+  $: if (!loading && firstRun && !autoFocusedOnce) {
+    autoFocusedOnce = true
+    tick().then(() => providerSelect?.focus())
+  }
 
   let health = null
   let loading = true
@@ -42,6 +57,9 @@
       health = h
       configSecretRequired = cfg.config_secret_required ?? false
       syncDraft(cfg)
+      // Auto-focus is handled by the reactive block above, which fires
+      // after `loading` flips false below — this branch would be too
+      // early because the provider <select> is gated behind {#if !loading}.
     } catch (err) {
       notify('error', `Failed to load config: ${err.message}`)
     } finally {
@@ -160,6 +178,25 @@
 <div class="max-w-2xl mx-auto space-y-6">
   <h1 class="text-2xl font-semibold text-slate-900">Settings</h1>
 
+  {#if firstRun && !loading}
+    <!-- Welcome banner. role="status" + aria-live="polite" (not alert — this
+         is informational, not urgent). Not dismissible: it self-heals the
+         moment a valid provider key is saved (first_run flips on the next
+         config fetch / PATCH response). -->
+    <div
+      role="status"
+      aria-live="polite"
+      class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <p class="font-semibold">Welcome — let’s get you connected.</p>
+      <p class="mt-1 text-amber-800">
+        Paranoid needs at least one provider configured before it can generate
+        threat models. Pick a provider below and paste an API key — or switch to
+        Ollama if you run models locally. Your key is encrypted before it
+        touches disk.
+      </p>
+    </div>
+  {/if}
+
   {#if loading}
     <div class="flex justify-center py-16">
       <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -203,6 +240,7 @@
           <label for="cfg-provider" class="text-sm text-slate-600 text-right">Provider</label>
           <select
             id="cfg-provider"
+            bind:this={providerSelect}
             bind:value={draft.default_provider}
             class="col-span-2 border border-slate-300 rounded-md px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400">
             <option value="anthropic">anthropic</option>
