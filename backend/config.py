@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     # hatch for CLI-only setups.
     allowed_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
 
+    # Git host allowlist for code sources. The built-in set covers
+    # github.com, gitlab.com, and bitbucket.org. Additional exact hostnames
+    # (no wildcards, no subdomain matching) can be appended here.
+    # Example: ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net
+    additional_git_hosts: str = ""
+
 
 # Global settings instance
 settings = Settings()

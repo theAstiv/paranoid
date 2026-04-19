@@ -18,6 +18,7 @@ from backend.db.seed import load_all_seeds
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
+from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
 from backend.security.csrf import CSRFMiddleware, parse_allowed_origins
 from backend.security.source_key import PATDecryptionError
@@ -131,6 +132,7 @@ app.include_router(models_router, prefix="/api")
 app.include_router(threats_router, prefix="/api")
 app.include_router(export_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
+app.include_router(sources_router, prefix="/api")
 
 
 @app.get("/")
