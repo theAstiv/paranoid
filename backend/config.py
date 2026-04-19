@@ -63,10 +63,34 @@ class Settings(BaseSettings):
     # required (default; safe for local / Docker single-user deployments).
     config_secret: str = ""
 
+    # CSRF allowlist — comma-separated concrete origins (no "*").  Applied
+    # only to non-GET requests that carry an Origin / Referer header; calls
+    # without either (CLI, server-to-server) pass through unconditionally.
+    # Empty string disables CSRF protection entirely — documented escape
+    # hatch for CLI-only setups.
+    allowed_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
+
+    # Git host allowlist for code sources. The built-in set covers
+    # github.com, gitlab.com, and bitbucket.org. Additional exact hostnames
+    # (no wildcards, no subdomain matching) can be appended here.
+    # Example: ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net
+    additional_git_hosts: str = ""
+
 
 # Global settings instance
 settings = Settings()
 
 # Single source of truth for the application version.
 # Keep in sync with pyproject.toml when bumping releases.
-VERSION = "1.4.0"
+VERSION = "1.5.0"
+
+
+# Provider → (env var name, settings attribute / config-table DB key).
+# The settings attribute and DB key share the same string by convention;
+# the tuple guards against future divergence (e.g. vendor renames).
+# Imported by backend.routes.config and backend.main (lifespan hydration)
+# so both read the same authoritative mapping.
+API_KEY_FIELDS: dict[str, tuple[str, str]] = {
+    "anthropic": ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+    "openai": ("OPENAI_API_KEY", "openai_api_key"),
+}

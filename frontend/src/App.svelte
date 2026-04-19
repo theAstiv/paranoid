@@ -1,5 +1,7 @@
 <script>
-  import Router from 'svelte-spa-router'
+  import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
+  import Router, { push, location } from 'svelte-spa-router'
   import { link } from 'svelte-spa-router'
   import Home from './routes/Home.svelte'
   import NewModel from './routes/NewModel.svelte'
@@ -10,7 +12,9 @@
   import Library from './routes/Library.svelte'
   import Settings from './routes/Settings.svelte'
   import ReviewContext from './routes/ReviewContext.svelte'
-  import { notification } from './lib/stores.js'
+  import CodeSources from './routes/CodeSources.svelte'
+  import { config, notification } from './lib/stores.js'
+  import { getConfig } from './lib/api.js'
 
   const routes = {
     '/': Home,
@@ -22,7 +26,28 @@
     '/settings': Settings,
     '/threats/:id/attack-tree': AttackTree,
     '/threats/:id/test-cases': TestCases,
+    '/sources': CodeSources,
   }
+
+  // First-run redirect. We fetch config once at app boot and, if the backend
+  // reports first_run=true and we're not already on /settings, push there.
+  // Settings owns the banner + self-heals on save — no URL flag needed, the
+  // next GET /api/config call there re-reads the boolean from the live
+  // backend.
+  onMount(async () => {
+    try {
+      const cfg = await getConfig()
+      config.set(cfg)
+      if (cfg.first_run && get(location) !== '/settings') {
+        push('/settings')
+      }
+    } catch (err) {
+      // Backend unreachable: every page still renders; the Settings page's
+      // own loader will surface the error inline. Log a breadcrumb so the
+      // bootstrap failure is discoverable in the browser console.
+      console.warn('Config bootstrap failed — first-run redirect skipped.', err)
+    }
+  })
 </script>
 
 <div class="min-h-screen bg-slate-50 text-slate-900">
@@ -38,6 +63,7 @@
       <div class="flex items-center gap-6">
         <a href="/" use:link class="text-sm text-slate-600 hover:text-slate-900">Home</a>
         <a href="/library" use:link class="text-sm text-slate-600 hover:text-slate-900">Library</a>
+        <a href="/sources" use:link class="text-sm text-slate-600 hover:text-slate-900">Sources</a>
         <a href="/settings" use:link class="text-sm text-slate-600 hover:text-slate-900">Settings</a>
         <a href="/models/new" use:link class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition-colors">
           New Model

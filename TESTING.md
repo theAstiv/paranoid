@@ -185,7 +185,7 @@ paranoid_cli-1.2.1.tar.gz
 Current test suite breakdown:
 
 ```
-Total tests: 534 passed, 5 skipped
+Total tests: 664 passed, 6 skipped
 
 Backend (pytest):
 - CLI tests: 16
@@ -197,14 +197,55 @@ Backend (pytest):
 - Export tests (markdown, PDF, SARIF): 37
 - Image/diagram tests: 36
 - MCP tests: 8
-- Routes / API tests: 76
+- Routes / API tests: 100+
 - Seeds integrity: 96
+- Security / source key: 12
+- Sources manager: 18
 - Other: 123+
 
 Frontend (Vitest):
 - DreadBadge component: 7
 - Svelte stores: 9
 ```
+
+### Phase 15 test modules
+
+Four new test modules were added in v1.5.0 covering the Docker UX features:
+
+**`tests/test_security_source_key.py`** — Fernet key derivation and encryption
+- PBKDF2 path (CONFIG_SECRET env var)
+- File-fallback path (writable data dir, no env var)
+- No key material available → `SourceKeyUnavailableError`
+- Wrong key → `PATDecryptionError`
+- Key-source switch detection → 409-mapped error
+
+**`tests/test_sources_manager.py`** — Git clone + index lifecycle
+- Full `queued → cloning → indexing → ready` event sequence
+- Re-index overwrites clone dir cleanly
+- PAT scrubbed from `last_index_error` before persisting
+- PAT never appears in any SSE event payload
+- Concurrent re-index while lock held → 409
+- Auth failure detection across git 2.35 / 2.40 / 2.45 stderr formats
+- Host allowlist: built-in hosts pass, non-listed hosts rejected, `ADDITIONAL_GIT_HOSTS` exact-match
+- Hex SHA ref triggers full clone (no `--depth 1`)
+- Resolved SHA hex-validated before storing (tag names produce `None`)
+
+**`tests/test_routes_sources.py`** — HTTP layer for `/api/sources`
+- `GET /api/sources` empty list and populated list
+- `POST /api/sources` creates row + schedules background task
+- Duplicate URL + ref returns 409 (UNIQUE constraint)
+- PAT submitted with no key material → 409
+- `POST /api/sources/{id}/reindex` → 202; locked source → 409
+- `DELETE /api/sources/{id}` removes row + clone dir
+- SSE stream closes cleanly on client disconnect without killing background task
+
+**`tests/test_routes_run_code_source.py`** — `code_source_id` in `POST /api/models/{id}/run`
+- Unknown `code_source_id` → 422 before SSE stream opens
+- Non-ready source (e.g. `cloning`) → 422 with status in detail
+- Whitespace-only `code_source_id` normalised to empty (pipeline runs without code context)
+- Ready source + successful extraction → SSE emits `summarize_code` started/completed events with source name
+- Extraction raises `RuntimeError` → SSE emits `summarize_code` failed event; pipeline continues
+- `MCPBinaryNotFoundError` → SSE emits failed event with "context-link" / "binary" in message
 
 ## 🔍 Test Types
 

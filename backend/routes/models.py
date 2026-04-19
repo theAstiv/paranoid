@@ -12,6 +12,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.config import settings
 from backend.db import crud
+from backend.mcp.client import MCPCodeExtractor
+from backend.mcp.errors import MCPBinaryNotFoundError
 from backend.models.api import (
     AnalyzeDescriptionResponse,
     CreateAssetRequest,
@@ -24,7 +26,7 @@ from backend.models.api import (
     UpdateTrustBoundaryRequest,
 )
 from backend.models.enums import DiagramFormat, Framework, ModelStatus, ThreatStatus
-from backend.models.extended import DiagramData
+from backend.models.extended import CodeContext, DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
@@ -33,6 +35,7 @@ from backend.routes._helpers import (
     build_provider_from_record,
     resolve_provider,
 )
+from backend.sources.paths import clone_dir_for
 
 
 logger = logging.getLogger(__name__)
@@ -265,6 +268,7 @@ async def run_pipeline(
     assumptions: Annotated[str, Form()] = "[]",
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
+    code_source_id: Annotated[str, Form()] = "",
 ) -> StreamingResponse:
     """Run the threat modeling pipeline, streaming SSE progress events.
 
@@ -272,7 +276,10 @@ async def run_pipeline(
     - assumptions: JSON array string, e.g. '["TLS is enforced","Auth is OAuth2"]'
     - has_ai_components: bool, enables MAESTRO alongside STRIDE
     - diagram: optional PNG/JPG/Mermaid file upload
+    - code_source_id: optional ID of a ready code source for code context
     """
+    code_source_id = code_source_id.strip() or ""
+
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -291,6 +298,23 @@ async def run_pipeline(
     if diagram is not None and diagram.filename:
         diagram_data = await _build_diagram_data(diagram)
 
+    # Validate code source — fast fail before opening the SSE stream.
+    source_row: dict | None = None
+    if code_source_id:
+        source_row = await crud.get_code_source(code_source_id)
+        if source_row is None:
+            raise HTTPException(
+                status_code=422, detail=f"Code source '{code_source_id}' not found."
+            )
+        if source_row["last_index_status"] != "ready":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Code source is not indexed yet (status: {source_row['last_index_status']}). "
+                    "Wait for status 'ready'."
+                ),
+            )
+
     provider = build_provider_from_record(record)
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
@@ -300,6 +324,45 @@ async def run_pipeline(
         # Clear any previous run's data so re-runs start clean
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+
+        # Extract code context from the indexed clone directory (if requested).
+        # This runs inside the SSE stream so the user sees extraction progress.
+        # Any failure degrades gracefully — the pipeline continues without code context.
+        code_context: CodeContext | None = None
+        if source_row is not None:
+            yield PipelineEvent(
+                step=PipelineStep.SUMMARIZE_CODE,
+                status="started",
+                message=f"Extracting code context from '{source_row['name']}'...",
+            ).to_sse_format()
+            try:
+                async with MCPCodeExtractor(str(clone_dir_for(code_source_id))) as extractor:
+                    code_context = await extractor.extract_context(record["description"])
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE_CODE,
+                    status="completed",
+                    message=(
+                        f"Extracted {len(code_context.files)} code files "
+                        f"from '{source_row['name']}'"
+                    ),
+                ).to_sse_format()
+            except MCPBinaryNotFoundError as exc:
+                logger.warning("context-link binary not found, skipping code context: %s", exc)
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE_CODE,
+                    status="failed",
+                    message="context-link binary not found — continuing without code context.",
+                ).to_sse_format()
+            except Exception as exc:
+                logger.warning(
+                    "Code context extraction failed for source %s: %s", code_source_id, exc
+                )
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE_CODE,
+                    status="failed",
+                    message=f"Code context unavailable — continuing without: {str(exc)[:200]}",
+                ).to_sse_format()
+
         try:
             async with AsyncExitStack() as stack:
                 await stack.enter_async_context(provider)
@@ -313,6 +376,7 @@ async def run_pipeline(
                     fast_provider=fast_provider,
                     assumptions=parsed_assumptions or None,
                     diagram_data=diagram_data,
+                    code_context=code_context,
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,
                 ):

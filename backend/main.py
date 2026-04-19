@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,13 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.config import VERSION, settings
+from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import db
+from backend.db.crud import get_config_value
 from backend.db.seed import load_all_seeds
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
+from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
+from backend.security.csrf import CSRFMiddleware, parse_allowed_origins
+from backend.security.source_key import PATDecryptionError
 
 
 # Configure logging
@@ -42,6 +47,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Initialize database connection and schema
     await db.initialize(settings.db_path)
 
+    # Hydrate API keys from the config table into settings, but only for
+    # fields NOT already sourced from the environment — env wins. A
+    # decryption failure (rotated CONFIG_SECRET, corrupt row) is logged and
+    # the field is left empty so the user sees the first-run banner rather
+    # than a silent half-broken state.
+    for env_name, key in API_KEY_FIELDS.values():
+        if os.environ.get(env_name, "").strip():
+            continue
+        try:
+            stored = await get_config_value(key)
+        except PATDecryptionError:
+            logger.warning(
+                f"Decryption failed for DB config key {key!r} — leaving "
+                "field unset. Re-enter the credential in Settings; the "
+                "stale ciphertext will be overwritten on save."
+            )
+            continue
+        if stored:
+            setattr(settings, key, stored)
+            logger.info(f"Loaded {key} from DB (env unset).")
+
     # Load seed patterns
     await load_all_seeds()
 
@@ -60,9 +86,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add CORS middleware
-# Configure via CORS_ORIGINS env var: "*" (default) or comma-separated origins
-# e.g. CORS_ORIGINS="https://app.example.com,https://staging.example.com"
+# Middleware stack. FastAPI/Starlette runs the LAST-added middleware outermost,
+# so we add CSRF first and CORS second — CORS runs on the way out of every
+# response, including a CSRF 403, which keeps cross-origin errors visible as
+# structured JSON (not a blank "CORS error") in the browser console.
+
+# CSRF — rejects mutating requests whose Origin/Referer is not in
+# ALLOWED_ORIGINS. Pure ASGI so it doesn't buffer SSE bodies. Validation
+# errors surface at startup rather than on the first blocked request.
+_allowed_origins = parse_allowed_origins(settings.allowed_origins)
+app.add_middleware(CSRFMiddleware, allowed_origins=_allowed_origins)
+if not _allowed_origins:
+    logger.warning(
+        "ALLOWED_ORIGINS is empty — CSRF protection is DISABLED. "
+        "Safe only for CLI-only / non-browser deployments."
+    )
+
+# CORS — configure via CORS_ORIGINS env var: "*" (default) or comma-separated
+# origins, e.g. CORS_ORIGINS="https://app.example.com,https://staging.example.com"
 _cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -91,6 +132,7 @@ app.include_router(models_router, prefix="/api")
 app.include_router(threats_router, prefix="/api")
 app.include_router(export_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
+app.include_router(sources_router, prefix="/api")
 
 
 @app.get("/")

@@ -8,7 +8,15 @@ services:
         # fastembed model to pre-bake into the image
         EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
     ports:
-      - "${PORT:-8000}:8000"
+      # Published on loopback by default — the container binds 0.0.0.0:8000
+      # internally, but only localhost on the host can reach it. Keeps the
+      # Settings UI (which now accepts API keys) off the LAN by default.
+      # For LAN exposure change to "0.0.0.0:${PORT:-8000}:8000" AND set a
+      # concrete ALLOWED_ORIGINS so CSRF protection still applies.
+      - "127.0.0.1:${PORT:-8000}:8000"
+    # Uncomment to cap memory — the app baseline is ~1GB, but git clone +
+    # context-link index + fastembed pushes ~3GB on large monorepos.
+    # mem_limit: 4g
     volumes:
       # SQLite database — persisted across container restarts and upgrades
       - ./data:/app/data
@@ -42,6 +50,13 @@ services:
       # For a publicly accessible deployment set this explicitly, e.g.:
       #   CORS_ORIGINS=https://your-domain.com
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      # Concrete origins allowed to make mutating requests. Default covers
+      # the loopback publish above. Adjust if you change the host publish.
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      # Optional — stretch into a Fernet key that encrypts API keys / PATs
+      # stored in the config DB. Without it a random file key is generated
+      # at data/.source_key (0600). See CLAUDE.md for the rotation SOP.
+      - CONFIG_SECRET=${CONFIG_SECRET:-}
 
       # ── MCP / context-link ────────────────────────────────────────────────
       # Leave empty to use the binary baked into the image (bin/context-link).

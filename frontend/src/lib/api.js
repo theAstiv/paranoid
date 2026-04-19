@@ -136,8 +136,8 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
               fireDone()
               return
             }
-          } catch {
-            // malformed JSON line — skip
+          } catch (parseErr) {
+            console.warn('subscribeSSE: malformed SSE JSON', parseErr)
           }
         }
       }
@@ -303,6 +303,52 @@ export function exportUrl(modelId, format, statusFilter) {
   return `${BASE}/export/${modelId}?${params.toString()}`
 }
 
+// ── Code Sources ─────────────────────────────────────────────────────────────
+
+export function listCodeSources() {
+  return request('GET', '/sources')
+}
+
+/** @param {{ name: string, git_url: string, ref?: string|null, pat?: string|null }} body */
+export function createCodeSource(body) {
+  return request('POST', '/sources', body)
+}
+
+/** @param {string} id */
+export function deleteCodeSource(id) {
+  return request('DELETE', `/sources/${id}`)
+}
+
+/** @param {string} id */
+export function reindexSource(id) {
+  return request('POST', `/sources/${id}/reindex`)
+}
+
+/**
+ * Stream SSE progress events for a code source (GET endpoint).
+ * The stream closes naturally when the source reaches a terminal state.
+ * Keepalive pings (arrive as `{}` with no `status` field) are filtered
+ * before reaching `onEvent`.
+ *
+ * Delegates to subscribeSSE so BASE, error handling, and abort logic
+ * are defined in exactly one place.
+ *
+ * @param {string} sourceId
+ * @param {(event: object) => void} onEvent
+ * @param {(err: Error) => void} onError
+ * @param {() => void} onDone  fired once when the stream ends
+ * @returns {() => void} abort function
+ */
+export function subscribeToSourceEvents(sourceId, onEvent, onError, onDone) {
+  return subscribeSSE(
+    `/sources/${sourceId}/events`,
+    { method: 'GET' },
+    (evt) => { if (evt && evt.status) onEvent(evt) },
+    onError,
+    onDone,
+  )
+}
+
 // ── Config & Health ───────────────────────────────────────────────────────────
 
 export function getConfig() {
@@ -310,13 +356,34 @@ export function getConfig() {
 }
 
 /**
- * Patch runtime settings (in-memory; resets on backend restart).
- * @param {{ default_provider?: string, model?: string, fast_model?: string, default_iterations?: number, similarity_threshold?: number, ollama_base_url?: string }} body
- * @param {string} [secret]  Value for X-Config-Secret header (required when CONFIG_SECRET env var is set on the backend)
+ * Patch runtime settings. Non-key fields are in-memory (reset on restart);
+ * API keys are persisted encrypted and survive restarts.
+ *
+ * For key fields (`anthropic_api_key`, `openai_api_key`):
+ *   omit  → no change
+ *   null  → clear
+ *   "abc" → set
+ *   ""    → 400 (use null to clear)
+ *
+ * Returns the parsed response body including the recomputed `first_run`.
+ *
+ * @param {object} body
+ * @param {string} [secret] Value for X-Config-Secret header (required when CONFIG_SECRET env var is set on the backend)
  */
 export function updateConfig(body, secret) {
   const headers = secret ? { 'X-Config-Secret': secret } : {}
   return request('PATCH', '/config', body, headers)
+}
+
+/**
+ * Liveness probe for a provider. Body key overrides env/DB precedence.
+ * Always resolves with { ok, latency_ms, provider, error, message } unless
+ * the backend rate-limits (throws Error with retry-after detail).
+ *
+ * @param {{ provider: 'anthropic'|'openai'|'ollama', api_key?: string, model?: string, ollama_base_url?: string }} body
+ */
+export function testProvider(body) {
+  return request('POST', '/config/test-provider', body)
 }
 
 export function getHealth() {

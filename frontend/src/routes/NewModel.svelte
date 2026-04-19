@@ -1,11 +1,11 @@
 <script>
-  import { push } from 'svelte-spa-router'
+  import { push, link } from 'svelte-spa-router'
   import Wizard from '../components/Wizard.svelte'
-  import { createModel, subscribeToRun } from '../lib/api.js'
+  import { createModel, subscribeToRun, listCodeSources } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
   import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun } from '../lib/stores.js'
 
-  const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
+  const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
 
   let step = 0
   let submitting = false
@@ -30,6 +30,27 @@
 
   // Step 6
   let hasAiComponents = false
+
+  // Step 3 — Code Source (optional)
+  let selectedCodeSourceId = null
+  let readySources = []
+  let loadingSources = false
+  let sourcesLoaded = false
+
+  $: if (step === 3 && !sourcesLoaded) loadSources()
+
+  async function loadSources() {
+    loadingSources = true
+    sourcesLoaded = true
+    try {
+      const all = await listCodeSources()
+      readySources = all.filter(s => s.last_index_status === 'ready')
+    } catch (err) {
+      console.warn('NewModel: failed to load code sources', err)
+    } finally {
+      loadingSources = false
+    }
+  }
 
   // Client-side gap regexes mirror backend/pipeline/pre_flight.py so the wizard
   // can flag gaps before the model is created (and before /analyze is reachable).
@@ -101,6 +122,7 @@
       fd.append('assumptions', JSON.stringify(assumptions))
       fd.append('has_ai_components', String(hasAiComponents))
       if (diagramFile) fd.append('diagram', diagramFile)
+      if (selectedCodeSourceId) fd.append('code_source_id', selectedCodeSourceId)
 
       // Reset run state, then start the SSE stream
       pipelineEvents.set([])
@@ -262,6 +284,54 @@
       </div>
 
     {:else if step === 3}
+      <!-- Code Source (optional) -->
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium text-slate-700">Code context <span class="text-slate-400 font-normal">(optional)</span></p>
+          <div class="flex items-center gap-3">
+            <button type="button" on:click={() => { sourcesLoaded = false }}
+              class="text-xs text-slate-400 hover:text-slate-600" title="Refresh source list">
+              Refresh
+            </button>
+            <a href="/sources" use:link class="text-xs text-indigo-600 hover:underline">Manage sources</a>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500">Select an indexed code repository to give the pipeline additional context about your implementation. Requires a ready source from the Sources page.</p>
+
+        {#if loadingSources}
+          <p class="text-sm text-slate-400 py-4 text-center">Loading sources…</p>
+        {:else if readySources.length === 0}
+          <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center space-y-1">
+            <p class="text-sm text-slate-500">No indexed sources available.</p>
+            <a href="/sources" use:link class="text-xs text-indigo-600 hover:underline">Add a repository on the Sources page →</a>
+          </div>
+        {:else}
+          <div class="space-y-2">
+            <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50
+              {selectedCodeSourceId === null ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200'}">
+              <input type="radio" bind:group={selectedCodeSourceId} value={null}
+                class="text-indigo-600 focus:ring-indigo-500" />
+              <div>
+                <p class="text-sm font-medium text-slate-700">None</p>
+                <p class="text-xs text-slate-400">No code context</p>
+              </div>
+            </label>
+            {#each readySources as src (src.id)}
+              <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50
+                {selectedCodeSourceId === src.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200'}">
+                <input type="radio" bind:group={selectedCodeSourceId} value={src.id}
+                  class="text-indigo-600 focus:ring-indigo-500" />
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-slate-700">{src.name}</p>
+                  <p class="text-xs text-slate-500 truncate">{src.git_url}{src.ref ? ` @ ${src.ref}` : ''}</p>
+                </div>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+    {:else if step === 4}
       <!-- Assumptions (optional) -->
       <div class="space-y-3">
         <p class="text-sm font-medium text-slate-700">Assumptions <span class="text-slate-400 font-normal">(optional)</span></p>
@@ -294,7 +364,7 @@
         {/if}
       </div>
 
-    {:else if step === 4}
+    {:else if step === 5}
       <!-- Iterations -->
       <div class="space-y-4">
         <div>
@@ -319,7 +389,7 @@
         </p>
       </div>
 
-    {:else if step === 5}
+    {:else if step === 6}
       <!-- AI Components -->
       <div class="space-y-4">
         {#if framework === 'MAESTRO' || framework === 'HYBRID'}
@@ -347,7 +417,7 @@
         {/if}
       </div>
 
-    {:else if step === 6}
+    {:else if step === 7}
       <!-- Review & Run -->
       <div class="space-y-4">
         <h3 class="text-sm font-semibold text-slate-700">Ready to run</h3>
@@ -362,6 +432,8 @@
           <dd class="text-slate-900">{hasAiComponents ? 'Yes (MAESTRO enabled)' : 'No'}</dd>
           <dt class="text-slate-500">Diagram</dt>
           <dd class="text-slate-900">{diagramFile ? diagramFile.name : '—'}</dd>
+          <dt class="text-slate-500">Code source</dt>
+          <dd class="text-slate-900">{selectedCodeSourceId ? (readySources.find(s => s.id === selectedCodeSourceId)?.name ?? '—') : '—'}</dd>
           <dt class="text-slate-500">Assumptions</dt>
           <dd class="text-slate-900">{assumptions.length > 0 ? assumptions.length + ' added' : '—'}</dd>
         </dl>
