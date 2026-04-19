@@ -7,7 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.5.0] - 2026-04-19
+
 ### Added
+
+#### Docker UX — API Key Management via Settings UI
+- **Encrypted key storage**: `PATCH /api/config` now accepts `anthropic_api_key` and `openai_api_key`; values are Fernet-encrypted (AES-128-CBC + HMAC-SHA256) and persisted in a new `config` table — survive restarts, never returned in `GET` responses
+- **Env-lock behaviour**: keys present in environment variables at startup are read-only in the UI; `GET /api/config` exposes `*_api_key_set: bool` and `*_api_key_source: "env" | "db" | null`; PATCH to an env-sourced field returns 400
+- **`GET /api/config` extended** with `first_run: bool`, `config_secret_required: bool`, `*_api_key_set`, `*_api_key_source` fields
+- **Settings.svelte redesigned**: provider-specific API key inputs with masked display, lock icon for env-sourced fields, "Replace" action, auto-save + test-connection flow, first-run amber banner (`role="status"`, `aria-live="polite"`)
+
+#### Docker UX — Provider Liveness Probe
+- **`POST /api/config/test-provider`** — tests connectivity for `anthropic`, `openai`, or `ollama`; accepts optional `api_key` / `model` / `ollama_base_url` override; always returns 200 with `{ ok, latency_ms, provider, error?, message? }`; rate-limited at 10 req/min (in-process token bucket, no Redis)
+- **Auto-test on key save**: Settings UI runs test-connection immediately after saving a key; shows green latency badge or red error inline
+- **Body key takes precedence** over DB-stored key over env key — allows testing a new key before committing it
+
+#### Docker UX — First-Run Detection and Redirect
+- **`first_run` flag** in `GET /api/config` — `true` when the configured provider (non-Ollama) has no API key in env or DB; recomputed live on every call so saving a key via PATCH immediately flips it without restart
+- **App.svelte bootstrap**: fetches `GET /api/config` on mount; if `first_run` and not already on `/settings`, redirects to `/settings` automatically
+- **First-run banner** in Settings: non-dismissible amber panel with `aria-live="polite"` — disappears the moment a valid key is saved (next config fetch returns `first_run: false`)
+
+#### Docker UX — Code Sources (Git Repo Indexing)
+- **`code_sources` table** — new schema entity: `id`, `name`, `git_url`, `ref`, `pat_ciphertext` (Fernet-encrypted), `last_index_status` (`queued` | `cloning` | `indexing` | `ready` | `failed`), `last_index_error`, `resolved_sha`, `last_indexed_at`; `UNIQUE (git_url, ref)` prevents duplicate adds (SQLite treats NULL ≠ NULL so `ref` is stored as `""` for HEAD)
+- **PAT encryption**: same Fernet / PBKDF2-HMAC-SHA256 key derivation used for API keys; `CONFIG_SECRET` env var → PBKDF2-stretched Fernet key; file fallback `data/.source_key` (0600); key-source switch detection raises 409 with actionable message
+- **`backend/security/source_key.py`** — `get_fernet()`, `encrypt_str()`, `decrypt_str()`, `SourceKeyUnavailableError`, `PATDecryptionError`, `KeySourceChangedError`
+- **Clone + index lifecycle** (`backend/sources/manager.py`) — background `asyncio.Task` per source: `queued → cloning → indexing → ready / failed`; per-source `asyncio.Lock` prevents concurrent clone/re-index; cancellable via `asyncio.Event` for DELETE-while-indexing
+  - `git clone` with `--depth 1` (shallow) for branch/tag refs, full clone for hex SHA refs
+  - Hardened clone flags: `-c protocol.file.allow=never -c core.symlinks=false`; `GIT_TERMINAL_PROMPT=0` env
+  - PAT injected into HTTPS URL (`x-access-token:<pat>@`); scrubbed from stderr before persisting as `last_index_error`
+  - Auth failure detection: exit 128 + `HTTP 40[13]` / `authentication failed` / `access denied` regex → human-readable "Token rejected" message
+  - Allowlist: `github.com`, `gitlab.com`, `bitbucket.org` + `ADDITIONAL_GIT_HOSTS` comma-separated env var (exact hostname match, no wildcards)
+  - Path-containment check: every file resolved via `Path.resolve()` verified inside the clone dir — primary symlink-escape defence
+  - SSE fan-out: per-source ring buffer (last 20 events, 60 s TTL after completion) replayed on reconnect; max 8 simultaneous SSE subscribers per source
+  - Heartbeat events every 10 s during indexing with `elapsed_s`, `files_scanned`, `bytes_scanned`
+- **`GET/POST/DELETE /api/sources`**, **`GET /api/sources/{id}`**, **`POST /api/sources/{id}/reindex`**, **`GET /api/sources/{id}/events`** (SSE) — full CRUD + lifecycle endpoints
+- **`CodeSources.svelte`** (`/sources`) — management page: add-source form (name, URL, ref, PAT masked input), live status badges with spinner, SSE progress messages, re-index button (optimistic `queued` status), delete with confirmation
+- **Wizard step "Code Source"** in `NewModel.svelte` — lazy-loaded dropdown of `ready` sources, Refresh button, `None` option; `code_source_id` appended to `FormData` on run
+- **Pipeline wiring**: `POST /api/models/{id}/run` accepts `code_source_id` form field; validates source exists and is `ready` before opening the SSE stream (422 otherwise); runs `MCPCodeExtractor` inside the SSE generator with started/completed/failed progress events; gracefully degrades on `MCPBinaryNotFoundError` or any extraction failure; passes `code_context` to `run_pipeline_for_model`
+
+#### CSRF Protection
+- **`backend/security/csrf.py`** — pure-ASGI middleware (no body buffering, SSE-safe); rejects mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) whose `Origin` or `Referer` header is present but does not match `ALLOWED_ORIGINS`; requests with no `Origin` (curl, CLI) pass through
+- **`ALLOWED_ORIGINS` env var** — comma-separated concrete origins (no `*`); default `http://localhost:8000,http://127.0.0.1:8000`; explicitly rejects `*` with a clear startup error; empty string disables CSRF protection (documented escape hatch)
+- **`docker-compose.yml`** port binding changed from `"8000:8000"` to `"127.0.0.1:8000:8000"` — loopback-only on the Docker host by default; users who want LAN exposure change to `"0.0.0.0:8000:8000"`
 
 #### GitHub Action (`action/`)
 - **`action/action.yml`** — Docker container action: inputs `description-file`, `provider`, `api-key`, `model`, `framework`, `iterations`, `sarif-output`, `strict`, `fail-on-findings`; output `sarif-file`; branding `shield / purple`

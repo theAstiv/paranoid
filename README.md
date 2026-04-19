@@ -657,6 +657,42 @@ CGO_ENABLED=1 go build -o context-link ./cmd/context-link
 
 ---
 
+## Code Sources (Web UI)
+
+The web UI lets you clone and index Git repositories directly from the browser, then select a source when creating a new threat model — no CLI or Docker volume required.
+
+### Adding a code source
+
+1. Navigate to **Sources** in the top navigation.
+2. Click **Add source** and fill in:
+   - **Git URL** — `https://github.com/owner/repo.git` (GitHub, GitLab, Bitbucket, or hosts added via `ADDITIONAL_GIT_HOSTS`)
+   - **Name** — a short label shown in the wizard
+   - **Branch / tag / commit** (optional) — leave blank to track the default branch; enter a commit SHA to pin to a specific revision
+   - **Personal access token** (optional) — for private repos; stored Fernet-encrypted at rest
+3. Click **Add & clone**. The source card shows live progress: `queued → cloning → indexing → ready`.
+
+Once a source is `ready`, select it in the **Code Source** step of the **New Model** wizard. The pipeline extracts a semantically relevant slice of the codebase and threads it through every threat-generation step.
+
+### Security model for stored credentials
+
+- PATs are Fernet-encrypted (AES-128-CBC + HMAC-SHA256) before being written to SQLite.
+- Key derivation: `CONFIG_SECRET` env var → PBKDF2-HMAC-SHA256 (100k iterations); falls back to a random 32-byte file key at `data/.source_key` (mode 0600).
+- The raw PAT is never logged, never included in SSE events, and never returned by any API endpoint (`has_pat: bool` only).
+- Git clones use hardened flags: `protocol.file.allow=never` (blocks submodule `file://` transport), `core.symlinks=false`, `GIT_TERMINAL_PROMPT=0`.
+
+### Requirements
+
+- **RAM**: 4 GB minimum. The fastembed ONNX embedding model (~130 MB resident), context-link indexer, and a git clone of a large monorepo can peak at 2–3 GB together; leave headroom for the LLM pipeline.
+- **Disk**: clone directories live at `data/sources/<id>/` inside the mounted data volume.
+- **Network**: HTTPS-only git URLs; host allowlist is `github.com`, `gitlab.com`, `bitbucket.org` by default.
+
+```bash
+# Allow additional private hosts (exact hostname match, no wildcards)
+ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net docker compose up
+```
+
+---
+
 ## Image-as-Input (`--diagram`)
 
 Supply an architecture diagram alongside your text description. Paranoid passes it to every pipeline node for richer threat coverage.
@@ -838,9 +874,9 @@ Click "More info" then "Run anyway", or add an exception in Windows Defender.
 
 ## Development Status
 
-**v1.4.0** — CLI production-ready, available on [PyPI](https://pypi.org/project/paranoid-cli/) and as standalone binaries.
+**v1.5.0** — Docker UX release. Non-technical users can now open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
 
-**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code`), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (362 curated patterns across 16 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (22+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation, fast provider routing (`FAST_MODEL` for extraction/enrichment), `--enrich` CLI flag (attack trees + Gherkin test cases per threat), enrichment included in Markdown/PDF exports, editable Settings UI with `CONFIG_SECRET` protection.
+**Completed:** Core pipeline (8 nodes, iteration logic, SSE, dual framework), LLM providers (Anthropic/OpenAI/Ollama), STRIDE + MAESTRO prompts, structured input templates, JSON + SARIF + Markdown + PDF export, DREAD scoring, CLI with config wizard, code-as-input via context-link MCP (`--code` CLI and code sources web UI), image-as-input via vision API and Mermaid text (`--diagram`), deterministic rule engine (362 curated patterns across 16 seed files, RAG retrieval), provider offline fallback (rule-engine-only mode), Anthropic prompt caching (~20–30% token reduction), full SQLite persistence (every run saved with assets/flows/threats/DREAD), full CRUD for all 12 schema entities, `paranoid models list/show/export/delete/prune` commands, `--provider`/`--model` run-time overrides, REST API (26+ routes with SSE and full CRUD), Svelte + Tailwind frontend (all pages and components implemented), Docker Compose deployment (3-stage build: Go + Node + Python, web UI served at `/app`), packaging and release automation, fast provider routing (`FAST_MODEL` for extraction/enrichment), `--enrich` CLI flag (attack trees + Gherkin test cases per threat), enrichment included in Markdown/PDF exports, encrypted API key + PAT storage (Fernet), first-run redirect + Settings UI overhaul, provider liveness probe, git clone + index pipeline with SSE progress, CSRF protection (`ALLOWED_ORIGINS`).
 
 **Future (v2.0+):** Multi-user collaboration.
 

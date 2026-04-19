@@ -82,7 +82,7 @@ settings = Settings()
 
 # Single source of truth for the application version.
 # Keep in sync with pyproject.toml when bumping releases.
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 
 # Provider → (env var name, settings attribute / config-table DB key).
