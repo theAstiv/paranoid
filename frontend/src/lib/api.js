@@ -136,8 +136,8 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
               fireDone()
               return
             }
-          } catch {
-            // malformed JSON line — skip
+          } catch (parseErr) {
+            console.warn('subscribeSSE: malformed SSE JSON', parseErr)
           }
         }
       }
@@ -301,6 +301,52 @@ export function exportUrl(modelId, format, statusFilter) {
   const params = new URLSearchParams({ format })
   if (statusFilter) params.set('status_filter', statusFilter)
   return `${BASE}/export/${modelId}?${params.toString()}`
+}
+
+// ── Code Sources ─────────────────────────────────────────────────────────────
+
+export function listCodeSources() {
+  return request('GET', '/sources')
+}
+
+/** @param {{ name: string, git_url: string, ref?: string|null, pat?: string|null }} body */
+export function createCodeSource(body) {
+  return request('POST', '/sources', body)
+}
+
+/** @param {string} id */
+export function deleteCodeSource(id) {
+  return request('DELETE', `/sources/${id}`)
+}
+
+/** @param {string} id */
+export function reindexSource(id) {
+  return request('POST', `/sources/${id}/reindex`)
+}
+
+/**
+ * Stream SSE progress events for a code source (GET endpoint).
+ * The stream closes naturally when the source reaches a terminal state.
+ * Keepalive pings (arrive as `{}` with no `status` field) are filtered
+ * before reaching `onEvent`.
+ *
+ * Delegates to subscribeSSE so BASE, error handling, and abort logic
+ * are defined in exactly one place.
+ *
+ * @param {string} sourceId
+ * @param {(event: object) => void} onEvent
+ * @param {(err: Error) => void} onError
+ * @param {() => void} onDone  fired once when the stream ends
+ * @returns {() => void} abort function
+ */
+export function subscribeToSourceEvents(sourceId, onEvent, onError, onDone) {
+  return subscribeSSE(
+    `/sources/${sourceId}/events`,
+    { method: 'GET' },
+    (evt) => { if (evt && evt.status) onEvent(evt) },
+    onError,
+    onDone,
+  )
 }
 
 // ── Config & Health ───────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
   import Library from './routes/Library.svelte'
   import Settings from './routes/Settings.svelte'
   import ReviewContext from './routes/ReviewContext.svelte'
+  import CodeSources from './routes/CodeSources.svelte'
   import { config, notification } from './lib/stores.js'
   import { getConfig } from './lib/api.js'
 
@@ -25,6 +26,7 @@
     '/settings': Settings,
     '/threats/:id/attack-tree': AttackTree,
     '/threats/:id/test-cases': TestCases,
+    '/sources': CodeSources,
   }
 
   // First-run redirect. We fetch config once at app boot and, if the backend
@@ -61,6 +63,7 @@
       <div class="flex items-center gap-6">
         <a href="/" use:link class="text-sm text-slate-600 hover:text-slate-900">Home</a>
         <a href="/library" use:link class="text-sm text-slate-600 hover:text-slate-900">Library</a>
+        <a href="/sources" use:link class="text-sm text-slate-600 hover:text-slate-900">Sources</a>
         <a href="/settings" use:link class="text-sm text-slate-600 hover:text-slate-900">Settings</a>
         <a href="/models/new" use:link class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition-colors">
           New Model
