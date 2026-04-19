@@ -260,7 +260,7 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
             logger.info(f"Applied schema migration: {column_sql.split(' ADD COLUMN ', 1)[1]}")
         except aiosqlite.OperationalError as exc:
             if "duplicate column name" not in str(exc):
-                logger.warning("Unexpected error during schema migration: %s", exc)
+                raise
 
     # Migrate existing threat_metadata tables that lack vector_rowid column
     try:
@@ -269,7 +269,7 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
         logger.info("Migrated threat_metadata: added vector_rowid column")
     except aiosqlite.OperationalError as exc:
         if "duplicate column name" not in str(exc):
-            logger.warning("Unexpected error during schema migration: %s", exc)
+            raise
 
     # Migrate existing assets/flows/trust_boundaries tables that lack user_edited column
     for table in ("assets", "flows", "trust_boundaries"):
@@ -279,7 +279,7 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
             logger.info(f"Migrated {table}: added user_edited column")
         except aiosqlite.OperationalError as exc:
             if "duplicate column name" not in str(exc):
-                logger.warning("Unexpected error during schema migration: %s", exc)
+                raise
 
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable

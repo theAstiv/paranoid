@@ -518,7 +518,14 @@ async def _do_clone_and_index(  # noqa: PLR0911
         cancel_event,
         env=git_env,
     )
-    resolved_sha: str | None = sha_out.strip()[:40] if sha_rc == 0 and sha_out.strip() else None
+    _raw_sha = sha_out.strip()
+    resolved_sha: str | None = (
+        _raw_sha[:40]
+        if sha_rc == 0
+        and len(_raw_sha) >= 40
+        and all(c in "0123456789abcdef" for c in _raw_sha[:40])
+        else None
+    )
 
     # ── Step 2: index ────────────────────────────────────────────────────
     if cancel_event.is_set():

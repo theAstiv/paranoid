@@ -360,7 +360,7 @@ async def run_pipeline(
                 yield PipelineEvent(
                     step=PipelineStep.SUMMARIZE_CODE,
                     status="failed",
-                    message=f"Code context unavailable — continuing without: {exc}",
+                    message=f"Code context unavailable — continuing without: {str(exc)[:200]}",
                 ).to_sse_format()
 
         try:

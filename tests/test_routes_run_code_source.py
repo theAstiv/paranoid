@@ -8,7 +8,7 @@ Covers four scenarios:
 """
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -105,7 +105,11 @@ async def test_run_whitespace_code_source_is_ignored(client, model_id):
         return
         yield
 
-    with patch("backend.routes.models.run_pipeline_for_model", _noop_runner):
+    with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
+        patch("backend.routes.models.run_pipeline_for_model", _noop_runner),
+    ):
         resp = await client.post(
             f"/api/models/{model_id}/run",
             data={**_MINIMAL_FORM, "code_source_id": "   "},
@@ -163,6 +167,8 @@ async def test_run_with_ready_source_emits_code_context_events(client, model_id,
         yield  # make it an async generator
 
     with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
         patch("backend.routes.models.MCPCodeExtractor", return_value=mock_extractor),
         patch("backend.routes.models.run_pipeline_for_model", _noop_runner),
     ):
@@ -206,6 +212,8 @@ async def test_run_extractor_failure_emits_failed_event(client, model_id, ready_
         yield
 
     with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
         patch("backend.routes.models.MCPCodeExtractor", return_value=mock_extractor),
         patch("backend.routes.models.run_pipeline_for_model", _noop_runner),
     ):
@@ -239,6 +247,8 @@ async def test_run_binary_not_found_emits_clear_failed_message(client, model_id,
         yield
 
     with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
         patch("backend.routes.models.MCPCodeExtractor", return_value=mock_extractor),
         patch("backend.routes.models.run_pipeline_for_model", _noop_runner),
     ):

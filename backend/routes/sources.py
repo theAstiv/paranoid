@@ -83,7 +83,10 @@ async def create_source(body: CreateCodeSourceRequest) -> JSONResponse:
     mgr.schedule_clone_and_index(source_id)
 
     row = await crud.get_code_source(source_id)
-    assert row is not None
+    if row is None:
+        raise HTTPException(
+            status_code=500, detail="Source was created but could not be read back."
+        )
     return _source_response(row, status_code=202)
 
 
@@ -112,7 +115,10 @@ async def reindex_source(source_id: str) -> JSONResponse:
     mgr.schedule_clone_and_index(source_id)
 
     row = await crud.get_code_source(source_id)
-    assert row is not None
+    if row is None:
+        raise HTTPException(
+            status_code=500, detail="Source was updated but could not be read back."
+        )
     return _source_response(row, status_code=202)
 
 

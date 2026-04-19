@@ -31,6 +31,9 @@ from backend.sources.paths import data_dir
 
 logger = logging.getLogger(__name__)
 
+# Static salt is intentional: the derived key must be reproducible across restarts
+# for the same CONFIG_SECRET value. If the KDF algorithm is ever upgraded, increment
+# the version suffix (e.g. "v2") and document a re-encryption migration in CLAUDE.md.
 _PBKDF2_SALT = b"paranoid:source_key:v1"
 _PBKDF2_ITERATIONS = 100_000
 _KEY_FILENAME = ".source_key"
