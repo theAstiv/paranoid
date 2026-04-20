@@ -147,8 +147,12 @@ async def list_threat_models(
     framework: str | None = None,
     status: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List threat models with per-model threat counts, optionally filtered."""
-    conditions = []
+    """List threat models with per-model threat counts, optionally filtered.
+
+    Excludes seed-pattern buckets (provider = 'seed'), which are internal
+    containers for RAG seed threats and not user-facing models.
+    """
+    conditions = ["tm.provider != 'seed'"]
     params: list[Any] = []
 
     if framework is not None:

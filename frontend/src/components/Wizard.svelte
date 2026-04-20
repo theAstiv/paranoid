@@ -18,10 +18,10 @@
 
 <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
   <!-- Step indicator -->
-  <div class="border-b border-slate-100 px-6 py-4">
-    <div class="flex items-center gap-2">
+  <div class="border-b border-slate-100 px-6 py-4 overflow-x-auto">
+    <div class="flex items-center gap-2 flex-nowrap min-w-max">
       {#each steps as label, i}
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-shrink-0">
           <div class="flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold flex-shrink-0
             {i < currentStep ? 'bg-indigo-600 text-white' : i === currentStep ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">
             {#if i < currentStep}
@@ -30,13 +30,13 @@
               {i + 1}
             {/if}
           </div>
-          <span class="text-xs font-medium hidden sm:block
+          <span class="text-xs font-medium whitespace-nowrap hidden sm:block
             {i === currentStep ? 'text-slate-900' : i < currentStep ? 'text-indigo-600' : 'text-slate-400'}">
             {label}
           </span>
         </div>
         {#if i < steps.length - 1}
-          <div class="flex-1 h-px {i < currentStep ? 'bg-indigo-300' : 'bg-slate-100'} min-w-4 max-w-12"></div>
+          <div class="h-px w-8 flex-shrink-0 {i < currentStep ? 'bg-indigo-300' : 'bg-slate-100'}"></div>
         {/if}
       {/each}
     </div>
