@@ -6,9 +6,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import API_KEY_FIELDS, VERSION, settings
@@ -147,10 +147,44 @@ async def root() -> JSONResponse:
     )
 
 
-# Mount frontend static files (will be added in Phase 1.6)
+# Mount frontend static files.
+# Two-tier strategy:
+#   /app/assets/*  → content-hashed filenames, cache forever (immutable)
+#   /app           → index.html with Cache-Control: no-cache so browsers always
+#                    revalidate after a deploy. Without this, a stale index.html
+#                    references old chunk hashes that no longer exist on the server
+#                    and Vite's dynamic import fails with "Failed to fetch
+#                    dynamically imported module".
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/app", StaticFiles(directory=str(frontend_dist), html=True), name="app")
+    # Serve content-hashed assets with long-lived cache
+    app.mount(
+        "/app/assets",
+        StaticFiles(directory=str(frontend_dist / "assets")),
+        name="app-assets",
+    )
+
+    # Serve index.html with no-cache for all /app and /app/* routes so the
+    # browser always revalidates after a deploy.
+    # Two routes are needed:
+    #   /app          — bare entry point (no trailing slash, path param is "")
+    #   /app/{...}    — all nested SPA routes
+    # A single {full_path:path} pattern only matches when there IS a path
+    # segment after /app/, so /app itself (empty suffix) falls through to a 404
+    # without the explicit second route.
+    _index_response_kwargs = {
+        "path": str(frontend_dist / "index.html"),
+        "headers": {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    }
+
+    @app.get("/app", include_in_schema=False)
+    async def serve_spa_root(request: Request) -> FileResponse:
+        return FileResponse(**_index_response_kwargs)
+
+    @app.get("/app/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str, request: Request) -> FileResponse:
+        return FileResponse(**_index_response_kwargs)
+
     logger.info(f"Serving frontend from {frontend_dist}")
 else:
     logger.warning(f"Frontend dist not found at {frontend_dist}")
