@@ -1,10 +1,9 @@
 """OpenAI LLM provider implementation."""
 
-import json
 from typing import TypeVar
 
-from openai import APIError, AuthenticationError, OpenAI, RateLimitError
-from pydantic import BaseModel, ValidationError
+from openai import APIError, AuthenticationError, LengthFinishReasonError, OpenAI, RateLimitError
+from pydantic import BaseModel
 
 from backend.models.extended import ImageContent
 from backend.providers.base import (
@@ -12,14 +11,10 @@ from backend.providers.base import (
     ProviderError,
     ProviderRateLimitError,
     run_sync_in_executor,
-    strip_markdown_fences,
 )
 
 
 T = TypeVar("T", bound=BaseModel)
-
-# Module-level cache for model_json_schema() results — deterministic per class.
-_schema_cache: dict[type, dict] = {}
 
 
 class OpenAIProvider:
@@ -39,7 +34,7 @@ class OpenAIProvider:
         api_key: str,
         base_url: str | None = None,
         max_retries: int = 3,
-        timeout: float = 60.0,
+        timeout: float = 240.0,
     ):
         """Initialize OpenAI provider.
 
@@ -89,18 +84,6 @@ class OpenAIProvider:
         with the Anthropic path rather than a cost reduction.
         """
         try:
-            # Get JSON schema from Pydantic model (cached per class — deterministic)
-            if response_model not in _schema_cache:
-                _schema_cache[response_model] = response_model.model_json_schema()
-            schema = _schema_cache[response_model]
-
-            # Use JSON mode with schema guidance (compact JSON, no indent)
-            system_prompt = (
-                f"You must respond with valid JSON matching this schema:\n"
-                f"{json.dumps(schema)}\n\n"
-                f"Respond ONLY with the JSON object."
-            )
-
             # Build user message content (images + text)
             user_content = []
 
@@ -118,34 +101,48 @@ class OpenAIProvider:
             full_user_text = f"{shared_context}\n\n{prompt}" if shared_context else prompt
             user_content.append({"type": "text", "text": full_user_text})
 
-            # Call OpenAI API with JSON mode (async)
+            # Use Structured Outputs (Aug 2024+) — the SDK converts the Pydantic
+            # model to a strict JSON schema and enforces it server-side.  This
+            # replaces legacy `response_format={"type": "json_object"}`, which
+            # only guaranteed *valid* JSON, not schema conformance — gpt-4o
+            # routinely omitted required fields like impact/likelihood under
+            # the old mode.  Requires gpt-4o-2024-08-06 or later.
             response = await run_sync_in_executor(
-                self._client.chat.completions.create,
+                self._client.chat.completions.parse,
                 model=self._model,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                response_format={"type": "json_object"},
+                response_format=response_model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
             )
 
-            # Extract and clean JSON content (defensive fence stripping)
-            content = response.choices[0].message.content
-            content = strip_markdown_fences(content)
-
-            # Parse and validate
-            try:
-                data = json.loads(content)
-                return response_model.model_validate(data)
-            except (json.JSONDecodeError, ValidationError) as e:
+            parsed = response.choices[0].message.parsed
+            if parsed is None:
+                refusal = response.choices[0].message.refusal
                 raise ProviderError(
                     provider=self.name,
-                    message=f"Failed to parse structured output: {e}",
-                    original_error=e,
+                    message=f"Model returned no parsed output (refusal: {refusal})",
                 )
+            return parsed
 
+        except LengthFinishReasonError as e:
+            # The model hit its output token ceiling before finishing the JSON.
+            # This maps to a hard ceiling mismatch (e.g. gpt-4o cap 16 384 tokens
+            # on a dense MAESTRO extract_flows call). Surface it as a ProviderError
+            # rather than letting it fall through to the generic APIError handler —
+            # the distinction lets callers recognise this as a max_tokens budget
+            # issue rather than an API problem.
+            raise ProviderError(
+                provider=self.name,
+                message=(
+                    "Model hit the output token ceiling before completing the response. "
+                    "Reduce input complexity or use a model with a higher output ceiling "
+                    "(gpt-4.1 supports 32 768 output tokens vs gpt-4o's 16 384)."
+                ),
+                original_error=e,
+            )
         except AuthenticationError as e:
             raise ProviderAuthError(
                 provider=self.name,

@@ -155,22 +155,20 @@ async def test_anthropic_vision_without_images():
 
 @pytest.mark.asyncio
 async def test_openai_vision_with_image():
-    """Test OpenAI provider constructs image_url content blocks correctly."""
+    """Test OpenAI provider constructs image_url content blocks correctly (parse API)."""
     provider = OpenAIProvider(model="gpt-4o", api_key="test-key")
 
-    # Mock the OpenAI client
+    # parse() returns the Pydantic model on message.parsed
+    parsed_result = TestResponse(message="Diagram analyzed")
     mock_response = MagicMock()
-    mock_response.choices = [
-        MagicMock(message=MagicMock(content='{"message": "Diagram analyzed"}'))
-    ]
+    mock_response.choices = [MagicMock(message=MagicMock(parsed=parsed_result, refusal=None))]
 
     async def mock_executor(func, *args, **kwargs):
-        """Mock run_sync_in_executor that calls the function to capture args."""
         func(*args, **kwargs)
         return mock_response
 
     with patch.object(provider, "_client") as mock_client:
-        mock_client.chat.completions.create = MagicMock(return_value=mock_response)
+        mock_client.chat.completions.parse = MagicMock(return_value=mock_response)
 
         image = ImageContent(
             data="base64data",
@@ -185,19 +183,15 @@ async def test_openai_vision_with_image():
                 images=[image],
             )
 
-        # Verify content blocks
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        user_message = call_kwargs["messages"][1]  # Second message (after system)
+        # Verify content blocks passed to parse()
+        call_kwargs = mock_client.chat.completions.parse.call_args[1]
+        user_message = call_kwargs["messages"][0]  # single user message (no system msg)
         user_content = user_message["content"]
 
         # Should have 2 blocks: image_url + text
         assert len(user_content) == 2
-
-        # First block should be image_url with data URI
         assert user_content[0]["type"] == "image_url"
         assert user_content[0]["image_url"]["url"] == "data:image/jpeg;base64,base64data"
-
-        # Second block should be text
         assert user_content[1]["type"] == "text"
         assert user_content[1]["text"] == "Describe the architecture"
 
@@ -206,19 +200,19 @@ async def test_openai_vision_with_image():
 
 @pytest.mark.asyncio
 async def test_openai_vision_without_images():
-    """Test OpenAI provider works without images (backward compat)."""
+    """Test OpenAI provider works without images (backward compat, parse API)."""
     provider = OpenAIProvider(model="gpt-4o", api_key="test-key")
 
+    parsed_result = TestResponse(message="Text only")
     mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(content='{"message": "Text only"}'))]
+    mock_response.choices = [MagicMock(message=MagicMock(parsed=parsed_result, refusal=None))]
 
     async def mock_executor(func, *args, **kwargs):
-        """Mock run_sync_in_executor that calls the function to capture args."""
         func(*args, **kwargs)
         return mock_response
 
     with patch.object(provider, "_client") as mock_client:
-        mock_client.chat.completions.create = MagicMock(return_value=mock_response)
+        mock_client.chat.completions.parse = MagicMock(return_value=mock_response)
 
         with patch("backend.providers.openai.run_sync_in_executor", new=mock_executor):
             await provider.generate_structured(
@@ -227,8 +221,8 @@ async def test_openai_vision_without_images():
                 images=None,
             )
 
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        user_message = call_kwargs["messages"][1]
+        call_kwargs = mock_client.chat.completions.parse.call_args[1]
+        user_message = call_kwargs["messages"][0]
         user_content = user_message["content"]
 
         # Should have only 1 block: text

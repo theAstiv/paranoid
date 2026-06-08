@@ -147,22 +147,18 @@ async def test_anthropic_rate_limit_error():
 
 @pytest.mark.asyncio
 async def test_openai_generate_structured(sample_asset_list):
-    """Test OpenAI structured output generation."""
+    """Test OpenAI structured output generation (Structured Outputs / parse API)."""
     with patch("backend.providers.openai.OpenAI") as mock_openai:
-        # Mock response
-        mock_message = MagicMock()
-        mock_message.content = json.dumps(
-            {
-                "assets": [
-                    {
-                        "type": "Asset",
-                        "name": "Database",
-                        "description": "PostgreSQL DB",
-                    },
-                    {"type": "Entity", "name": "User", "description": "End user"},
-                ]
-            }
+        # parse() returns the Pydantic model directly on message.parsed
+        parsed_result = AssetsList(
+            assets=[
+                Asset(type=AssetType.ASSET, name="Database", description="PostgreSQL DB"),
+                Asset(type=AssetType.ENTITY, name="User", description="End user"),
+            ]
         )
+        mock_message = MagicMock()
+        mock_message.parsed = parsed_result
+        mock_message.refusal = None
 
         mock_choice = MagicMock()
         mock_choice.message = mock_message
@@ -171,10 +167,10 @@ async def test_openai_generate_structured(sample_asset_list):
         mock_response.choices = [mock_choice]
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
+        mock_client.chat.completions.parse.return_value = mock_response
         mock_openai.return_value = mock_client
 
-        provider = OpenAIProvider(model="gpt-4", api_key="test-key")
+        provider = OpenAIProvider(model="gpt-4o", api_key="test-key")
         result = await provider.generate_structured(
             prompt="List the assets",
             response_model=AssetsList,
@@ -271,6 +267,62 @@ async def test_ollama_generate_structured(sample_asset_list):
 
         assert isinstance(result, AssetsList)
         assert len(result.assets) == 2
+
+
+@pytest.mark.asyncio
+async def test_ollama_repairs_missing_required_fields():
+    """Ollama provider should fill missing optional containers and return a partial
+    result rather than crashing the pipeline when a small model omits a required field."""
+    with patch("backend.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        # Asset missing 'description' (required string field).
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "response": json.dumps(
+                {
+                    "assets": [
+                        {"type": "Asset", "name": "Database"},  # description missing
+                    ]
+                }
+            )
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        provider = OllamaProvider(model="llama3")
+        # The single asset has a missing required field — that's a nested-field
+        # validation error which our top-level fill doesn't touch. The repair
+        # path only patches missing required fields at the *top* of the model.
+        # So this should still raise ProviderError. Test that to lock the behaviour.
+        with pytest.raises(ProviderError):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+
+@pytest.mark.asyncio
+async def test_ollama_repairs_missing_top_level_list():
+    """Top-level required list field that the model omitted is auto-filled with []."""
+    with patch("backend.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        # AssetsList is `{"assets": [...]}` — return a body that's missing `assets`.
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"response": json.dumps({})}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        provider = OllamaProvider(model="llama3")
+        result = await provider.generate_structured(prompt="x", response_model=AssetsList)
+        assert isinstance(result, AssetsList)
+        assert result.assets == []
+
+
+def test_ollama_default_timeout_is_300s():
+    """Default timeout was raised from 120s to 300s to handle dense MAESTRO runs."""
+    provider = OllamaProvider(model="llama3")
+    assert provider._timeout == 300.0
 
 
 @pytest.mark.asyncio
