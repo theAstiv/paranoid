@@ -1,0 +1,147 @@
+graph TB
+    Applicant[Loan Applicant<br/>Web Chat + WhatsApp]
+    CreditOps[Credit-Ops Reviewer<br/>VPN + MFA]
+    Compliance[Compliance Officer<br/>Audit Replay Access]
+    Risk[Risk Team<br/>Policy Authors]
+
+    subgraph "Internet Boundary"
+        WAF[AWS WAF<br/>OWASP + Bot Control<br/>20 msg/min user, 200/hr IP]
+    end
+
+    subgraph "Channel Adapters"
+        WebSSE[Web Chat SSE Handler]
+        WAConn[WhatsApp Connector<br/>Business Cloud API]
+        WAWebhook[WhatsApp Webhook Verifier<br/>HMAC]
+    end
+
+    subgraph "Application Layer - EKS ap-south-1"
+        API[Agent API<br/>FastAPI<br/>JWT 15min + Signed OTP]
+
+        subgraph "AI Pipeline"
+            Intent[Intent Classifier<br/>EN / HI / Hinglish]
+            InjScan[Prompt Injection Scanner<br/>Regex + Classifier<br/>Inbound + RAG chunks]
+            RAGRet[Policy RAG Retriever<br/>pgvector + RLS]
+            Reasoner[Reasoning Agent<br/>Claude Sonnet 4 ap-south-1]
+            Conf[Confidence Scorer<br/>Rule-based]
+            PostProc[Deterministic Post-Processor<br/>Interest / EMI / Fees Validator]
+            PIIFilter[PII Output Filter]
+        end
+
+        subgraph "Policy Enforcement Layer - Trust Boundary"
+            ToolAllow[Tool Allowlist Enforcer]
+            SchemaV[JSON Schema Validator]
+            RBAC[RBAC + Amount Cap<br/>₹1L Auto / ₹1-5L Human]
+            ProductAllow[Product Allowlist<br/>Reject Crypto / Gambling / Foreign]
+            OTPGate[Signed OTP Gate<br/>Required for disburse_loan]
+        end
+
+        OpsAPI[Ops Console API<br/>RBAC]
+        KillSwitch[Kill Switch<br/>Disable disburse + fetch_aa]
+    end
+
+    subgraph "Memory & Knowledge"
+        Redis[(Redis<br/>Session Memory<br/>30d TTL Namespaced)]
+        Aurora[(Aurora Postgres<br/>User Profile + Audit<br/>CMK + Row-level Encryption)]
+        PgVec[(pgvector<br/>Policy RAG 12K Chunks<br/>Per-chunk Integrity Hash)]
+        S3Arch[(S3 Object Lock<br/>Conversation Archive 90d<br/>KMS Audit Log 7y)]
+        Secrets[AWS Secrets Manager<br/>90d Rotation]
+    end
+
+    subgraph "External AI"
+        Anthropic[Anthropic API<br/>Claude Sonnet 4<br/>ap-south-1 endpoint]
+    end
+
+    subgraph "Regulated Integrations"
+        AATSP[AA TSP<br/>Finvu / OneMoney<br/>Signed JWS Consent]
+        KUA[Authorised KUA<br/>Aadhaar eKYC Offline XML]
+        CIBIL[CIBIL Consumer Bureau<br/>IP Allowlist]
+        NBFC[Partner NBFC<br/>Disbursement API<br/>mTLS + Signed Request]
+    end
+
+    subgraph "Observability"
+        CW[CloudWatch Logs + Metrics]
+        Audit[Immutable Audit Sink<br/>S3 Object Lock]
+    end
+
+    Applicant -->|HTTPS / SSE| WAF
+    Applicant -->|WhatsApp| WAConn
+    WAConn --> WAWebhook
+    WAF --> WebSSE
+    WAF --> API
+    WAWebhook --> API
+
+    API --> Intent
+    Intent --> InjScan
+    InjScan --> RAGRet
+    RAGRet --> PgVec
+    PgVec -->|Retrieved chunks| InjScan
+    InjScan --> Reasoner
+    Reasoner -->|Prompts + Tool Calls| Anthropic
+    Anthropic -->|Tool Plan| Reasoner
+
+    Reasoner --> ToolAllow
+    ToolAllow --> SchemaV
+    SchemaV --> RBAC
+    RBAC --> ProductAllow
+    ProductAllow --> OTPGate
+
+    OTPGate -->|fetch_aa_consent_artefact| AATSP
+    OTPGate -->|fetch_aa_financial_data| AATSP
+    OTPGate -->|fetch_cibil_report| CIBIL
+    OTPGate -->|eKYC| KUA
+    OTPGate -->|disburse_loan<br/>requires signed OTP| NBFC
+
+    AATSP -.->|Consent callback| WAWebhook
+    NBFC -.->|Disbursement status| WAWebhook
+
+    Reasoner --> Conf
+    Conf -->|< threshold| CreditOps
+    Conf -->|>= threshold + auto cap| PostProc
+    PostProc --> PIIFilter
+    PIIFilter --> Applicant
+
+    CreditOps --> OpsAPI
+    Risk --> OpsAPI
+    Compliance --> OpsAPI
+    OpsAPI --> Aurora
+    OpsAPI --> S3Arch
+
+    API --> Redis
+    API --> Aurora
+    OTPGate --> Secrets
+    KillSwitch -.->|Disable tools| ToolAllow
+
+    API --> CW
+    OTPGate --> Audit
+    OpsAPI --> Audit
+    Reasoner --> Audit
+
+    style InjScan fill:#fcc,stroke:#333,stroke-width:2px
+    style ToolAllow fill:#fcc,stroke:#333,stroke-width:2px
+    style SchemaV fill:#fcc,stroke:#333,stroke-width:2px
+    style OTPGate fill:#fcc,stroke:#333,stroke-width:2px
+    style RBAC fill:#fcc,stroke:#333
+    style ProductAllow fill:#fcc,stroke:#333
+    style KillSwitch fill:#fcc,stroke:#333,stroke-width:2px
+    style PostProc fill:#fcc,stroke:#333
+    style PIIFilter fill:#fcc,stroke:#333
+    style Reasoner fill:#f9f,stroke:#333,stroke-width:2px
+    style RAGRet fill:#f9f,stroke:#333
+    style Intent fill:#f9f,stroke:#333
+    style Conf fill:#f9f,stroke:#333
+    style Anthropic fill:#fbb,stroke:#333
+    style AATSP fill:#fbb,stroke:#333
+    style KUA fill:#fbb,stroke:#333
+    style CIBIL fill:#fbb,stroke:#333
+    style NBFC fill:#fbb,stroke:#333
+    style WAConn fill:#fbb,stroke:#333
+    style Aurora fill:#ff9,stroke:#333
+    style Redis fill:#ff9,stroke:#333
+    style PgVec fill:#ff9,stroke:#333
+    style S3Arch fill:#ff9,stroke:#333
+    style Secrets fill:#9f9,stroke:#333
+    style Audit fill:#9f9,stroke:#333
+    style Applicant fill:#bbf,stroke:#333
+    style CreditOps fill:#fbb,stroke:#333
+    style Compliance fill:#fbb,stroke:#333
+    style Risk fill:#fbb,stroke:#333
