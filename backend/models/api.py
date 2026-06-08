@@ -122,3 +122,42 @@ class AnalyzeDescriptionResponse(BaseModel):
 
     gaps: list[DescriptionGap]
     is_sufficient: bool  # True when len(errors) == 0
+
+
+class AssumptionsGap(BaseModel):
+    """A single gap found in the assumptions section."""
+
+    field: Literal[
+        "controls",
+        "in_scope",
+        "out_of_scope",
+        "focus_areas",
+        "constraints",
+        "coverage",
+        "assumptions",
+    ]
+    severity: Literal["warning", "error", "info"]
+    message: str
+
+
+class AnalyzeAssumptionsResponse(BaseModel):
+    """Response body for the assumptions portion of the bundle analysis."""
+
+    gaps: list[AssumptionsGap]
+    is_sufficient: bool  # True when no error-severity gaps
+
+
+class AnalyzeBundleRequest(BaseModel):
+    """Request body for POST /api/analyze/."""
+
+    description: str = Field(..., min_length=1, max_length=50_000)
+    assumptions: list[str] = Field(default_factory=list, max_length=200)
+    framework: Framework = Framework.STRIDE
+    has_ai_components: bool = False
+
+
+class AnalyzeBundleResponse(BaseModel):
+    """Response body for POST /api/analyze/ — covers both description and assumptions."""
+
+    description: AnalyzeDescriptionResponse
+    assumptions: AnalyzeAssumptionsResponse

@@ -15,6 +15,7 @@ from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import db
 from backend.db.crud import get_config_value
 from backend.db.seed import load_all_seeds
+from backend.routes.analyze import router as analyze_router
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
@@ -128,6 +129,7 @@ async def health_check() -> JSONResponse:
 
 
 # API routers
+app.include_router(analyze_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(threats_router, prefix="/api")
 app.include_router(export_router, prefix="/api")

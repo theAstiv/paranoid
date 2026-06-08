@@ -33,7 +33,7 @@ ARG CONTEXT_LINK_VERSION=1.0.0
 ARG TARGETARCH
 
 RUN apk add --no-cache curl tar && \
-    curl -fsSL \
+    curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
         "https://github.com/context-link-mcp/context-link/releases/download/v${CONTEXT_LINK_VERSION}/context-link_${CONTEXT_LINK_VERSION}_linux_${TARGETARCH}.tar.gz" \
         -o /tmp/cl.tar.gz && \
     tar -xzf /tmp/cl.tar.gz -C /tmp && \
