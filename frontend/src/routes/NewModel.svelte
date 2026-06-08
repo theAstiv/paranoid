@@ -1,9 +1,10 @@
 <script>
   import { push, link } from 'svelte-spa-router'
   import Wizard from '../components/Wizard.svelte'
-  import { createModel, subscribeToRun, listCodeSources } from '../lib/api.js'
+  import PreFlightPanel from '../components/PreFlightPanel.svelte'
+  import { createModel, subscribeToRun, listCodeSources, analyzeBundle } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
-  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun } from '../lib/stores.js'
+  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config } from '../lib/stores.js'
 
   const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
 
@@ -30,6 +31,94 @@
 
   // Step 6
   let hasAiComponents = false
+
+  // Strict mode — block Run on error-severity gaps
+  let strictMode = false
+
+  // LLM pre-flight state (debounced; fired from Step 1 description and Step 4 assumptions)
+  let llmAnalysisLoading = false
+  let llmDescriptionGaps = []
+  let llmDescriptionSufficient = true
+  let llmAssumptionsGaps = []
+  let llmAssumptionsSufficient = true
+  let _analyzeDebounceTimer = null
+  let _analyzeController = null
+
+  function _clearLlmResults() {
+    llmDescriptionGaps = []
+    llmDescriptionSufficient = true
+    llmAssumptionsGaps = []
+    llmAssumptionsSufficient = true
+    llmAnalysisLoading = false
+  }
+
+  function scheduleAnalysis() {
+    clearTimeout(_analyzeDebounceTimer)
+    // Abort any in-flight fetch immediately — the signal is wired to the
+    // actual HTTP request so this cancels on the network level, not just
+    // in JS. Create a fresh controller for the next request.
+    if (_analyzeController) _analyzeController.abort()
+    _analyzeController = null
+
+    if (description.trim().length < 200) {
+      // Below threshold — clear stale results so the panel doesn't show
+      // outdated gaps from a previously longer description.
+      _clearLlmResults()
+      return
+    }
+
+    _analyzeDebounceTimer = setTimeout(runAnalysis, 600)
+  }
+
+  async function runAnalysis() {
+    // Fresh AbortController per request — previous one was already aborted
+    // (or never created) by scheduleAnalysis before we got here.
+    _analyzeController = new AbortController()
+    const signal = _analyzeController.signal
+
+    llmAnalysisLoading = true
+    try {
+      const result = await analyzeBundle({
+        description: description.trim(),
+        assumptions,
+        framework,
+        hasAi: hasAiComponents,
+        signal,
+      })
+      llmDescriptionGaps = result.description.gaps
+      llmDescriptionSufficient = result.description.is_sufficient
+      llmAssumptionsGaps = result.assumptions.gaps
+      llmAssumptionsSufficient = result.assumptions.is_sufficient
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.warn('Pre-flight analysis failed:', err.message)
+      }
+      // On abort or error keep previous results visible (don't flash empty)
+    } finally {
+      llmAnalysisLoading = false
+    }
+  }
+
+  // Re-run analysis when description or assumptions change
+  $: { description; assumptions; scheduleAnalysis() }
+
+  // Block "Run" in strict mode if there are any error-severity gaps
+  $: strictBlocked = strictMode && (
+    llmDescriptionGaps.some(g => g.severity === 'error') ||
+    llmAssumptionsGaps.some(g => g.severity === 'error')
+  )
+
+  // Block Run when the selected provider has no API key configured.
+  // Ollama needs no key — only anthropic and openai require one.
+  // Reads from $config which is populated on app boot and after Settings save.
+  $: providerKeyMissing = (() => {
+    if (!$config) return false  // config still loading; let the user proceed
+    const p = $config.default_provider
+    if (p === 'anthropic') return $config.anthropic_api_key_set === false
+    if (p === 'openai') return $config.openai_api_key_set === false
+    return false  // ollama or unknown provider
+  })()
+  $: providerLabel = $config?.default_provider ?? 'the provider'
 
   // Step 3 — Code Source (optional)
   let selectedCodeSourceId = null
@@ -74,6 +163,7 @@
   $: nextDisabled = (() => {
     if (step === 0) return !title.trim() || title.length > 200
     if (step === 1) return description.trim().length < 10
+    if (step === 7) return submitting || strictBlocked || providerKeyMissing
     return false
   })()
 
@@ -236,7 +326,7 @@
           </p>
         </div>
 
-        <!-- Pre-flight gap panel (shows once description is long enough to analyze) -->
+        <!-- Fast regex panel (instant, shows at 80 chars) -->
         {#if description.trim().length >= 80}
           <div class="rounded-lg border {descriptionGaps.length === 0 ? 'border-green-200 bg-green-50' : 'border-yellow-200 bg-yellow-50'} px-3 py-2.5 space-y-1.5">
             {#if descriptionGaps.length === 0}
@@ -256,6 +346,17 @@
               </ul>
             {/if}
           </div>
+        {/if}
+
+        <!-- LLM-backed deep analysis (debounced, fires at 200 chars) -->
+        {#if description.trim().length >= 200}
+          <PreFlightPanel
+            title="Description coverage (AI)"
+            loading={llmAnalysisLoading}
+            gaps={llmDescriptionGaps}
+            isSufficient={llmDescriptionSufficient}
+            collapsed={true}
+          />
         {/if}
       </div>
 
@@ -335,12 +436,12 @@
       <!-- Assumptions (optional) -->
       <div class="space-y-3">
         <p class="text-sm font-medium text-slate-700">Assumptions <span class="text-slate-400 font-normal">(optional)</span></p>
-        <p class="text-xs text-slate-500">Add constraints or assumptions already in place (e.g. "TLS enforced", "Auth via OAuth2").</p>
+        <p class="text-xs text-slate-500">List existing security controls, scope boundaries, and focus areas. This prevents the pipeline from suggesting threats that are already mitigated and guides it toward what matters most.</p>
         <div class="flex gap-2">
           <input
             type="text"
             bind:value={newAssumption}
-            placeholder="e.g. TLS 1.3 enforced"
+            placeholder="e.g. TLS 1.3 enforced on all client connections"
             on:keydown={e => e.key === 'Enter' && addAssumption()}
             class="flex-1 rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
           />
@@ -361,6 +462,16 @@
               </li>
             {/each}
           </ul>
+        {/if}
+
+        <!-- LLM-backed assumptions analysis -->
+        {#if description.trim().length >= 200}
+          <PreFlightPanel
+            title="Assumptions coverage (AI)"
+            loading={llmAnalysisLoading}
+            gaps={llmAssumptionsGaps}
+            isSufficient={llmAssumptionsSufficient}
+          />
         {/if}
       </div>
 
@@ -421,6 +532,27 @@
       <!-- Review & Run -->
       <div class="space-y-4">
         <h3 class="text-sm font-semibold text-slate-700">Ready to run</h3>
+
+        <!-- Provider API key gate — blocks Run if the configured provider has no key. -->
+        {#if providerKeyMissing}
+          <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+              <div>
+                <p class="text-sm font-medium text-amber-900">No API key configured for {providerLabel}</p>
+                <p class="text-xs text-amber-800 mt-0.5">
+                  The pipeline can't reach {providerLabel} without a key. Add one in Settings, then come back to run.
+                </p>
+              </div>
+            </div>
+            <a href="/settings" use:link
+              class="inline-block text-xs font-medium text-amber-900 underline hover:text-amber-700">
+              Open Settings →
+            </a>
+          </div>
+        {/if}
+
+
         <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <dt class="text-slate-500">Title</dt>
           <dd class="text-slate-900 font-medium truncate">{title}</dd>
@@ -437,6 +569,48 @@
           <dt class="text-slate-500">Assumptions</dt>
           <dd class="text-slate-900">{assumptions.length > 0 ? assumptions.length + ' added' : '—'}</dd>
         </dl>
+
+        <!-- Pre-flight gap summary -->
+        {#if llmDescriptionGaps.length > 0 || llmAssumptionsGaps.length > 0 || llmAnalysisLoading}
+          <div class="space-y-2 pt-2 border-t border-slate-100">
+            <p class="text-xs font-medium text-slate-600">Pre-flight analysis</p>
+            <PreFlightPanel
+              title="Description"
+              loading={llmAnalysisLoading}
+              gaps={llmDescriptionGaps}
+              isSufficient={llmDescriptionSufficient}
+              collapsed={llmDescriptionGaps.length === 0}
+            />
+            <PreFlightPanel
+              title="Assumptions"
+              loading={llmAnalysisLoading}
+              gaps={llmAssumptionsGaps}
+              isSufficient={llmAssumptionsSufficient}
+              collapsed={llmAssumptionsGaps.length === 0}
+            />
+          </div>
+        {/if}
+
+        <!-- Strict mode toggle -->
+        <div class="flex items-start gap-3 pt-2 border-t border-slate-100">
+          <input
+            id="strict-mode"
+            type="checkbox"
+            bind:checked={strictMode}
+            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <label for="strict-mode" class="cursor-pointer">
+            <p class="text-sm font-medium text-slate-700">Block run on error-severity gaps</p>
+            <p class="text-xs text-slate-500 mt-0.5">When enabled, the Run button is disabled if the AI analysis found any error-severity gaps in the description or assumptions.</p>
+          </label>
+        </div>
+
+        {#if strictBlocked}
+          <p class="text-xs text-red-600 font-medium">
+            ✗ Run blocked — fix the error-severity gaps above or disable strict mode.
+          </p>
+        {/if}
+
         <p class="text-xs text-slate-500 pt-2 border-t border-slate-100">
           The pipeline will run {iterationCount} iteration{iterationCount !== 1 ? 's' : ''} of threat generation. You'll see live progress on the next screen.
         </p>

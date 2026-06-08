@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { link } from 'svelte-spa-router'
-  import { listModels, getModelThreats } from '../lib/api.js'
+  import { listModels, getModelThreats, deleteModel } from '../lib/api.js'
   import { notify } from '../lib/stores.js'
   import ThreatCard from '../components/ThreatCard.svelte'
 
@@ -53,6 +53,21 @@
       }
     }
   }
+
+  async function handleDelete(id, title, event) {
+    // Stop the row click from also toggling expand
+    event.stopPropagation()
+    if (!confirm(`Delete threat model "${title}"?\nThis removes all its threats, assets, flows, and trust boundaries.`)) return
+    try {
+      await deleteModel(id)
+      models = models.filter(m => m.id !== id)
+      if (expandedModel === id) expandedModel = null
+      delete loadedThreats[id]
+      notify('success', 'Threat model deleted.')
+    } catch (err) {
+      notify('error', `Delete failed: ${err.message}`)
+    }
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-5">
@@ -81,6 +96,17 @@
               {#if m.threat_count != null}
                 <span>{m.threat_count} threats</span>
               {/if}
+              <span
+                role="button"
+                tabindex="0"
+                on:click={(e) => handleDelete(m.id, m.title, e)}
+                on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleDelete(m.id, m.title, e) }}
+                title="Delete threat model"
+                class="p-1 rounded hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer">
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+              </span>
               <svg class="w-4 h-4 transition-transform {expandedModel === m.id ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
               </svg>

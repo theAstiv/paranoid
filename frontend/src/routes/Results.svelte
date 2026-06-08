@@ -10,7 +10,7 @@
     subscribeToRun,
   } from '../lib/api.js'
   import {
-    currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify,
+    currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
   } from '../lib/stores.js'
   import PipelineProgress from '../components/PipelineProgress.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
@@ -129,6 +129,20 @@
   }
 
   function rerun() {
+    // Guard against missing provider API key — re-runs the same provider that was
+    // chosen at create time, so we check the model's recorded provider against the
+    // current $config flags. Ollama needs no key.
+    const cfg = get(config)
+    const provider = model?.provider ?? cfg?.default_provider
+    const keyMissing = (
+      (provider === 'anthropic' && cfg?.anthropic_api_key_set === false) ||
+      (provider === 'openai' && cfg?.openai_api_key_set === false)
+    )
+    if (keyMissing) {
+      notify('error', `No API key configured for ${provider}. Add one in Settings before re-running.`)
+      return
+    }
+
     const fd = new FormData()
     fd.append('assumptions', '[]')
     fd.append('has_ai_components', 'false')
@@ -226,6 +240,32 @@
           </div>
         {/if}
       </div>
+    {/if}
+
+    <!-- Iteration gap analysis (after run completes) -->
+    {#if !$pipelineRunning && model.status === 'completed'}
+      {#if model.gap_summaries && model.gap_summaries.length > 0}
+        <div class="bg-white rounded-xl border border-slate-200 p-5">
+          <h2 class="text-sm font-semibold text-slate-700">Iteration Gap Analysis</h2>
+          <p class="text-xs text-slate-400 mt-1">
+            Each pass identified missing coverage that fed into the next iteration.
+          </p>
+          {#each model.gap_summaries as gap, i}
+            <div class="mt-4">
+              <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wide">
+                Iteration {i + 1}
+              </p>
+              <p class="text-sm text-slate-700 mt-1 whitespace-pre-line">{gap}</p>
+            </div>
+          {/each}
+        </div>
+      {:else if $threats.length > 0}
+        <div class="bg-white rounded-xl border border-slate-200 p-4">
+          <p class="text-xs text-slate-500">
+            Iteration gap analysis: coverage was sufficient after iteration 1 — no gaps identified.
+          </p>
+        </div>
+      {/if}
     {/if}
 
     <!-- Threat summary (after run completes) -->

@@ -1,11 +1,12 @@
 const BASE = '/api'
 
-async function request(method, path, body, extraHeaders = {}) {
+async function request(method, path, body, extraHeaders = {}, signal = undefined) {
   const opts = { method, headers: { ...extraHeaders } }
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
   }
+  if (signal !== undefined) opts.signal = signal
   const res = await fetch(BASE + path, opts)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -267,6 +268,32 @@ export function deleteTrustBoundary(modelId, boundaryId) {
  */
 export function analyzeDescription(id) {
   return request('POST', `/models/${id}/analyze`)
+}
+
+/**
+ * Run description + assumptions gap analysis without a saved model.
+ * Designed for the wizard — call before the user commits to a full run.
+ *
+ * Returns {
+ *   description: { gaps, is_sufficient },
+ *   assumptions: { gaps, is_sufficient }
+ * }
+ *
+ * @param {{ description: string, assumptions: string[], framework: string, hasAi: boolean, signal?: AbortSignal }} opts
+ */
+export function analyzeBundle({ description, assumptions = [], framework = 'STRIDE', hasAi = false, signal }) {
+  return request(
+    'POST',
+    '/analyze/',
+    {
+      description,
+      assumptions,
+      framework: framework.toUpperCase() === 'HYBRID' ? 'STRIDE' : framework,
+      has_ai_components: hasAi,
+    },
+    {},
+    signal,
+  )
 }
 
 /**
