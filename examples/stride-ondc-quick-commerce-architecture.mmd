@@ -1,0 +1,100 @@
+graph TB
+    Buyer[Buyer<br/>Mobile + Web]
+    Ops[Ops Dispute Console<br/>VPN + RBAC]
+
+    subgraph "Internet Boundary"
+        Armor[Cloud Armor<br/>OWASP + Rate Limit<br/>30 search/min, 5 order/min]
+    end
+
+    subgraph "Buyer App Backend - GKE asia-south1"
+        API[Buyer API<br/>Go / Echo<br/>JWT + Device Binding]
+        CartSvc[Cart Service<br/>Price Snapshot on Select]
+        OrderSvc[Order Service<br/>Idempotency 24h]
+        AddrSvc[Address Book Service<br/>Field-level KMS]
+        SignerVerifier[Beckn Signer / Verifier<br/>Ed25519 via KMS]
+        RegistryClient[Registry Client<br/>1h cache]
+        CallbackHandler[ONDC Callback Handler<br/>on_search / on_select / on_init<br/>on_confirm / on_status / on_track]
+        WebhookV[Payment Webhook Verifier<br/>HMAC]
+        OpsAPI[Ops Console API<br/>RBAC + Audit]
+    end
+
+    subgraph "Data Layer"
+        Postgres[(Cloud SQL Postgres<br/>Orders + Users + Address<br/>CMEK)]
+        Redis[(Memorystore Redis<br/>Search Cache 5m<br/>Idempotency)]
+        GCS[(Cloud Storage<br/>Signed Payload Archive<br/>90d Retention)]
+        KMS[GCP KMS<br/>BAP Ed25519 Key<br/>Audit Logged]
+    end
+
+    subgraph "ONDC Network - External"
+        Gateway[ONDC Gateway]
+        Registry[ONDC Registry<br/>Participant Keys]
+        Seller[Seller Node BPP<br/>Out of Scope]
+        LSP[Logistics Node LSP<br/>Out of Scope]
+    end
+
+    subgraph "Payment"
+        UPIIntent[Hosted UPI Intent<br/>Razorpay / Cashfree]
+    end
+
+    subgraph "Observability"
+        Stack[Stackdriver Logs + Traces]
+        PubSub[Pub/Sub Event Bus]
+    end
+
+    Buyer -->|HTTPS| Armor
+    Ops -->|HTTPS| Armor
+    Armor --> API
+    Armor --> CallbackHandler
+    Armor --> WebhookV
+
+    API --> CartSvc
+    API --> OrderSvc
+    API --> AddrSvc
+    API --> OpsAPI
+
+    CartSvc --> Redis
+    OrderSvc --> Postgres
+    AddrSvc --> Postgres
+    OrderSvc --> Redis
+
+    CartSvc -->|search / select| SignerVerifier
+    OrderSvc -->|init / confirm / cancel| SignerVerifier
+    SignerVerifier --> KMS
+    SignerVerifier -->|Signed Beckn| Gateway
+
+    Gateway --> Seller
+    Gateway --> LSP
+    Seller -.->|Signed on_search / on_select| CallbackHandler
+    LSP -.->|Signed on_track / on_status| CallbackHandler
+    CallbackHandler --> SignerVerifier
+    SignerVerifier --> RegistryClient
+    RegistryClient --> Registry
+
+    CallbackHandler --> Postgres
+    CallbackHandler --> GCS
+
+    OrderSvc -->|Pay Intent| UPIIntent
+    UPIIntent -.->|Webhook status| WebhookV
+    WebhookV --> OrderSvc
+
+    OrderSvc --> PubSub
+    API --> Stack
+    CallbackHandler --> Stack
+    OpsAPI --> Stack
+
+    style Armor fill:#fcc,stroke:#333,stroke-width:2px
+    style SignerVerifier fill:#f9f,stroke:#333,stroke-width:2px
+    style CallbackHandler fill:#f9f,stroke:#333,stroke-width:2px
+    style WebhookV fill:#fcc,stroke:#333,stroke-width:2px
+    style RegistryClient fill:#fcc,stroke:#333
+    style KMS fill:#9f9,stroke:#333
+    style Gateway fill:#fbb,stroke:#333
+    style Registry fill:#fbb,stroke:#333
+    style Seller fill:#fbb,stroke:#333
+    style LSP fill:#fbb,stroke:#333
+    style UPIIntent fill:#fbb,stroke:#333
+    style Postgres fill:#ff9,stroke:#333
+    style Redis fill:#ff9,stroke:#333
+    style GCS fill:#ff9,stroke:#333
+    style Buyer fill:#bbf,stroke:#333
+    style Ops fill:#fbb,stroke:#333

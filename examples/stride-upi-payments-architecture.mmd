@@ -1,0 +1,94 @@
+graph TB
+    User[User<br/>Mobile App<br/>Android/iOS]
+    Admin[Ops Console<br/>VPN + TOTP MFA]
+
+    subgraph "Device Trust Boundary"
+        PSPSdk[PSP UPI SDK<br/>UPI PIN capture<br/>Device + SIM binding<br/>Signs UPI XML]
+        AppClient[App Client Code<br/>Kotlin / Swift]
+    end
+
+    subgraph "Internet Boundary"
+        CDN[CloudFront<br/>Static Assets]
+        WAF[AWS WAF<br/>OWASP + Bot Control<br/>Rate Limiting 5/min]
+    end
+
+    subgraph "Application Layer - ECS Fargate ap-south-1"
+        APIGW[API Gateway<br/>FastAPI<br/>JWT 15min / Refresh 7d]
+        Idem[Idempotency Service<br/>Redis 24h TTL]
+        VPAResolve[VPA Resolver<br/>Pre-auth read]
+        Fraud[Fraud Signals<br/>Device + Velocity + Geo]
+        WebhookV[Webhook Verifier<br/>HMAC signature check]
+        AdminAPI[Admin API<br/>RBAC + Refund Workflow]
+    end
+
+    subgraph "Data Layer - DPDP-compliant in-region"
+        Aurora[(Aurora PostgreSQL<br/>Users + Txn<br/>Field-level KMS<br/>PAN / Account encrypted)]
+        Redis[(ElastiCache Redis<br/>Sessions + Idempotency)]
+        S3KYC[(S3<br/>KYC PDFs<br/>KMS + Object Lock 7y)]
+        Secrets[AWS Secrets Manager<br/>30-day Rotation]
+    end
+
+    subgraph "Regulated UPI Rails - Out of Scope"
+        PSPBank[PSP Bank<br/>UPI Switch Client + HSM<br/>mTLS]
+        NPCI[NPCI UPI Switch]
+        Banks[Remitter / Beneficiary Banks]
+    end
+
+    subgraph "Third Parties"
+        VKYC[Video KYC Vendor]
+        BBPS[BBPS Biller Aggregator]
+        SMS[SMS Gateway<br/>Karix / Gupshup]
+        Push[FCM / APNs]
+    end
+
+    subgraph "Observability"
+        CW[CloudWatch + CloudTrail<br/>GuardDuty]
+    end
+
+    User --> AppClient
+    AppClient --> PSPSdk
+    AppClient -->|HTTPS REST| CDN
+    AppClient -->|HTTPS REST| WAF
+    Admin -->|HTTPS| WAF
+
+    WAF --> APIGW
+    APIGW --> Idem
+    APIGW --> VPAResolve
+    APIGW --> Fraud
+    APIGW --> AdminAPI
+
+    APIGW --> Aurora
+    APIGW --> Redis
+    APIGW --> Secrets
+    AdminAPI --> Aurora
+    AdminAPI --> S3KYC
+
+    PSPSdk -->|Signed UPI XML over mTLS| PSPBank
+    APIGW -->|Txn Init / Status| PSPBank
+    PSPBank --> NPCI
+    NPCI --> Banks
+
+    PSPBank -.->|Webhook: txn status| WebhookV
+    BBPS -.->|Webhook: bill status| WebhookV
+    WebhookV --> APIGW
+
+    APIGW -->|Onboarding handoff| VKYC
+    APIGW -->|Bill fetch / pay| BBPS
+    APIGW -->|OTP + Alerts| SMS
+    APIGW -->|Notifications| Push
+
+    APIGW --> CW
+    AdminAPI --> CW
+
+    style PSPSdk fill:#f9f,stroke:#333,stroke-width:2px
+    style WAF fill:#fcc,stroke:#333,stroke-width:2px
+    style WebhookV fill:#fcc,stroke:#333,stroke-width:2px
+    style PSPBank fill:#fbb,stroke:#333
+    style NPCI fill:#fbb,stroke:#333
+    style Banks fill:#fbb,stroke:#333
+    style Aurora fill:#ff9,stroke:#333
+    style Redis fill:#ff9,stroke:#333
+    style S3KYC fill:#ff9,stroke:#333
+    style Secrets fill:#9f9,stroke:#333
+    style User fill:#bbf,stroke:#333
+    style Admin fill:#fbb,stroke:#333
