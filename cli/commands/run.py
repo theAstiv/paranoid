@@ -17,7 +17,7 @@ from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, TestSuite
 from backend.models.state import ThreatsList
-from backend.pipeline.pre_flight import analyze_description_gaps
+from backend.pipeline.pre_flight import analyze_bundle
 from backend.pipeline.runner import (
     PipelineConfig,
     PipelineRunner,
@@ -661,28 +661,46 @@ async def _run_pipeline_inside_provider(
     strict: bool,
     enrich: bool = False,
 ) -> None:
-    # Pre-flight gap analysis — always runs; --strict enforces blocking on errors
-    gap_result = await analyze_description_gaps(description=description, provider=provider)
+    # Pre-flight gap analysis (description + assumptions) — always runs;
+    # --strict enforces blocking on error-severity gaps in either section.
+    bundle = await analyze_bundle(
+        description=description,
+        assumptions=assumptions or [],
+        provider=provider,
+    )
 
-    if gap_result.gaps:
-        for gap in gap_result.gaps:
-            prefix = "error" if gap.severity == "error" else "warning"
+    def _print_gaps(label: str, gaps: list) -> None:
+        if not gaps:
+            return
+        click.secho(f"[pre-flight] {label}:", fg="cyan", bold=True, err=True)
+        for gap in gaps:
+            color = (
+                "red"
+                if gap.severity == "error"
+                else "yellow"
+                if gap.severity == "warning"
+                else "blue"
+            )
             click.echo(
-                click.style(
-                    f"[{prefix}] {gap.field}: {gap.message}",
-                    fg="red" if prefix == "error" else "yellow",
-                ),
+                click.style(f"  [{gap.severity}] {gap.field}: {gap.message}", fg=color),
                 err=True,
             )
+
+    _print_gaps("Description gaps", bundle.description.gaps)
+    _print_gaps("Assumptions gaps", bundle.assumptions.gaps)
+    if bundle.description.gaps or bundle.assumptions.gaps:
         click.echo("", err=True)
 
-    if strict and not gap_result.is_sufficient:
+    if strict and (not bundle.description.is_sufficient or not bundle.assumptions.is_sufficient):
         click.secho(
-            "Description has error-severity gaps. Fix them or remove --strict to continue.",
+            "Pre-flight found error-severity gaps. Fix them or remove --strict to continue.",
             fg="red",
             err=True,
         )
         raise SystemExit(2)
+
+    # Keep gap_result for SARIF export compatibility (description gaps only)
+    gap_result = bundle.description
     # Extract code context if --code flag provided
     code_context = None
     if code_path:
@@ -939,6 +957,7 @@ async def _run_pipeline_inside_provider(
                         source_file=str(input_file),
                         attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
                         test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
+                        gap_summaries=json_writer.gap_summaries or None,
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(output_path, "w", encoding="utf-8") as f:
@@ -965,6 +984,7 @@ async def _run_pipeline_inside_provider(
                         source_file=str(input_file),
                         attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
                         test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
+                        gap_summaries=json_writer.gap_summaries or None,
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_bytes(pdf_bytes)
@@ -1025,6 +1045,7 @@ async def _run_pipeline_inside_provider(
             threats=json_writer.threats,
             attack_trees=attack_trees or None,
             test_suites=test_suites or None,
+            gap_summaries=json_writer.gap_summaries or None,
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")

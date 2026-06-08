@@ -119,6 +119,12 @@ async def test_runner_three_iterations():
     assert complete.data["total_threats"] > 0
     assert complete.data["iterations_completed"] == 3
 
+    # Complete event must include `gaps`: one entry per gap_analysis pass
+    # (iterations 1 and 2 produce a gap; iteration 3 has no gap analysis step).
+    assert "gaps" in complete.data
+    assert isinstance(complete.data["gaps"], list)
+    assert len(complete.data["gaps"]) == 2
+
 
 @pytest.mark.asyncio
 async def test_runner_stops_on_gap_satisfied():

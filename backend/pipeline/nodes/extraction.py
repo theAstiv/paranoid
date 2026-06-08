@@ -112,7 +112,7 @@ async def extract_assets(
         prompt=full_prompt,
         response_model=AssetsList,
         temperature=temperature,
-        max_tokens=2048,
+        max_tokens=8192,
         images=images,
     )
 
@@ -215,7 +215,7 @@ async def extract_flows(
         prompt=full_prompt,
         response_model=FlowsList,
         temperature=temperature,
-        max_tokens=2560,
+        max_tokens=32768,
         images=images,
     )
 

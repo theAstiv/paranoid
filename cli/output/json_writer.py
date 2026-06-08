@@ -63,6 +63,7 @@ class JSONWriter:
         self.asset_count = 0
         self.flow_count = 0
         self.stopped_reason: str | None = None
+        self.gap_summaries: list[str] = []
 
     def add_event(self, event: PipelineEvent) -> None:
         """Add pipeline event to aggregation.
@@ -108,6 +109,9 @@ class JSONWriter:
                     self.iterations_completed = event.data["iterations_completed"]
                 if "stopped_reason" in event.data:
                     self.stopped_reason = event.data["stopped_reason"]
+                gaps = event.data.get("gaps")
+                if isinstance(gaps, list):
+                    self.gap_summaries = [str(g) for g in gaps]
 
     def export_simple(self, output_path: Path) -> None:
         """Export simple JSON format (lightweight, no events or full models).

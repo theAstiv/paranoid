@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.config import settings
 from backend.db import crud
+from backend.db.gap_utils import decode_gap_summaries
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
 from backend.models.api import (
@@ -117,6 +118,8 @@ async def list_models(
         framework=framework,
         status=status,
     )
+    for row in rows:
+        row["gap_summaries"] = decode_gap_summaries(row.get("gap_summaries"))
     return JSONResponse(content=rows)
 
 
@@ -129,6 +132,8 @@ async def get_model(model_id: str) -> JSONResponse:
 
     threats = await crud.list_threats(model_id)
     record["threats"] = threats
+    # gap_summaries is stored as JSON-encoded list; parse for the response.
+    record["gap_summaries"] = decode_gap_summaries(record.get("gap_summaries"))
     return JSONResponse(content=record)
 
 
@@ -255,6 +260,17 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         getattr(threat, "name", "unknown"),
                         exc_info=True,
                     )
+
+        gap_list = event.data.get("gaps")
+        if gap_list:
+            try:
+                await crud.update_threat_model(model_id, gap_summaries=json.dumps(gap_list))
+            except Exception:
+                logger.warning(
+                    "Failed to persist gap_summaries for model %s",
+                    model_id,
+                    exc_info=True,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -624,8 +640,9 @@ async def analyze_model_description(model_id: str) -> AnalyzeDescriptionResponse
     """Analyze the model's description for completeness gaps.
 
     Runs fast deterministic checks plus an LLM pass to identify what is missing
-    before committing to a full pipeline run. Returns a list of gaps with severity
-    and an is_sufficient flag.
+    before committing to a full pipeline run. Returns gaps and is_sufficient for
+    the description only (for CLI / CI callers). For full description + assumptions
+    analysis use POST /api/analyze/ instead.
     """
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -635,6 +652,7 @@ async def analyze_model_description(model_id: str) -> AnalyzeDescriptionResponse
     provider = build_provider_from_record(record)
 
     async with provider:
+        # Delegate to shared pre_flight function — same logic as /api/analyze/
         return await analyze_description_gaps(description=description, provider=provider)
 
 

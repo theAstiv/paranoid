@@ -777,6 +777,7 @@ class PipelineRunner:
                     "duration_seconds": total_duration,
                     "stopped_reason": stopped_reason,
                     "threats": cumulative_threats,
+                    "gaps": gaps,
                 },
             )
 

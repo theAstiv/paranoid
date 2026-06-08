@@ -9,6 +9,7 @@ Single entry point: persist_pipeline_result(). Designed to be non-fatal:
 any DB error is logged as a warning and does not propagate to the caller.
 """
 
+import json
 import logging
 
 from backend.db.crud import (
@@ -20,6 +21,7 @@ from backend.db.crud import (
     create_threat_model,
     create_threat_source,
     create_trust_boundary,
+    update_threat_model,
     update_threat_model_status,
 )
 from backend.models.enums import Framework
@@ -42,6 +44,7 @@ async def persist_pipeline_result(
     threats: ThreatsList | None,
     attack_trees: dict[str, AttackTree] | None = None,
     test_suites: dict[str, TestSuite] | None = None,
+    gap_summaries: list[str] | None = None,
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
@@ -81,6 +84,7 @@ async def persist_pipeline_result(
             threats=threats,
             attack_trees=attack_trees,
             test_suites=test_suites,
+            gap_summaries=gap_summaries,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -101,6 +105,7 @@ async def _persist(
     threats: ThreatsList | None,
     attack_trees: dict[str, AttackTree] | None = None,
     test_suites: dict[str, TestSuite] | None = None,
+    gap_summaries: list[str] | None = None,
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -217,6 +222,9 @@ async def _persist(
                 )
                 saved += 1
         logger.debug(f"Persisted {saved} test cases")
+
+    if gap_summaries:
+        await update_threat_model(model_id, gap_summaries=json.dumps(gap_summaries))
 
     await update_threat_model_status(model_id, "completed")
     return model_id
