@@ -25,10 +25,20 @@ services:
       # one baked into the image (e.g. for a different version or arch).
       # - /path/to/context-link:/app/bin/context-link:ro
 
+    # Pass .env directly to the container.  We deliberately do NOT use
+    # `${ANTHROPIC_API_KEY}`-style interpolation in the `environment:` block
+    # for long secret values: docker compose's .env interpolation silently
+    # drops values containing certain character sequences (we hit this with
+    # 100+ char API keys), leaving the var empty inside the container.
+    # env_file is a literal key=value passthrough — no interpolation, no
+    # length sensitivity, no surprises.
+    env_file:
+      - .env
+
     environment:
       # ── LLM Provider ──────────────────────────────────────────────────────
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # ANTHROPIC_API_KEY, OPENAI_API_KEY, CONFIG_SECRET come from env_file
+      # above (deliberately not interpolated here — see comment).
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-anthropic}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-claude-sonnet-4-20250514}
@@ -53,10 +63,8 @@ services:
       # Concrete origins allowed to make mutating requests. Default covers
       # the loopback publish above. Adjust if you change the host publish.
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      # Optional — stretch into a Fernet key that encrypts API keys / PATs
-      # stored in the config DB. Without it a random file key is generated
-      # at data/.source_key (0600). See CLAUDE.md for the rotation SOP.
-      - CONFIG_SECRET=${CONFIG_SECRET:-}
+      # CONFIG_SECRET comes from env_file (long values are unsafe to
+      # interpolate — see comment near env_file above).
 
       # ── MCP / context-link ────────────────────────────────────────────────
       # Leave empty to use the binary baked into the image (bin/context-link).

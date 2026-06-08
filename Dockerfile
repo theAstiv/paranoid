@@ -48,7 +48,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+RUN VITE_BASE=/app/ npm run build
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 3 — Python backend (final image)
@@ -65,16 +65,17 @@ RUN useradd -m -u 1000 -s /bin/bash app
 
 WORKDIR /app
 
-# ── Python dependencies ───────────────────────────────────────────────────────
-# Copy pyproject.toml first so this layer is cached independently of
-# source-code changes.  Re-runs only when declared dependencies change.
+# ── Application source + install ─────────────────────────────────────────────
+# Source must be copied BEFORE `pip install -e .`. With our
+# [tool.setuptools.packages.find] config, setuptools scans the project
+# directory at install time — if backend/, cli/, and seeds/ aren't present
+# yet, zero packages get registered and `paranoid` (entry point) fails with
+# ModuleNotFoundError at runtime.
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e .
-
-# ── Application source ────────────────────────────────────────────────────────
 COPY backend/ ./backend/
 COPY seeds/   ./seeds/
 COPY cli/     ./cli/
+RUN pip install --no-cache-dir -e .
 
 # ── Built artifacts ───────────────────────────────────────────────────────────
 COPY --from=frontend-builder     /app/frontend/dist ./frontend/dist
