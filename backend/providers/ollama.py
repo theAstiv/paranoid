@@ -24,6 +24,56 @@ T = TypeVar("T", bound=BaseModel)
 _schema_cache: dict[type, dict] = {}
 
 
+def _fill_missing_required(
+    data: object,
+    response_model: type[BaseModel],
+    err: ValidationError,
+) -> dict | None:
+    """Patch a dict with default values for required fields the LLM omitted.
+
+    Returns the patched dict, or None when the input wasn't a dict at the top
+    level (in which case there's nothing we can repair). Defaults are chosen
+    to be safe placeholders that satisfy Pydantic without lying about content:
+    empty list / dict for container types, empty string for scalars.
+
+    The repair is best-effort. If it produces a still-invalid structure the
+    caller raises ProviderError with the original validation error.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    # err.errors() reports each missing field as a tuple of (loc=(...path...), type="missing").
+    patched: dict = json.loads(json.dumps(data))  # deep copy via JSON round-trip
+    schema = response_model.model_json_schema()
+    field_props = schema.get("properties", {})
+
+    for issue in err.errors():
+        if issue.get("type") != "missing":
+            continue
+        loc = issue.get("loc") or ()
+        if not loc:
+            continue
+        field_name = loc[0]
+        prop_schema = field_props.get(field_name, {})
+        # Resolve the JSON-schema type; arrays/objects get empty containers,
+        # everything else gets an empty string. This is intentionally coarse —
+        # the goal is "let the pipeline produce a partial result" rather than
+        # "guess the right value for a missing required field".
+        json_type = prop_schema.get("type")
+        if json_type == "array":
+            patched.setdefault(field_name, [])
+        elif json_type == "object":
+            patched.setdefault(field_name, {})
+        elif json_type in ("integer", "number"):
+            patched.setdefault(field_name, 0)
+        elif json_type == "boolean":
+            patched.setdefault(field_name, False)
+        else:
+            patched.setdefault(field_name, "")
+
+    return patched
+
+
 class OllamaProvider:
     """Ollama provider for local/self-hosted models.
 
@@ -38,14 +88,17 @@ class OllamaProvider:
         self,
         model: str,
         base_url: str | None = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
     ):
         """Initialize Ollama provider.
 
         Args:
-            model: Model identifier (e.g., 'llama3', 'mistral')
+            model: Model identifier (e.g., 'llama3.1:8b', 'mistral-nemo')
             base_url: Ollama server URL (default: http://localhost:11434)
-            timeout: Request timeout in seconds (local models can be slower)
+            timeout: Request timeout in seconds. Default raised from 120s to 300s
+                because dense MAESTRO extraction with num_predict=32768 can take
+                3-5 minutes on a mid-range GPU; the previous ceiling triggered
+                spurious timeouts on legitimate completions.
         """
         self._model = model
         self._base_url = base_url or "http://localhost:11434"
@@ -125,16 +178,43 @@ class OllamaProvider:
             # Clean content (defensive fence stripping)
             content = strip_markdown_fences(content)
 
-            # Parse and validate JSON
+            # Parse and validate JSON. Smaller Ollama-hosted models occasionally
+            # drop required fields even with format=json — try a single repair
+            # pass that fills missing list/dict fields with empty containers and
+            # missing string fields with placeholders before giving up.
             try:
                 data = json.loads(content)
-                return response_model.model_validate(data)
-            except (json.JSONDecodeError, ValidationError) as e:
+            except json.JSONDecodeError as e:
                 raise ProviderError(
                     provider=self.name,
                     message=f"Failed to parse structured output: {e}",
                     original_error=e,
                 )
+
+            try:
+                return response_model.model_validate(data)
+            except ValidationError as initial_err:
+                repaired = _fill_missing_required(data, response_model, initial_err)
+                if repaired is None:
+                    raise ProviderError(
+                        provider=self.name,
+                        message=f"Failed to parse structured output: {initial_err}",
+                        original_error=initial_err,
+                    )
+                try:
+                    result = response_model.model_validate(repaired)
+                    logger.warning(
+                        "Ollama (model: %s) response was missing required fields; "
+                        "auto-filled with defaults to keep the pipeline running.",
+                        self._model,
+                    )
+                    return result
+                except ValidationError as e:
+                    raise ProviderError(
+                        provider=self.name,
+                        message=f"Failed to parse structured output: {e}",
+                        original_error=e,
+                    )
 
         except httpx.TimeoutException as e:
             raise ProviderTimeoutError(
