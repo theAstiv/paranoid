@@ -19,6 +19,7 @@ def export_markdown(
     trust_boundaries: list[dict[str, Any]] | None = None,
     attack_trees: dict[str, dict[str, Any]] | None = None,
     test_suites: dict[str, dict[str, Any]] | None = None,
+    gap_summaries: list[str] | None = None,
 ) -> str:
     """Export threats to Markdown format.
 
@@ -113,6 +114,8 @@ def export_markdown(
         lines.append("")
         lines.append("*No threats recorded.*")
         lines.append("")
+        if gap_summaries:
+            _append_gap_section(lines, gap_summaries)
         return "\n".join(lines)
 
     for i, t in enumerate(threats, 1):
@@ -126,6 +129,11 @@ def export_markdown(
     lines.append("")
     lines.append("---")
     lines.append("")
+
+    # Gap analysis (per iteration) — sits between Summary and Threats so reviewers
+    # see how coverage evolved before reading the threat detail.
+    if gap_summaries:
+        _append_gap_section(lines, gap_summaries)
 
     # Threats by category
     lines.append("## Threats")
@@ -200,6 +208,19 @@ def export_markdown(
             global_idx += 1
 
     return "\n".join(lines)
+
+
+def _append_gap_section(lines: list[str], gap_summaries: list[str]) -> None:
+    """Append the per-iteration gap analysis section to the markdown buffer."""
+    lines.append("## Gap Analysis (Per Iteration)")
+    lines.append("")
+    for i, gap in enumerate(gap_summaries, 1):
+        lines.append(f"### Iteration {i}")
+        lines.append("")
+        lines.append(gap.strip() or "*(empty)*")
+        lines.append("")
+    lines.append("---")
+    lines.append("")
 
 
 def _category_from_row(row: dict[str, Any]) -> str:

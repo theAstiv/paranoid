@@ -215,6 +215,67 @@ def test_pdf_trust_boundaries_section_adds_content() -> None:
     assert len(pdf_with) > len(pdf_without)
 
 
+def test_pdf_includes_gap_analysis() -> None:
+    """Gap summaries produce a non-empty PDF; the section adds bytes vs baseline."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        gap_summaries=["Missing Information Disclosure on database.", "OAuth flow gap."],
+    )
+    assert isinstance(pdf_with, bytes)
+    assert pdf_with[:4] == b"%PDF"
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_gap_analysis_omitted_when_empty() -> None:
+    """Empty / None gap_summaries produces same baseline output."""
+    pdf_baseline = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_none = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", gap_summaries=None)
+    pdf_empty = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", gap_summaries=[])
+    # Sizes will be near-identical (PDF metadata varies by timestamp, so allow small delta)
+    assert abs(len(pdf_none) - len(pdf_baseline)) < 200
+    assert abs(len(pdf_empty) - len(pdf_baseline)) < 200
+
+
+def test_pdf_realistic_size_is_non_trivial() -> None:
+    """A realistic 3-threat PDF with long fields and gaps is well over the 'blank PDF' floor.
+
+    Catches regressions where rendering silently drops content (e.g. paragraph
+    escaping breaks and reportlab outputs only the header).
+    """
+    threats = [
+        {**_STRIDE_FLAT, "name": "SQL Injection via Unparameterized Query on /search endpoint"},
+        {
+            **_STRIDE_FLAT,
+            "name": "CSRF token reuse across privilege escalation",
+            "stride_category": "Spoofing",
+        },
+        {
+            **_STRIDE_FLAT,
+            "name": "Verbose error reveals stack trace",
+            "stride_category": "Information Disclosure",
+        },
+    ]
+    pdf = export_pdf(
+        threats=threats,
+        model_id="realistic-mid",
+        framework="STRIDE",
+        title="Realistic Demo",
+        gap_summaries=[
+            "First iteration covered Tampering. Spoofing on admin paths was not examined.",
+            "Second iteration filled in Spoofing. Elevation of Privilege remains uncovered.",
+        ],
+    )
+    assert pdf[:4] == b"%PDF"
+    # 4 KB is the empirically observed floor for a 3-threat + gap-section PDF.
+    # A blank-page bug typically produces a < 2 KB output.
+    assert len(pdf) > 4_000
+    # And it spans more than one page (Pages /Count 2 in the trailer).
+    assert b"/Count 2" in pdf or b"/Count 3" in pdf
+
+
 # ---------------------------------------------------------------------------
 # Integration test: _export_model_async PDF format
 # ---------------------------------------------------------------------------
