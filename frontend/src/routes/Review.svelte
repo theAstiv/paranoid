@@ -17,6 +17,49 @@
   $: filtered = filter === 'all' ? $threats : $threats.filter(t => t.status === filter)
   $: pendingThreats = $threats.filter(t => t.status === 'pending')
 
+  // Pending threats bucketed by severity for batch actions.
+  // Severity prefers DREAD score (matches DreadBadge colour buckets:
+  // <=3 low, <=6 medium, otherwise high). When DREAD is missing we
+  // fall back to the `likelihood` field so rule-engine threats are
+  // still classifiable.
+  function severityOf(t) {
+    const score = dreadScoreOf(t)
+    if (score != null) {
+      if (score >= 8) return 'critical'
+      if (score > 6) return 'high'
+      if (score >= 4) return 'medium'
+      return 'low'
+    }
+    const l = String(t.likelihood ?? '').toLowerCase()
+    if (l === 'critical') return 'critical'
+    if (l === 'high') return 'high'
+    if (l === 'medium' || l === 'med') return 'medium'
+    if (l === 'low') return 'low'
+    return 'unknown'
+  }
+
+  function dreadScoreOf(t) {
+    if (t.dread_score != null) return Number(t.dread_score)
+    if (t.dread?.damage != null) {
+      const d = t.dread
+      const vals = [d.damage, d.reproducibility, d.exploitability, d.affected_users, d.discoverability].filter(v => v != null)
+      if (!vals.length) return null
+      return vals.reduce((a, b) => a + b, 0) / vals.length
+    }
+    if (t.dread_damage != null) {
+      const vals = [t.dread_damage, t.dread_reproducibility, t.dread_exploitability, t.dread_affected_users, t.dread_discoverability].filter(v => v != null)
+      if (!vals.length) return null
+      return vals.reduce((a, b) => a + b, 0) / vals.length
+    }
+    return null
+  }
+
+  $: criticalHighPending = pendingThreats.filter(t => {
+    const s = severityOf(t)
+    return s === 'critical' || s === 'high'
+  })
+  $: lowPending = pendingThreats.filter(t => severityOf(t) === 'low')
+
   onMount(async () => {
     try {
       const data = await getModelThreats(params.id)
@@ -53,12 +96,43 @@
 
   async function approveAll() {
     const pending = $threats.filter(t => t.status === 'pending')
-    threats.update(ts => ts.map(t => t.status === 'pending' ? { ...t, status: 'approved' } : t))
+    await _bulkApply(pending, 'approved', `Approved ${pending.length} threats`, 'Bulk approve failed')
+  }
+
+  async function rejectAll() {
+    const pending = $threats.filter(t => t.status === 'pending')
+    await _bulkApply(pending, 'rejected', `Rejected ${pending.length} threats`, 'Bulk reject failed')
+  }
+
+  async function approveCriticalHigh() {
+    const subset = criticalHighPending
+    await _bulkApply(subset, 'approved', `Approved ${subset.length} Critical/High threats`, 'Bulk approve failed')
+  }
+
+  async function rejectLow() {
+    const subset = lowPending
+    await _bulkApply(subset, 'rejected', `Rejected ${subset.length} Low-severity threats`, 'Bulk reject failed')
+  }
+
+  async function _bulkApply(subset, nextStatus, successMsg, errMsg) {
+    if (subset.length === 0) return
+    const ids = new Set(subset.map(t => t.id))
+    // Optimistic update — keep originals so we can revert on failure.
+    const originals = $threats.filter(t => ids.has(t.id)).map(t => ({ id: t.id, status: t.status }))
+    threats.update(ts => ts.map(t => ids.has(t.id) ? { ...t, status: nextStatus } : t))
     try {
-      await Promise.all(pending.map(t => updateThreat(t.id, { status: 'approved' })))
-      notify('success', `Approved ${pending.length} threats`)
+      await Promise.all(subset.map(t => updateThreat(t.id, { status: nextStatus })))
+      notify('success', successMsg)
     } catch (err) {
-      notify('error', `Bulk approve failed: ${err.message}`)
+      // Revert the UI to the pre-action state so the display is internally
+      // consistent. Note: some server calls in the Promise.all may already have
+      // succeeded — the server state could be partially updated. The page will
+      // re-sync on the next full load (navigate away and back).
+      threats.update(ts => ts.map(t => {
+        const orig = originals.find(o => o.id === t.id)
+        return orig ? { ...t, status: orig.status } : t
+      }))
+      notify('error', `${errMsg}: ${err.message}. Reload the page to see the latest server state.`)
     }
   }
 </script>
@@ -98,12 +172,38 @@
       {/each}
     </div>
     {#if pendingThreats.length > 0}
-      <button
-        type="button"
-        on:click={approveAll}
-        class="text-sm font-medium text-green-700 hover:text-green-800">
-        Approve all pending ({pendingThreats.length})
-      </button>
+      <div class="flex items-center gap-3 flex-wrap justify-end">
+        {#if criticalHighPending.length > 0}
+          <button
+            type="button"
+            on:click={approveCriticalHigh}
+            class="text-sm font-medium text-green-700 hover:text-green-800"
+            title="Approve all pending threats with DREAD score >6 or High/Critical likelihood">
+            Approve Critical+High ({criticalHighPending.length})
+          </button>
+        {/if}
+        {#if lowPending.length > 0}
+          <button
+            type="button"
+            on:click={rejectLow}
+            class="text-sm font-medium text-amber-700 hover:text-amber-800"
+            title="Reject all pending threats with DREAD score &lt;4 or Low likelihood">
+            Reject Low ({lowPending.length})
+          </button>
+        {/if}
+        <button
+          type="button"
+          on:click={approveAll}
+          class="text-sm font-medium text-green-700 hover:text-green-800">
+          Approve all ({pendingThreats.length})
+        </button>
+        <button
+          type="button"
+          on:click={rejectAll}
+          class="text-sm font-medium text-red-700 hover:text-red-800">
+          Reject all ({pendingThreats.length})
+        </button>
+      </div>
     {/if}
   </div>
 
