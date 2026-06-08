@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from backend.db import crud
+from backend.db.gap_utils import decode_gap_summaries
 from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif
@@ -67,6 +68,7 @@ async def export_model(
 
     title = model.get("title")
     framework = model.get("framework", "STRIDE")
+    gap_summaries = decode_gap_summaries(model.get("gap_summaries"))
     # Strip characters that would break Content-Disposition or filesystem paths.
     raw = title or model_id[:8]
     safe_title = re.sub(r"[^\w\-]", "_", raw).lower().strip("_") or "export"
@@ -100,6 +102,7 @@ async def export_model(
             trust_boundaries=trust_boundaries,
             attack_trees=attack_trees or None,
             test_suites=test_suites or None,
+            gap_summaries=gap_summaries or None,
         )
         return Response(
             content=content,
@@ -120,6 +123,7 @@ async def export_model(
             trust_boundaries=trust_boundaries,
             attack_trees=attack_trees or None,
             test_suites=test_suites or None,
+            gap_summaries=gap_summaries or None,
         )
         return Response(
             content=pdf_bytes,

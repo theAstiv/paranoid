@@ -12,6 +12,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     HRFlowable,
     Paragraph,
@@ -33,6 +34,7 @@ def export_pdf(
     trust_boundaries: list[dict[str, Any]] | None = None,
     attack_trees: dict[str, dict[str, Any]] | None = None,
     test_suites: dict[str, dict[str, Any]] | None = None,
+    gap_summaries: list[str] | None = None,
 ) -> bytes:
     """Export threats to PDF format.
 
@@ -119,6 +121,17 @@ def export_pdf(
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
     story.append(Spacer(1, 12))
 
+    # --- Gap analysis (per iteration) ---
+    if gap_summaries:
+        story.append(Paragraph("Gap Analysis (Per Iteration)", styles["h2"]))
+        story.append(Spacer(1, 6))
+        for i, gap in enumerate(gap_summaries, 1):
+            story.append(Paragraph(f"Iteration {i}", styles["h3"]))
+            story.append(Paragraph(_escape_pdf_text(gap.strip() or "(empty)"), styles["body"]))
+            story.append(Spacer(1, 6))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 12))
+
     # --- Threat details by category ---
     story.append(Paragraph("Threats", styles["h2"]))
     story.append(Spacer(1, 8))
@@ -141,7 +154,19 @@ def export_pdf(
                 global_idx += 1
             story.append(Spacer(1, 6))
 
-    doc.build(story)
+    footer_label = f"Threat Model — {display_title}"
+
+    def _draw_footer(canvas: Canvas, _doc: SimpleDocTemplate) -> None:
+        """Render page number + title strip at the bottom of every page."""
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#6b7280"))
+        page_num = canvas.getPageNumber()
+        canvas.drawString(0.9 * inch, 0.55 * inch, footer_label)
+        canvas.drawRightString(letter[0] - 0.9 * inch, 0.55 * inch, f"Page {page_num}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     return buf.getvalue()
 
 
@@ -162,8 +187,23 @@ _TABLE_STYLE_BASE = [
     ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
     ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
-    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),  # header stays centred
+    ("VALIGN", (0, 1), (-1, -1), "TOP"),  # data rows top-align so wrapped text reads cleanly
 ]
+
+
+_CELL_STYLE = ParagraphStyle(
+    "cell-base",
+    fontName="Helvetica",
+    fontSize=8,
+    leading=10,
+    textColor=colors.HexColor("#374151"),
+)
+
+
+def _cell(text: str | None) -> Paragraph:
+    """Wrap a table cell value in a Paragraph so long strings soft-wrap."""
+    return Paragraph(_escape_pdf_text(text or "—"), _CELL_STYLE)
 
 
 def _build_assets_table(assets: list[dict[str, Any]]) -> Table:
@@ -171,9 +211,9 @@ def _build_assets_table(assets: list[dict[str, Any]]) -> Table:
     for a in assets:
         rows.append(
             [
-                a.get("name") or "—",
-                a.get("type") or "—",
-                a.get("description") or "—",
+                _cell(a.get("name")),
+                _cell(a.get("type")),
+                _cell(a.get("description")),
             ]
         )
     col_widths = [1.5 * inch, 1.2 * inch, 3.6 * inch]
@@ -187,10 +227,10 @@ def _build_flows_table(flows: list[dict[str, Any]]) -> Table:
     for f in flows:
         rows.append(
             [
-                f.get("source_entity") or "—",
-                f.get("target_entity") or "—",
-                f.get("flow_type") or "—",
-                f.get("flow_description") or "—",
+                _cell(f.get("source_entity")),
+                _cell(f.get("target_entity")),
+                _cell(f.get("flow_type")),
+                _cell(f.get("flow_description")),
             ]
         )
     col_widths = [1.4 * inch, 1.4 * inch, 1.0 * inch, 2.5 * inch]
@@ -204,9 +244,9 @@ def _build_trust_boundaries_table(trust_boundaries: list[dict[str, Any]]) -> Tab
     for tb in trust_boundaries:
         rows.append(
             [
-                tb.get("source_entity") or "—",
-                tb.get("target_entity") or "—",
-                tb.get("purpose") or "—",
+                _cell(tb.get("source_entity")),
+                _cell(tb.get("target_entity")),
+                _cell(tb.get("purpose")),
             ]
         )
     col_widths = [1.6 * inch, 1.6 * inch, 3.1 * inch]
@@ -306,45 +346,87 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
     header = ["#", "Threat", "Category", "Target", "Likelihood", "DREAD"]
     rows = [header]
 
+    # cell_style is a tighter body variant used inside Paragraph-wrapped table
+    # cells so long names/targets soft-wrap instead of clipping.
+    cell_style = ParagraphStyle(
+        "cell",
+        parent=styles["body"],
+        fontSize=8,
+        leading=10,
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+
+    # Per-row severity background colour for the DREAD cell. Critical/high
+    # threats jump out at a glance; absent DREAD gets the row-default.
+    dread_bg: list[tuple[int, Any]] = []
+
     for i, t in enumerate(threats, 1):
         dread = _extract_dread_score(t)
         rows.append(
             [
                 str(i),
-                t.get("name") or "—",
+                Paragraph(_escape_pdf_text(t.get("name") or "—"), cell_style),
                 _category_from_row(t),
-                t.get("target") or "—",
+                Paragraph(_escape_pdf_text(t.get("target") or "—"), cell_style),
                 t.get("likelihood") or "—",
                 f"{dread:.1f}" if dread is not None else "—",
             ]
         )
+        bg = _severity_background(dread)
+        if bg is not None:
+            # +1 to skip the header row; table rows are 0-indexed
+            dread_bg.append((i, bg))
 
     col_widths = [0.3 * inch, 2.0 * inch, 1.2 * inch, 1.2 * inch, 0.9 * inch, 0.7 * inch]
 
+    style_commands: list[Any] = [
+        # Header row
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        # Data rows
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("TOPPADDING", (0, 1), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+        # Grid
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        # Bold the DREAD score column so the severity tier reads at a glance
+        ("FONTNAME", (5, 1), (5, -1), "Helvetica-Bold"),
+        ("ALIGN", (5, 1), (5, -1), "CENTER"),
+    ]
+
+    # Apply per-row DREAD severity backgrounds AFTER the zebra-stripe so the
+    # colour wins for the DREAD cell only.
+    for row_idx, bg in dread_bg:
+        style_commands.append(("BACKGROUND", (5, row_idx), (5, row_idx), bg))
+
     table = Table(rows, colWidths=col_widths, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                # Header row
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-                ("TOPPADDING", (0, 0), (-1, 0), 6),
-                # Data rows
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 1), (-1, -1), 8),
-                ("TOPPADDING", (0, 1), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
-                # Grid
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]
-        )
-    )
+    table.setStyle(TableStyle(style_commands))
     return table
+
+
+def _severity_background(score: float | None):
+    """DREAD severity background colour for the score cell.
+
+    Bands match the DreadBadge component on the frontend so the printed PDF
+    matches what reviewers see on screen.
+    """
+    if score is None:
+        return None
+    if score >= 8:
+        return colors.HexColor("#fecaca")  # red-200 — Critical
+    if score > 6:
+        return colors.HexColor("#fed7aa")  # orange-200 — High
+    if score >= 4:
+        return colors.HexColor("#fef08a")  # yellow-200 — Medium
+    return colors.HexColor("#e5e7eb")  # gray-200 — Low
 
 
 def _threat_flowables(
@@ -362,9 +444,13 @@ def _threat_flowables(
     impact = t.get("impact") or "—"
     description = (t.get("description") or "").strip()
 
-    parts.append(Paragraph(f"{idx}. {name}", styles["h4"]))
+    parts.append(Paragraph(f"{idx}. {_escape_pdf_text(name)}", styles["h4"]))
 
-    meta_line = f"<b>Target:</b> {target}&nbsp;&nbsp;|&nbsp;&nbsp;<b>Likelihood:</b> {likelihood}&nbsp;&nbsp;|&nbsp;&nbsp;<b>Impact:</b> {impact}"
+    meta_line = (
+        f"<b>Target:</b> {_escape_pdf_text(target)}&nbsp;&nbsp;|&nbsp;&nbsp;"
+        f"<b>Likelihood:</b> {_escape_pdf_text(likelihood)}&nbsp;&nbsp;|&nbsp;&nbsp;"
+        f"<b>Impact:</b> {_escape_pdf_text(impact)}"
+    )
     dread_line = _dread_display(t)
     if dread_line:
         meta_line += f"&nbsp;&nbsp;|&nbsp;&nbsp;{dread_line}"
@@ -372,7 +458,7 @@ def _threat_flowables(
 
     if description:
         parts.append(Spacer(1, 3))
-        parts.append(Paragraph(description, styles["quote"]))
+        parts.append(Paragraph(_escape_pdf_text(description), styles["quote"]))
 
     mitigations = t.get("mitigations") or []
     if mitigations:
@@ -380,10 +466,11 @@ def _threat_flowables(
         parts.append(Paragraph("<b>Mitigations:</b>", styles["body"]))
         for m in mitigations:
             label, clean = _mitigation_label(m)
+            clean_escaped = _escape_pdf_text(clean)
             if label != "Mitigation":
-                parts.append(Paragraph(f"[{label[0]}] {clean}", styles["mitigation"]))
+                parts.append(Paragraph(f"• [{label[0]}] {clean_escaped}", styles["mitigation"]))
             else:
-                parts.append(Paragraph(clean, styles["mitigation"]))
+                parts.append(Paragraph(f"• {clean_escaped}", styles["mitigation"]))
 
     # Attack tree (Mermaid source shown as preformatted text; PDF has no native Mermaid renderer)
     if attack_tree:
@@ -418,6 +505,11 @@ def _threat_flowables(
 
     parts.append(Spacer(1, 6))
     return parts
+
+
+def _escape_pdf_text(text: str) -> str:
+    """Escape XML entities so reportlab's Paragraph parser doesn't choke on `<`/`&`."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _category_from_row(row: dict[str, Any]) -> str:

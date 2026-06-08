@@ -273,3 +273,49 @@ def test_all_sections_appear_before_summary() -> None:
     assert assets_pos < summary_pos
     assert flows_pos < summary_pos
     assert tb_pos < summary_pos
+
+
+# ---------------------------------------------------------------------------
+# Gap analysis section
+# ---------------------------------------------------------------------------
+
+
+def test_markdown_includes_gap_analysis_section() -> None:
+    """Gap summaries render under '## Gap Analysis (Per Iteration)' with iteration headings."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        gap_summaries=[
+            "Missing coverage for Information Disclosure on the database tier.",
+            "Authentication threats explored, but no spoofing analysis for OAuth flow.",
+        ],
+    )
+    assert "## Gap Analysis (Per Iteration)" in md
+    assert "### Iteration 1" in md
+    assert "### Iteration 2" in md
+    assert "Information Disclosure" in md
+    assert "OAuth flow" in md
+
+
+def test_markdown_omits_gap_analysis_when_empty() -> None:
+    """No gap_summaries → no gap section in output."""
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", gap_summaries=None)
+    assert "Gap Analysis" not in md
+
+    md_empty_list = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", gap_summaries=[])
+    assert "Gap Analysis" not in md_empty_list
+
+
+def test_markdown_gap_section_between_summary_and_threats() -> None:
+    """Gap section sits between Summary table and Threats detail."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        gap_summaries=["Gap one."],
+    )
+    summary_pos = md.index("## Summary")
+    gap_pos = md.index("## Gap Analysis")
+    threats_pos = md.index("## Threats")
+    assert summary_pos < gap_pos < threats_pos
