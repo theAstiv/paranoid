@@ -39,6 +39,7 @@ class MCPCodeExtractor:
         project_root: str,
         binary_path: str | None = None,
         timeout_seconds: int = 120,
+        db_path: str | None = None,
     ):
         """Initialize MCP code extractor.
 
@@ -46,10 +47,15 @@ class MCPCodeExtractor:
             project_root: Absolute path to repository root
             binary_path: Explicit path to context-link binary (optional)
             timeout_seconds: Timeout for MCP operations (default: 120s for initial indexing)
+            db_path: Explicit path for the context-link SQLite index DB.
+                     When None, context-link writes .context-link.db in the
+                     project root (the default).  Pass an explicit path to
+                     avoid SQLite mmap failures on Windows Docker bind mounts.
         """
         self.project_root = Path(project_root).resolve()
         self.binary_path = binary_path
         self.timeout_seconds = timeout_seconds
+        self.db_path = db_path
         self._session: ClientSession | None = None
         self._stdio_context = None
 
@@ -61,9 +67,12 @@ class MCPCodeExtractor:
         # Index the repo first — builds .context-link.db for semantic search
         await self._index_project(str(binary))
 
+        serve_args = ["serve", "--project-root", str(self.project_root)]
+        if self.db_path:
+            serve_args += ["--db-path", self.db_path]
         server_params = StdioServerParameters(
             command=str(binary),
-            args=["serve", "--project-root", str(self.project_root)],
+            args=serve_args,
             env=None,
             cwd=str(self.project_root),
         )
@@ -117,12 +126,17 @@ class MCPCodeExtractor:
         """Run context-link index to build the searchable symbol database."""
         logger.info(f"Indexing {self.project_root} with context-link")
         try:
+            index_args = [
+                binary,
+                "index",
+                "--project-root",
+                str(self.project_root),
+            ]
+            if self.db_path:
+                index_args += ["--db-path", self.db_path]
             proc = await asyncio.wait_for(
                 asyncio.create_subprocess_exec(
-                    binary,
-                    "index",
-                    "--project-root",
-                    str(self.project_root),
+                    *index_args,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self.project_root),

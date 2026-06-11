@@ -58,6 +58,7 @@ FROM python:3.12-slim AS final
 # curl is required for the HEALTHCHECK
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user (uid 1000)
