@@ -95,6 +95,7 @@ async def update_threat_model(
     framework: str | None = None,
     status: str | None = None,
     gap_summaries: str | None = None,
+    code_summary: str | None = None,
 ) -> None:
     """
     Update threat model details. Only provided fields will be updated.
@@ -106,6 +107,7 @@ async def update_threat_model(
         framework: Framework (STRIDE, MAESTRO, etc.)
         status: Status (pending, in_progress, completed, failed)
         gap_summaries: JSON-encoded list of per-iteration gap analysis strings
+        code_summary: JSON-encoded CodeSummary dict from code analysis
     """
     update_fields = []
     params = []
@@ -129,6 +131,10 @@ async def update_threat_model(
     if gap_summaries is not None:
         update_fields.append("gap_summaries = ?")
         params.append(gap_summaries)
+
+    if code_summary is not None:
+        update_fields.append("code_summary = ?")
+        params.append(code_summary)
 
     # Always update timestamp
     update_fields.append("updated_at = ?")

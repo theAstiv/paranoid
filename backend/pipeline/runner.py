@@ -19,7 +19,6 @@ from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSu
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.pipeline import nodes
 from backend.pipeline.nodes.helpers import build_shared_context
-from backend.pipeline.nodes.summary import _deterministic_code_summary
 from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
@@ -236,7 +235,17 @@ class PipelineRunner:
                         data={"summary": summary.summary},
                     )
 
-                    code_summary = _deterministic_code_summary(code_context)
+                    yield PipelineEvent(
+                        step=PipelineStep.SUMMARIZE_CODE,
+                        status="started",
+                        message="Analyzing code structure and security patterns...",
+                    )
+
+                    code_summary = await nodes.summarize_code(
+                        code_context=code_context,
+                        provider=self.provider,
+                        temperature=self.config.temperature,
+                    )
 
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE_CODE,
@@ -778,6 +787,7 @@ class PipelineRunner:
                     "stopped_reason": stopped_reason,
                     "threats": cumulative_threats,
                     "gaps": gaps,
+                    "code_summary": code_summary,
                 },
             )
 
