@@ -41,6 +41,17 @@ from backend.sources.paths import clone_dir_for, index_db_for
 
 logger = logging.getLogger(__name__)
 
+
+def _decode_json_field(value: str | None) -> dict | None:
+    """Parse a JSON-encoded DB column; return None on missing or invalid input."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        return None
+
+
 router = APIRouter(prefix="/models", tags=["models"])
 
 _MAX_DIAGRAM_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -120,6 +131,7 @@ async def list_models(
     )
     for row in rows:
         row["gap_summaries"] = decode_gap_summaries(row.get("gap_summaries"))
+        row["code_summary"] = _decode_json_field(row.get("code_summary"))
     return JSONResponse(content=rows)
 
 
@@ -132,8 +144,8 @@ async def get_model(model_id: str) -> JSONResponse:
 
     threats = await crud.list_threats(model_id)
     record["threats"] = threats
-    # gap_summaries is stored as JSON-encoded list; parse for the response.
     record["gap_summaries"] = decode_gap_summaries(record.get("gap_summaries"))
+    record["code_summary"] = _decode_json_field(record.get("code_summary"))
     return JSONResponse(content=record)
 
 
@@ -268,6 +280,18 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
             except Exception:
                 logger.warning(
                     "Failed to persist gap_summaries for model %s",
+                    model_id,
+                    exc_info=True,
+                )
+
+        cs = event.data.get("code_summary")
+        if cs is not None:
+            try:
+                cs_dict = cs.model_dump(mode="json") if hasattr(cs, "model_dump") else cs
+                await crud.update_threat_model(model_id, code_summary=json.dumps(cs_dict))
+            except Exception:
+                logger.warning(
+                    "Failed to persist code_summary for model %s",
                     model_id,
                     exc_info=True,
                 )

@@ -184,8 +184,18 @@ class AnthropicProvider:
                 try:
                     data = json.loads(response_text)
                     return response_model.model_validate(data)
-                except (json.JSONDecodeError, ValidationError) as e:
+                except json.JSONDecodeError as e:
                     err_str = str(e)
+
+                    # "Extra data" means valid JSON followed by trailing prose.
+                    # Try parsing just the valid prefix before bumping or failing.
+                    if "Extra data" in err_str:
+                        try:
+                            data = json.loads(response_text[: e.pos])
+                            return response_model.model_validate(data)
+                        except (json.JSONDecodeError, ValidationError):
+                            pass
+
                     is_truncation = any(pat in err_str for pat in _TRUNCATION_PATTERNS)
 
                     if is_truncation and attempt < _MAX_RETRIES and budget < _MAX_AUTO_BUMP:
@@ -207,6 +217,12 @@ class AnthropicProvider:
                         )
                         continue
 
+                    raise ProviderError(
+                        provider=self.name,
+                        message=f"Failed to parse structured output: {e}",
+                        original_error=e,
+                    )
+                except ValidationError as e:
                     raise ProviderError(
                         provider=self.name,
                         message=f"Failed to parse structured output: {e}",
