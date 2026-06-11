@@ -22,7 +22,7 @@ def cli() -> None:
     \b
     Examples:
       paranoid run system.md                    # Basic usage
-      paranoid run api-gateway.md --maestro     # Dual framework
+      paranoid run api-gateway.md --stride-maestro  # Dual framework
       paranoid models list                      # List saved threat models
       paranoid models show a1b2c3d4             # Show threats for a model
       paranoid config init                      # Setup wizard

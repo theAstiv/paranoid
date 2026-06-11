@@ -190,3 +190,10 @@ frontend/.vite/
 *.db-shm
 *.db-wal
 build-test-output.txt
+
+# Recordings (VULNCON demo videos — large binaries, keep local)
+recordings/output/
+*.mp4
+*.mkv
+*.flv
+*.avi

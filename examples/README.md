@@ -31,6 +31,78 @@ An AI-powered customer support system with LLM, RAG pipeline, and tool use. Demo
 
 ---
 
+### 3. STRIDE Example: UPI P2P + Bill Payments App
+**File:** [stride-example-upi-payments.md](stride-example-upi-payments.md)
+
+A consumer UPI payments TPAP operating under RBI / NPCI rails. Demonstrates:
+- ✅ India-specific fintech architecture (PSP SDK, VPA, BBPS)
+- ✅ RBI/NPCI regulatory scope (DPDP Act, PCI-DSS)
+- ✅ Detailed trust boundaries (device binding, mTLS, KMS encryption)
+
+**Use Case:** UPI payment apps, fintech TPAPs, bill payment platforms
+
+---
+
+### 4. STRIDE Example: ONDC Quick Commerce Platform
+**File:** [stride-example-ondc-quick-commerce.md](stride-example-ondc-quick-commerce.md)
+
+A seller-side quick commerce platform on the ONDC Beckn network. Demonstrates:
+- ✅ ONDC/Beckn protocol security (message signing, registry lookup)
+- ✅ Hyperlocal delivery and dark-store logistics
+- ✅ Multi-protocol integration (Beckn, REST, WebSocket)
+
+**Use Case:** ONDC buyer/seller apps, quick commerce, Beckn network participants
+
+---
+
+### 5. MAESTRO Example: AI Loan Origination Agent
+**File:** [maestro-example-loan-agent.md](maestro-example-loan-agent.md)
+
+A conversational AI loan agent with LLM tool-use, Aadhaar eKYC, RBI Account Aggregator, and CIBIL integration. Demonstrates:
+- ✅ Combined STRIDE + MAESTRO analysis
+- ✅ Agentic AI threat modeling (prompt injection, tool-argument tampering, reasoning bypass)
+- ✅ RBI Digital Lending Guidelines compliance scope
+
+**Use Case:** AI agents with tool use, LLM-powered financial services, regulated AI systems
+
+---
+
+### 6. STRIDE Example: OWASP Juice Shop (Code-as-Input)
+**File:** [stride-example-juice-shop.md](stride-example-juice-shop.md)
+
+The OWASP Juice Shop intentionally vulnerable e-commerce app. Designed for `--code` flag demos with the [juice-shop/juice-shop](https://github.com/juice-shop/juice-shop) repository.
+- ✅ Code-as-input workflow (`--code` flag)
+- ✅ OWASP Top 10 coverage (SQLi, XSS, IDOR, XXE, broken auth)
+- ✅ Every security audience already knows this app
+
+**Use Case:** Security training demos, code-backed threat modeling, OWASP vulnerability discovery
+
+---
+
+### 7. STRIDE Example: Razorpay Payment Integration (Code-as-Input)
+**File:** [stride-example-razorpay-integration.md](stride-example-razorpay-integration.md)
+
+A merchant payment backend integrating with Razorpay. Designed for `--code` flag demos with the [razorpay/razorpay-python](https://github.com/razorpay/razorpay-python) SDK.
+- ✅ Code-as-input workflow (`--code` flag)
+- ✅ Payment gateway security (HMAC webhook verification, signature validation)
+- ✅ Multi-tenant SaaS payment isolation
+
+**Use Case:** Payment gateway integrations, webhook security, fintech backends
+
+---
+
+### 8. STRIDE Example: Frappe Lending (Code-as-Input)
+**File:** [stride-example-frappe-lending.md](stride-example-frappe-lending.md)
+
+A full-lifecycle loan management system on the Frappe framework. Designed for `--code` flag demos with the [frappe/lending](https://github.com/frappe/lending) repository.
+- ✅ Code-as-input workflow (`--code` flag)
+- ✅ Financial workflow security (loan approval bypass, interest manipulation, NPA suppression)
+- ✅ RBI NBFC regulatory compliance scope
+
+**Use Case:** Loan management systems, ERP lending modules, Frappe/ERPNext apps
+
+---
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -83,10 +155,36 @@ paranoid run examples/maestro-example-rag-chatbot.md \
 **Available diagram files:**
 - [`stride-api-gateway-architecture.mmd`](stride-api-gateway-architecture.mmd) - E-commerce API Gateway architecture
 - [`maestro-rag-chatbot-architecture.mmd`](maestro-rag-chatbot-architecture.mmd) - RAG chatbot AI pipeline
+- [`stride-upi-payments-architecture.mmd`](stride-upi-payments-architecture.mmd) - UPI TPAP architecture
+- [`stride-ondc-quick-commerce-architecture.mmd`](stride-ondc-quick-commerce-architecture.mmd) - ONDC seller platform architecture
+- [`maestro-loan-agent-architecture.mmd`](maestro-loan-agent-architecture.mmd) - AI loan agent pipeline
 
 **Supported formats:**
 - `.mmd` (Mermaid) - Works with all providers (Anthropic, OpenAI, Ollama)
 - `.png`, `.jpg` - Vision API (Anthropic all models, OpenAI gpt-4o/gpt-4o-mini only)
+
+#### Run Examples with Code Context (`--code`)
+
+Point Paranoid at a cloned repository for code-backed threat discovery:
+
+```bash
+# Juice Shop — discover OWASP Top 10 from source
+git clone --depth 1 https://github.com/juice-shop/juice-shop.git /tmp/juice-shop
+paranoid run examples/stride-example-juice-shop.md \
+  --code /tmp/juice-shop --iterations 5
+
+# Razorpay SDK — analyse webhook/signature verification
+git clone --depth 1 https://github.com/razorpay/razorpay-python.git /tmp/razorpay-python
+paranoid run examples/stride-example-razorpay-integration.md \
+  --code /tmp/razorpay-python --iterations 5
+
+# Frappe Lending — inspect loan workflows and permission model
+git clone --depth 1 https://github.com/frappe/lending.git /tmp/frappe-lending
+paranoid run examples/stride-example-frappe-lending.md \
+  --code /tmp/frappe-lending --iterations 5
+```
+
+Or add code sources via the web UI (Settings → Code Sources → Add source) and select them in the wizard.
 
 ---
 

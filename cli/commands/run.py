@@ -259,6 +259,14 @@ async def _extract_code_context(
 )
 @click.option(
     "--maestro",
+    "maestro_compat",
+    is_flag=True,
+    hidden=True,
+    default=False,
+)
+@click.option(
+    "--stride-maestro",
+    "stride_maestro",
     is_flag=True,
     default=False,
     help="Force dual framework execution (STRIDE + MAESTRO in parallel)",
@@ -333,7 +341,8 @@ def run(
     input_file: Path,
     output: Path | None,
     output_format: str,
-    maestro: bool,
+    stride_maestro: bool,
+    maestro_compat: bool,
     iterations: int | None,
     framework: str | None,
     quiet: bool,
@@ -370,7 +379,7 @@ def run(
 
         \b
         # Force dual framework (STRIDE + MAESTRO)
-        paranoid run system.md --maestro
+        paranoid run system.md --stride-maestro
 
         \b
         # Export to SARIF for GitHub Security
@@ -388,6 +397,9 @@ def run(
         # With code context from repository
         paranoid run system.md --code /path/to/repo
     """
+    if maestro_compat:
+        click.echo("Warning: --maestro is deprecated. Use --stride-maestro instead.", err=True)
+        stride_maestro = True
     try:
         # Initialize console renderer with verbosity settings
         # quiet mode suppresses output, verbose shows detailed data
@@ -498,7 +510,7 @@ def run(
             if framework is not None:
                 framework_str += " (overridden)"
             click.echo(f"  Framework: {framework_str}")
-            if maestro:
+            if stride_maestro:
                 click.echo("  Mode: Dual framework (STRIDE + MAESTRO)")
             click.echo(f"  Input: {input_file.name}")
             click.echo()
@@ -534,7 +546,7 @@ def run(
                 description=description,
                 assumptions=assumptions,
                 framework=detected_framework,
-                has_ai_components=maestro,
+                has_ai_components=stride_maestro,
                 settings=settings,
                 strict=strict,
                 enrich=enrich,
