@@ -289,14 +289,26 @@ class MCPCodeExtractor:
             depth: Dependency depth (0 = symbol only, 1 = direct deps, max 3)
 
         Returns:
-            Dict with keys: symbol, code, dependencies, imports
+            Normalized dict with keys: code (str), language (str|None), dependencies (list)
         """
         try:
             result = await self._call_tool(
                 "get_code_by_symbol",
                 {"symbol_name": symbol_name, "depth": depth},
             )
-            return result if isinstance(result, dict) else None
+            if not isinstance(result, dict):
+                return None
+            # Unwrap context-link envelope: {results: [{data: {symbol: {...}, dependencies: [...]}}]}
+            results = result.get("results", [])
+            if not results:
+                return None
+            data = results[0].get("data", {})
+            symbol = data.get("symbol", {})
+            return {
+                "code": symbol.get("code_block", ""),
+                "language": symbol.get("language"),
+                "dependencies": data.get("dependencies", []),
+            }
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"get_code_by_symbol({symbol_name}) failed: {e}")
             return None
@@ -308,14 +320,20 @@ class MCPCodeExtractor:
             file_path: Relative file path from repository root
 
         Returns:
-            Dict with keys: file_path, symbols (list of signature dicts)
+            Dict with keys: file_path, language, symbols (list of signature dicts)
         """
         try:
             result = await self._call_tool(
                 "get_file_skeleton",
                 {"file_path": file_path},
             )
-            return result if isinstance(result, dict) else None
+            if not isinstance(result, dict):
+                return None
+            # Unwrap context-link envelope: {results: [{data: {file_path, language, symbols}}]}
+            results = result.get("results", [])
+            if not results:
+                return None
+            return results[0].get("data")
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"get_file_skeleton({file_path}) failed: {e}")
             return None
@@ -339,8 +357,26 @@ class MCPCodeExtractor:
         total_bytes = 0
         seen_paths: set[str] = set()
 
-        # Tier 1: Semantic search
-        symbols = await self.search_symbols(description, top_k=15)
+        # Tier 1: Semantic search — user description + fixed security-focused terms.
+        # Short or generic descriptions (e.g. "Juice Shop") match almost nothing on
+        # their own; the supplemental queries ensure broad coverage across auth,
+        # routing, storage and config regardless of description verbosity.
+        supplemental_queries = [
+            "authentication authorization login session",
+            "HTTP route handler endpoint API",
+            "database query storage model",
+            "input validation sanitization user data",
+            "configuration secret key environment",
+        ]
+        seen_sym_keys: set[tuple[str, str]] = set()
+        symbols: list[dict[str, Any]] = []
+        for query in [description, *supplemental_queries]:
+            for sym in await self.search_symbols(query, top_k=10):
+                key = (sym.get("symbol_name", ""), sym.get("file_path", ""))
+                if key not in seen_sym_keys:
+                    seen_sym_keys.add(key)
+                    symbols.append(sym)
+
         if not symbols:
             logger.warning("Semantic search returned no symbols")
             return CodeContext(
@@ -368,9 +404,13 @@ class MCPCodeExtractor:
             if not code_data:
                 continue
 
-            # Extract code content
+            # Extract code content; prefer language from symbol metadata over search result
             code_text = code_data.get("code", "")
-            language = symbol_meta.get("language")
+            language = code_data.get("language") or symbol_meta.get("language")
+
+            # Skip empty bodies — tier 3 will fetch the file skeleton instead
+            if not code_text:
+                continue
 
             # Check budget
             content_bytes = len(code_text.encode("utf-8"))
@@ -402,7 +442,7 @@ class MCPCodeExtractor:
                 if not skeleton:
                     continue
 
-                # Serialize skeleton to text
+                # Serialize skeleton to text; language comes from skeleton metadata
                 skeleton_text = json.dumps(skeleton, indent=2)
                 content_bytes = len(skeleton_text.encode("utf-8"))
 
@@ -413,7 +453,7 @@ class MCPCodeExtractor:
                     CodeFile(
                         path=file_path,
                         content=skeleton_text,
-                        language=symbol_meta.get("language"),
+                        language=skeleton.get("language") or symbol_meta.get("language"),
                     )
                 )
                 seen_paths.add(file_path)

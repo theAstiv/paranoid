@@ -7,7 +7,7 @@ to trigger ProviderError on specific response models (per RULES.md).
 import pytest
 
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeSummary, TestSuite
+from backend.models.extended import AttackTree, CodeContext, CodeFile, CodeSummary, TestSuite
 from backend.models.state import (
     AssetsList,
     FlowsList,
@@ -530,6 +530,29 @@ def test_deterministic_code_summary_extraction():
     assert len(result.security_observations) > 0
     # Should have a summary
     assert len(result.raw_summary) >= 100
+
+
+def test_deterministic_code_summary_with_json_skeleton():
+    """Skeleton files from context-link tier 3 should be parsed for patterns."""
+    import json as _json
+
+    skeleton_content = _json.dumps(
+        {
+            "symbols": [
+                {"signature": "from fastapi import APIRouter", "kind": "import"},
+                {"signature": "@router.post('/api/users')", "kind": "function"},
+            ]
+        }
+    )
+    code_context = CodeContext(
+        repository="/repo/test-app",
+        files=[
+            CodeFile(path="routes/users.py", language="python", content=skeleton_content),
+        ],
+    )
+    result = _deterministic_code_summary(code_context)
+    assert "FastAPI" in result.tech_stack
+    assert any("/api/users" in ep for ep in result.entry_points)
 
 
 # ---------------------------------------------------------------------------
