@@ -4,6 +4,7 @@ Produces a structured PDF suitable for sharing, archiving, and security review s
 Uses reportlab platypus for layout — no external binaries required.
 """
 
+import re
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
@@ -127,7 +128,7 @@ def export_pdf(
         story.append(Spacer(1, 6))
         for i, gap in enumerate(gap_summaries, 1):
             story.append(Paragraph(f"Iteration {i}", styles["h3"]))
-            story.append(Paragraph(_escape_pdf_text(gap.strip() or "(empty)"), styles["body"]))
+            story.extend(_gap_analysis_flowables(gap.strip() or "(empty)", styles))
             story.append(Spacer(1, 6))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
         story.append(Spacer(1, 12))
@@ -329,6 +330,26 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         leftIndent=16,
         spaceAfter=1,
     )
+    code = ParagraphStyle(
+        "code",
+        parent=base["Normal"],
+        fontName="Courier",
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor("#1f2937"),
+        leftIndent=16,
+        spaceAfter=0,
+        backColor=colors.HexColor("#f3f4f6"),
+    )
+    gap_body = ParagraphStyle(
+        "gap_body",
+        parent=base["Normal"],
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#374151"),
+        leftIndent=8,
+        spaceAfter=2,
+    )
 
     return {
         "h1": h1,
@@ -339,6 +360,8 @@ def _build_styles() -> dict[str, ParagraphStyle]:
         "meta": meta,
         "quote": quote,
         "mitigation": mitigation,
+        "code": code,
+        "gap_body": gap_body,
     }
 
 
@@ -367,18 +390,17 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
             [
                 str(i),
                 Paragraph(_escape_pdf_text(t.get("name") or "—"), cell_style),
-                _category_from_row(t),
+                Paragraph(_escape_pdf_text(_category_from_row(t)), cell_style),
                 Paragraph(_escape_pdf_text(t.get("target") or "—"), cell_style),
-                t.get("likelihood") or "—",
+                Paragraph(_escape_pdf_text(t.get("likelihood") or "—"), cell_style),
                 f"{dread:.1f}" if dread is not None else "—",
             ]
         )
         bg = _severity_background(dread)
         if bg is not None:
-            # +1 to skip the header row; table rows are 0-indexed
             dread_bg.append((i, bg))
 
-    col_widths = [0.3 * inch, 2.0 * inch, 1.2 * inch, 1.2 * inch, 0.9 * inch, 0.7 * inch]
+    col_widths = [0.3 * inch, 1.8 * inch, 1.1 * inch, 1.6 * inch, 1.1 * inch, 0.5 * inch]
 
     style_commands: list[Any] = [
         # Header row
@@ -478,13 +500,12 @@ def _threat_flowables(
         if mermaid_src:
             parts.append(Spacer(1, 4))
             parts.append(Paragraph("<b>Attack Tree (Mermaid):</b>", styles["body"]))
-            # Render each line as a small monospaced paragraph
             for line in mermaid_src.splitlines():
                 parts.append(
                     Paragraph(
                         line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                         or "&nbsp;",
-                        styles["mitigation"],
+                        styles["code"],
                     )
                 )
 
@@ -499,12 +520,51 @@ def _threat_flowables(
                     Paragraph(
                         line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                         or "&nbsp;",
-                        styles["mitigation"],
+                        styles["code"],
                     )
                 )
 
     parts.append(Spacer(1, 6))
     return parts
+
+
+def _gap_analysis_flowables(text: str, styles: dict[str, ParagraphStyle]) -> list[Any]:
+    """Parse gap analysis text into structured flowables.
+
+    The LLM emits gap analysis as markdown with **bold** markers and
+    inline gap sections separated by **Gap N**: patterns. This function
+    splits the text into a summary paragraph followed by individual gap
+    blocks with proper formatting.
+    """
+    parts: list[Any] = []
+
+    gap_pattern = re.compile(r"\*\*Gap\s+(\d+)\*\*\s*:")
+    sections = gap_pattern.split(text)
+
+    summary = sections[0].strip()
+    if summary:
+        parts.append(Paragraph(_markdown_bold_to_html(summary), styles["gap_body"]))
+        parts.append(Spacer(1, 4))
+
+    # sections after split: [summary, gap_num_1, gap_text_1, gap_num_2, gap_text_2, ...]
+    for i in range(1, len(sections) - 1, 2):
+        gap_num = sections[i]
+        gap_text = sections[i + 1].strip() if i + 1 < len(sections) else ""
+
+        parts.append(
+            Paragraph(
+                f"<b>Gap {gap_num}:</b> {_markdown_bold_to_html(gap_text)}", styles["gap_body"]
+            )
+        )
+        parts.append(Spacer(1, 3))
+
+    return parts
+
+
+def _markdown_bold_to_html(text: str) -> str:
+    """Convert **bold** markdown to <b>bold</b> and escape XML entities."""
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
 
 
 def _escape_pdf_text(text: str) -> str:
