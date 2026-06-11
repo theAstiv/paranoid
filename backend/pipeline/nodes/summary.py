@@ -4,6 +4,7 @@ Contains summarize() for generating system summaries from descriptions/diagrams,
 and summarize_code() for condensing code context into security-focused summaries.
 """
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -100,6 +101,27 @@ async def summarize(
     return response
 
 
+def _skeleton_scan_text(content: str) -> str:
+    """Return text suitable for pattern scanning from raw source or a JSON skeleton.
+
+    context-link tier-3 files are JSON objects with a "symbols" list whose
+    entries carry a "signature" field.  Concatenating those signatures gives
+    the same signal density as raw source for import/route detection.
+    """
+    stripped = content.strip()
+    if stripped.startswith("{") and '"symbols"' in stripped:
+        try:
+            data = json.loads(content)
+            sigs = [
+                sym.get("signature", "") for sym in data.get("symbols", []) if sym.get("signature")
+            ]
+            if sigs:
+                return "\n".join(sigs)
+        except (ValueError, AttributeError):
+            pass
+    return content
+
+
 def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
     """Generate code summary from metadata when LLM unavailable.
 
@@ -119,14 +141,16 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
     external_dependencies = []
     security_observations = []
 
-    # Extract languages from file extensions
-    extensions = set()
+    # Extract languages from file extensions and context-link language metadata
+    extensions: set[str] = set()
+    language_hints: set[str] = set()
     for file in code_context.files:
         ext = Path(file.path).suffix.lower()
         if ext:
             extensions.add(ext)
+        if file.language:
+            language_hints.add(file.language.lower().strip())
 
-    # Map extensions to languages/frameworks
     ext_map = {
         ".py": "Python",
         ".js": "JavaScript",
@@ -144,9 +168,34 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
         if ext in extensions:
             tech_stack.append(lang)
 
-    # Scan content for framework imports and security patterns
+    # Supplement with language names from context-link metadata (covers cases
+    # where tier 3 skeleton files all share one extension but span multiple langs)
+    lang_hint_map = {
+        "javascript": "JavaScript",
+        "typescript": "TypeScript",
+        "python": "Python",
+        "go": "Go",
+        "java": "Java",
+        "ruby": "Ruby",
+        "php": "PHP",
+        "rust": "Rust",
+        "cpp": "C++",
+        "c++": "C++",
+        "c": "C",
+        "csharp": "C#",
+        "c#": "C#",
+    }
+    for hint, display in lang_hint_map.items():
+        if hint in language_hints and display not in tech_stack:
+            tech_stack.append(display)
+
+    # Scan content for framework imports and security patterns.
+    # Tier 3 files contain JSON skeletons from context-link; extract signature
+    # text so route and import patterns can match against real code tokens.
     for file in code_context.files:
-        content = file.content.lower()
+        raw = file.content
+        scan_text = _skeleton_scan_text(raw)
+        content = scan_text.lower()
 
         # Detect frameworks
         if "from fastapi" in content or "import fastapi" in content:
@@ -155,7 +204,11 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
         if "from flask" in content or "import flask" in content:
             if "Flask" not in tech_stack:
                 tech_stack.append("Flask")
-        if "import express" in content or "require('express')" in content:
+        if (
+            "import express" in content
+            or "require('express')" in content
+            or 'require("express")' in content
+        ):
             if "Express.js" not in tech_stack:
                 tech_stack.append("Express.js")
         if "import torch" in content or "from torch" in content:
@@ -165,11 +218,12 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
             if "TensorFlow" not in tech_stack:
                 tech_stack.append("TensorFlow")
 
-        # Detect HTTP routes
+        # Detect HTTP routes — include both app.* and router.* (Express convention)
         route_patterns = [
             r"@app\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
             r"@router\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
             r"app\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
+            r"router\.(get|post|put|delete|patch)\(['\"]([^'\"]+)",
         ]
         for pattern in route_patterns:
             for match in re.finditer(pattern, content):
@@ -245,10 +299,6 @@ def _deterministic_code_summary(code_context: CodeContext) -> CodeSummary:
     )
 
 
-# NOTE: The pipeline runner calls _deterministic_code_summary() directly instead of
-# summarize_code() to save one LLM API call per run. This function is intentionally
-# kept as an upgrade path for when LLM-quality code summarization is needed (e.g.,
-# when code context is too ambiguous for pattern-matching heuristics alone).
 async def summarize_code(
     code_context: CodeContext,
     provider: LLMProvider,
