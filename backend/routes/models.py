@@ -36,7 +36,7 @@ from backend.routes._helpers import (
     build_provider_from_record,
     resolve_provider,
 )
-from backend.sources.paths import clone_dir_for
+from backend.sources.paths import clone_dir_for, index_db_for
 
 
 logger = logging.getLogger(__name__)
@@ -352,7 +352,10 @@ async def run_pipeline(
                 message=f"Extracting code context from '{source_row['name']}'...",
             ).to_sse_format()
             try:
-                async with MCPCodeExtractor(str(clone_dir_for(code_source_id))) as extractor:
+                async with MCPCodeExtractor(
+                    str(clone_dir_for(code_source_id)),
+                    db_path=str(index_db_for(code_source_id)),
+                ) as extractor:
                     code_context = await extractor.extract_context(record["description"])
                 yield PipelineEvent(
                     step=PipelineStep.SUMMARIZE_CODE,

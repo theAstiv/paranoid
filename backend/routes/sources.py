@@ -20,7 +20,7 @@ from backend.security.source_key import (
 )
 from backend.sources import manager as mgr
 from backend.sources.manager import SourceEvent
-from backend.sources.paths import clone_dir_for
+from backend.sources.paths import clone_dir_for, index_db_for
 
 
 logger = logging.getLogger(__name__)
@@ -143,10 +143,13 @@ async def delete_source(source_id: str) -> None:
                 detail="Source is busy; retry in a few seconds.",
             )
 
-    # Remove the clone directory (best-effort).
+    # Remove the clone directory and index DB (best-effort).
     clone_dir = clone_dir_for(source_id)
     if clone_dir.exists():
         shutil.rmtree(clone_dir, ignore_errors=True)
+    idx_db = index_db_for(source_id)
+    if idx_db.exists():
+        idx_db.unlink(missing_ok=True)
 
     await crud.delete_code_source(source_id)
     # Purge all per-source module state so create→delete cycles don't accumulate

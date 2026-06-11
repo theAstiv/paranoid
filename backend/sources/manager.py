@@ -48,7 +48,7 @@ from backend.security.source_key import (
     PATDecryptionError,
     SourceKeyUnavailableError,
 )
-from backend.sources.paths import clone_dir_for
+from backend.sources.paths import clone_dir_for, index_db_for
 
 
 logger = logging.getLogger(__name__)
@@ -564,8 +564,9 @@ async def _do_clone_and_index(  # noqa: PLR0911
         )
         return
 
-    # Always remove stale .context-link.db before indexing.
-    cl_db = clone_dir / ".context-link.db"
+    # Index DB is stored on the container's native filesystem (not the
+    # bind-mounted volume) to avoid SQLite mmap failures on Windows Docker.
+    cl_db = index_db_for(source_id)
     if cl_db.exists():
         cl_db.unlink()
 
@@ -598,7 +599,8 @@ async def _do_clone_and_index(  # noqa: PLR0911
 
     try:
         idx_rc, _, idx_err = await _run_subprocess(
-            [cl_binary, "index", str(clone_dir)], cancel_event
+            [cl_binary, "index", str(clone_dir), "--db-path", str(cl_db)],
+            cancel_event,
         )
     finally:
         heartbeat_stop.set()
