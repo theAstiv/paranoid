@@ -51,6 +51,8 @@
   $: cumulativeThreats = getCumulativeThreats(events)
   $: currentIteration = getCurrentIteration(events)
 
+  let codeDetailOpen = false
+
   /**
    * Compute progress percentage from SSE events.
    *
@@ -174,17 +176,73 @@
       </div>
     {:else}
       {#each events as evt (evt.timestamp + evt.step + evt.status)}
-        <div class="flex items-start gap-3 px-4 py-2 text-sm hover:bg-slate-50">
-          <span class="font-mono flex-shrink-0 mt-0.5 {STATUS_COLOR[evt.status] ?? 'text-slate-400'}">
-            {STATUS_ICON[evt.status] ?? '·'}
-          </span>
-          <div class="flex-1 min-w-0">
-            <span class="font-medium text-slate-700">{STEP_LABELS[evt.step] ?? evt.step}</span>
-            {#if evt.iteration != null}
-              <span class="text-xs text-slate-400 ml-1">iter {evt.iteration}</span>
+        <div class="text-sm">
+          <div class="flex items-start gap-3 px-4 py-2 hover:bg-slate-50">
+            <span class="font-mono flex-shrink-0 mt-0.5 {STATUS_COLOR[evt.status] ?? 'text-slate-400'}">
+              {STATUS_ICON[evt.status] ?? '·'}
+            </span>
+            <div class="flex-1 min-w-0">
+              <span class="font-medium text-slate-700">{STEP_LABELS[evt.step] ?? evt.step}</span>
+              {#if evt.iteration != null}
+                <span class="text-xs text-slate-400 ml-1">iter {evt.iteration}</span>
+              {/if}
+              <p class="text-slate-500 text-xs mt-0.5 leading-snug">{evt.message}</p>
+            </div>
+            {#if evt.step === 'summarize_code' && evt.status === 'completed' && evt.data?.code_summary}
+              <button
+                type="button"
+                on:click={() => codeDetailOpen = !codeDetailOpen}
+                class="flex-shrink-0 text-slate-400 hover:text-slate-600 mt-0.5"
+                aria-label="Toggle code analysis detail"
+              >
+                <svg class="w-4 h-4 transition-transform {codeDetailOpen ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                </svg>
+              </button>
             {/if}
-            <p class="text-slate-500 text-xs mt-0.5 leading-snug">{evt.message}</p>
           </div>
+          {#if codeDetailOpen && evt.step === 'summarize_code' && evt.status === 'completed' && evt.data?.code_summary}
+            {@const cs = evt.data.code_summary}
+            <div class="mx-4 mb-2 px-3 py-2.5 bg-slate-50 rounded-md border border-slate-100 space-y-2 text-xs">
+              {#if cs.tech_stack?.length}
+                <div class="flex flex-wrap gap-1 items-center">
+                  <span class="text-slate-400 mr-1 flex-shrink-0">Stack</span>
+                  {#each cs.tech_stack as t}
+                    <span class="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-mono">{t}</span>
+                  {/each}
+                </div>
+              {/if}
+              {#if cs.entry_points?.length && cs.entry_points[0] !== 'No entry points detected'}
+                <div>
+                  <span class="text-slate-400 block mb-1">Entry Points</span>
+                  <div class="space-y-0.5 max-h-24 overflow-y-auto">
+                    {#each cs.entry_points as ep}
+                      <div class="font-mono text-slate-600">{ep}</div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              {#if cs.auth_patterns?.length && cs.auth_patterns[0] !== 'No auth patterns detected'}
+                <div class="flex flex-wrap gap-1 items-center">
+                  <span class="text-slate-400 mr-1 flex-shrink-0">Auth</span>
+                  {#each cs.auth_patterns as a}
+                    <span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">{a}</span>
+                  {/each}
+                </div>
+              {/if}
+              {#if cs.security_observations?.length && cs.security_observations[0] !== 'No security issues detected in automated scan'}
+                <div>
+                  <span class="text-slate-400 block mb-1">Observations</span>
+                  {#each cs.security_observations as obs}
+                    <div class="flex items-start gap-1">
+                      <span class="{obs.startsWith('CRITICAL') ? 'text-red-500' : 'text-yellow-500'} flex-shrink-0">⚠</span>
+                      <span class="text-slate-600">{obs}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/each}
     {/if}

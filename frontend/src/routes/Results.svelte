@@ -31,6 +31,7 @@
   let pollTimer = null
 
   $: stoppedReason = $pipelineEvents.find(e => e.step === 'complete')?.data?.stopped_reason ?? ''
+  $: codeAnalysis = $pipelineEvents.find(e => e.step === 'summarize_code' && e.status === 'completed')?.data?.code_summary ?? model?.code_summary ?? null
 
   // Detect when SSE stream finishes (pipelineRunning goes true → false) and load
   // supplementary data that onDone in NewModel.svelte cannot access.
@@ -239,6 +240,80 @@
             </a>
           </div>
         {/if}
+      </div>
+    {/if}
+
+    <!-- Code Analysis card (persists after run when code source was used) -->
+    {#if codeAnalysis}
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <h2 class="text-sm font-semibold text-slate-700 mb-3">Code Analysis</h2>
+        <div class="grid sm:grid-cols-2 gap-4">
+
+          <!-- Tech Stack -->
+          <div>
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Tech Stack</p>
+            {#if codeAnalysis.tech_stack?.length && codeAnalysis.tech_stack[0] !== 'Unknown'}
+              <div class="flex flex-wrap gap-1.5">
+                {#each codeAnalysis.tech_stack as tech}
+                  <span class="px-2 py-0.5 text-xs font-mono bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100">{tech}</span>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-slate-400 italic">Not detected</p>
+            {/if}
+          </div>
+
+          <!-- Auth Patterns -->
+          <div>
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Auth Patterns</p>
+            {#if codeAnalysis.auth_patterns?.length && codeAnalysis.auth_patterns[0] !== 'No auth patterns detected'}
+              <div class="flex flex-wrap gap-1.5">
+                {#each codeAnalysis.auth_patterns as a}
+                  <span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-700 rounded-md border border-blue-100">{a}</span>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-slate-400 italic">None detected</p>
+            {/if}
+          </div>
+
+          <!-- Entry Points -->
+          <div>
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Entry Points</p>
+            {#if codeAnalysis.entry_points?.length && codeAnalysis.entry_points[0] !== 'No entry points detected'}
+              <div class="space-y-0.5 max-h-28 overflow-y-auto">
+                {#each codeAnalysis.entry_points as ep}
+                  <div class="flex items-center gap-1.5 text-xs font-mono text-slate-600">
+                    <span class="w-10 flex-shrink-0 text-right font-semibold {ep.startsWith('POST') || ep.startsWith('PUT') || ep.startsWith('DELETE') || ep.startsWith('PATCH') ? 'text-amber-600' : 'text-green-600'}">
+                      {ep.split(' ')[0]}
+                    </span>
+                    <span class="text-slate-700">{ep.split(' ').slice(1).join(' ')}</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-slate-400 italic">None detected</p>
+            {/if}
+          </div>
+
+          <!-- Security Observations -->
+          <div>
+            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Security Observations</p>
+            {#if codeAnalysis.security_observations?.length && codeAnalysis.security_observations[0] !== 'No security issues detected in automated scan'}
+              <div class="space-y-1">
+                {#each codeAnalysis.security_observations as obs}
+                  <div class="flex items-start gap-1.5 text-xs">
+                    <span class="flex-shrink-0 mt-0.5 {obs.startsWith('CRITICAL') ? 'text-red-500' : 'text-amber-500'}">⚠</span>
+                    <span class="text-slate-700">{obs}</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-xs text-slate-400 italic">No issues flagged</p>
+            {/if}
+          </div>
+
+        </div>
       </div>
     {/if}
 
