@@ -1,5 +1,6 @@
 """OpenAI LLM provider implementation."""
 
+import logging
 from typing import TypeVar
 
 from openai import APIError, AuthenticationError, LengthFinishReasonError, OpenAI, RateLimitError
@@ -14,7 +15,16 @@ from backend.providers.base import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
+
+# Auto-bump constants — mirror the Anthropic provider.
+# OpenAI's hard ceilings differ by model (gpt-4o: 16 384, gpt-4.1: 32 768),
+# but our retry logic just doubles the *requested* budget; the model will still
+# cap at its own maximum.
+_MAX_AUTO_BUMP = 32768
+_MAX_RETRIES = 2
 
 
 class OpenAIProvider:
@@ -76,6 +86,11 @@ class OpenAIProvider:
 
         Supports vision API for PNG/JPG images via image_url content blocks.
 
+        **Auto-bump:** When the model hits its output token ceiling
+        (``LengthFinishReasonError``), the method automatically retries with
+        2x the token budget, up to ``_MAX_AUTO_BUMP`` and ``_MAX_RETRIES``
+        additional attempts.
+
         Note: OpenAI JSON mode + vision is only supported on gpt-4o and gpt-4o-mini.
         Models like gpt-4-vision-preview do not support JSON mode with images.
 
@@ -101,48 +116,78 @@ class OpenAIProvider:
             full_user_text = f"{shared_context}\n\n{prompt}" if shared_context else prompt
             user_content.append({"type": "text", "text": full_user_text})
 
-            # Use Structured Outputs (Aug 2024+) — the SDK converts the Pydantic
-            # model to a strict JSON schema and enforces it server-side.  This
-            # replaces legacy `response_format={"type": "json_object"}`, which
-            # only guaranteed *valid* JSON, not schema conformance — gpt-4o
-            # routinely omitted required fields like impact/likelihood under
-            # the old mode.  Requires gpt-4o-2024-08-06 or later.
-            response = await run_sync_in_executor(
-                self._client.chat.completions.parse,
-                model=self._model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                response_format=response_model,
-                messages=[
-                    {"role": "user", "content": user_content},
-                ],
-            )
+            # ── Auto-bump retry loop ──────────────────────────────────────
+            budget = max_tokens  # may be None (model default)
+            last_length_error: ProviderError | None = None
 
-            parsed = response.choices[0].message.parsed
-            if parsed is None:
-                refusal = response.choices[0].message.refusal
-                raise ProviderError(
-                    provider=self.name,
-                    message=f"Model returned no parsed output (refusal: {refusal})",
-                )
-            return parsed
+            for attempt in range(1 + _MAX_RETRIES):
+                try:
+                    # Use Structured Outputs (Aug 2024+) — the SDK converts
+                    # the Pydantic model to a strict JSON schema and enforces
+                    # it server-side.  Requires gpt-4o-2024-08-06 or later.
+                    response = await run_sync_in_executor(
+                        self._client.chat.completions.parse,
+                        model=self._model,
+                        max_tokens=budget,
+                        temperature=temperature,
+                        response_format=response_model,
+                        messages=[
+                            {"role": "user", "content": user_content},
+                        ],
+                    )
 
-        except LengthFinishReasonError as e:
-            # The model hit its output token ceiling before finishing the JSON.
-            # This maps to a hard ceiling mismatch (e.g. gpt-4o cap 16 384 tokens
-            # on a dense MAESTRO extract_flows call). Surface it as a ProviderError
-            # rather than letting it fall through to the generic APIError handler —
-            # the distinction lets callers recognise this as a max_tokens budget
-            # issue rather than an API problem.
-            raise ProviderError(
+                    parsed = response.choices[0].message.parsed
+                    if parsed is None:
+                        refusal = response.choices[0].message.refusal
+                        raise ProviderError(
+                            provider=self.name,
+                            message=f"Model returned no parsed output (refusal: {refusal})",
+                        )
+                    return parsed
+
+                except LengthFinishReasonError as e:
+                    # Model hit its output token ceiling before completing JSON.
+                    current = budget or 4096
+                    if attempt < _MAX_RETRIES and current < _MAX_AUTO_BUMP:
+                        old = current
+                        budget = min(current * 2, _MAX_AUTO_BUMP)
+                        logger.warning(
+                            "OpenAI output truncated (LengthFinishReasonError) "
+                            "at %d tokens, auto-bumping to %d (attempt %d/%d)",
+                            old,
+                            budget,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        last_length_error = ProviderError(
+                            provider=self.name,
+                            message=(
+                                "Model hit the output token ceiling before completing "
+                                "the response. Auto-bump retries exhausted."
+                            ),
+                            original_error=e,
+                        )
+                        continue
+
+                    raise ProviderError(
+                        provider=self.name,
+                        message=(
+                            "Model hit the output token ceiling before completing the "
+                            "response. Reduce input complexity or use a model with a "
+                            "higher output ceiling (gpt-4.1 supports 32 768 output "
+                            "tokens vs gpt-4o's 16 384)."
+                        ),
+                        original_error=e,
+                    )
+
+            # Exhausted all retries
+            if last_length_error:
+                raise last_length_error
+            raise ProviderError(  # pragma: no cover — defensive
                 provider=self.name,
-                message=(
-                    "Model hit the output token ceiling before completing the response. "
-                    "Reduce input complexity or use a model with a higher output ceiling "
-                    "(gpt-4.1 supports 32 768 output tokens vs gpt-4o's 16 384)."
-                ),
-                original_error=e,
+                message="Auto-bump retries exhausted without producing valid output",
             )
+
         except AuthenticationError as e:
             raise ProviderAuthError(
                 provider=self.name,

@@ -327,7 +327,7 @@ async def gap_analysis(
         prompt=full_prompt,
         response_model=GapAnalysis,
         temperature=temperature,
-        max_tokens=1536,
+        max_tokens=4096,
         images=images,
         shared_context=shared_context,
     )

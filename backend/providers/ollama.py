@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+# Auto-bump constants — Ollama truncation is detected via done_reason="length"
+# or JSON parse errors with truncation patterns.
+_MAX_AUTO_BUMP = 32768
+_MAX_RETRIES = 2
+_TRUNCATION_PATTERNS = ("Extra data", "Unterminated string", "Expecting ',' delimiter")
+
 # Module-level cache for model_json_schema() results — deterministic per class.
 _schema_cache: dict[type, dict] = {}
 
@@ -126,6 +132,11 @@ class OllamaProvider:
     ) -> T:
         """Generate structured output conforming to a Pydantic model.
 
+        **Auto-bump:** When Ollama truncates output (``done_reason`` is
+        ``"length"``), or the JSON fails to parse with a truncation pattern,
+        the method retries with 2x the ``num_predict`` budget up to
+        ``_MAX_AUTO_BUMP`` / ``_MAX_RETRIES``.
+
         Note: Ollama does not support vision for most models. Images are ignored
         with a warning. Consider using Anthropic or OpenAI for vision-based threat modeling.
 
@@ -156,65 +167,113 @@ class OllamaProvider:
                 f"Output ONLY the JSON object, no additional text."
             )
 
-            # Call Ollama API
-            response = await self._client.post(
-                f"{self._base_url}/api/generate",
-                json={
-                    "model": self._model,
-                    "prompt": enhanced_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
+            # ── Auto-bump retry loop ──────────────────────────────────────
+            budget = max_tokens or 4096
+            last_error: ProviderError | None = None
+
+            for attempt in range(1 + _MAX_RETRIES):
+                response = await self._client.post(
+                    f"{self._base_url}/api/generate",
+                    json={
+                        "model": self._model,
+                        "prompt": enhanced_prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": budget,
+                        },
+                        "format": "json",
                     },
-                    "format": "json",  # Request JSON output
-                },
-            )
-
-            response.raise_for_status()
-            result = response.json()
-            content = result.get("response", "")
-
-            # Clean content (defensive fence stripping)
-            content = strip_markdown_fences(content)
-
-            # Parse and validate JSON. Smaller Ollama-hosted models occasionally
-            # drop required fields even with format=json — try a single repair
-            # pass that fills missing list/dict fields with empty containers and
-            # missing string fields with placeholders before giving up.
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as e:
-                raise ProviderError(
-                    provider=self.name,
-                    message=f"Failed to parse structured output: {e}",
-                    original_error=e,
                 )
 
-            try:
-                return response_model.model_validate(data)
-            except ValidationError as initial_err:
-                repaired = _fill_missing_required(data, response_model, initial_err)
-                if repaired is None:
-                    raise ProviderError(
-                        provider=self.name,
-                        message=f"Failed to parse structured output: {initial_err}",
-                        original_error=initial_err,
-                    )
-                try:
-                    result = response_model.model_validate(repaired)
+                response.raise_for_status()
+                api_result = response.json()
+                content = api_result.get("response", "")
+
+                # ── Check for explicit truncation via done_reason ─────────
+                done_reason = api_result.get("done_reason", "")
+                if done_reason == "length" and budget < _MAX_AUTO_BUMP:
+                    old = budget
+                    budget = min(budget * 2, _MAX_AUTO_BUMP)
                     logger.warning(
-                        "Ollama (model: %s) response was missing required fields; "
-                        "auto-filled with defaults to keep the pipeline running.",
-                        self._model,
+                        "Ollama output truncated (done_reason=length) at "
+                        "num_predict=%d, auto-bumping to %d (attempt %d/%d)",
+                        old,
+                        budget,
+                        attempt + 1,
+                        1 + _MAX_RETRIES,
                     )
-                    return result
-                except ValidationError as e:
+                    continue
+
+                # Clean content (defensive fence stripping)
+                content = strip_markdown_fences(content)
+
+                # Parse and validate JSON. Smaller Ollama-hosted models occasionally
+                # drop required fields even with format=json — try a single repair
+                # pass before giving up.
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    err_str = str(e)
+                    is_truncation = any(pat in err_str for pat in _TRUNCATION_PATTERNS)
+
+                    if is_truncation and attempt < _MAX_RETRIES and budget < _MAX_AUTO_BUMP:
+                        old = budget
+                        budget = min(budget * 2, _MAX_AUTO_BUMP)
+                        logger.warning(
+                            "Ollama output likely truncated (%s) at num_predict=%d, "
+                            "auto-bumping to %d (attempt %d/%d)",
+                            err_str[:80],
+                            old,
+                            budget,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        last_error = ProviderError(
+                            provider=self.name,
+                            message=f"Failed to parse structured output: {e}",
+                            original_error=e,
+                        )
+                        continue
+
                     raise ProviderError(
                         provider=self.name,
                         message=f"Failed to parse structured output: {e}",
                         original_error=e,
                     )
+
+                try:
+                    return response_model.model_validate(data)
+                except ValidationError as initial_err:
+                    repaired = _fill_missing_required(data, response_model, initial_err)
+                    if repaired is None:
+                        raise ProviderError(
+                            provider=self.name,
+                            message=f"Failed to parse structured output: {initial_err}",
+                            original_error=initial_err,
+                        )
+                    try:
+                        validated = response_model.model_validate(repaired)
+                        logger.warning(
+                            "Ollama (model: %s) response was missing required fields; "
+                            "auto-filled with defaults to keep the pipeline running.",
+                            self._model,
+                        )
+                        return validated
+                    except ValidationError as e:
+                        raise ProviderError(
+                            provider=self.name,
+                            message=f"Failed to parse structured output: {e}",
+                            original_error=e,
+                        )
+
+            # Exhausted all retries
+            if last_error:
+                raise last_error
+            raise ProviderError(  # pragma: no cover — defensive
+                provider=self.name,
+                message="Auto-bump retries exhausted without producing valid output",
+            )
 
         except httpx.TimeoutException as e:
             raise ProviderTimeoutError(

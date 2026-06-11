@@ -1,6 +1,7 @@
 """Anthropic LLM provider implementation."""
 
 import json
+import logging
 from typing import TypeVar
 
 from anthropic import Anthropic, APIError, AuthenticationError, RateLimitError
@@ -16,7 +17,17 @@ from backend.providers.base import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
+
+# Auto-bump: when the model's output is truncated (stop_reason == "max_tokens"
+# or the JSON fails to parse with a truncation-specific pattern), retry with
+# 2x the token budget.  At most _MAX_RETRIES additional attempts; hard ceiling
+# to avoid runaway costs.
+_MAX_AUTO_BUMP = 16384
+_MAX_RETRIES = 2
+_TRUNCATION_PATTERNS = ("Extra data", "Unterminated string", "Expecting ',' delimiter")
 
 # Module-level cache for model_json_schema() results — these are deterministic
 # per class and can be computed once rather than on every API call.
@@ -79,6 +90,12 @@ class AnthropicProvider:
 
         Supports vision API for PNG/JPG images via content blocks.
 
+        **Auto-bump:** When the model's output is truncated (``stop_reason``
+        is ``max_tokens``, or the JSON fails to parse with a truncation
+        pattern like "Extra data" / "Unterminated string"), the method
+        automatically retries with 2x the token budget, up to
+        ``_MAX_AUTO_BUMP`` and ``_MAX_RETRIES`` additional attempts.
+
         When shared_context is provided it is sent as a separate content block
         marked with cache_control: ephemeral so Anthropic's prompt cache can
         serve it from cache for every call in the same pipeline run (5-min TTL).
@@ -132,30 +149,77 @@ class AnthropicProvider:
 
             content.append({"type": "text", "text": prompt})
 
-            # Call Anthropic API in thread pool (sync SDK)
-            response = await run_sync_in_executor(
-                self._client.messages.create,
-                model=self._model,
-                max_tokens=max_tokens or 4096,
-                temperature=temperature,
-                system=system,
-                messages=[{"role": "user", "content": content}],
-            )
+            # ── Auto-bump retry loop ──────────────────────────────────────
+            budget = max_tokens or 4096
+            last_error: ProviderError | None = None
 
-            # Extract and clean text content
-            response_text = response.content[0].text
-            response_text = strip_markdown_fences(response_text)
-
-            # Parse JSON and validate against Pydantic model
-            try:
-                data = json.loads(response_text)
-                return response_model.model_validate(data)
-            except (json.JSONDecodeError, ValidationError) as e:
-                raise ProviderError(
-                    provider=self.name,
-                    message=f"Failed to parse structured output: {e}",
-                    original_error=e,
+            for attempt in range(1 + _MAX_RETRIES):
+                response = await run_sync_in_executor(
+                    self._client.messages.create,
+                    model=self._model,
+                    max_tokens=budget,
+                    temperature=temperature,
+                    system=system,
+                    messages=[{"role": "user", "content": content}],
                 )
+
+                # ── Check for explicit truncation ─────────────────────────
+                if response.stop_reason == "max_tokens" and budget < _MAX_AUTO_BUMP:
+                    old = budget
+                    budget = min(budget * 2, _MAX_AUTO_BUMP)
+                    logger.warning(
+                        "Output truncated (stop_reason=max_tokens) at %d tokens, "
+                        "auto-bumping to %d (attempt %d/%d)",
+                        old,
+                        budget,
+                        attempt + 1,
+                        1 + _MAX_RETRIES,
+                    )
+                    continue
+
+                # ── Parse JSON ────────────────────────────────────────────
+                response_text = response.content[0].text
+                response_text = strip_markdown_fences(response_text)
+
+                try:
+                    data = json.loads(response_text)
+                    return response_model.model_validate(data)
+                except (json.JSONDecodeError, ValidationError) as e:
+                    err_str = str(e)
+                    is_truncation = any(pat in err_str for pat in _TRUNCATION_PATTERNS)
+
+                    if is_truncation and attempt < _MAX_RETRIES and budget < _MAX_AUTO_BUMP:
+                        old = budget
+                        budget = min(budget * 2, _MAX_AUTO_BUMP)
+                        logger.warning(
+                            "Output likely truncated (%s) at %d tokens, "
+                            "auto-bumping to %d (attempt %d/%d)",
+                            err_str[:80],
+                            old,
+                            budget,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        last_error = ProviderError(
+                            provider=self.name,
+                            message=f"Failed to parse structured output: {e}",
+                            original_error=e,
+                        )
+                        continue
+
+                    raise ProviderError(
+                        provider=self.name,
+                        message=f"Failed to parse structured output: {e}",
+                        original_error=e,
+                    )
+
+            # Exhausted all retries — raise the last error
+            if last_error:
+                raise last_error
+            raise ProviderError(  # pragma: no cover — defensive
+                provider=self.name,
+                message="Auto-bump retries exhausted without producing valid output",
+            )
 
         except AuthenticationError as e:
             raise ProviderAuthError(
