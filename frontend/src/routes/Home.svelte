@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { link, push } from 'svelte-spa-router'
-  import { listModels } from '../lib/api.js'
+  import { link } from 'svelte-spa-router'
+  import { listModels, deleteModel } from '../lib/api.js'
   import { models, notify } from '../lib/stores.js'
 
   let loading = true
@@ -33,6 +33,18 @@
       loading = false
     }
   })
+
+  async function handleDelete(model, event) {
+    event.stopPropagation()
+    if (!confirm(`Delete "${model.title}"?\nThis removes all its threats, assets, flows, and trust boundaries.`)) return
+    try {
+      await deleteModel(model.id)
+      models.update(ms => ms.filter(m => m.id !== model.id))
+      notify('success', 'Threat model deleted.')
+    } catch (err) {
+      notify('error', `Delete failed: ${err.message}`)
+    }
+  }
 </script>
 
 <div>
@@ -63,28 +75,39 @@
   {:else}
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {#each $models as model (model.id)}
-        <a href="/models/{model.id}" use:link
-          class="block bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-sm transition-all group">
-          <div class="flex items-start justify-between mb-3">
-            <h2 class="font-medium text-slate-900 group-hover:text-indigo-700 line-clamp-2 flex-1 pr-2">
-              {model.title}
-            </h2>
-            <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium {frameworkColors[model.framework] ?? 'bg-slate-100 text-slate-600'}">
-              {model.framework}
-            </span>
-          </div>
-          <div class="flex items-center justify-between text-xs text-slate-500">
-            <span class="px-2 py-0.5 rounded-full {statusColors[model.status] ?? 'bg-slate-100 text-slate-600'}">
-              {model.status.replace('_', ' ')}
-            </span>
-            <div class="flex items-center gap-3">
-              {#if model.threat_count != null}
-                <span>{model.threat_count} threats</span>
-              {/if}
-              <span>{formatDate(model.created_at)}</span>
+        <div class="relative group">
+          <a href="/models/{model.id}" use:link
+            class="block bg-white rounded-xl border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-sm transition-all">
+            <div class="flex items-start justify-between mb-3">
+              <h2 class="font-medium text-slate-900 group-hover:text-indigo-700 line-clamp-2 flex-1 pr-2">
+                {model.title}
+              </h2>
+              <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium {frameworkColors[model.framework] ?? 'bg-slate-100 text-slate-600'}">
+                {model.framework}
+              </span>
             </div>
-          </div>
-        </a>
+            <div class="flex items-center justify-between text-xs text-slate-500">
+              <span class="px-2 py-0.5 rounded-full {statusColors[model.status] ?? 'bg-slate-100 text-slate-600'}">
+                {model.status.replace('_', ' ')}
+              </span>
+              <div class="flex items-center gap-3">
+                {#if model.threat_count != null}
+                  <span>{model.threat_count} threats</span>
+                {/if}
+                <span>{formatDate(model.created_at)}</span>
+              </div>
+            </div>
+          </a>
+          <button
+            type="button"
+            on:click={(e) => handleDelete(model, e)}
+            title="Delete threat model"
+            class="absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 transition-all">
+            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+            </svg>
+          </button>
+        </div>
       {/each}
     </div>
   {/if}
