@@ -545,7 +545,7 @@ def test_deterministic_code_summary_with_json_skeleton():
         }
     )
     code_context = CodeContext(
-        repository="/tmp/test-app",
+        repository="/repo/test-app",
         files=[
             CodeFile(path="routes/users.py", language="python", content=skeleton_content),
         ],
