@@ -6,13 +6,11 @@
    *   title        string   e.g. "Description coverage" | "Assumptions coverage"
    *   loading      boolean  show spinner while the LLM analysis is in-flight
    *   gaps         Array<{ field: string, severity: 'error'|'warning'|'info', message: string }>
-   *   isSufficient boolean  when true, show green "all clear" pill
    *   collapsed    boolean  start collapsed (default false)
    */
   export let title = 'Coverage check'
   export let loading = false
   export let gaps = []
-  export let isSufficient = true
   export let collapsed = false
 
   let open = !collapsed

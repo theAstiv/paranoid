@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -70,3 +71,16 @@ def mock_provider_maestro() -> MockProvider:
 def stride_threats():
     """Pre-built STRIDE threats fixture."""
     return make_stride_threats()
+
+
+@pytest.fixture(autouse=True)
+def mock_load_seeds():
+    """Suppress fastembed model download during FastAPI lifespan in all tests.
+
+    TestClient(app) triggers the lifespan which calls load_all_seeds() →
+    embed_text() → get_embedding_model() → HuggingFace download. This hangs
+    indefinitely in CI (no internet access). Patching load_all_seeds to a
+    no-op prevents the download while leaving all other lifespan logic intact.
+    """
+    with patch("backend.main.load_all_seeds", new=AsyncMock(return_value=None)):
+        yield

@@ -37,7 +37,8 @@ RUN if ls /tmp/wheels/paranoid_cli*.whl 1>/dev/null 2>&1; then \
     rm -rf /tmp/wheels/
 
 # Pre-bake the default fastembed model so CI doesn't download it at runtime
-RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))"
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))" \
+    || echo "[warn] fastembed pre-download failed — model will be fetched on first run"
 
 # entrypoint.sh lives alongside action.yml — within the build context
 COPY entrypoint.sh /entrypoint.sh
