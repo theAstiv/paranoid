@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "mermaid": "^10.9.3",
+    "mermaid": "^11.15.0",
     "svelte-spa-router": "^4.0.1"
   },
   "devDependencies": {
