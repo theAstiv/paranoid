@@ -112,10 +112,12 @@
       <!-- Inline edit form -->
       <div class="bg-slate-50 border border-indigo-200 rounded-lg p-3 space-y-2">
         {#each fields as f}
+          {@const editFieldId = `edit-${item.id}-${f.key}`}
           <div>
-            <label class="block text-xs font-medium text-slate-600 mb-0.5">{f.label}</label>
+            <label for={editFieldId} class="block text-xs font-medium text-slate-600 mb-0.5">{f.label}</label>
             {#if f.type === 'select'}
               <select
+                id={editFieldId}
                 bind:value={editDraft[f.key]}
                 class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
               >
@@ -125,12 +127,14 @@
               </select>
             {:else if f.type === 'textarea'}
               <textarea
+                id={editFieldId}
                 bind:value={editDraft[f.key]}
                 rows="2"
                 class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500 resize-none"
               ></textarea>
             {:else}
               <input
+                id={editFieldId}
                 type="text"
                 bind:value={editDraft[f.key]}
                 class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
@@ -203,10 +207,12 @@
     <!-- New item form -->
     <div class="bg-slate-50 border border-indigo-200 rounded-lg p-3 space-y-2 mt-1">
       {#each fields as f}
+        {@const newFieldId = `new-${f.key}`}
         <div>
-          <label class="block text-xs font-medium text-slate-600 mb-0.5">{f.label}</label>
+          <label for={newFieldId} class="block text-xs font-medium text-slate-600 mb-0.5">{f.label}</label>
           {#if f.type === 'select'}
             <select
+              id={newFieldId}
               bind:value={newDraft[f.key]}
               class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
             >
@@ -216,12 +222,14 @@
             </select>
           {:else if f.type === 'textarea'}
             <textarea
+              id={newFieldId}
               bind:value={newDraft[f.key]}
               rows="2"
               class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500 resize-none"
             ></textarea>
           {:else}
             <input
+              id={newFieldId}
               type="text"
               bind:value={newDraft[f.key]}
               class="block w-full rounded border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"

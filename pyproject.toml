@@ -8,7 +8,7 @@ version = "1.5.0"
 description = "Open-source iterative threat modeling powered by LLMs - STRIDE + MAESTRO frameworks with DREAD scoring"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 authors = [
     {name = "Astitva"}
 ]
@@ -34,7 +34,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -188,4 +187,5 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short"

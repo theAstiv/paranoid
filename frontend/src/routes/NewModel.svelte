@@ -38,17 +38,13 @@
   // LLM pre-flight state (debounced; fired from Step 1 description and Step 4 assumptions)
   let llmAnalysisLoading = false
   let llmDescriptionGaps = []
-  let llmDescriptionSufficient = true
   let llmAssumptionsGaps = []
-  let llmAssumptionsSufficient = true
   let _analyzeDebounceTimer = null
   let _analyzeController = null
 
   function _clearLlmResults() {
     llmDescriptionGaps = []
-    llmDescriptionSufficient = true
     llmAssumptionsGaps = []
-    llmAssumptionsSufficient = true
     llmAnalysisLoading = false
   }
 
@@ -86,9 +82,7 @@
         signal,
       })
       llmDescriptionGaps = result.description.gaps
-      llmDescriptionSufficient = result.description.is_sufficient
       llmAssumptionsGaps = result.assumptions.gaps
-      llmAssumptionsSufficient = result.assumptions.is_sufficient
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.warn('Pre-flight analysis failed:', err.message)
@@ -354,7 +348,7 @@
             title="Description coverage (AI)"
             loading={llmAnalysisLoading}
             gaps={llmDescriptionGaps}
-            isSufficient={llmDescriptionSufficient}
+
             collapsed={true}
           />
         {/if}
@@ -470,7 +464,7 @@
             title="Assumptions coverage (AI)"
             loading={llmAnalysisLoading}
             gaps={llmAssumptionsGaps}
-            isSufficient={llmAssumptionsSufficient}
+
           />
         {/if}
       </div>
@@ -578,14 +572,14 @@
               title="Description"
               loading={llmAnalysisLoading}
               gaps={llmDescriptionGaps}
-              isSufficient={llmDescriptionSufficient}
+  
               collapsed={llmDescriptionGaps.length === 0}
             />
             <PreFlightPanel
               title="Assumptions"
               loading={llmAnalysisLoading}
               gaps={llmAssumptionsGaps}
-              isSufficient={llmAssumptionsSufficient}
+  
               collapsed={llmAssumptionsGaps.length === 0}
             />
           </div>
