@@ -28,34 +28,72 @@ Usage in a route:
 import asyncio
 import time
 from collections import OrderedDict
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
-
-# ---------------------------------------------------------------------------
-# Configuration (deliberately not in settings.py — these are security knobs
-# that should only be tuned with an understanding of the bucket semantics).
-# ---------------------------------------------------------------------------
-
-# How many requests each IP is allowed per time window.
-_LIMIT: int = 20
-
-# Window length in seconds.  20 requests / 60 s ≈ 1 req / 3 s burst-smoothed.
-_WINDOW_SECONDS: float = 60.0
 
 # Maximum number of distinct IPs to track before evicting the oldest entries.
 # Prevents unbounded memory growth under a slow-drip scan from many sources.
 _MAX_BUCKETS: int = 2_000
 
 
+@dataclass
+class _RateLimitTier:
+    """Bundle a rate-limit tier's state and config into a single named object.
+
+    Using a struct instead of positional parameters prevents silent wrong-tier
+    substitution: all three fields (buckets, lock, limit, window, unit) carry
+    names, so a caller passing _write_tier where _pipeline_tier is expected
+    produces an obvious semantic mismatch rather than a silent runtime bug.
+
+    Each tier has its own independent bucket dict and lock — exhausting one
+    tier does not affect any other tier for the same IP.
+    """
+
+    limit: int
+    window: float
+    unit: str  # human-readable label used in 429 detail messages
+    buckets: OrderedDict[str, list[float]] = field(default_factory=OrderedDict)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 # ---------------------------------------------------------------------------
-# Bucket store
+# Tier definitions — add a new tier here; _ALL_TIERS and _reset_for_tests()
+# handle it automatically.
 # ---------------------------------------------------------------------------
 
-# OrderedDict gives O(1) LRU eviction: move_to_end on access, popitem(last=False)
-# to evict oldest when over capacity.
-_buckets: OrderedDict[str, list[float]] = OrderedDict()
-_lock = asyncio.Lock()
+# Analyze tier: /api/analyze/ — two LLM calls per request.
+_ANALYZE_TIER = _RateLimitTier(limit=20, window=60.0, unit="requests")
+
+# Write tier: DB-only mutations — model creation, code-source creation, reindex.
+# No LLM cost, so more permissive than enrichment.
+_WRITE_TIER = _RateLimitTier(limit=30, window=60.0, unit="requests")
+
+# Enrichment tier: single-LLM-call endpoints — attack trees, test cases.
+# Separate from write_rate_limit so that 30 model creations do not exhaust
+# the budget for LLM enrichment calls on the same IP.
+_ENRICHMENT_TIER = _RateLimitTier(limit=20, window=60.0, unit="requests")
+
+# Pipeline tier: POST /models/{id}/run — multi-step, multi-minute pipeline runs.
+_PIPELINE_TIER = _RateLimitTier(limit=5, window=60.0, unit="pipeline runs")
+
+# Registry — the only place that must be updated when a new tier is added.
+# _reset_for_tests() iterates this list, so new tiers are automatically cleared.
+_ALL_TIERS: list[_RateLimitTier] = [
+    _ANALYZE_TIER,
+    _WRITE_TIER,
+    _ENRICHMENT_TIER,
+    _PIPELINE_TIER,
+]
+
+# Module-level aliases so tests can backdate timestamps directly.
+# These reference the same OrderedDict object as the tier — mutating them
+# is equivalent to mutating tier.buckets.
+_buckets = _ANALYZE_TIER.buckets
+_write_buckets = _WRITE_TIER.buckets
+_enrichment_buckets = _ENRICHMENT_TIER.buckets
+_pipeline_buckets = _PIPELINE_TIER.buckets
 
 
 def _get_client_ip(request: Request) -> str:
@@ -73,103 +111,98 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
-async def analyze_rate_limit(request: Request) -> None:
-    """FastAPI dependency — raises HTTP 429 when the caller exceeds the limit.
+async def _check_bucket(ip: str, tier: _RateLimitTier) -> None:
+    """Shared sliding-window check — raises HTTP 429 when ip exceeds tier.limit.
 
-    Implements a sliding-window counter: keeps the timestamps of each request
-    from this IP within the current window, rejects when the count is at or
-    above _LIMIT.
+    Args:
+        ip:   Client IP used as the bucket key.
+        tier: The rate-limit tier to check against (buckets, lock, limit, window, unit).
     """
-    ip = _get_client_ip(request)
     now = time.monotonic()
-    cutoff = now - _WINDOW_SECONDS
+    cutoff = now - tier.window
 
-    async with _lock:
+    async with tier.lock:
         # Evict the oldest bucket when at capacity (before inserting a new key).
-        if ip not in _buckets and len(_buckets) >= _MAX_BUCKETS:
-            _buckets.popitem(last=False)
+        if ip not in tier.buckets and len(tier.buckets) >= _MAX_BUCKETS:
+            tier.buckets.popitem(last=False)
 
-        # Retrieve or create the sliding-window list for this IP, then prune
-        # timestamps that have aged out of the window.
-        timestamps = _buckets.get(ip, [])
-        timestamps = [t for t in timestamps if t > cutoff]
+        # Prune timestamps outside the window.
+        timestamps = [t for t in tier.buckets.get(ip, []) if t > cutoff]
 
-        if len(timestamps) >= _LIMIT:
-            # Re-store the pruned list so the bucket stays accurate.
-            _buckets[ip] = timestamps
-            _buckets.move_to_end(ip)
-            retry_after = int(_WINDOW_SECONDS - (now - timestamps[0])) + 1
+        if len(timestamps) >= tier.limit:
+            tier.buckets[ip] = timestamps
+            tier.buckets.move_to_end(ip)
+            retry_after = int(tier.window - (now - timestamps[0])) + 1
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    f"Rate limit exceeded: {_LIMIT} requests per "
-                    f"{int(_WINDOW_SECONDS)} seconds. "
+                    f"Rate limit exceeded: {tier.limit} {tier.unit} per "
+                    f"{int(tier.window)} seconds. "
                     f"Retry after {retry_after} seconds."
                 ),
                 headers={"Retry-After": str(retry_after)},
             )
 
         timestamps.append(now)
-        _buckets[ip] = timestamps
-        _buckets.move_to_end(ip)
+        tier.buckets[ip] = timestamps
+        tier.buckets.move_to_end(ip)
 
 
 # ---------------------------------------------------------------------------
-# Pipeline rate limiter — tighter than analyze because each run triggers
-# multiple LLM calls and may run for several minutes.
+# Public FastAPI dependencies — one per tier.
 # ---------------------------------------------------------------------------
 
-_PIPELINE_LIMIT: int = 5
-_PIPELINE_WINDOW: float = 60.0
-_pipeline_buckets: OrderedDict[str, list[float]] = OrderedDict()
-_pipeline_lock = asyncio.Lock()
+
+async def analyze_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits /api/analyze/ (20 req / 60 s per IP)."""
+    await _check_bucket(_get_client_ip(request), _ANALYZE_TIER)
+
+
+async def write_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits DB-only write endpoints (30 req / 60 s per IP).
+
+    Covers: model creation, code-source creation, reindex.
+    Does NOT cover LLM-backed enrichment endpoints — use enrichment_rate_limit for those.
+    """
+    await _check_bucket(_get_client_ip(request), _WRITE_TIER)
+
+
+async def enrichment_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits single-LLM-call enrichment endpoints (20 req / 60 s per IP).
+
+    Covers: attack-tree generation, test-case generation.
+    Separate from write_rate_limit so that DB-write traffic does not exhaust
+    the LLM enrichment budget for the same IP.
+    """
+    await _check_bucket(_get_client_ip(request), _ENRICHMENT_TIER)
 
 
 async def pipeline_rate_limit(request: Request) -> None:
-    """FastAPI dependency — rate-limits POST /models/{id}/run.
+    """FastAPI dependency — rate-limits POST /models/{id}/run (5 req / 60 s per IP).
 
-    5 requests per 60 seconds per IP. Each pipeline run may spend minutes
-    calling LLM APIs, so a tight limit is appropriate even for legitimate use.
+    Each pipeline run spawns multiple LLM calls and may run for several minutes.
+    This limit covers the full pipeline endpoint only — NOT enrichment endpoints.
     """
-    ip = _get_client_ip(request)
-    now = time.monotonic()
-    cutoff = now - _PIPELINE_WINDOW
-
-    async with _pipeline_lock:
-        if ip not in _pipeline_buckets and len(_pipeline_buckets) >= _MAX_BUCKETS:
-            _pipeline_buckets.popitem(last=False)
-
-        timestamps = _pipeline_buckets.get(ip, [])
-        timestamps = [t for t in timestamps if t > cutoff]
-
-        if len(timestamps) >= _PIPELINE_LIMIT:
-            _pipeline_buckets[ip] = timestamps
-            _pipeline_buckets.move_to_end(ip)
-            retry_after = int(_PIPELINE_WINDOW - (now - timestamps[0])) + 1
-            raise HTTPException(
-                status_code=429,
-                detail=(
-                    f"Rate limit exceeded: {_PIPELINE_LIMIT} pipeline runs per "
-                    f"{int(_PIPELINE_WINDOW)} seconds. "
-                    f"Retry after {retry_after} seconds."
-                ),
-                headers={"Retry-After": str(retry_after)},
-            )
-
-        timestamps.append(now)
-        _pipeline_buckets[ip] = timestamps
-        _pipeline_buckets.move_to_end(ip)
+    await _check_bucket(_get_client_ip(request), _PIPELINE_TIER)
 
 
 # Expose the constants so tests can introspect them without re-importing the
 # module multiple times and risking stale references to the bucket dict.
-RATE_LIMIT = _LIMIT
-RATE_WINDOW = _WINDOW_SECONDS
-PIPELINE_RATE_LIMIT = _PIPELINE_LIMIT
-PIPELINE_RATE_WINDOW = _PIPELINE_WINDOW
+RATE_LIMIT = _ANALYZE_TIER.limit
+RATE_WINDOW = _ANALYZE_TIER.window
+WRITE_RATE_LIMIT = _WRITE_TIER.limit
+WRITE_RATE_WINDOW = _WRITE_TIER.window
+ENRICHMENT_RATE_LIMIT = _ENRICHMENT_TIER.limit
+ENRICHMENT_RATE_WINDOW = _ENRICHMENT_TIER.window
+PIPELINE_RATE_LIMIT = _PIPELINE_TIER.limit
+PIPELINE_RATE_WINDOW = _PIPELINE_TIER.window
 
 
 def _reset_for_tests() -> None:
-    """Clear all buckets — call from test setUp / fixture teardown only."""
-    _buckets.clear()
-    _pipeline_buckets.clear()
+    """Clear all tier buckets — call from test setUp / fixture teardown only.
+
+    Iterates _ALL_TIERS so adding a new tier is the only change needed to
+    keep test isolation correct — no manual .clear() line required here.
+    """
+    for tier in _ALL_TIERS:
+        tier.buckets.clear()

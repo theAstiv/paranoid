@@ -15,12 +15,18 @@ import pytest
 
 import backend.security.rate_limit as rl
 from backend.security.rate_limit import (
+    ENRICHMENT_RATE_LIMIT,
+    ENRICHMENT_RATE_WINDOW,
     PIPELINE_RATE_LIMIT,
     PIPELINE_RATE_WINDOW,
     RATE_LIMIT,
     RATE_WINDOW,
+    WRITE_RATE_LIMIT,
+    WRITE_RATE_WINDOW,
     analyze_rate_limit,
+    enrichment_rate_limit,
     pipeline_rate_limit,
+    write_rate_limit,
 )
 
 
@@ -229,3 +235,153 @@ async def test_pipeline_bucket_refills_after_window(monkeypatch):
 
     for _ in range(PIPELINE_RATE_LIMIT):
         await pipeline_rate_limit(req)
+
+
+# ---------------------------------------------------------------------------
+# Write rate limiter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_requests_under_limit_pass():
+    """WRITE_RATE_LIMIT - 1 requests from the same IP all succeed."""
+    req = _mock_request("10.20.0.1")
+    for _ in range(WRITE_RATE_LIMIT - 1):
+        await write_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_write_request_at_limit_passes():
+    """Exactly WRITE_RATE_LIMIT requests succeed."""
+    req = _mock_request("10.20.0.2")
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_write_request_over_limit_raises_429():
+    """The (WRITE_RATE_LIMIT + 1)th request raises HTTP 429."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.20.0.3")
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await write_rate_limit(req)
+
+    assert exc_info.value.status_code == 429
+    assert "Rate limit exceeded" in exc_info.value.detail
+    assert "Retry-After" in exc_info.value.headers
+
+
+@pytest.mark.asyncio
+async def test_write_bucket_independent_from_analyze_and_pipeline():
+    """Exhausting the write bucket does not affect analyze or pipeline buckets."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.20.0.4")
+
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+    with pytest.raises(HTTPException):
+        await write_rate_limit(req)
+
+    # analyze and pipeline buckets should be fresh for the same IP
+    for _ in range(RATE_LIMIT):
+        await analyze_rate_limit(req)
+    for _ in range(PIPELINE_RATE_LIMIT):
+        await pipeline_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_write_bucket_refills_after_window():
+    """After the window expires, the same IP can make new write requests."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.20.0.5")
+
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+    with pytest.raises(HTTPException):
+        await write_rate_limit(req)
+
+    old_time = time.monotonic() - WRITE_RATE_WINDOW - 1.0
+    rl._write_buckets["10.20.0.5"] = [old_time] * WRITE_RATE_LIMIT
+
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+
+
+# ---------------------------------------------------------------------------
+# Enrichment rate limiter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enrichment_requests_under_limit_pass():
+    """ENRICHMENT_RATE_LIMIT - 1 requests from the same IP all succeed."""
+    req = _mock_request("10.30.0.1")
+    for _ in range(ENRICHMENT_RATE_LIMIT - 1):
+        await enrichment_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_enrichment_request_at_limit_passes():
+    """Exactly ENRICHMENT_RATE_LIMIT requests succeed."""
+    req = _mock_request("10.30.0.2")
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        await enrichment_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_enrichment_request_over_limit_raises_429():
+    """The (ENRICHMENT_RATE_LIMIT + 1)th request raises HTTP 429."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.30.0.3")
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        await enrichment_rate_limit(req)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enrichment_rate_limit(req)
+
+    assert exc_info.value.status_code == 429
+    assert "Rate limit exceeded" in exc_info.value.detail
+    assert "Retry-After" in exc_info.value.headers
+
+
+@pytest.mark.asyncio
+async def test_enrichment_bucket_independent_from_write():
+    """Exhausting the write bucket does not affect the enrichment bucket."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.30.0.4")
+
+    for _ in range(WRITE_RATE_LIMIT):
+        await write_rate_limit(req)
+    with pytest.raises(HTTPException):
+        await write_rate_limit(req)
+
+    # enrichment bucket should be fresh despite same IP
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        await enrichment_rate_limit(req)
+
+
+@pytest.mark.asyncio
+async def test_enrichment_bucket_refills_after_window():
+    """After the window expires, the same IP can make new enrichment requests."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.30.0.5")
+
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        await enrichment_rate_limit(req)
+    with pytest.raises(HTTPException):
+        await enrichment_rate_limit(req)
+
+    old_time = time.monotonic() - ENRICHMENT_RATE_WINDOW - 1.0
+    rl._enrichment_buckets["10.30.0.5"] = [old_time] * ENRICHMENT_RATE_LIMIT
+
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        await enrichment_rate_limit(req)
