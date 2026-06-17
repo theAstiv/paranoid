@@ -1,7 +1,9 @@
 """Application configuration using pydantic-settings."""
 
+import sys
 from typing import Literal
 
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,6 +56,18 @@ class Settings(BaseSettings):
     # Pipeline configuration
     max_iteration_count: int = 15
     min_iteration_count: int = 1
+    # gt=0: timeout=0 would make _check_time_limit() fire immediately on the
+    # first call, aborting every pipeline run before any threat is generated.
+    pipeline_timeout_minutes: int = Field(default=30, gt=0)
+    # ge/le bounds match the strictest provider: Anthropic caps at 1.0.
+    # Values above 1.0 cause an Anthropic API 400 that manifests as a silent
+    # rule-engine-only fallback with no indication the config is to blame.
+    default_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
+
+    # Rule engine / RAG
+    # gt=0: rag_top_k=0 → scored[:0]=[] → rule engine always returns empty,
+    # neutering the deterministic safety net with no visible warning.
+    rag_top_k: int = Field(default=10, gt=0)
 
     # Deduplication threshold for rule engine
     similarity_threshold: float = 0.85
@@ -77,8 +91,20 @@ class Settings(BaseSettings):
     additional_git_hosts: str = ""
 
 
-# Global settings instance
-settings = Settings()
+# Global settings instance.
+# Wrap Settings() so that an invalid env var produces a readable startup error
+# instead of a raw Pydantic ValidationError traceback that buries the field
+# path in JSON.  sys.exit(1) is intentional — a misconfigured container should
+# fail fast rather than run in a half-broken state.
+try:
+    settings = Settings()
+except ValidationError as _exc:
+    _lines = ["[paranoid] Invalid configuration — fix the following env vars and restart:"]
+    for _err in _exc.errors():
+        _field = " → ".join(str(loc) for loc in _err["loc"])
+        _lines.append(f"  {_field}: {_err['msg']}")
+    print("\n".join(_lines), file=sys.stderr)
+    sys.exit(1)
 
 # Single source of truth for the application version.
 # Keep in sync with pyproject.toml when bumping releases.

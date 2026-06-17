@@ -13,6 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
+from backend.config import settings
 from backend.dedup import deduplicate_threats
 from backend.models.enums import Framework, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
@@ -415,7 +416,11 @@ class PipelineRunner:
             # (no RAG hits expected either in that case).
             if self.config.enable_rag and not provider_failed:
                 assets_text = " ".join(a.name for a in assets.assets)
-                rag_context = await fetch_rag_context(description, assets_text=assets_text)
+                rag_context = await fetch_rag_context(
+                    description,
+                    assets_text=assets_text,
+                    limit=settings.rag_top_k,
+                )
             else:
                 rag_context = None
 
@@ -742,7 +747,7 @@ class PipelineRunner:
                 message="Running deterministic rule engine...",
             )
 
-            rule_threats = run_rule_engine(description, framework)
+            rule_threats = run_rule_engine(description, framework, max_patterns=settings.rag_top_k)
 
             if rule_threats.threats:
                 pre_merge_count = len(cumulative_threats.threats)
@@ -907,8 +912,8 @@ async def run_pipeline_for_model(
     """
     config = PipelineConfig(
         max_iterations=max(1, min(15, max_iterations)),  # Clamp to 1-15
-        max_execution_time_minutes=30,
-        temperature=0.2,
+        max_execution_time_minutes=settings.pipeline_timeout_minutes,
+        temperature=settings.default_temperature,
         enable_rag=True,
         has_ai_components=has_ai_components,
         similarity_threshold=similarity_threshold,
