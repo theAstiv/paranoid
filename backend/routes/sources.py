@@ -9,11 +9,12 @@ import shutil
 from collections.abc import AsyncGenerator
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.db import crud
 from backend.models.extended import CodeSource, CreateCodeSourceRequest
+from backend.security.rate_limit import write_rate_limit
 from backend.security.source_key import (
     KeySourceChangedError,
     SourceKeyUnavailableError,
@@ -55,7 +56,10 @@ async def list_sources() -> JSONResponse:
 
 
 @router.post("", status_code=202)
-async def create_source(body: CreateCodeSourceRequest) -> JSONResponse:
+async def create_source(
+    body: CreateCodeSourceRequest,
+    _rate: None = Depends(write_rate_limit),
+) -> JSONResponse:
     """Create a code source row and kick off a background clone + index."""
     # Validate URL before touching the DB — cheap fail-fast.
     try:
@@ -100,7 +104,10 @@ async def get_source(source_id: str) -> JSONResponse:
 
 
 @router.post("/{source_id}/reindex", status_code=202)
-async def reindex_source(source_id: str) -> JSONResponse:
+async def reindex_source(
+    source_id: str,
+    _rate: None = Depends(write_rate_limit),
+) -> JSONResponse:
     """Trigger a manual re-clone + re-index for an existing source."""
     row = await crud.get_code_source(source_id)
     if row is None:
