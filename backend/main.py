@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import db
-from backend.db.crud import get_config_value
+from backend.db.crud import delete_config_value, get_config_value
 from backend.db.seed import load_all_seeds
 from backend.routes.analyze import router as analyze_router
 from backend.routes.config import router as config_router
@@ -22,6 +22,7 @@ from backend.routes.models import router as models_router
 from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
 from backend.security.csrf import CSRFMiddleware, parse_allowed_origins
+from backend.security.headers import SecurityHeadersMiddleware
 from backend.security.source_key import PATDecryptionError
 
 
@@ -60,10 +61,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             stored = await get_config_value(key)
         except PATDecryptionError:
             logger.warning(
-                f"Decryption failed for DB config key {key!r} — leaving "
-                "field unset. Re-enter the credential in Settings; the "
-                "stale ciphertext will be overwritten on save."
+                f"Decryption failed for DB config key {key!r} — "
+                "leaving field unset. Re-enter the credential in Settings."
             )
+            try:
+                await delete_config_value(key)
+                logger.info(f"Removed stale ciphertext for {key!r} from config table.")
+            except Exception as del_exc:
+                logger.warning(f"Could not remove stale ciphertext for {key!r}: {del_exc}")
             continue
         if stored:
             setattr(settings, key, stored)
@@ -88,9 +93,12 @@ app = FastAPI(
 )
 
 # Middleware stack. FastAPI/Starlette runs the LAST-added middleware outermost,
-# so we add CSRF first and CORS second — CORS runs on the way out of every
-# response, including a CSRF 403, which keeps cross-origin errors visible as
-# structured JSON (not a blank "CORS error") in the browser console.
+# so we add security headers first, CSRF second, and CORS last — CORS runs on
+# the way out of every response (including CSRF 403s), keeping cross-origin
+# errors visible as structured JSON rather than blank "CORS error" messages.
+
+# Security headers — injected on every response regardless of status code.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CSRF — rejects mutating requests whose Origin/Referer is not in
 # ALLOWED_ORIGINS. Pure ASGI so it doesn't buffer SSE bodies. Validation
