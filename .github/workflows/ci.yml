@@ -83,7 +83,7 @@ jobs:
         run: python -m build
 
       - name: Check package
-        run: twine check dist/*
+        run: twine check dist/paranoid_cli-*.whl dist/paranoid_cli-*.tar.gz
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Frontend

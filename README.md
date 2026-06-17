@@ -6,7 +6,7 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 
 ## Features
 
-- **Zero Infrastructure**: SQLite + sqlite-vec. One command to run: `docker compose up` [Coming Soon]
+- **Zero Infrastructure**: SQLite + sqlite-vec. One command to run: `docker compose up`
 - **Multi-Provider LLM**: Anthropic, OpenAI, or Ollama (fully local/air-gapped)
 - **Dual Framework Support**: STRIDE (traditional) + MAESTRO (AI/ML) auto-detected or run in parallel
 - **DREAD Risk Scoring**: Automatic risk assessment with 5 dimensions (0-10 scale each, averaged) for severity classification
