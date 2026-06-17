@@ -74,6 +74,11 @@ services:
       # ── Pipeline ──────────────────────────────────────────────────────────
       - MAX_ITERATION_COUNT=${MAX_ITERATION_COUNT:-15}
       - MIN_ITERATION_COUNT=${MIN_ITERATION_COUNT:-1}
+      - PIPELINE_TIMEOUT_MINUTES=${PIPELINE_TIMEOUT_MINUTES:-30}
+      - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.2}
+
+      # ── Rule engine / RAG ─────────────────────────────────────────────────
+      - RAG_TOP_K=${RAG_TOP_K:-10}
 
     restart: unless-stopped
     healthcheck:
