@@ -414,5 +414,7 @@ export function testProvider(body) {
 }
 
 export function getHealth() {
-  return fetch('/health').then(r => r.json())
+  return fetch('/health')
+    .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() })
+    .catch(() => ({ status: 'unreachable' }))
 }
