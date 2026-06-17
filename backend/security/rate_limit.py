@@ -114,12 +114,62 @@ async def analyze_rate_limit(request: Request) -> None:
         _buckets.move_to_end(ip)
 
 
+# ---------------------------------------------------------------------------
+# Pipeline rate limiter — tighter than analyze because each run triggers
+# multiple LLM calls and may run for several minutes.
+# ---------------------------------------------------------------------------
+
+_PIPELINE_LIMIT: int = 5
+_PIPELINE_WINDOW: float = 60.0
+_pipeline_buckets: OrderedDict[str, list[float]] = OrderedDict()
+_pipeline_lock = asyncio.Lock()
+
+
+async def pipeline_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits POST /models/{id}/run.
+
+    5 requests per 60 seconds per IP. Each pipeline run may spend minutes
+    calling LLM APIs, so a tight limit is appropriate even for legitimate use.
+    """
+    ip = _get_client_ip(request)
+    now = time.monotonic()
+    cutoff = now - _PIPELINE_WINDOW
+
+    async with _pipeline_lock:
+        if ip not in _pipeline_buckets and len(_pipeline_buckets) >= _MAX_BUCKETS:
+            _pipeline_buckets.popitem(last=False)
+
+        timestamps = _pipeline_buckets.get(ip, [])
+        timestamps = [t for t in timestamps if t > cutoff]
+
+        if len(timestamps) >= _PIPELINE_LIMIT:
+            _pipeline_buckets[ip] = timestamps
+            _pipeline_buckets.move_to_end(ip)
+            retry_after = int(_PIPELINE_WINDOW - (now - timestamps[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Rate limit exceeded: {_PIPELINE_LIMIT} pipeline runs per "
+                    f"{int(_PIPELINE_WINDOW)} seconds. "
+                    f"Retry after {retry_after} seconds."
+                ),
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        timestamps.append(now)
+        _pipeline_buckets[ip] = timestamps
+        _pipeline_buckets.move_to_end(ip)
+
+
 # Expose the constants so tests can introspect them without re-importing the
 # module multiple times and risking stale references to the bucket dict.
 RATE_LIMIT = _LIMIT
 RATE_WINDOW = _WINDOW_SECONDS
+PIPELINE_RATE_LIMIT = _PIPELINE_LIMIT
+PIPELINE_RATE_WINDOW = _PIPELINE_WINDOW
 
 
 def _reset_for_tests() -> None:
     """Clear all buckets — call from test setUp / fixture teardown only."""
     _buckets.clear()
+    _pipeline_buckets.clear()

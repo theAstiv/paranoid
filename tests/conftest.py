@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
+import backend.security.rate_limit as _rl
 from backend.db.connection import db
 from backend.db.schema import init_database_with_connection
 from backend.models.enums import Framework
@@ -71,6 +72,19 @@ def mock_provider_maestro() -> MockProvider:
 def stride_threats():
     """Pre-built STRIDE threats fixture."""
     return make_stride_threats()
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limit_buckets():
+    """Clear all rate-limit buckets before every test.
+
+    Without this, the pipeline_rate_limit bucket (5/60s) fills up across
+    tests that call POST /run, causing later tests to receive 429 instead of
+    the expected response.
+    """
+    _rl._reset_for_tests()
+    yield
+    _rl._reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

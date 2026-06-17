@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.config import settings
@@ -36,6 +36,7 @@ from backend.routes._helpers import (
     build_provider_from_record,
     resolve_provider,
 )
+from backend.security.rate_limit import pipeline_rate_limit
 from backend.sources.paths import clone_dir_for, index_db_for
 
 
@@ -309,6 +310,7 @@ async def run_pipeline(
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
     code_source_id: Annotated[str, Form()] = "",
+    _rate: None = Depends(pipeline_rate_limit),
 ) -> StreamingResponse:
     """Run the threat modeling pipeline, streaming SSE progress events.
 
