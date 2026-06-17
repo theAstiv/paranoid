@@ -122,7 +122,7 @@ export ANTHROPIC_API_KEY="your-key-here"
 #### Test Input Parser (No API Calls)
 
 ```bash
-python examples/test_structured_input.py
+python examples/demo_structured_input.py
 ```
 
 #### Run STRIDE Example (API Gateway)

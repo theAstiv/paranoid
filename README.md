@@ -793,7 +793,7 @@ pytest tests/ -v
 pytest tests/test_pipeline_e2e.py -v
 
 # Validate structured input parser (no API key required)
-python examples/test_structured_input.py
+python examples/demo_structured_input.py
 
 # Lint
 ruff check backend/ cli/
