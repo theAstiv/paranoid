@@ -9,7 +9,7 @@ Usage:
     export ANTHROPIC_API_KEY="your-key-here"
 
     # Run the test
-    python examples/test_structured_input.py
+    python examples/demo_structured_input.py
 """
 
 import asyncio
