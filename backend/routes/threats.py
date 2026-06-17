@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
@@ -11,6 +11,7 @@ from backend.models.api import UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
 from backend.routes._helpers import get_api_key
+from backend.security.rate_limit import enrichment_rate_limit
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,10 @@ async def delete_threat(threat_id: str) -> None:
 
 
 @router.post("/{threat_id}/attack-tree", status_code=201)
-async def generate_attack_tree(threat_id: str) -> JSONResponse:
+async def generate_attack_tree(
+    threat_id: str,
+    _rate: None = Depends(enrichment_rate_limit),
+) -> JSONResponse:
     """Generate a Mermaid attack tree for a threat using the default LLM provider."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
@@ -148,7 +152,10 @@ async def list_attack_trees(threat_id: str) -> JSONResponse:
 
 
 @router.post("/{threat_id}/test-cases", status_code=201)
-async def generate_test_cases(threat_id: str) -> JSONResponse:
+async def generate_test_cases(
+    threat_id: str,
+    _rate: None = Depends(enrichment_rate_limit),
+) -> JSONResponse:
     """Generate Gherkin test cases for a threat using the default LLM provider."""
     threat = await crud.get_threat(threat_id)
     if threat is None:

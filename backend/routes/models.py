@@ -36,7 +36,7 @@ from backend.routes._helpers import (
     build_provider_from_record,
     resolve_provider,
 )
-from backend.security.rate_limit import pipeline_rate_limit
+from backend.security.rate_limit import pipeline_rate_limit, write_rate_limit
 from backend.sources.paths import clone_dir_for, index_db_for
 
 
@@ -101,7 +101,10 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
 
 
 @router.post("/", status_code=201)
-async def create_model(body: CreateModelRequest) -> JSONResponse:
+async def create_model(
+    body: CreateModelRequest,
+    _rate: None = Depends(write_rate_limit),
+) -> JSONResponse:
     """Create a new threat model record."""
     provider_type, model_id_str = resolve_provider(body.provider.value if body.provider else None)
 
