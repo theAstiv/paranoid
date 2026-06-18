@@ -121,14 +121,15 @@
                   type="text"
                   bind:value={searchQuery}
                   placeholder="Search threats…"
+                  aria-label="Search threats"
                   class="flex-1 min-w-40 rounded-md border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
                 />
-                <select bind:value={filterImpact} class="rounded-md border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                <select bind:value={filterImpact} aria-label="Filter by impact" class="rounded-md border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
                   {#each IMPACTS as imp}
                     <option value={imp}>{imp || 'Any impact'}</option>
                   {/each}
                 </select>
-                <select bind:value={filterStatus} class="rounded-md border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                <select bind:value={filterStatus} aria-label="Filter by status" class="rounded-md border-slate-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
                   {#each STATUSES as s}
                     <option value={s}>{s || 'Any status'}</option>
                   {/each}

@@ -247,14 +247,14 @@
         {#if editingAsset === a.id}
           <div class="space-y-2">
             <div class="flex gap-2">
-              <input type="text" bind:value={assetDraft.name} placeholder="Name"
+              <input type="text" bind:value={assetDraft.name} placeholder="Name" aria-label="Asset name"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
-              <select bind:value={assetDraft.type}
+              <select bind:value={assetDraft.type} aria-label="Asset type"
                 class="border border-slate-300 rounded px-2 py-1 text-sm">
                 <option>Asset</option><option>Entity</option>
               </select>
             </div>
-            <input type="text" bind:value={assetDraft.description} placeholder="Description"
+            <input type="text" bind:value={assetDraft.description} placeholder="Description" aria-label="Asset description"
               class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
             <div class="flex gap-2">
               <button type="button" on:click={() => saveAsset(a)}
@@ -290,14 +290,14 @@
     {#if addingAsset}
       <div class="bg-slate-50 rounded-lg border border-dashed border-slate-300 p-3 space-y-2">
         <div class="flex gap-2">
-          <input type="text" bind:value={newAsset.name} placeholder="Name *"
+          <input type="text" bind:value={newAsset.name} placeholder="Name *" aria-label="New asset name"
             class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
-          <select bind:value={newAsset.type}
+          <select bind:value={newAsset.type} aria-label="New asset type"
             class="border border-slate-300 rounded px-2 py-1 text-sm">
             <option>Asset</option><option>Entity</option>
           </select>
         </div>
-        <input type="text" bind:value={newAsset.description} placeholder="Description"
+        <input type="text" bind:value={newAsset.description} placeholder="Description" aria-label="New asset description"
           class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
         <div class="flex gap-2">
           <button type="button" on:click={submitNewAsset}
@@ -322,13 +322,13 @@
         {#if editingFlow === f.id}
           <div class="space-y-2">
             <div class="flex gap-2">
-              <input type="text" bind:value={flowDraft.source_entity} placeholder="Source"
+              <input type="text" bind:value={flowDraft.source_entity} placeholder="Source" aria-label="Flow source"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
               <span class="text-slate-400 self-center">→</span>
-              <input type="text" bind:value={flowDraft.target_entity} placeholder="Target"
+              <input type="text" bind:value={flowDraft.target_entity} placeholder="Target" aria-label="Flow target"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
             </div>
-            <input type="text" bind:value={flowDraft.flow_description} placeholder="Description"
+            <input type="text" bind:value={flowDraft.flow_description} placeholder="Description" aria-label="Flow description"
               class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
             <div class="flex gap-2">
               <button type="button" on:click={() => saveFlow(f)}
@@ -367,13 +367,13 @@
     {#if addingFlow}
       <div class="bg-slate-50 rounded-lg border border-dashed border-slate-300 p-3 space-y-2">
         <div class="flex gap-2">
-          <input type="text" bind:value={newFlow.source_entity} placeholder="Source *"
+          <input type="text" bind:value={newFlow.source_entity} placeholder="Source *" aria-label="New flow source"
             class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
           <span class="text-slate-400 self-center">→</span>
-          <input type="text" bind:value={newFlow.target_entity} placeholder="Target *"
+          <input type="text" bind:value={newFlow.target_entity} placeholder="Target *" aria-label="New flow target"
             class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
         </div>
-        <input type="text" bind:value={newFlow.flow_description} placeholder="Description"
+        <input type="text" bind:value={newFlow.flow_description} placeholder="Description" aria-label="New flow description"
           class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
         <div class="flex gap-2">
           <button type="button" on:click={submitNewFlow}
@@ -398,13 +398,13 @@
         {#if editingBoundary === b.id}
           <div class="space-y-2">
             <div class="flex gap-2">
-              <input type="text" bind:value={boundaryDraft.source_entity} placeholder="Source"
+              <input type="text" bind:value={boundaryDraft.source_entity} placeholder="Source" aria-label="Boundary source"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
               <span class="text-slate-400 self-center">/</span>
-              <input type="text" bind:value={boundaryDraft.target_entity} placeholder="Target"
+              <input type="text" bind:value={boundaryDraft.target_entity} placeholder="Target" aria-label="Boundary target"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
             </div>
-            <input type="text" bind:value={boundaryDraft.purpose} placeholder="Purpose"
+            <input type="text" bind:value={boundaryDraft.purpose} placeholder="Purpose" aria-label="Boundary purpose"
               class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
             <div class="flex gap-2">
               <button type="button" on:click={() => saveBoundary(b)}
@@ -443,13 +443,13 @@
     {#if addingBoundary}
       <div class="bg-slate-50 rounded-lg border border-dashed border-slate-300 p-3 space-y-2">
         <div class="flex gap-2">
-          <input type="text" bind:value={newBoundary.source_entity} placeholder="Source *"
+          <input type="text" bind:value={newBoundary.source_entity} placeholder="Source *" aria-label="New boundary source"
             class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
           <span class="text-slate-400 self-center">↔</span>
-          <input type="text" bind:value={newBoundary.target_entity} placeholder="Target *"
+          <input type="text" bind:value={newBoundary.target_entity} placeholder="Target *" aria-label="New boundary target"
             class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" />
         </div>
-        <input type="text" bind:value={newBoundary.purpose} placeholder="Purpose"
+        <input type="text" bind:value={newBoundary.purpose} placeholder="Purpose" aria-label="New boundary purpose"
           class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
         <div class="flex gap-2">
           <button type="button" on:click={submitNewBoundary}
