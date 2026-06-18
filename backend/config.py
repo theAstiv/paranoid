@@ -77,6 +77,21 @@ class Settings(BaseSettings):
     # required (default; safe for local / Docker single-user deployments).
     config_secret: str = ""
 
+    # Auth settings (Phase 0 foundation)
+    # JWT signing key. When empty, falls back to PBKDF2 derivation from
+    # config_secret (salt "paranoid:jwt:v1"). If config_secret is also empty,
+    # an ephemeral per-process key is generated (JWTs invalidated on restart).
+    jwt_secret: str = ""
+    # Set PARANOID_REQUIRE_AUTH=true to enforce authentication on all routes.
+    # When false (default), all requests are treated as instance admin —
+    # equivalent to the existing single-user mode. Document: "anyone with
+    # network access is admin" when this is false.
+    paranoid_require_auth: bool = False
+    # PARANOID_ADMIN_PASSWORD: password for the auto-created 'admin' user on
+    # first startup (when the users table is empty). If unset, a random
+    # password is generated and logged once. Never overwrites an existing user.
+    paranoid_admin_password: str = ""
+
     # CSRF allowlist — comma-separated concrete origins (no "*").  Applied
     # only to non-GET requests that carry an Origin / Referer header; calls
     # without either (CLI, server-to-server) pass through unconditionally.
