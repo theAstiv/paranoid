@@ -107,8 +107,11 @@ ENV PYTHONUNBUFFERED=1 \
     FASTEMBED_CACHE_PATH=/app/.cache/fastembed \
     DB_PATH=/app/data/paranoid.db
 
-# Extra start_period to allow DB init + seed loading on first boot
+# Extra start_period to allow DB init + seed loading on first boot.
+# Exec form avoids a /bin/sh dependency — future base-image hardening
+# (e.g. distroless) won't silently break the healthcheck.
+# curl -f already exits non-zero on HTTP error, so || exit 1 is redundant.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD ["curl", "-f", "http://localhost:8000/health"]
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

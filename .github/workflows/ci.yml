@@ -233,10 +233,45 @@ jobs:
       # If the context-link release URL becomes unreachable this step will fail;
       # in that case update CONTEXT_LINK_VERSION in the Dockerfile or mirror the
       # binary to a stable URL.
+      # load: true makes the image available to the local Docker daemon so the
+      # smoke-test step below can actually start a container from it.
       - name: Build full image (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
+          load: true
+          tags: paranoid:ci-smoke
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Start a container with the same hardening flags used in docker-compose.yml
+      # and poll /health until it responds or 60 s elapses.  /health is
+      # unauthenticated, so no API key is required.  This catches regressions that
+      # build-only CI misses: startup crashes, wrong bind address, curl absent from
+      # the final image, or health route removed.
+      - name: Smoke-test /health endpoint
+        run: |
+          docker run --detach \
+            --name paranoid-smoke \
+            -p 127.0.0.1:8000:8000 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            -e DEFAULT_PROVIDER=anthropic \
+            -e DEFAULT_MODEL=claude-sonnet-4-20250514 \
+            paranoid:ci-smoke
+          for i in $(seq 1 12); do
+            if curl -sf http://127.0.0.1:8000/health; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i/12 — waiting 5 s..."
+            sleep 5
+          done
+          echo "Health check timed out after 60 s" >&2
+          docker logs paranoid-smoke >&2
+          exit 1
+
+      - name: Tear down smoke container
+        if: always()
+        run: docker rm -f paranoid-smoke || true
