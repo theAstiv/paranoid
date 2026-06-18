@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+#### Docker container hardening
+- **`cap_drop: [ALL]`** added to `docker-compose.yml` — drops every Linux capability at the compose level; the app runs as non-root uid 1000 on port 8000 and requires no elevated capabilities at runtime (`CAP_DAC_READ_SEARCH` is not in Docker's default capset, so host-mounted directory reads are unaffected; `NET_BIND_SERVICE` is dropped — privileged ports < 1024 are now explicitly off-limits)
+- **`security_opt: [no-new-privileges:true]`** added to `docker-compose.yml` — prevents privilege escalation via setuid/setgid binaries inside the container
+- Removed redundant `healthcheck` block from `docker-compose.yml` — Dockerfile already defines an identical `HEALTHCHECK` directive and compose inherits it automatically; having both was silent noise
+- **Dockerfile `HEALTHCHECK` converted to exec form** — `CMD ["curl", "-f", "..."]` replaces `CMD curl ... || exit 1`; exec form does not depend on `/bin/sh`, making it compatible with future distroless base-image hardening; `|| exit 1` was also redundant since `curl -f` already exits non-zero on HTTP error
+- **CI docker job now smoke-tests the running container** — `load: true` added to the full-image build step so the image enters the local Docker daemon; a new "Smoke-test /health endpoint" step starts the container with `--cap-drop ALL --security-opt no-new-privileges:true` and polls `http://127.0.0.1:8000/health` for up to 60 s; a teardown step runs unconditionally on `if: always()`
+
 ---
 
 ## [1.5.0] - 2026-04-19

@@ -469,6 +469,19 @@ docker run --rm \
 
 The SQLite database is stored at `/app/data/paranoid.db` inside the container, bind-mounted to `./data/` on the host. This directory persists threat models across container restarts and image upgrades.
 
+### Container security
+
+The default `docker-compose.yml` applies defence-in-depth hardening out of the box:
+
+| Setting | Value | Effect |
+|---------|-------|--------|
+| `cap_drop` | `ALL` | Drops every Linux capability — the app needs none (non-root user, port > 1024) |
+| `security_opt` | `no-new-privileges:true` | Blocks privilege escalation via setuid/setgid binaries |
+| Port binding | `127.0.0.1:8000:8000` | Loopback-only by default — LAN exposure requires an explicit change |
+| Runtime user | `app` (uid 1000) | Non-root; set in Dockerfile |
+
+For LAN or public exposure, change the port binding to `"0.0.0.0:${PORT:-8000}:8000"` **and** set `ALLOWED_ORIGINS` to a concrete origin list so CSRF protection still applies.
+
 ---
 
 ## Output Formats

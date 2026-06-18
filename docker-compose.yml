@@ -80,10 +80,21 @@ services:
       # ── Rule engine / RAG ─────────────────────────────────────────────────
       - RAG_TOP_K=${RAG_TOP_K:-10}
 
+    # Drop all Linux capabilities.
+    # Default Docker capset includes NET_BIND_SERVICE and NET_RAW (among others)
+    # but NOT CAP_DAC_READ_SEARCH — so cap_drop: ALL does not regress file-read
+    # behaviour for the non-root app user on host-mounted directories.
+    # Key consequences of dropping everything:
+    #   - Ports < 1024 are off-limits (NET_BIND_SERVICE dropped). The app binds
+    #     8000, so this is a non-issue — but add `cap_add: [NET_BIND_SERVICE]`
+    #     before any future feature that needs port 443 or 80.
+    #   - Raw sockets unavailable (NET_RAW dropped) — not used by the app.
+    cap_drop:
+      - ALL
+    # Prevent privilege escalation via setuid/setgid binaries inside the container.
+    security_opt:
+      - no-new-privileges:true
+
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+    # Healthcheck is defined in the Dockerfile; compose inherits it automatically.
+    # (Duplicating it here was noise — both had identical parameters.)
