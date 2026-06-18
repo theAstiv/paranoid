@@ -212,6 +212,44 @@ CREATE TABLE IF NOT EXISTS code_sources (
 """
 
 
+CREATE_USERS_TABLE = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    email TEXT NOT NULL,
+    display_name TEXT,
+    password_hash TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_login_at TEXT
+);
+"""
+
+CREATE_SESSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+"""
+
+CREATE_PERSONAL_ACCESS_TOKENS_TABLE = """
+CREATE TABLE IF NOT EXISTS personal_access_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    project_id TEXT,
+    last_used_at TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL
+);
+"""
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -220,6 +258,13 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_flows_model_id ON flows(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_runs_model_id ON pipeline_runs(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threat_metadata_threat_id ON threat_metadata(threat_id);",
+    # Auth indices
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pat_hash ON personal_access_tokens(token_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_pat_user_id ON personal_access_tokens(user_id);",
 ]
 
 
@@ -244,6 +289,10 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
     await conn.execute(CREATE_CONFIG_TABLE)
     await conn.execute(CREATE_CODE_SOURCES_TABLE)
+    # Auth tables (Phase 0)
+    await conn.execute(CREATE_USERS_TABLE)
+    await conn.execute(CREATE_SESSIONS_TABLE)
+    await conn.execute(CREATE_PERSONAL_ACCESS_TOKENS_TABLE)
 
     # Add columns to threat_models that link to a code source and (reserved
     # for v2) record the creating user. Wrapped in try/except to stay
