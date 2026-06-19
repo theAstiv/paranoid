@@ -2,6 +2,7 @@
 
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,6 +33,38 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _bootstrap_admin_if_needed() -> None:
+    """Create the initial admin user when the users table is empty.
+
+    Guards:
+    - Runs only if user_count() == 0 (no users in DB yet).
+    - If PARANOID_ADMIN_PASSWORD is set, uses that password; otherwise
+      generates a random password and logs it once with a rotate reminder.
+    - Never overwrites an existing user on subsequent restarts.
+    """
+    from backend.auth.passwords import hash_password
+    from backend.db.crud_auth import create_user, user_count
+
+    if await user_count() > 0:
+        return
+
+    password = settings.paranoid_admin_password or secrets.token_urlsafe(16)
+    if not settings.paranoid_admin_password:
+        logger.warning(
+            f"PARANOID_ADMIN_PASSWORD not set — generated admin password: {password!r}. "
+            "Rotate this via Settings UI after first login."
+        )
+
+    await create_user(
+        username="admin",
+        email="admin@paranoid.local",
+        password_hash=hash_password(password),
+        display_name="Administrator",
+        is_admin=True,
+    )
+    logger.info("Created initial admin user (username: admin)")
 
 
 @asynccontextmanager
@@ -76,6 +109,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Load seed patterns
     await load_all_seeds()
+
+    # Bootstrap the initial admin user (runs only when users table is empty).
+    await _bootstrap_admin_if_needed()
+
+    # Warn loudly when authentication is disabled so operators are aware.
+    if not settings.paranoid_require_auth:
+        logger.warning(
+            "PARANOID_REQUIRE_AUTH is not set — authentication is DISABLED. "
+            "All requests are treated as instance admin. "
+            "Set PARANOID_REQUIRE_AUTH=true to enforce login."
+        )
 
     yield
 

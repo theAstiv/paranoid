@@ -78,6 +78,9 @@ _ENRICHMENT_TIER = _RateLimitTier(limit=20, window=60.0, unit="requests")
 # Pipeline tier: POST /models/{id}/run — multi-step, multi-minute pipeline runs.
 _PIPELINE_TIER = _RateLimitTier(limit=5, window=60.0, unit="pipeline runs")
 
+# Auth tier: /api/auth/login + /api/auth/refresh — brute-force protection.
+_AUTH_TIER = _RateLimitTier(limit=10, window=60.0, unit="login attempts")
+
 # Registry — the only place that must be updated when a new tier is added.
 # _reset_for_tests() iterates this list, so new tiers are automatically cleared.
 _ALL_TIERS: list[_RateLimitTier] = [
@@ -85,6 +88,7 @@ _ALL_TIERS: list[_RateLimitTier] = [
     _WRITE_TIER,
     _ENRICHMENT_TIER,
     _PIPELINE_TIER,
+    _AUTH_TIER,
 ]
 
 # Module-level aliases so tests can backdate timestamps directly.
@@ -186,6 +190,15 @@ async def pipeline_rate_limit(request: Request) -> None:
     await _check_bucket(_get_client_ip(request), _PIPELINE_TIER)
 
 
+async def auth_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits /api/auth/login and /api/auth/refresh (10 req / 60 s per IP).
+
+    Applied to credential-checking endpoints to limit brute-force attempts.
+    Account lockout and password reset are explicitly out of scope for v2.
+    """
+    await _check_bucket(_get_client_ip(request), _AUTH_TIER)
+
+
 # Expose the constants so tests can introspect them without re-importing the
 # module multiple times and risking stale references to the bucket dict.
 RATE_LIMIT = _ANALYZE_TIER.limit
@@ -196,6 +209,8 @@ ENRICHMENT_RATE_LIMIT = _ENRICHMENT_TIER.limit
 ENRICHMENT_RATE_WINDOW = _ENRICHMENT_TIER.window
 PIPELINE_RATE_LIMIT = _PIPELINE_TIER.limit
 PIPELINE_RATE_WINDOW = _PIPELINE_TIER.window
+AUTH_RATE_LIMIT = _AUTH_TIER.limit
+AUTH_RATE_WINDOW = _AUTH_TIER.window
 
 
 def _reset_for_tests() -> None:
