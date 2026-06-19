@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 import os
 import secrets
@@ -17,6 +18,7 @@ from backend.db.connection import db
 from backend.db.crud import delete_config_value, get_config_value
 from backend.db.seed import load_all_seeds
 from backend.routes.analyze import router as analyze_router
+from backend.routes.auth import router as auth_router
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
@@ -113,6 +115,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Bootstrap the initial admin user (runs only when users table is empty).
     await _bootstrap_admin_if_needed()
 
+    # Clean up expired / revoked sessions from previous runs.
+    from backend.db.crud_auth import cleanup_expired_sessions
+
+    await cleanup_expired_sessions()
+
     # Warn loudly when authentication is disabled so operators are aware.
     if not settings.paranoid_require_auth:
         logger.warning(
@@ -121,7 +128,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Set PARANOID_REQUIRE_AUTH=true to enforce login."
         )
 
+    # Background task: clean up sessions every 24 h.
+    async def _session_gc_loop() -> None:
+        while True:
+            await asyncio.sleep(86_400)
+            try:
+                await cleanup_expired_sessions()
+                logger.debug("Session GC completed")
+            except Exception as exc:
+                logger.warning(f"Session GC error: {exc}")
+
+    _gc_task = asyncio.create_task(_session_gc_loop())
+
     yield
+
+    _gc_task.cancel()
+    try:
+        await _gc_task
+    except asyncio.CancelledError:
+        pass
 
     # Close database connection
     await db.close()
@@ -181,6 +206,7 @@ async def health_check() -> JSONResponse:
 
 
 # API routers
+app.include_router(auth_router, prefix="/api")
 app.include_router(analyze_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(threats_router, prefix="/api")

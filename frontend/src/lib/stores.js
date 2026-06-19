@@ -1,4 +1,47 @@
-import { writable, derived } from 'svelte/store'
+import { writable, derived, get } from 'svelte/store'
+
+// ---------------------------------------------------------------------------
+// Auth state
+// ---------------------------------------------------------------------------
+
+/**
+ * The authenticated user object (from GET /api/auth/me), or null when logged out.
+ * Persisted in memory only — restored on page load by calling /api/auth/me with
+ * the stored access token.
+ * @type {import('svelte/store').Writable<object|null>}
+ */
+export const currentUser = writable(null)
+
+/**
+ * True while the initial auth check (on page load) is in flight.
+ * Components can use this to show a loading spinner instead of a login redirect.
+ * @type {import('svelte/store').Writable<boolean>}
+ */
+export const authLoading = writable(true)
+
+// ---------------------------------------------------------------------------
+// Token helpers — localStorage-backed, used by api.js
+// ---------------------------------------------------------------------------
+
+const _TOKEN_KEY = 'paranoid_access_token'
+
+/** @returns {string|null} */
+export function getStoredToken() {
+  try { return localStorage.getItem(_TOKEN_KEY) } catch { return null }
+}
+
+/** @param {string} token */
+export function setStoredToken(token) {
+  try { localStorage.setItem(_TOKEN_KEY, token) } catch { /* ignore */ }
+}
+
+export function clearStoredToken() {
+  try { localStorage.removeItem(_TOKEN_KEY) } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline / model stores
+// ---------------------------------------------------------------------------
 
 /** @type {import('svelte/store').Writable<object[]>} list of threat model records */
 export const models = writable([])

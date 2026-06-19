@@ -1,19 +1,141 @@
 const BASE = '/api'
 
-async function request(method, path, body, extraHeaders = {}, signal = undefined) {
-  const opts = { method, headers: { ...extraHeaders } }
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json'
-    opts.body = JSON.stringify(body)
-  }
+// Track in-flight refresh to prevent parallel refresh races
+let _refreshPromise = null
+
+/**
+ * Core fetch wrapper.
+ * - Attaches Authorization: Bearer header from localStorage token (if present).
+ * - On 401: attempts one silent token refresh, then retries.
+ * - On second 401 after refresh: clears token + redirects to /app/login.
+ */
+async function request(method, path, body, extraHeaders = {}, signal = undefined, _retrying = false) {
+  const { getStoredToken, setStoredToken, clearStoredToken, currentUser } = await import('./stores.js')
+
+  const token = getStoredToken()
+  const headers = { ...extraHeaders }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+
+  const opts = { method, headers }
+  if (body !== undefined) opts.body = JSON.stringify(body)
   if (signal !== undefined) opts.signal = signal
+
   const res = await fetch(BASE + path, opts)
+
+  // Retry 401 after refresh still failed: full auth clear
+  if (res.status === 401 && _retrying) {
+    clearStoredToken()
+    currentUser.set(null)
+    window.location.hash = '#/login'
+    throw new Error('Session expired — please log in again')
+  }
+
+  // First 401: attempt refresh once, then retry
+  if (res.status === 401 && !_retrying) {
+    try {
+      if (!_refreshPromise) {
+        _refreshPromise = _doRefresh()
+      }
+      const newToken = await _refreshPromise
+      if (newToken) {
+        setStoredToken(newToken)
+        return request(method, path, body, extraHeaders, signal, true)
+      }
+    } catch {
+      // refresh failed — fall through to clear below
+    } finally {
+      _refreshPromise = null
+    }
+    // Refresh failed or returned no token: clear auth and redirect to login
+    clearStoredToken()
+    currentUser.set(null)
+    window.location.hash = '#/login'
+    throw new Error('Session expired — please log in again')
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || res.statusText)
   }
   if (res.status === 204) return null
   return res.json()
+}
+
+/** Attempt a silent token refresh using the HttpOnly cookie. */
+async function _doRefresh() {
+  const res = await fetch(`${BASE}/auth/refresh`, { method: 'POST' })
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.access_token || null
+}
+
+// ── Auth API ──────────────────────────────────────────────────────────────────
+
+/**
+ * @param {{ username: string, email: string, password: string, display_name?: string }} body
+ */
+export function register(body) {
+  return request('POST', '/auth/register', body)
+}
+
+/**
+ * @param {{ username: string, password: string }} body
+ * @returns {Promise<{ access_token: string, user: object }>}
+ */
+export async function login(body) {
+  const { setStoredToken, currentUser } = await import('./stores.js')
+  const data = await request('POST', '/auth/login', body)
+  if (data?.access_token) {
+    setStoredToken(data.access_token)
+    currentUser.set(data.user)
+  }
+  return data
+}
+
+/** Log out and clear local auth state. */
+export async function logout() {
+  const { clearStoredToken, currentUser } = await import('./stores.js')
+  try {
+    await request('POST', '/auth/logout', {})
+  } finally {
+    clearStoredToken()
+    currentUser.set(null)
+  }
+}
+
+/** Fetch current user profile and update the currentUser store. */
+export async function fetchMe() {
+  const { currentUser, authLoading } = await import('./stores.js')
+  try {
+    const user = await request('GET', '/auth/me')
+    currentUser.set(user)
+    return user
+  } catch {
+    currentUser.set(null)
+    return null
+  } finally {
+    authLoading.set(false)
+  }
+}
+
+/** @param {{ name: string, expires_in_days?: number }} body */
+export function createPAT(body) {
+  return request('POST', '/auth/tokens', body)
+}
+
+export function listPATs() {
+  return request('GET', '/auth/tokens')
+}
+
+/** @param {string} tokenId */
+export function deletePAT(tokenId) {
+  return request('DELETE', `/auth/tokens/${tokenId}`)
+}
+
+/** @param {{ display_name?: string, password?: string, current_password?: string }} body */
+export function updateMe(body) {
+  return request('PATCH', '/auth/me', body)
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
@@ -98,35 +220,17 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
   let doneFired = false
   const fireDone = () => { if (!doneFired) { doneFired = true; onDone() } }
 
-  ;(async () => {
-    let res
-    try {
-      res = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal })
-    } catch (err) {
-      if (err.name !== 'AbortError') onError(err)
-      fireDone()
-      return
-    }
-
-    if (!res.ok) {
-      const detail = await res.json().catch(() => ({ detail: res.statusText }))
-      onError(new Error(detail.detail || res.statusText))
-      fireDone()
-      return
-    }
-
+  async function _readStream(res) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
-
     try {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buf += decoder.decode(value, { stream: true })
-        // SSE frames separated by double newline
         const parts = buf.split('\n\n')
-        buf = parts.pop() // keep incomplete trailing chunk
+        buf = parts.pop()
         for (const part of parts) {
           const dataLine = part.split('\n').find(l => l.startsWith('data:'))
           if (!dataLine) continue
@@ -147,6 +251,60 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
     } finally {
       fireDone()
     }
+  }
+
+  ;(async () => {
+    const { getStoredToken, setStoredToken } = await import('./stores.js')
+    let token = getStoredToken()
+    let authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {}
+
+    let res
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: { ...(init.headers || {}), ...authHeaders },
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (err.name !== 'AbortError') onError(err)
+      fireDone()
+      return
+    }
+
+    // On 401: attempt a single token refresh and retry the SSE connection
+    if (res.status === 401) {
+      try {
+        if (!_refreshPromise) _refreshPromise = _doRefresh()
+        const newToken = await _refreshPromise
+        _refreshPromise = null
+        if (newToken) {
+          setStoredToken(newToken)
+          authHeaders = { 'Authorization': `Bearer ${newToken}` }
+          try {
+            res = await fetch(`${BASE}${path}`, {
+              ...init,
+              headers: { ...(init.headers || {}), ...authHeaders },
+              signal: controller.signal,
+            })
+          } catch (retryErr) {
+            if (retryErr.name !== 'AbortError') onError(retryErr)
+            fireDone()
+            return
+          }
+        }
+      } catch {
+        _refreshPromise = null
+      }
+    }
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ detail: res.statusText }))
+      onError(new Error(detail.detail || res.statusText))
+      fireDone()
+      return
+    }
+
+    await _readStream(res)
   })()
 
   return () => controller.abort()

@@ -13,11 +13,15 @@
   import Settings from './routes/Settings.svelte'
   import ReviewContext from './routes/ReviewContext.svelte'
   import CodeSources from './routes/CodeSources.svelte'
-  import { config, notification } from './lib/stores.js'
-  import { getConfig } from './lib/api.js'
+  import Login from './routes/Login.svelte'
+  import Register from './routes/Register.svelte'
+  import { config, notification, currentUser, authLoading } from './lib/stores.js'
+  import { getConfig, fetchMe, logout } from './lib/api.js'
 
   const routes = {
     '/': Home,
+    '/login': Login,
+    '/register': Register,
     '/models/new': NewModel,
     '/models/:id': Results,
     '/models/:id/review': Review,
@@ -29,12 +33,20 @@
     '/sources': CodeSources,
   }
 
-  // First-run redirect. We fetch config once at app boot and, if the backend
-  // reports first_run=true and we're not already on /settings, push there.
-  // Settings owns the banner + self-heals on save — no URL flag needed, the
-  // next GET /api/config call there re-reads the boolean from the live
-  // backend.
+  let showUserMenu = false
+
+  async function handleLogout() {
+    showUserMenu = false
+    try { await logout() } catch { /* ignore */ }
+    push('/login')
+  }
+
+  // Boot sequence: restore session silently, then check first-run config.
   onMount(async () => {
+    // Attempt to restore the session from stored token / HttpOnly cookie.
+    // fetchMe() sets currentUser and authLoading stores.
+    await fetchMe()
+
     try {
       const cfg = await getConfig()
       config.set(cfg)
@@ -42,9 +54,6 @@
         push('/settings')
       }
     } catch (err) {
-      // Backend unreachable: every page still renders; the Settings page's
-      // own loader will surface the error inline. Log a breadcrumb so the
-      // bootstrap failure is discoverable in the browser console.
       console.warn('Config bootstrap failed — first-run redirect skipped.', err)
     }
   })
@@ -68,6 +77,51 @@
         <a href="/models/new" use:link class="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition-colors">
           New Model
         </a>
+
+        <!-- User menu (shown when logged in) -->
+        {#if $currentUser}
+          <div class="relative">
+            <button
+              on:click={() => showUserMenu = !showUserMenu}
+              class="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
+              aria-label="User menu"
+            >
+              <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-semibold">
+                {($currentUser.display_name || $currentUser.username).charAt(0).toUpperCase()}
+              </span>
+              <svg class="w-3.5 h-3.5 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+              </svg>
+            </button>
+
+            {#if showUserMenu}
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div
+                class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50"
+                on:click|stopPropagation
+              >
+                <div class="px-4 py-2 border-b border-gray-100">
+                  <p class="text-sm font-medium text-gray-900 truncate">{$currentUser.display_name || $currentUser.username}</p>
+                  <p class="text-xs text-gray-500 truncate">{$currentUser.email || ''}</p>
+                </div>
+                <button
+                  on:click={handleLogout}
+                  class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  Sign out
+                </button>
+              </div>
+
+              <!-- Click-away overlay -->
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div class="fixed inset-0 z-40" on:click={() => showUserMenu = false}></div>
+            {/if}
+          </div>
+        {:else if !$authLoading}
+          <a href="#/login" class="text-sm text-slate-600 hover:text-slate-900">Sign in</a>
+        {/if}
       </div>
     </div>
   </nav>
