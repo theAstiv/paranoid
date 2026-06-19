@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
 from backend.db import crud
 from backend.db.gap_utils import decode_gap_summaries
@@ -104,6 +105,7 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
 async def create_model(
     body: CreateModelRequest,
     _rate: None = Depends(write_rate_limit),
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """Create a new threat model record."""
     provider_type, model_id_str = resolve_provider(body.provider.value if body.provider else None)
@@ -126,6 +128,7 @@ async def list_models(
     limit: int = 50,
     framework: str | None = None,
     status: str | None = None,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """List threat models, optionally filtered by framework or status."""
     rows = await crud.list_threat_models(
@@ -140,7 +143,10 @@ async def list_models(
 
 
 @router.get("/{model_id}")
-async def get_model(model_id: str) -> JSONResponse:
+async def get_model(
+    model_id: str,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """Get a single threat model with its threats."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -154,7 +160,11 @@ async def get_model(model_id: str) -> JSONResponse:
 
 
 @router.patch("/{model_id}")
-async def update_model(model_id: str, body: UpdateModelRequest) -> JSONResponse:
+async def update_model(
+    model_id: str,
+    body: UpdateModelRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Update threat model metadata."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -173,7 +183,10 @@ async def update_model(model_id: str, body: UpdateModelRequest) -> JSONResponse:
 
 
 @router.delete("/{model_id}", status_code=204)
-async def delete_model(model_id: str) -> None:
+async def delete_model(
+    model_id: str,
+    _authz: None = Depends(require_role("owner", "model_id", "model")),
+) -> None:
     """Delete a threat model and all associated data."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -314,6 +327,7 @@ async def run_pipeline(
     diagram: Annotated[UploadFile | None, File()] = None,
     code_source_id: Annotated[str, Form()] = "",
     _rate: None = Depends(pipeline_rate_limit),
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> StreamingResponse:
     """Run the threat modeling pipeline, streaming SSE progress events.
 
@@ -526,7 +540,11 @@ async def get_model_stats(model_id: str) -> JSONResponse:
 
 
 @router.post("/{model_id}/assets", status_code=201)
-async def create_asset(model_id: str, body: CreateAssetRequest) -> JSONResponse:
+async def create_asset(
+    model_id: str,
+    body: CreateAssetRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Add an asset to a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -542,7 +560,12 @@ async def create_asset(model_id: str, body: CreateAssetRequest) -> JSONResponse:
 
 
 @router.patch("/{model_id}/assets/{asset_id}")
-async def update_asset(model_id: str, asset_id: str, body: UpdateAssetRequest) -> JSONResponse:
+async def update_asset(
+    model_id: str,
+    asset_id: str,
+    body: UpdateAssetRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Update an asset."""
     asset = await crud.get_asset(asset_id)
     if asset is None or asset.get("model_id") != model_id:
@@ -558,7 +581,11 @@ async def update_asset(model_id: str, asset_id: str, body: UpdateAssetRequest) -
 
 
 @router.delete("/{model_id}/assets/{asset_id}", status_code=204)
-async def delete_asset(model_id: str, asset_id: str) -> None:
+async def delete_asset(
+    model_id: str,
+    asset_id: str,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> None:
     """Delete an asset."""
     asset = await crud.get_asset(asset_id)
     if asset is None or asset.get("model_id") != model_id:
@@ -572,7 +599,11 @@ async def delete_asset(model_id: str, asset_id: str) -> None:
 
 
 @router.post("/{model_id}/flows", status_code=201)
-async def create_flow(model_id: str, body: CreateFlowRequest) -> JSONResponse:
+async def create_flow(
+    model_id: str,
+    body: CreateFlowRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Add a data flow to a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -589,7 +620,12 @@ async def create_flow(model_id: str, body: CreateFlowRequest) -> JSONResponse:
 
 
 @router.patch("/{model_id}/flows/{flow_id}")
-async def update_flow(model_id: str, flow_id: str, body: UpdateFlowRequest) -> JSONResponse:
+async def update_flow(
+    model_id: str,
+    flow_id: str,
+    body: UpdateFlowRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Update a data flow."""
     flow = await crud.get_flow(flow_id)
     if flow is None or flow.get("model_id") != model_id:
@@ -606,7 +642,11 @@ async def update_flow(model_id: str, flow_id: str, body: UpdateFlowRequest) -> J
 
 
 @router.delete("/{model_id}/flows/{flow_id}", status_code=204)
-async def delete_flow(model_id: str, flow_id: str) -> None:
+async def delete_flow(
+    model_id: str,
+    flow_id: str,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> None:
     """Delete a data flow."""
     flow = await crud.get_flow(flow_id)
     if flow is None or flow.get("model_id") != model_id:
@@ -620,7 +660,11 @@ async def delete_flow(model_id: str, flow_id: str) -> None:
 
 
 @router.post("/{model_id}/trust-boundaries", status_code=201)
-async def create_trust_boundary(model_id: str, body: CreateTrustBoundaryRequest) -> JSONResponse:
+async def create_trust_boundary(
+    model_id: str,
+    body: CreateTrustBoundaryRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> JSONResponse:
     """Add a trust boundary to a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -637,7 +681,10 @@ async def create_trust_boundary(model_id: str, body: CreateTrustBoundaryRequest)
 
 @router.patch("/{model_id}/trust-boundaries/{boundary_id}")
 async def update_trust_boundary(
-    model_id: str, boundary_id: str, body: UpdateTrustBoundaryRequest
+    model_id: str,
+    boundary_id: str,
+    body: UpdateTrustBoundaryRequest,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Update a trust boundary."""
     boundary = await crud.get_trust_boundary(boundary_id)
@@ -654,7 +701,11 @@ async def update_trust_boundary(
 
 
 @router.delete("/{model_id}/trust-boundaries/{boundary_id}", status_code=204)
-async def delete_trust_boundary(model_id: str, boundary_id: str) -> None:
+async def delete_trust_boundary(
+    model_id: str,
+    boundary_id: str,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> None:
     """Delete a trust boundary."""
     boundary = await crud.get_trust_boundary(boundary_id)
     if boundary is None or boundary.get("model_id") != model_id:
@@ -689,7 +740,10 @@ async def analyze_model_description(model_id: str) -> AnalyzeDescriptionResponse
 
 
 @router.post("/{model_id}/extract")
-async def extract_model_context(model_id: str) -> StreamingResponse:
+async def extract_model_context(
+    model_id: str,
+    _authz: None = Depends(require_role("editor", "model_id", "model")),
+) -> StreamingResponse:
     """Run only the summarize + extract steps (no threat generation), streaming SSE.
 
     Populates assets, flows, and trust boundaries in the DB so the user can

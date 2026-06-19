@@ -7,11 +7,13 @@ import asyncio
 import logging
 import shutil
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from backend.auth.dependencies import get_current_user, require_role
 from backend.db import crud
 from backend.models.extended import CodeSource, CreateCodeSourceRequest
 from backend.security.rate_limit import write_rate_limit
@@ -48,7 +50,9 @@ def _source_response(row: dict, status_code: int = 200) -> JSONResponse:
 
 
 @router.get("")
-async def list_sources() -> JSONResponse:
+async def list_sources(
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """List all code sources."""
     rows = await crud.list_code_sources()
     items = [CodeSource(**r).model_dump() for r in rows]
@@ -59,6 +63,7 @@ async def list_sources() -> JSONResponse:
 async def create_source(
     body: CreateCodeSourceRequest,
     _rate: None = Depends(write_rate_limit),
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """Create a code source row and kick off a background clone + index."""
     # Validate URL before touching the DB — cheap fail-fast.
@@ -95,7 +100,10 @@ async def create_source(
 
 
 @router.get("/{source_id}")
-async def get_source(source_id: str) -> JSONResponse:
+async def get_source(
+    source_id: str,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """Get a single code source by ID."""
     row = await crud.get_code_source(source_id)
     if row is None:
@@ -107,6 +115,7 @@ async def get_source(source_id: str) -> JSONResponse:
 async def reindex_source(
     source_id: str,
     _rate: None = Depends(write_rate_limit),
+    _authz: None = Depends(require_role("editor", "source_id", "source")),
 ) -> JSONResponse:
     """Trigger a manual re-clone + re-index for an existing source."""
     row = await crud.get_code_source(source_id)
@@ -130,7 +139,10 @@ async def reindex_source(
 
 
 @router.delete("/{source_id}", status_code=204)
-async def delete_source(source_id: str) -> None:
+async def delete_source(
+    source_id: str,
+    _authz: None = Depends(require_role("owner", "source_id", "source")),
+) -> None:
     """Delete a code source row and remove its clone directory.
 
     If the source is currently being cloned or indexed, the background task
@@ -165,7 +177,11 @@ async def delete_source(source_id: str) -> None:
 
 
 @router.get("/{source_id}/events")
-async def stream_source_events(source_id: str, request: Request) -> StreamingResponse:
+async def stream_source_events(
+    source_id: str,
+    request: Request,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> StreamingResponse:
     """SSE stream of clone/index progress events for a source.
 
     On connect the last ~20 events are replayed from the ring buffer, then
