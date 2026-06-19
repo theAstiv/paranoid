@@ -97,3 +97,41 @@ export function notify(type, message) {
     setTimeout(() => notification.set(null), 4000)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-user / project stores (Phase 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The currently-active project context, or null before Phase 2 backend ships.
+ * Shape: { id, name, org, role } | null
+ * @type {import('svelte/store').Writable<object|null>}
+ */
+export const currentProject = writable(null)
+
+/**
+ * All projects the current user is a member of.
+ * @type {import('svelte/store').Writable<object[]>}
+ */
+export const projects = writable([])
+
+/**
+ * Unread notification items from GET /api/notifications.
+ * @type {import('svelte/store').Writable<object[]>}
+ */
+export const notifications = writable([])
+
+/**
+ * Count of unread notifications for the bell badge.
+ * @type {import('svelte/store').Readable<number>}
+ */
+export const notifUnread = derived(
+  notifications,
+  $n => $n.filter(n => !n.is_read).length
+)
+
+/**
+ * Which overlay menu is open: 'project' | 'user' | 'notif' | null
+ * @type {import('svelte/store').Writable<string|null>}
+ */
+export const menuOpen = writable(null)
