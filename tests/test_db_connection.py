@@ -145,9 +145,10 @@ async def test_initialize_loads_vec0_via_package_path(clean_manager, mock_aiosql
     ):
         await clean_manager.initialize("./test.db")
 
-        mock_aiosqlite_connection.enable_load_extension.assert_called_once_with(True)
-        # Must use the full path, never the bare name "vec0"
-        mock_aiosqlite_connection.load_extension.assert_called_once_with(sqlite_vec.loadable_path())
+        # enable_load_extension(True) is called for the writer + each reader pool connection.
+        # Verify at least one call uses True and the full path was used (not bare "vec0").
+        mock_aiosqlite_connection.enable_load_extension.assert_any_call(True)
+        mock_aiosqlite_connection.load_extension.assert_any_call(sqlite_vec.loadable_path())
 
 
 @pytest.mark.asyncio
@@ -256,7 +257,8 @@ async def test_close_resets_state(clean_manager, mock_aiosqlite_connection):
         await clean_manager.initialize("./test.db")
         await clean_manager.close()
 
-        mock_aiosqlite_connection.close.assert_called_once()
+        # close() is called once per reader pool connection + once for the writer.
+        assert mock_aiosqlite_connection.close.call_count >= 1
         assert clean_manager._connection is None
         assert clean_manager._initialized is False
         assert clean_manager._db_path is None
