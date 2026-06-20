@@ -7,6 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.auth.dependencies import get_current_user, require_admin
 from backend.db import crud_projects
+from backend.models.api import (
+    AddMemberRequest,
+    CreateInvitationRequest,
+    CreateProjectRequest,
+    UpdateMemberRoleRequest,
+    UpdateProjectRequest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -20,16 +27,13 @@ router = APIRouter(tags=["projects"])
 
 @router.post("/projects", status_code=201)
 async def create_project(
-    body: dict,
+    body: CreateProjectRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="name is required")
     return await crud_projects.create_project(
-        name=name,
+        name=body.name,
         created_by=user["id"],
-        description=body.get("description"),
+        description=body.description,
     )
 
 
@@ -51,20 +55,19 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if not user.get("is_admin"):
-        role = await crud_projects.get_user_role_in_project(project_id, user["id"])
-        if role is None:
-            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_member(project_id, user)
     return project
 
 
 @router.patch("/projects/{project_id}")
 async def update_project(
     project_id: str,
-    body: dict,
+    body: UpdateProjectRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    project = await crud_projects.update_project(project_id, **body)
+    updates = body.model_dump(exclude_none=True)
+    project = await crud_projects.update_project(project_id, **updates)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
@@ -96,32 +99,22 @@ async def list_members(
 @router.post("/projects/{project_id}/members", status_code=201)
 async def add_member(
     project_id: str,
-    body: dict,
+    body: AddMemberRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    user_id = body.get("user_id")
-    role = body.get("role", "viewer")
-    if not user_id:
-        raise HTTPException(status_code=422, detail="user_id is required")
-    if role not in ("owner", "editor", "viewer"):
-        raise HTTPException(status_code=422, detail="role must be owner/editor/viewer")
-    member = await crud_projects.add_member(project_id, user_id, role)
-    return member
+    return await crud_projects.add_member(project_id, body.user_id, body.role)
 
 
 @router.patch("/projects/{project_id}/members/{user_id}")
 async def update_member(
     project_id: str,
     user_id: str,
-    body: dict,
+    body: UpdateMemberRoleRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    role = body.get("role")
-    if role not in ("owner", "editor", "viewer"):
-        raise HTTPException(status_code=422, detail="role must be owner/editor/viewer")
-    member = await crud_projects.update_member_role(project_id, user_id, role)
+    member = await crud_projects.update_member_role(project_id, user_id, body.role)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     return member
@@ -148,21 +141,15 @@ async def remove_member(
 @router.post("/projects/{project_id}/invitations", status_code=201)
 async def create_invitation(
     project_id: str,
-    body: dict,
+    body: CreateInvitationRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    email = (body.get("invited_email") or "").strip()
-    role = body.get("role", "viewer")
-    if not email:
-        raise HTTPException(status_code=422, detail="invited_email is required")
-    if role not in ("owner", "editor", "viewer"):
-        raise HTTPException(status_code=422, detail="role must be owner/editor/viewer")
     try:
         return await crud_projects.create_invitation(
             project_id=project_id,
-            invited_email=email,
-            role=role,
+            invited_email=body.invited_email,
+            role=body.role,
             invited_by=user["id"],
         )
     except ValueError as exc:
@@ -183,8 +170,16 @@ async def accept_invitation(
     invitation_id: str,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
+    # Pre-check existence so callers get 404 (not 409) for unknown IDs.
+    inv = await crud_projects.get_invitation(invitation_id)
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found")
     try:
-        return await crud_projects.accept_invitation(invitation_id, user["id"])
+        return await crud_projects.accept_invitation(
+            invitation_id, user["id"], user.get("email", "")
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -197,6 +192,20 @@ async def decline_invitation(
     inv = await crud_projects.get_invitation(invitation_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation not found")
+
+    # Authorization: project owner OR the invited person may decline.
+    from backend.config import settings
+
+    if settings.paranoid_require_auth and not user.get("is_admin"):
+        role = await crud_projects.get_user_role_in_project(inv["project_id"], user["id"])
+        is_owner = role == "owner"
+        is_invitee = inv["invited_email"].lower() == user.get("email", "").lower()
+        if not is_owner and not is_invitee:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project owner or the invited user may decline this invitation",
+            )
+
     await crud_projects.decline_invitation(invitation_id)
 
 

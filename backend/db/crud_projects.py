@@ -233,16 +233,29 @@ async def list_invitations(project_id: str) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def accept_invitation(invitation_id: str, user_id: str) -> dict:
-    """Accept an invitation: add member, mark accepted. Returns the member record."""
+async def accept_invitation(invitation_id: str, user_id: str, user_email: str) -> dict:
+    """Accept an invitation: verify email match, add member, mark accepted.
+
+    Returns the member record.
+    Raises ValueError on business-logic failures (wrong email, already used, expired).
+    """
     inv = await get_invitation(invitation_id)
     if not inv:
-        raise ValueError("Invitation not found")
+        raise LookupError("Invitation not found")
+
+    # Security: only the invited email address may accept
+    if inv["invited_email"].lower() != user_email.lower():
+        raise PermissionError("This invitation was not sent to your email address")
+
     if inv["status"] != "pending":
         raise ValueError(f"Invitation is already {inv['status']}")
 
     now = datetime.now(UTC)
-    if now.isoformat() > inv["expires_at"]:
+    expires = datetime.fromisoformat(inv["expires_at"])
+    # Make both timezone-aware for a correct comparison
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    if now > expires:
         conn = await db.get()
         await conn.execute(
             "UPDATE project_invitations SET status = 'expired' WHERE id = ?",

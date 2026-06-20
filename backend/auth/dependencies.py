@@ -151,8 +151,6 @@ async def _authenticate_pat(token: str) -> dict[str, Any]:
 
 _ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
 
-_DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
-
 
 async def resolve_project_id(entity_type: str, entity_id: str) -> str:
     """Resolve project_id from any entity type. Raises 404 if not found.
