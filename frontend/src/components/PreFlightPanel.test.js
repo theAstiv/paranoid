@@ -40,7 +40,7 @@ describe('PreFlightPanel', () => {
       props: { title: 'Coverage', loading: false, gaps: [errorGap, warnGap, infoGap], collapsed: false }
     })
     expect(screen.getByText('error')).toBeInTheDocument()
-    expect(screen.getByText('warn')).toBeInTheDocument()
+    expect(screen.getByText('warning')).toBeInTheDocument()
     expect(screen.getByText('info')).toBeInTheDocument()
   })
 
@@ -88,20 +88,20 @@ describe('PreFlightPanel', () => {
     expect(svgsWhileLoading.length).toBeLessThan(svgsWhenDone.length)
   })
 
-  it('applies red border for errors', () => {
+  it('applies critical border for errors', () => {
     const { container } = render(PreFlightPanel, {
       props: { title: 'Coverage', loading: false, gaps: [errorGap] }
     })
     const wrapper = container.firstChild
-    expect(wrapper.className).toContain('border-red-200')
+    expect(wrapper.className).toContain('border-c-critical')
   })
 
-  it('applies yellow border for warnings only', () => {
+  it('applies high border for warnings only', () => {
     const { container } = render(PreFlightPanel, {
       props: { title: 'Coverage', loading: false, gaps: [warnGap] }
     })
     const wrapper = container.firstChild
-    expect(wrapper.className).toContain('border-yellow-200')
+    expect(wrapper.className).toContain('border-c-high')
   })
 
   it('applies green border when no gaps', () => {
@@ -109,6 +109,6 @@ describe('PreFlightPanel', () => {
       props: { title: 'Coverage', loading: false, gaps: [] }
     })
     const wrapper = container.firstChild
-    expect(wrapper.className).toContain('border-green-200')
+    expect(wrapper.className).toContain('border-c-green')
   })
 })

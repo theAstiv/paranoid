@@ -16,14 +16,18 @@
   $: isFirst = currentStep === 0
 </script>
 
-<div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-  <!-- Step indicator -->
-  <div class="border-b border-slate-100 px-6 py-4 overflow-x-auto">
+<div class="card overflow-hidden">
+  <!-- Step rail -->
+  <div class="border-b border-c-border px-6 py-4 overflow-x-auto">
     <div class="flex items-center gap-2 flex-nowrap min-w-max">
       {#each steps as label, i}
         <div class="flex items-center gap-2 flex-shrink-0">
-          <div class="flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold flex-shrink-0
-            {i < currentStep ? 'bg-indigo-600 text-white' : i === currentStep ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}">
+          <div class="flex items-center justify-center w-6 h-6 rounded-panel text-xs font-semibold flex-shrink-0
+            {i < currentStep
+              ? 'bg-c-accent/20 text-c-accent border border-c-accent/40'
+              : i === currentStep
+              ? 'bg-c-accent text-[#04141A]'
+              : 'bg-c-well text-c-faint border border-c-border'}">
             {#if i < currentStep}
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
             {:else}
@@ -31,12 +35,12 @@
             {/if}
           </div>
           <span class="text-xs font-medium whitespace-nowrap hidden sm:block
-            {i === currentStep ? 'text-slate-900' : i < currentStep ? 'text-indigo-600' : 'text-slate-400'}">
+            {i === currentStep ? 'text-c-text' : i < currentStep ? 'text-c-accent' : 'text-c-faint'}">
             {label}
           </span>
         </div>
         {#if i < steps.length - 1}
-          <div class="h-px w-8 flex-shrink-0 {i < currentStep ? 'bg-indigo-300' : 'bg-slate-100'}"></div>
+          <div class="h-px w-8 flex-shrink-0 {i < currentStep ? 'bg-c-accent/30' : 'bg-c-border'}"></div>
         {/if}
       {/each}
     </div>
@@ -48,21 +52,21 @@
   </div>
 
   <!-- Navigation -->
-  <div class="border-t border-slate-100 px-6 py-4 flex justify-between">
+  <div class="border-t border-c-border px-6 py-4 flex justify-between">
     <button
       type="button"
       on:click={() => dispatch('back')}
       disabled={isFirst}
-      class="px-4 py-2 text-sm font-medium text-slate-600 rounded-md hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+      class="px-4 py-2 text-sm font-medium text-c-muted hover:text-c-text hover:bg-c-well rounded-panel disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
       Back
     </button>
     <button
       type="button"
       on:click={() => isLast ? dispatch('submit') : dispatch('next')}
       disabled={nextDisabled || submitting}
-      class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2">
+      class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
       {#if submitting}
-        <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+        <div class="w-3.5 h-3.5 border-2 border-[#04141A] border-t-transparent rounded-full animate-spin-slow"></div>
       {/if}
       {isLast ? 'Create & Run' : 'Next'}
     </button>
