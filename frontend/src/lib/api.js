@@ -534,11 +534,81 @@ export function subscribeToSourceEvents(sourceId, onEvent, onError, onDone) {
   )
 }
 
-// ── Projects (Phase 2 stubs) ──────────────────────────────────────────────────
+// ── Projects (Phase 2) ───────────────────────────────────────────────────────
 
-/** Returns user's project list. Stubbed until Phase 2 backend ships. */
 export function listProjects() {
-  return Promise.resolve([])
+  return request('GET', '/projects')
+}
+
+/** @param {{ name: string, description?: string }} body */
+export function createProject(body) {
+  return request('POST', '/projects', body)
+}
+
+/** @param {string} id */
+export function getProject(id) {
+  return request('GET', `/projects/${id}`)
+}
+
+/** @param {string} id @param {{ name?: string, description?: string }} body */
+export function updateProject(id, body) {
+  return request('PATCH', `/projects/${id}`, body)
+}
+
+/** @param {string} id */
+export function archiveProject(id) {
+  return request('DELETE', `/projects/${id}`)
+}
+
+// ── Project members ───────────────────────────────────────────────────────────
+
+/** @param {string} projectId */
+export function listProjectMembers(projectId) {
+  return request('GET', `/projects/${projectId}/members`)
+}
+
+/** @param {string} projectId @param {{ user_id: string, role: string }} body */
+export function addProjectMember(projectId, body) {
+  return request('POST', `/projects/${projectId}/members`, body)
+}
+
+/** @param {string} projectId @param {string} userId @param {{ role: string }} body */
+export function updateProjectMember(projectId, userId, body) {
+  return request('PATCH', `/projects/${projectId}/members/${userId}`, body)
+}
+
+/** @param {string} projectId @param {string} userId */
+export function removeProjectMember(projectId, userId) {
+  return request('DELETE', `/projects/${projectId}/members/${userId}`)
+}
+
+// ── Project invitations ───────────────────────────────────────────────────────
+
+/** @param {string} projectId @param {{ invited_email: string, role: string }} body */
+export function createProjectInvitation(projectId, body) {
+  return request('POST', `/projects/${projectId}/invitations`, body)
+}
+
+/** @param {string} projectId */
+export function listProjectInvitations(projectId) {
+  return request('GET', `/projects/${projectId}/invitations`)
+}
+
+/** @param {string} invitationId */
+export function acceptInvitation(invitationId) {
+  return request('POST', `/invitations/${invitationId}/accept`, {})
+}
+
+/** @param {string} invitationId — declines/revokes a pending invitation */
+export function declineInvitation(invitationId) {
+  return request('POST', `/invitations/${invitationId}/decline`, {})
+}
+
+// ── Admin: users ──────────────────────────────────────────────────────────────
+
+/** Admin only. Returns all registered users. */
+export function listAllUsers() {
+  return request('GET', '/users')
 }
 
 // ── Notifications (Phase 5 stubs) ─────────────────────────────────────────────

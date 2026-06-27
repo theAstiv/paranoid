@@ -15,11 +15,13 @@
   import CodeSources from './routes/CodeSources.svelte'
   import Login from './routes/Login.svelte'
   import Register from './routes/Register.svelte'
+  import Members from './routes/Members.svelte'
+  import AdminUsers from './routes/AdminUsers.svelte'
   import {
-    config, notification, currentUser, authLoading,
+    config, notification, notify, currentUser, authLoading,
     currentProject, projects, notifications, notifUnread, menuOpen,
   } from './lib/stores.js'
-  import { getConfig, fetchMe, logout, listProjects, listNotifications, markAllNotificationsRead } from './lib/api.js'
+  import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead } from './lib/api.js'
   import { initials, relativeTime } from './lib/utils.js'
 
   const routes = {
@@ -35,6 +37,8 @@
     '/threats/:id/attack-tree': AttackTree,
     '/threats/:id/test-cases': TestCases,
     '/sources': CodeSources,
+    '/members': Members,
+    '/admin/users': AdminUsers,
   }
 
   // Routes that render standalone (no sidebar/topbar chrome)
@@ -82,8 +86,40 @@
     } catch { /* ignore */ }
   }
 
-  // Project name for display (stub until Phase 2)
+  // Project name for display
   $: projectName = $currentProject?.name ?? 'Default Project'
+
+  // Whether current user can manage (owner or admin)
+  $: canManageProject = $currentProject?.member_role === 'owner' || $currentUser?.is_admin
+
+  // New project inline form state
+  let showNewProjectForm = false
+  let newProjectName = ''
+  let creatingProject = false
+
+  // Reset inline form when the project dropdown closes
+  $: if ($menuOpen !== 'project') {
+    showNewProjectForm = false
+    newProjectName = ''
+  }
+
+  async function handleCreateProject() {
+    if (!newProjectName.trim()) return
+    creatingProject = true
+    try {
+      const proj = await createProject({ name: newProjectName.trim() })
+      projects.update(ps => [proj, ...ps])
+      currentProject.set(proj)
+      newProjectName = ''
+      showNewProjectForm = false
+      closeMenu()
+    } catch (err) {
+      notify('error', `Failed to create project: ${err.message}`)
+    } finally {
+      creatingProject = false
+    }
+  }
+
 
   // Breadcrumb screen name
   const SCREEN_LABELS = {
@@ -91,6 +127,8 @@
     '/models/new': 'New Model',
     '/library': 'Library',
     '/sources': 'Code Sources',
+    '/members': 'Members',
+    '/admin/users': 'Users',
     '/settings': 'Settings',
   }
   $: screenLabel = (() => {
@@ -216,12 +254,45 @@
               </button>
             {/each}
             <div class="border-t border-c-divider mt-1 pt-1">
-              <button class="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-c-muted hover:text-c-text hover:bg-c-panel2 text-left transition-colors">
-                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 5v10M5 10h10"/>
-                </svg>
-                New project
-              </button>
+              {#if showNewProjectForm}
+                <div class="px-3 py-2 space-y-2" on:click|stopPropagation>
+                  <input
+                    type="text"
+                    bind:value={newProjectName}
+                    placeholder="Project name"
+                    class="field text-sm w-full"
+                    autofocus
+                    on:keydown={(e) => { if (e.key === 'Enter') handleCreateProject(); if (e.key === 'Escape') { showNewProjectForm = false; newProjectName = '' } }}
+                  />
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      on:click={handleCreateProject}
+                      disabled={creatingProject || !newProjectName.trim()}
+                      class="flex-1 btn-primary text-xs py-1.5 disabled:opacity-50"
+                    >
+                      {creatingProject ? 'Creating…' : 'Create'}
+                    </button>
+                    <button
+                      type="button"
+                      on:click={() => { showNewProjectForm = false; newProjectName = '' }}
+                      class="btn-ghost text-xs py-1.5 px-3"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {:else}
+                <button
+                  class="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-c-muted hover:text-c-text hover:bg-c-panel2 text-left transition-colors"
+                  on:click|stopPropagation={() => { showNewProjectForm = true }}
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 5v10M5 10h10"/>
+                  </svg>
+                  New project
+                </button>
+              {/if}
             </div>
           </div>
         {/if}
@@ -268,6 +339,24 @@
                 Code Sources
               </a>
             </li>
+            {#if canManageProject}
+              <li>
+                <a href="#/members" use:link
+                  class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors
+                    {isActive('/members')
+                      ? 'bg-c-accent/10 text-c-accent font-medium'
+                      : 'text-c-text3 hover:bg-c-panel hover:text-c-text'}"
+                >
+                  <!-- People icon (stroke-native paths) -->
+                  <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <circle cx="8" cy="6" r="3"/>
+                    <path d="M2 17c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+                    <path d="M14 4a3 3 0 010 6M17 17a5 5 0 00-3-4.6"/>
+                  </svg>
+                  Members
+                </a>
+              </li>
+            {/if}
             <li>
               <a href="#/settings" use:link
                 class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors
