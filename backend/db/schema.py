@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 CREATE_THREAT_MODELS_TABLE = """
@@ -250,6 +250,47 @@ CREATE TABLE IF NOT EXISTS personal_access_tokens (
 );
 """
 
+CREATE_PROJECTS_TABLE = """
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    default_provider TEXT,
+    default_model TEXT,
+    default_iterations INTEGER,
+    default_temperature REAL,
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+CREATE_PROJECT_MEMBERS_TABLE = """
+CREATE TABLE IF NOT EXISTS project_members (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('owner', 'editor', 'viewer')),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, user_id)
+);
+"""
+
+CREATE_PROJECT_INVITATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS project_invitations (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    invited_email TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('owner', 'editor', 'viewer')),
+    invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'declined', 'expired')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    UNIQUE(project_id, invited_email)
+);
+"""
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -265,7 +306,79 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_pat_hash ON personal_access_tokens(token_hash);",
     "CREATE INDEX IF NOT EXISTS idx_pat_user_id ON personal_access_tokens(user_id);",
+    # Phase 2 indices
+    "CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);",
+    "CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_project_invitations_email ON project_invitations(invited_email);",
+    "CREATE INDEX IF NOT EXISTS idx_threat_models_project_id ON threat_models(project_id);",
+    "CREATE INDEX IF NOT EXISTS idx_code_sources_project_id ON code_sources(project_id);",
 ]
+
+
+async def _migrate_v1_to_v2(conn: aiosqlite.Connection) -> None:
+    """Idempotent v1→v2 migration inside a single IMMEDIATE transaction.
+
+    Creates the Default Project (sentinel UUID), backfills project_id on
+    threat_models and code_sources, sets user_version=2.
+    Only runs when user_version < 2.
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    async with conn.execute("PRAGMA user_version;") as cur:
+        row = await cur.fetchone()
+    version = row[0] if row else 0
+    if version >= 2:
+        return
+
+    default_project_id = "00000000-0000-0000-0000-000000000000"
+    now = datetime.now(UTC).isoformat()
+
+    # Resolve the admin user_id — may not exist yet if first run
+    async with conn.execute("SELECT id FROM users WHERE username = 'admin' LIMIT 1") as cur:
+        row = await cur.fetchone()
+    admin_id = row[0] if row else None
+
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+
+        # Create Default Project (idempotent via OR IGNORE)
+        await conn.execute(
+            """INSERT OR IGNORE INTO projects
+               (id, name, description, is_archived, created_by, created_at, updated_at)
+               VALUES (?, 'Default Project', 'Automatically created on first startup', 0, ?, ?, ?)""",
+            (default_project_id, admin_id, now, now),
+        )
+
+        # Backfill threat_models
+        await conn.execute(
+            "UPDATE threat_models SET project_id = ? WHERE project_id IS NULL",
+            (default_project_id,),
+        )
+
+        # Backfill code_sources
+        await conn.execute(
+            "UPDATE code_sources SET project_id = ? WHERE project_id IS NULL",
+            (default_project_id,),
+        )
+
+        # Add admin as owner of Default Project (idempotent via OR IGNORE)
+        if admin_id:
+            member_id = str(uuid.uuid4())
+            await conn.execute(
+                """INSERT OR IGNORE INTO project_members
+                   (id, project_id, user_id, role, created_at)
+                   VALUES (?, ?, ?, 'owner', ?)""",
+                (member_id, default_project_id, admin_id, now),
+            )
+
+        # Bump schema version — inside the same transaction
+        await conn.execute("PRAGMA user_version = 2;")
+        await conn.commit()
+        logger.info("Schema migration v1→v2 complete (Default Project created)")
+    except Exception:
+        await conn.rollback()
+        raise
 
 
 async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
@@ -293,6 +406,10 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_USERS_TABLE)
     await conn.execute(CREATE_SESSIONS_TABLE)
     await conn.execute(CREATE_PERSONAL_ACCESS_TOKENS_TABLE)
+    # Phase 2 tables
+    await conn.execute(CREATE_PROJECTS_TABLE)
+    await conn.execute(CREATE_PROJECT_MEMBERS_TABLE)
+    await conn.execute(CREATE_PROJECT_INVITATIONS_TABLE)
 
     # Add columns to threat_models that link to a code source and (reserved
     # for v2) record the creating user. Wrapped in try/except to stay
@@ -334,6 +451,19 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
             if "duplicate column name" not in str(exc):
                 raise
 
+    # Phase 2: project_id on threat_models and code_sources
+    for column_sql in (
+        "ALTER TABLE threat_models ADD COLUMN project_id TEXT REFERENCES projects(id)",
+        "ALTER TABLE code_sources ADD COLUMN project_id TEXT REFERENCES projects(id)",
+    ):
+        try:
+            await conn.execute(column_sql)
+            await conn.commit()
+            logger.info(f"Applied schema migration: {column_sql.split(' ADD COLUMN ', 1)[1]}")
+        except aiosqlite.OperationalError as exc:
+            if "duplicate column name" not in str(exc):
+                raise
+
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
     try:
@@ -354,6 +484,9 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
         await conn.execute(index_sql)
 
     await conn.commit()
+
+    await _migrate_v1_to_v2(conn)
+
     logger.info("Database schema initialized successfully")
 
 

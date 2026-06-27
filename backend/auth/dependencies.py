@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 
@@ -143,3 +143,91 @@ async def _authenticate_pat(token: str) -> dict[str, Any]:
         pass
 
     return {**user, "pat_id": token_id, "pat_project_id": pat.get("project_id")}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: RBAC helpers
+# ---------------------------------------------------------------------------
+
+_ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
+
+
+async def resolve_project_id(entity_type: str, entity_id: str) -> str:
+    """Resolve project_id from any entity type. Raises 404 if not found.
+
+    entity_type: 'model' | 'threat' | 'source'
+    """
+    from backend.db.crud_projects import (
+        resolve_project_id_from_model,
+        resolve_project_id_from_source,
+        resolve_project_id_from_threat,
+    )
+
+    if entity_type == "model":
+        project_id = await resolve_project_id_from_model(entity_id)
+    elif entity_type == "threat":
+        project_id = await resolve_project_id_from_threat(entity_id)
+    elif entity_type == "source":
+        project_id = await resolve_project_id_from_source(entity_id)
+    else:
+        raise HTTPException(status_code=500, detail=f"Unknown entity_type: {entity_type}")
+
+    if project_id is None:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return project_id
+
+
+def require_role(min_role: str, entity_param: str, entity_type: str):
+    """Factory: returns a FastAPI dependency that checks project membership.
+
+    When PARANOID_REQUIRE_AUTH is false, passes through (anon admin has all access).
+    When the entity's project_id is the Default Project sentinel, allows any
+    authenticated user with at least min_role (or any user if anon mode).
+
+    Usage:
+        @router.patch("/{threat_id}")
+        async def update_threat(
+            threat_id: str,
+            _: None = Depends(require_role("editor", "threat_id", "threat")),
+        ): ...
+    """
+
+    async def _dep(
+        request: Request,
+        user: Annotated[dict, Depends(get_current_user)],
+    ) -> None:
+        from backend.config import settings
+
+        if not settings.paranoid_require_auth:
+            return  # anon admin — full access
+
+        entity_id = request.path_params.get(entity_param)
+        if not entity_id:
+            raise HTTPException(status_code=400, detail=f"Missing path param: {entity_param}")
+
+        project_id = await resolve_project_id(entity_type, entity_id)
+
+        # Instance admins bypass project membership check
+        if user.get("is_admin"):
+            return
+
+        from backend.db.crud_projects import get_user_role_in_project
+
+        role = await get_user_role_in_project(project_id, user["id"])
+        if role is None:
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+
+        if _ROLE_ORDER.get(role, 0) < _ROLE_ORDER.get(min_role, 0):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requires {min_role} role (you have {role})",
+            )
+
+    return _dep
+
+
+def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    """Dependency: require is_admin=True. Returns the user dict."""
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user

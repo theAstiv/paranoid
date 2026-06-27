@@ -1,3 +1,54 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html, body {
+    background-color: #0A0E16;
+    color: #E7EDF5;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: rgba(43, 212, 192, 0.28);
+    color: #E7EDF5;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1E2738; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2BD4C0; }
+}
+
+@layer components {
+  .glow { box-shadow: 0 6px 20px -8px #2BD4C0; }
+
+  .chip-accent  { background: rgba(43,212,192,0.13);  color: #2BD4C0; border: 1px solid rgba(43,212,192,0.3); }
+  .chip-blue    { background: rgba(77,156,255,0.13);  color: #4D9CFF; border: 1px solid rgba(77,156,255,0.3); }
+  .chip-violet  { background: rgba(192,132,252,0.13); color: #C084FC; border: 1px solid rgba(192,132,252,0.3); }
+  .chip-amber   { background: rgba(245,208,78,0.10);  color: #C9B870; border: 1px solid rgba(245,208,78,0.2); }
+  .chip-green   { background: rgba(63,208,168,0.13);  color: #3FD0A8; border: 1px solid rgba(63,208,168,0.3); }
+  .chip-red     { background: rgba(251,111,132,0.13); color: #FB6F84; border: 1px solid rgba(251,111,132,0.3); }
+  .chip-orange  { background: rgba(255,165,82,0.13);  color: #FFA552; border: 1px solid rgba(255,165,82,0.3); }
+  .chip-gray    { background: rgba(139,151,168,0.13); color: #8B97A8; border: 1px solid rgba(139,151,168,0.3); }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 px-4 py-2 rounded-panel text-sm font-semibold
+           bg-c-accent text-[#04141A] glow transition-colors;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-panel text-sm font-medium
+           bg-c-panel border border-c-border text-c-text3 transition-colors;
+  }
+  .card {
+    @apply bg-c-panel border border-c-border rounded-card;
+  }
+  .field {
+    @apply w-full bg-c-input border border-c-border-strong rounded-panel px-3 py-2.5
+           font-mono text-[13px] text-c-text2 placeholder-c-faint
+           focus:outline-none focus:border-c-accent transition-colors;
+  }
+}

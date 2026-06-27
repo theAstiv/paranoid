@@ -534,6 +534,25 @@ export function subscribeToSourceEvents(sourceId, onEvent, onError, onDone) {
   )
 }
 
+// ── Projects (Phase 2 stubs) ──────────────────────────────────────────────────
+
+/** Returns user's project list. Stubbed until Phase 2 backend ships. */
+export function listProjects() {
+  return Promise.resolve([])
+}
+
+// ── Notifications (Phase 5 stubs) ─────────────────────────────────────────────
+
+/** Returns user's notification list. Stubbed until Phase 5 backend ships. */
+export function listNotifications() {
+  return Promise.resolve([])
+}
+
+/** Marks all notifications read. Stubbed until Phase 5 backend ships. */
+export function markAllNotificationsRead() {
+  return Promise.resolve()
+}
+
 // ── Config & Health ───────────────────────────────────────────────────────────
 
 export function getConfig() {

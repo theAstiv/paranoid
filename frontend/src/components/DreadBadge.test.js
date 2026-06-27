@@ -34,21 +34,21 @@ describe('DreadBadge', () => {
   it('shows averaged score from SSE shape', () => {
     render(DreadBadge, { props: { threat: sseShape } })
     // avg(8,6,7,5,4) = 30/5 = 6
-    expect(screen.getByText(/DREAD: 6/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
   })
 
   it('shows averaged score from DB/API shape', () => {
     render(DreadBadge, { props: { threat: dbShape } })
-    expect(screen.getByText(/DREAD: 6/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
   })
 
-  it('uses yellow color class for mid-range score', () => {
+  it('uses orange chip class for mid-range score', () => {
     render(DreadBadge, { props: { threat: dbShape } })
-    const btn = screen.getByText(/DREAD: 6/).closest('button')
-    expect(btn.className).toContain('bg-yellow-100')
+    const btn = screen.getByRole('button', { name: /DREAD 6/ })
+    expect(btn.className).toContain('chip-orange')
   })
 
-  it('uses red color class for high score', () => {
+  it('uses red chip class for high score', () => {
     const highThreat = {
       dread_damage: 9,
       dread_reproducibility: 9,
@@ -57,11 +57,11 @@ describe('DreadBadge', () => {
       dread_discoverability: 8,
     }
     render(DreadBadge, { props: { threat: highThreat } })
-    const btn = screen.getByText(/DREAD:/).closest('button')
-    expect(btn.className).toContain('bg-red-100')
+    const btn = screen.getByRole('button', { name: /DREAD/ })
+    expect(btn.className).toContain('chip-red')
   })
 
-  it('uses green color class for low score', () => {
+  it('uses green chip class for low score', () => {
     const lowThreat = {
       dread_damage: 1,
       dread_reproducibility: 2,
@@ -70,7 +70,7 @@ describe('DreadBadge', () => {
       dread_discoverability: 1,
     }
     render(DreadBadge, { props: { threat: lowThreat } })
-    const btn = screen.getByText(/DREAD:/).closest('button')
-    expect(btn.className).toContain('bg-green-100')
+    const btn = screen.getByRole('button', { name: /DREAD/ })
+    expect(btn.className).toContain('chip-green')
   })
 })

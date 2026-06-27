@@ -17,11 +17,6 @@
   $: filtered = filter === 'all' ? $threats : $threats.filter(t => t.status === filter)
   $: pendingThreats = $threats.filter(t => t.status === 'pending')
 
-  // Pending threats bucketed by severity for batch actions.
-  // Severity prefers DREAD score (matches DreadBadge colour buckets:
-  // <=3 low, <=6 medium, otherwise high). When DREAD is missing we
-  // fall back to the `likelihood` field so rule-engine threats are
-  // still classifiable.
   function severityOf(t) {
     const score = dreadScoreOf(t)
     if (score != null) {
@@ -54,10 +49,7 @@
     return null
   }
 
-  $: criticalHighPending = pendingThreats.filter(t => {
-    const s = severityOf(t)
-    return s === 'critical' || s === 'high'
-  })
+  $: criticalHighPending = pendingThreats.filter(t => { const s = severityOf(t); return s === 'critical' || s === 'high' })
   $: lowPending = pendingThreats.filter(t => severityOf(t) === 'low')
 
   onMount(async () => {
@@ -77,7 +69,6 @@
     try {
       await updateThreat(threat.id, { status: 'approved' })
     } catch (err) {
-      // Revert on failure
       threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: threat.status } : t))
       notify('error', `Failed to approve: ${err.message}`)
     }
@@ -105,29 +96,22 @@
   }
 
   async function approveCriticalHigh() {
-    const subset = criticalHighPending
-    await _bulkApply(subset, 'approved', `Approved ${subset.length} Critical/High threats`, 'Bulk approve failed')
+    await _bulkApply(criticalHighPending, 'approved', `Approved ${criticalHighPending.length} Critical/High threats`, 'Bulk approve failed')
   }
 
   async function rejectLow() {
-    const subset = lowPending
-    await _bulkApply(subset, 'rejected', `Rejected ${subset.length} Low-severity threats`, 'Bulk reject failed')
+    await _bulkApply(lowPending, 'rejected', `Rejected ${lowPending.length} Low-severity threats`, 'Bulk reject failed')
   }
 
   async function _bulkApply(subset, nextStatus, successMsg, errMsg) {
     if (subset.length === 0) return
     const ids = new Set(subset.map(t => t.id))
-    // Optimistic update — keep originals so we can revert on failure.
     const originals = $threats.filter(t => ids.has(t.id)).map(t => ({ id: t.id, status: t.status }))
     threats.update(ts => ts.map(t => ids.has(t.id) ? { ...t, status: nextStatus } : t))
     try {
       await Promise.all(subset.map(t => updateThreat(t.id, { status: nextStatus })))
       notify('success', successMsg)
     } catch (err) {
-      // Revert the UI to the pre-action state so the display is internally
-      // consistent. Note: some server calls in the Promise.all may already have
-      // succeeded — the server state could be partially updated. The page will
-      // re-sync on the next full load (navigate away and back).
       threats.update(ts => ts.map(t => {
         const orig = originals.find(o => o.id === t.id)
         return orig ? { ...t, status: orig.status } : t
@@ -137,70 +121,59 @@
   }
 </script>
 
-<div class="max-w-4xl mx-auto space-y-5">
+<div class="max-w-[920px] mx-auto space-y-5">
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-semibold text-slate-900">Review Threats</h1>
+      <h1 class="text-xl font-semibold text-c-text">Review Threats</h1>
       {#if $currentModel}
-        <p class="text-sm text-slate-500 mt-0.5">{$currentModel.title}</p>
+        <p class="text-sm text-c-muted mt-0.5">{$currentModel.title}</p>
       {/if}
     </div>
     <div class="flex items-center gap-2">
       <ExportMenu modelId={params.id} />
-      <a href="/models/{params.id}" use:link class="text-sm text-slate-500 hover:text-slate-700">← Results</a>
+      <a href="/models/{params.id}" use:link class="text-sm text-c-muted hover:text-c-text2">← Results</a>
     </div>
   </div>
 
   <!-- Filters + bulk actions -->
-  <div class="flex items-center justify-between">
+  <div class="flex items-center justify-between gap-4 flex-wrap">
     <div class="flex gap-1">
       {#each FILTERS as f}
         <button
           type="button"
           on:click={() => filter = f}
-          class="px-3 py-1 text-sm rounded-md capitalize {filter === f ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}">
+          class="px-3 py-1 text-sm rounded-panel capitalize transition-colors
+            {filter === f ? 'bg-c-accent text-[#04141A] font-medium' : 'text-c-muted hover:bg-c-well hover:text-c-text2'}">
           {f}
-          {#if f === 'all'}
-            ({$threats.length})
-          {:else if f === 'pending'}
-            ({pendingThreats.length})
-          {:else}
-            ({$threats.filter(t => t.status === f).length})
-          {/if}
+          <span class="font-mono text-[11px] ml-0.5">
+            {#if f === 'all'}({$threats.length}){:else if f === 'pending'}({pendingThreats.length}){:else}({$threats.filter(t => t.status === f).length}){/if}
+          </span>
         </button>
       {/each}
     </div>
     {#if pendingThreats.length > 0}
-      <div class="flex items-center gap-3 flex-wrap justify-end">
+      <div class="flex items-center gap-3 flex-wrap">
         {#if criticalHighPending.length > 0}
-          <button
-            type="button"
-            on:click={approveCriticalHigh}
-            class="text-sm font-medium text-green-700 hover:text-green-800"
+          <button type="button" on:click={approveCriticalHigh}
+            class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors"
             title="Approve all pending threats with DREAD score >6 or High/Critical likelihood">
             Approve Critical+High ({criticalHighPending.length})
           </button>
         {/if}
         {#if lowPending.length > 0}
-          <button
-            type="button"
-            on:click={rejectLow}
-            class="text-sm font-medium text-amber-700 hover:text-amber-800"
-            title="Reject all pending threats with DREAD score &lt;4 or Low likelihood">
+          <button type="button" on:click={rejectLow}
+            class="text-xs font-medium text-c-high hover:text-c-high/80 transition-colors"
+            title="Reject all pending threats with DREAD score <4 or Low likelihood">
             Reject Low ({lowPending.length})
           </button>
         {/if}
-        <button
-          type="button"
-          on:click={approveAll}
-          class="text-sm font-medium text-green-700 hover:text-green-800">
+        <button type="button" on:click={approveAll}
+          class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors">
           Approve all ({pendingThreats.length})
         </button>
-        <button
-          type="button"
-          on:click={rejectAll}
-          class="text-sm font-medium text-red-700 hover:text-red-800">
+        <button type="button" on:click={rejectAll}
+          class="text-xs font-medium text-c-critical hover:text-c-critical/80 transition-colors">
           Reject all ({pendingThreats.length})
         </button>
       </div>
@@ -210,10 +183,10 @@
   <!-- Threat list -->
   {#if loading}
     <div class="flex justify-center py-16">
-      <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <div class="w-6 h-6 border-2 border-c-accent border-t-transparent rounded-full animate-spin-slow"></div>
     </div>
   {:else if filtered.length === 0}
-    <div class="text-center py-12 text-slate-400">
+    <div class="text-center py-12 text-c-faint text-sm">
       No {filter === 'all' ? '' : filter} threats.
     </div>
   {:else}

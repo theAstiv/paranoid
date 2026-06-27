@@ -7,7 +7,7 @@ API accepts and returns.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.models.enums import (
     Framework,
@@ -107,6 +107,54 @@ class UpdateTrustBoundaryRequest(BaseModel):
 
 
 ExportFormat = Literal["markdown", "pdf", "sarif", "json"]
+
+ProjectRole = Literal["owner", "editor", "viewer"]
+
+
+class CreateProjectRequest(BaseModel):
+    """Request body for POST /api/projects."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("name must not be blank")
+        return stripped
+
+
+class UpdateProjectRequest(BaseModel):
+    """Request body for PATCH /api/projects/{project_id}."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    default_provider: str | None = None
+    default_model: str | None = None
+    default_iterations: int | None = Field(default=None, ge=1, le=15)
+    default_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+
+
+class AddMemberRequest(BaseModel):
+    """Request body for POST /api/projects/{project_id}/members."""
+
+    user_id: str = Field(..., min_length=1)
+    role: ProjectRole = "viewer"
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    """Request body for PATCH /api/projects/{project_id}/members/{user_id}."""
+
+    role: ProjectRole
+
+
+class CreateInvitationRequest(BaseModel):
+    """Request body for POST /api/projects/{project_id}/invitations."""
+
+    invited_email: str = Field(..., min_length=3, max_length=320)
+    role: ProjectRole = "viewer"
 
 
 class DescriptionGap(BaseModel):

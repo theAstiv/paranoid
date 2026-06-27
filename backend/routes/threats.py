@@ -1,10 +1,12 @@
 """Threat CRUD routes and on-demand enrichment (attack trees, test cases)."""
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
 from backend.db import crud
 from backend.models.api import UpdateThreatRequest
@@ -42,7 +44,10 @@ def _default_runner(model_id: str) -> PipelineRunner:
 
 
 @router.get("/{threat_id}")
-async def get_threat(threat_id: str) -> JSONResponse:
+async def get_threat(
+    threat_id: str,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """Get a single threat by ID."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
@@ -51,7 +56,11 @@ async def get_threat(threat_id: str) -> JSONResponse:
 
 
 @router.patch("/{threat_id}")
-async def update_threat(threat_id: str, body: UpdateThreatRequest) -> JSONResponse:
+async def update_threat(
+    threat_id: str,
+    body: UpdateThreatRequest,
+    _authz: None = Depends(require_role("editor", "threat_id", "threat")),
+) -> JSONResponse:
     """Update threat fields. Only provided fields are changed."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
@@ -82,7 +91,10 @@ async def update_threat(threat_id: str, body: UpdateThreatRequest) -> JSONRespon
 
 
 @router.delete("/{threat_id}", status_code=204)
-async def delete_threat(threat_id: str) -> None:
+async def delete_threat(
+    threat_id: str,
+    _authz: None = Depends(require_role("editor", "threat_id", "threat")),
+) -> None:
     """Delete a threat and its associated attack trees and test cases."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
@@ -99,6 +111,7 @@ async def delete_threat(threat_id: str) -> None:
 async def generate_attack_tree(
     threat_id: str,
     _rate: None = Depends(enrichment_rate_limit),
+    _authz: None = Depends(require_role("editor", "threat_id", "threat")),
 ) -> JSONResponse:
     """Generate a Mermaid attack tree for a threat using the default LLM provider."""
     threat = await crud.get_threat(threat_id)
@@ -137,7 +150,10 @@ async def generate_attack_tree(
 
 
 @router.get("/{threat_id}/attack-trees")
-async def list_attack_trees(threat_id: str) -> JSONResponse:
+async def list_attack_trees(
+    threat_id: str,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """List all attack trees for a threat."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
@@ -155,6 +171,7 @@ async def list_attack_trees(threat_id: str) -> JSONResponse:
 async def generate_test_cases(
     threat_id: str,
     _rate: None = Depends(enrichment_rate_limit),
+    _authz: None = Depends(require_role("editor", "threat_id", "threat")),
 ) -> JSONResponse:
     """Generate Gherkin test cases for a threat using the default LLM provider."""
     threat = await crud.get_threat(threat_id)
@@ -191,7 +208,10 @@ async def generate_test_cases(
 
 
 @router.get("/{threat_id}/test-cases")
-async def list_test_cases(threat_id: str) -> JSONResponse:
+async def list_test_cases(
+    threat_id: str,
+    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+) -> JSONResponse:
     """List all test cases for a threat."""
     threat = await crud.get_threat(threat_id)
     if threat is None:
