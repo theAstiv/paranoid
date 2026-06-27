@@ -33,8 +33,6 @@
   $: stoppedReason = $pipelineEvents.find(e => e.step === 'complete')?.data?.stopped_reason ?? ''
   $: codeAnalysis = $pipelineEvents.find(e => e.step === 'summarize_code' && e.status === 'completed')?.data?.code_summary ?? model?.code_summary ?? null
 
-  // Detect when SSE stream finishes (pipelineRunning goes true → false) and load
-  // supplementary data that onDone in NewModel.svelte cannot access.
   let _wasRunning = false
   $: {
     if (_wasRunning && !$pipelineRunning && model?.id === params.id) {
@@ -45,12 +43,7 @@
 
   onMount(async () => {
     const alreadyRunning = get(pipelineRunning)
-
-    // Only clear events when we're not mid-stream from NewModel
-    if (!alreadyRunning) {
-      pipelineEvents.set([])
-    }
-
+    if (!alreadyRunning) pipelineEvents.set([])
     try {
       model = await getModel(params.id)
       currentModel.set(model)
@@ -60,18 +53,9 @@
       loading = false
       return
     }
-
     loading = false
-
-    if (alreadyRunning) {
-      // Stream started in NewModel before navigation — stores are already updating.
-      // Nothing to do; PipelineProgress renders from $pipelineEvents.
-      return
-    }
-
+    if (alreadyRunning) return
     if (model.status === 'in_progress') {
-      // User refreshed mid-run: SSE stream is gone, pipeline is still running on the server.
-      // Poll the model endpoint every 3s until it reaches a terminal state.
       polling = true
       pollTimer = setInterval(async () => {
         try {
@@ -83,31 +67,21 @@
             stopPolling()
             await loadSupplementary()
           }
-        } catch { /* ignore transient poll errors */ }
+        } catch { /* ignore transient */ }
       }, 3000)
     } else if (model.status === 'completed' || model.status === 'failed') {
       await loadSupplementary()
     }
-    // status === 'pending': model was created but /run was never called.
-    // This shouldn't happen in normal flow (NewModel starts the run before
-    // navigating), but we show the model header without auto-triggering.
   })
 
   onDestroy(() => {
     stopPolling()
-    // Abort the SSE stream when navigating away; clear the stored reference
     const abort = get(abortRun)
-    if (abort) {
-      abort()
-      abortRun.set(null)
-    }
+    if (abort) { abort(); abortRun.set(null) }
   })
 
   function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer)
-      pollTimer = null
-    }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
     polling = false
   }
 
@@ -117,22 +91,17 @@
       getModelFlows(params.id).catch(() => []),
       getModelTrustBoundaries(params.id).catch(() => []),
     ])
-    assets = a
-    flows = f
-    trustBoundaries = tb
+    assets = a; flows = f; trustBoundaries = tb
   }
 
-  const statusColors = {
-    pending: 'bg-slate-100 text-slate-600',
-    in_progress: 'bg-blue-100 text-blue-700',
-    completed: 'bg-green-100 text-green-700',
-    failed: 'bg-red-100 text-red-700',
+  const STATUS_CHIPS = {
+    pending:     'chip-gray',
+    in_progress: 'chip-blue',
+    completed:   'chip-green',
+    failed:      'chip-red',
   }
 
   function rerun() {
-    // Guard against missing provider API key — re-runs the same provider that was
-    // chosen at create time, so we check the model's recorded provider against the
-    // current $config flags. Ollama needs no key.
     const cfg = get(config)
     const provider = model?.provider ?? cfg?.default_provider
     const keyMissing = (
@@ -143,7 +112,6 @@
       notify('error', `No API key configured for ${provider}. Add one in Settings before re-running.`)
       return
     }
-
     const fd = new FormData()
     fd.append('assumptions', '[]')
     fd.append('has_ai_components', 'false')
@@ -151,8 +119,7 @@
     pipelineRunning.set(true)
     threats.set([])
     const abort = subscribeToRun(
-      params.id,
-      fd,
+      params.id, fd,
       evt => {
         pipelineEvents.update(es => [...es, evt])
         if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
@@ -162,9 +129,7 @@
         pipelineRunning.set(false)
         try {
           const refreshed = await getModel(params.id)
-          model = refreshed
-          currentModel.set(refreshed)
-          threats.set(refreshed.threats ?? [])
+          model = refreshed; currentModel.set(refreshed); threats.set(refreshed.threats ?? [])
           await loadSupplementary()
         } catch { /* ignore */ }
       },
@@ -173,59 +138,57 @@
   }
 </script>
 
-<div class="max-w-4xl mx-auto space-y-6">
+<div class="max-w-[1120px] mx-auto space-y-5">
   {#if loading}
     <div class="flex justify-center py-20">
-      <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <div class="w-6 h-6 border-2 border-c-accent border-t-transparent rounded-full animate-spin-slow"></div>
     </div>
   {:else if model}
     <!-- Header -->
-    <div class="flex items-start justify-between">
-      <div>
-        <h1 class="text-2xl font-semibold text-slate-900">{model.title}</h1>
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h1 class="text-xl font-semibold text-c-text truncate">{model.title}</h1>
         <div class="flex items-center gap-2 mt-1">
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium {statusColors[model.status] ?? 'bg-slate-100 text-slate-600'}">
+          <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border capitalize {STATUS_CHIPS[model.status] ?? 'chip-gray'}">
             {model.status.replace('_', ' ')}
           </span>
-          <span class="text-xs text-slate-400">{model.framework}</span>
+          <span class="font-mono text-[11px] text-c-faint">{model.framework}</span>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-shrink-0">
         <ExportMenu modelId={params.id} />
-        <a href="/models/{params.id}/context" use:link
-          class="px-3 py-1.5 text-sm font-medium text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors">
+        <a href="/models/{params.id}/context" use:link class="btn-ghost text-xs px-3 py-1.5">
           Edit Context
         </a>
         {#if model.status === 'completed' || model.status === 'failed'}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
-            class="px-3 py-1.5 text-sm font-medium text-slate-700 border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50 transition-colors">
+            class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
             Re-run
           </button>
         {/if}
         {#if model.status === 'completed'}
-          <a href="/models/{params.id}/review" use:link
-            class="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors">
+          <a href="/models/{params.id}/review" use:link class="btn-primary text-xs px-3 py-1.5">
             Review Threats
           </a>
         {/if}
       </div>
     </div>
 
-    <!-- Polling banner (shown after page refresh mid-run) -->
+    <!-- Polling banner -->
     {#if polling}
-      <div class="bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 flex items-center gap-3">
-        <div class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+      <div class="card px-5 py-4 flex items-center gap-3 border-c-blue/30 bg-c-blue/5">
+        <div class="w-4 h-4 border-2 border-c-blue border-t-transparent rounded-full animate-spin-slow flex-shrink-0"></div>
         <div>
-          <p class="text-sm font-medium text-blue-800">Pipeline is running on the server</p>
-          <p class="text-xs text-blue-600 mt-0.5">The SSE stream was lost on refresh. Polling for completion every 3 s…</p>
+          <p class="text-sm font-medium text-c-blue">Pipeline is running on the server</p>
+          <p class="text-xs text-c-muted mt-0.5">SSE stream lost on refresh. Polling for completion every 3s…</p>
         </div>
       </div>
     {/if}
 
-    <!-- Pipeline progress (shown while streaming or when events exist from this session) -->
+    <!-- Pipeline progress -->
     {#if $pipelineRunning || $pipelineEvents.length > 0}
-      <div class="bg-white rounded-xl border border-slate-200 p-5">
-        <h2 class="text-sm font-semibold text-slate-700 mb-4">Pipeline</h2>
+      <div class="card p-5">
+        <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">Pipeline</h2>
         <PipelineProgress
           events={$pipelineEvents}
           running={$pipelineRunning}
@@ -233,9 +196,8 @@
           totalIterations={model.iteration_count ?? 3}
         />
         {#if !$pipelineRunning && $pipelineEvents.length > 0}
-          <div class="mt-4 pt-4 border-t border-slate-100 flex gap-2">
-            <a href="/models/{params.id}/review" use:link
-              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors">
+          <div class="mt-4 pt-4 border-t border-c-border flex gap-2">
+            <a href="/models/{params.id}/review" use:link class="btn-primary text-sm px-4 py-2">
               Review {$threats.length} Threats
             </a>
           </div>
@@ -243,73 +205,70 @@
       </div>
     {/if}
 
-    <!-- Code Analysis card (persists after run when code source was used) -->
+    <!-- Code Analysis -->
     {#if codeAnalysis}
-      <div class="bg-white rounded-xl border border-slate-200 p-5">
-        <h2 class="text-sm font-semibold text-slate-700 mb-3">Code Analysis</h2>
-        <div class="grid sm:grid-cols-2 gap-4">
+      <div class="card p-5">
+        <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">Code Analysis</h2>
+        <div class="grid sm:grid-cols-2 gap-5">
 
-          <!-- Tech Stack -->
           <div>
-            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Tech Stack</p>
+            <p class="text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-2">Tech Stack</p>
             {#if codeAnalysis.tech_stack?.length && codeAnalysis.tech_stack[0] !== 'Unknown'}
               <div class="flex flex-wrap gap-1.5">
                 {#each codeAnalysis.tech_stack as tech}
-                  <span class="px-2 py-0.5 text-xs font-mono bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100">{tech}</span>
+                  <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-blue">{tech}</span>
                 {/each}
               </div>
             {:else}
-              <p class="text-xs text-slate-400 italic">Not detected</p>
+              <p class="text-xs text-c-faint italic">Not detected</p>
             {/if}
           </div>
 
-          <!-- Auth Patterns -->
           <div>
-            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Auth Patterns</p>
+            <p class="text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-2">Auth Patterns</p>
             {#if codeAnalysis.auth_patterns?.length && codeAnalysis.auth_patterns[0] !== 'No auth patterns detected'}
               <div class="flex flex-wrap gap-1.5">
                 {#each codeAnalysis.auth_patterns as a}
-                  <span class="px-2 py-0.5 text-xs bg-blue-50 text-blue-700 rounded-md border border-blue-100">{a}</span>
+                  <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-accent">{a}</span>
                 {/each}
               </div>
             {:else}
-              <p class="text-xs text-slate-400 italic">None detected</p>
+              <p class="text-xs text-c-faint italic">None detected</p>
             {/if}
           </div>
 
-          <!-- Entry Points -->
           <div>
-            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Entry Points</p>
+            <p class="text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-2">Entry Points</p>
             {#if codeAnalysis.entry_points?.length && codeAnalysis.entry_points[0] !== 'No entry points detected'}
               <div class="space-y-0.5 max-h-28 overflow-y-auto">
                 {#each codeAnalysis.entry_points as ep}
-                  <div class="flex items-center gap-1.5 text-xs font-mono text-slate-600">
-                    <span class="w-10 flex-shrink-0 text-right font-semibold {ep.startsWith('POST') || ep.startsWith('PUT') || ep.startsWith('DELETE') || ep.startsWith('PATCH') ? 'text-amber-600' : 'text-green-600'}">
+                  <div class="flex items-center gap-1.5 text-xs">
+                    <span class="font-mono font-semibold flex-shrink-0 w-12 text-right
+                      {ep.startsWith('POST') || ep.startsWith('PUT') || ep.startsWith('DELETE') || ep.startsWith('PATCH') ? 'text-c-high' : 'text-c-green'}">
                       {ep.split(' ')[0]}
                     </span>
-                    <span class="text-slate-700">{ep.split(' ').slice(1).join(' ')}</span>
+                    <span class="font-mono text-c-text2">{ep.split(' ').slice(1).join(' ')}</span>
                   </div>
                 {/each}
               </div>
             {:else}
-              <p class="text-xs text-slate-400 italic">None detected</p>
+              <p class="text-xs text-c-faint italic">None detected</p>
             {/if}
           </div>
 
-          <!-- Security Observations -->
           <div>
-            <p class="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Security Observations</p>
+            <p class="text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-2">Security Observations</p>
             {#if codeAnalysis.security_observations?.length && codeAnalysis.security_observations[0] !== 'No security issues detected in automated scan'}
               <div class="space-y-1">
                 {#each codeAnalysis.security_observations as obs}
                   <div class="flex items-start gap-1.5 text-xs">
-                    <span class="flex-shrink-0 mt-0.5 {obs.startsWith('CRITICAL') ? 'text-red-500' : 'text-amber-500'}">⚠</span>
-                    <span class="text-slate-700">{obs}</span>
+                    <span class="flex-shrink-0 mt-0.5 {obs.startsWith('CRITICAL') ? 'text-c-critical' : 'text-c-high'}">⚠</span>
+                    <span class="text-c-muted">{obs}</span>
                   </div>
                 {/each}
               </div>
             {:else}
-              <p class="text-xs text-slate-400 italic">No issues flagged</p>
+              <p class="text-xs text-c-faint italic">No issues flagged</p>
             {/if}
           </div>
 
@@ -317,65 +276,60 @@
       </div>
     {/if}
 
-    <!-- Iteration gap analysis (after run completes) -->
+    <!-- Gap analysis -->
     {#if !$pipelineRunning && model.status === 'completed'}
       {#if model.gap_summaries && model.gap_summaries.length > 0}
-        <div class="bg-white rounded-xl border border-slate-200 p-5">
-          <h2 class="text-sm font-semibold text-slate-700">Iteration Gap Analysis</h2>
-          <p class="text-xs text-slate-400 mt-1">
-            Each pass identified missing coverage that fed into the next iteration.
-          </p>
+        <div class="card p-5">
+          <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Iteration Gap Analysis</h2>
+          <p class="text-xs text-c-faint mt-1 mb-4">Each pass identified missing coverage that fed into the next iteration.</p>
           {#each model.gap_summaries as gap, i}
-            <div class="mt-4">
-              <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wide">
-                Iteration {i + 1}
-              </p>
-              <p class="text-sm text-slate-700 mt-1 whitespace-pre-line">{gap}</p>
+            <div class="mt-3 pt-3 border-t border-c-border first:border-0 first:mt-0 first:pt-0">
+              <p class="font-mono text-[11px] font-semibold text-c-accent uppercase tracking-wide">Iteration {i + 1}</p>
+              <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{gap}</p>
             </div>
           {/each}
         </div>
       {:else if $threats.length > 0}
-        <div class="bg-white rounded-xl border border-slate-200 p-4">
-          <p class="text-xs text-slate-500">
-            Iteration gap analysis: coverage was sufficient after iteration 1 — no gaps identified.
-          </p>
+        <div class="card p-4">
+          <p class="text-xs text-c-faint">Gap analysis: coverage was sufficient after iteration 1 — no gaps identified.</p>
         </div>
       {/if}
     {/if}
 
-    <!-- Threat summary (after run completes) -->
+    <!-- Threat summary -->
     {#if $threats.length > 0 && !$pipelineRunning}
-      <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="card p-5">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-slate-700">{$threats.length} Threats</h2>
-          <a href="/models/{params.id}/review" use:link class="text-xs text-indigo-600 hover:underline">Review all →</a>
+          <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">
+            {$threats.length} Threats
+          </h2>
+          <a href="/models/{params.id}/review" use:link class="text-xs text-c-accent hover:underline">Review all →</a>
         </div>
         <div class="space-y-1">
           {#each $threats.slice(0, 5) as t}
-            <div class="flex items-center gap-2 text-sm py-1 border-b border-slate-50">
-              <span class="text-xs font-mono text-slate-400 flex-shrink-0 w-4">·</span>
-              <span class="text-slate-800 truncate">{t.name}</span>
-              <span class="ml-auto flex-shrink-0 text-xs text-slate-400">{t.stride_category ?? t.maestro_category ?? ''}</span>
+            <div class="flex items-center gap-2 text-sm py-1.5 border-b border-c-divider last:border-0">
+              <span class="text-c-faint flex-shrink-0">·</span>
+              <span class="text-c-text2 truncate">{t.name}</span>
+              <span class="ml-auto flex-shrink-0 font-mono text-[11px] text-c-faint">{t.stride_category ?? t.maestro_category ?? ''}</span>
             </div>
           {/each}
           {#if $threats.length > 5}
-            <p class="text-xs text-slate-400 pt-1">+{$threats.length - 5} more</p>
+            <p class="text-xs text-c-faint pt-1">+{$threats.length - 5} more</p>
           {/if}
         </div>
       </div>
     {/if}
 
-    <!-- Assets / Flows / Trust Boundaries (always visible, CRUD-enabled) -->
+    <!-- Assets / Flows / Trust Boundaries -->
     {#if !$pipelineRunning}
       <div class="grid sm:grid-cols-3 gap-4">
-        <!-- Assets -->
-        <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="card p-4">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Assets {#if assets.length > 0}<span class="normal-case font-normal">({assets.length})</span>{/if}
+            <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
+              Assets {#if assets.length > 0}<span class="normal-case font-mono text-c-muted">({assets.length})</span>{/if}
             </h3>
             <button type="button" on:click={() => assetsList.startAdd()}
-              class="flex items-center gap-0.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+              class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
               </svg>
@@ -397,14 +351,13 @@
           />
         </div>
 
-        <!-- Data Flows -->
-        <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="card p-4">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Data Flows {#if flows.length > 0}<span class="normal-case font-normal">({flows.length})</span>{/if}
+            <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
+              Data Flows {#if flows.length > 0}<span class="normal-case font-mono text-c-muted">({flows.length})</span>{/if}
             </h3>
             <button type="button" on:click={() => flowsList.startAdd()}
-              class="flex items-center gap-0.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+              class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
               </svg>
@@ -427,14 +380,13 @@
           />
         </div>
 
-        <!-- Trust Boundaries -->
-        <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="card p-4">
           <div class="flex items-center justify-between mb-3">
-            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Trust Boundaries {#if trustBoundaries.length > 0}<span class="normal-case font-normal">({trustBoundaries.length})</span>{/if}
+            <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
+              Trust Boundaries {#if trustBoundaries.length > 0}<span class="normal-case font-mono text-c-muted">({trustBoundaries.length})</span>{/if}
             </h3>
             <button type="button" on:click={() => boundariesList.startAdd()}
-              class="flex items-center gap-0.5 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+              class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
               </svg>
