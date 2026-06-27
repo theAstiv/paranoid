@@ -11,31 +11,17 @@
   let step = 0
   let submitting = false
 
-  // Step 1
   let title = ''
   let framework = 'STRIDE'
-
-  // Step 2
   let description = ''
-
-  // Step 3
   let diagramFile = null
   let diagramPreview = null
-
-  // Step 4
   let assumptions = []
   let newAssumption = ''
-
-  // Step 5
   let iterationCount = 3
-
-  // Step 6
   let hasAiComponents = false
-
-  // Strict mode — block Run on error-severity gaps
   let strictMode = false
 
-  // LLM pre-flight state (debounced; fired from Step 1 description and Step 4 assumptions)
   let llmAnalysisLoading = false
   let llmDescriptionGaps = []
   let llmAssumptionsGaps = []
@@ -50,71 +36,43 @@
 
   function scheduleAnalysis() {
     clearTimeout(_analyzeDebounceTimer)
-    // Abort any in-flight fetch immediately — the signal is wired to the
-    // actual HTTP request so this cancels on the network level, not just
-    // in JS. Create a fresh controller for the next request.
     if (_analyzeController) _analyzeController.abort()
     _analyzeController = null
-
-    if (description.trim().length < 200) {
-      // Below threshold — clear stale results so the panel doesn't show
-      // outdated gaps from a previously longer description.
-      _clearLlmResults()
-      return
-    }
-
+    if (description.trim().length < 200) { _clearLlmResults(); return }
     _analyzeDebounceTimer = setTimeout(runAnalysis, 600)
   }
 
   async function runAnalysis() {
-    // Fresh AbortController per request — previous one was already aborted
-    // (or never created) by scheduleAnalysis before we got here.
     _analyzeController = new AbortController()
     const signal = _analyzeController.signal
-
     llmAnalysisLoading = true
     try {
-      const result = await analyzeBundle({
-        description: description.trim(),
-        assumptions,
-        framework,
-        hasAi: hasAiComponents,
-        signal,
-      })
+      const result = await analyzeBundle({ description: description.trim(), assumptions, framework, hasAi: hasAiComponents, signal })
       llmDescriptionGaps = result.description.gaps
       llmAssumptionsGaps = result.assumptions.gaps
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        console.warn('Pre-flight analysis failed:', err.message)
-      }
-      // On abort or error keep previous results visible (don't flash empty)
+      if (err.name !== 'AbortError') console.warn('Pre-flight analysis failed:', err.message)
     } finally {
       llmAnalysisLoading = false
     }
   }
 
-  // Re-run analysis when description or assumptions change
   $: { description; assumptions; scheduleAnalysis() }
 
-  // Block "Run" in strict mode if there are any error-severity gaps
   $: strictBlocked = strictMode && (
     llmDescriptionGaps.some(g => g.severity === 'error') ||
     llmAssumptionsGaps.some(g => g.severity === 'error')
   )
 
-  // Block Run when the selected provider has no API key configured.
-  // Ollama needs no key — only anthropic and openai require one.
-  // Reads from $config which is populated on app boot and after Settings save.
   $: providerKeyMissing = (() => {
-    if (!$config) return false  // config still loading; let the user proceed
+    if (!$config) return false
     const p = $config.default_provider
     if (p === 'anthropic') return $config.anthropic_api_key_set === false
     if (p === 'openai') return $config.openai_api_key_set === false
-    return false  // ollama or unknown provider
+    return false
   })()
   $: providerLabel = $config?.default_provider ?? 'the provider'
 
-  // Step 3 — Code Source (optional)
   let selectedCodeSourceId = null
   let readySources = []
   let loadingSources = false
@@ -135,9 +93,6 @@
     }
   }
 
-  // Client-side gap regexes mirror backend/pipeline/pre_flight.py so the wizard
-  // can flag gaps before the model is created (and before /analyze is reachable).
-  // Backend is authoritative at run time; keep these in sync when editing.
   const AUTH_RE = /\b(auth(?:entication|orization)?|oauth|jwt|token|saml|sso|password|credential|api.?key|bearer|session|login|mfa|2fa)\b/i
   const BOUNDARY_RE = /\b(trust.?boundary|network.?segment|dmz|firewall|vlan|subnet|vpc|perimeter|internet.?facing|internal|external|public|private)\b/i
   const FLOW_RE = /\b(sends?|receives?|transfers?|communicates?|calls?|requests?|responses?|reads?|writes?|stores?|fetches?|connects?|publishes?|subscribes?)\b/i
@@ -191,55 +146,28 @@
   async function handleSubmit() {
     submitting = true
     try {
-      const model = await createModel({
-        title: title.trim(),
-        description: description.trim(),
-        framework,
-        iteration_count: iterationCount,
-      })
-
-      // Build FormData now — diagramFile is a File object that only exists in this
-      // component's scope. We must start the SSE stream BEFORE navigating away so
-      // the File reference stays alive. Results.svelte checks $pipelineRunning on
-      // mount and skips triggering a second run.
+      const model = await createModel({ title: title.trim(), description: description.trim(), framework, iteration_count: iterationCount })
       const fd = new FormData()
       fd.append('assumptions', JSON.stringify(assumptions))
       fd.append('has_ai_components', String(hasAiComponents))
       if (diagramFile) fd.append('diagram', diagramFile)
       if (selectedCodeSourceId) fd.append('code_source_id', selectedCodeSourceId)
-
-      // Reset run state, then start the SSE stream
       pipelineEvents.set([])
       pipelineRunning.set(true)
       const modelId = model.id
-
       const abort = subscribeToRun(
-        modelId,
-        fd,
+        modelId, fd,
         evt => {
           pipelineEvents.update(es => [...es, evt])
-          if (evt.step === 'complete' && evt.data?.threats?.threats) {
-            threats.set(evt.data.threats.threats)
-          }
+          if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
         },
-        err => {
-          notify('error', `Pipeline error: ${err.message}`)
-          pipelineRunning.set(false)
-        },
+        err => { notify('error', `Pipeline error: ${err.message}`); pipelineRunning.set(false) },
         async () => {
           pipelineRunning.set(false)
-          // Refresh model so Results page picks up final state
-          try {
-            const refreshed = await getModel(modelId)
-            currentModel.set(refreshed)
-            threats.set(refreshed.threats ?? [])
-          } catch { /* ignore */ }
+          try { const refreshed = await getModel(modelId); currentModel.set(refreshed); threats.set(refreshed.threats ?? []) } catch { /* ignore */ }
         },
       )
-
-      // Store abort so Results.onDestroy can cancel if user navigates away
       abortRun.set(abort)
-
       await push(`/models/${model.id}`)
     } catch (err) {
       notify('error', `Failed to create model: ${err.message}`)
@@ -247,11 +175,12 @@
       submitting = false
     }
   }
+
+  const LABEL_CLASS = 'block text-xs font-medium text-c-muted mb-1 uppercase tracking-wide'
+  const INPUT_CLASS = 'field w-full'
 </script>
 
-<div class="max-w-2xl mx-auto">
-  <h1 class="text-2xl font-semibold text-slate-900 mb-6">New Threat Model</h1>
-
+<div class="max-w-[880px] mx-auto">
   <Wizard
     steps={STEPS}
     currentStep={step}
@@ -262,36 +191,26 @@
     on:submit={handleSubmit}
   >
     {#if step === 0}
-      <!-- Title + Framework -->
       <div class="space-y-5">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1" for="title">Model title</label>
-          <input
-            id="title"
-            type="text"
-            bind:value={title}
-            maxlength="200"
+          <label class="{LABEL_CLASS}" for="title">Model title</label>
+          <input id="title" type="text" bind:value={title} maxlength="200"
             placeholder="e.g. Payment Gateway, Auth Service"
-            class="block w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-          <p class="mt-1 text-xs text-slate-400">{title.length}/200</p>
+            class="{INPUT_CLASS}" />
+          <p class="mt-1 font-mono text-[11px] text-c-faint">{title.length}/200</p>
         </div>
         <div>
-          <p class="block text-sm font-medium text-slate-700 mb-2">Threat framework</p>
-          <div class="flex gap-4">
+          <p class="{LABEL_CLASS}">Threat framework</p>
+          <div class="flex gap-4 mt-2">
             {#each ['STRIDE', 'MAESTRO', 'HYBRID'] as fw}
               <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  bind:group={framework}
-                  value={fw}
-                  class="text-indigo-600 focus:ring-indigo-500"
-                />
-                <span class="text-sm font-medium text-slate-700">{fw}</span>
+                <input type="radio" bind:group={framework} value={fw}
+                  class="text-c-accent focus:ring-c-accent" />
+                <span class="text-sm font-medium text-c-text2">{fw}</span>
               </label>
             {/each}
           </div>
-          <p class="mt-2 text-xs text-slate-500">
+          <p class="mt-2 text-xs text-c-muted">
             {#if framework === 'STRIDE'}
               Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege.
             {:else if framework === 'MAESTRO'}
@@ -304,37 +223,32 @@
       </div>
 
     {:else if step === 1}
-      <!-- Description -->
       <div class="space-y-3">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1" for="description">System description</label>
-          <textarea
-            id="description"
-            bind:value={description}
-            rows="6"
+          <label class="{LABEL_CLASS}" for="description">System description</label>
+          <textarea id="description" bind:value={description} rows="6"
             placeholder="Describe your system architecture, components, data flows, and trust boundaries. The more detail you provide, the more targeted the threat model will be."
-            class="block w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none"
-          ></textarea>
-          <p class="mt-1 text-xs {description.trim().length < 10 ? 'text-red-400' : 'text-slate-400'}">
+            class="{INPUT_CLASS} resize-none animate-blink"></textarea>
+          <p class="mt-1 font-mono text-[11px] {description.trim().length < 10 ? 'text-c-critical' : 'text-c-faint'}">
             {description.trim().length} chars (min 10)
           </p>
         </div>
 
-        <!-- Fast regex panel (instant, shows at 80 chars) -->
         {#if description.trim().length >= 80}
-          <div class="rounded-lg border {descriptionGaps.length === 0 ? 'border-green-200 bg-green-50' : 'border-yellow-200 bg-yellow-50'} px-3 py-2.5 space-y-1.5">
+          <div class="rounded-panel border px-3 py-2.5 space-y-1.5
+            {descriptionGaps.length === 0 ? 'border-c-green/30 bg-c-green/5' : 'border-c-high/30 bg-c-high/5'}">
             {#if descriptionGaps.length === 0}
-              <p class="text-xs font-medium text-green-700 flex items-center gap-1.5">
+              <p class="text-xs font-medium text-c-green flex items-center gap-1.5">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                 Description looks complete
               </p>
             {:else}
-              <p class="text-xs font-medium text-yellow-800">Coverage gaps detected — consider adding:</p>
+              <p class="text-xs font-medium text-c-high">Coverage gaps detected — consider adding:</p>
               <ul class="space-y-1">
                 {#each descriptionGaps as gap}
-                  <li class="text-xs text-yellow-700 flex items-start gap-1.5">
-                    <svg class="w-3 h-3 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                    <span><span class="font-medium">{gap.field}:</span> {gap.message}</span>
+                  <li class="text-xs text-c-muted flex items-start gap-1.5">
+                    <svg class="w-3 h-3 mt-0.5 flex-shrink-0 text-c-high" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <span><span class="font-medium text-c-text2">{gap.field}:</span> {gap.message}</span>
                   </li>
                 {/each}
               </ul>
@@ -342,83 +256,66 @@
           </div>
         {/if}
 
-        <!-- LLM-backed deep analysis (debounced, fires at 200 chars) -->
         {#if description.trim().length >= 200}
-          <PreFlightPanel
-            title="Description coverage (AI)"
-            loading={llmAnalysisLoading}
-            gaps={llmDescriptionGaps}
-
-            collapsed={true}
-          />
+          <PreFlightPanel title="Description coverage (AI)" loading={llmAnalysisLoading} gaps={llmDescriptionGaps} collapsed={true} />
         {/if}
       </div>
 
     {:else if step === 2}
-      <!-- Diagram (optional) -->
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1" for="file-diagram">Architecture diagram <span class="text-slate-400 font-normal">(optional)</span></label>
-          <input
-            id="file-diagram"
-            type="file"
-            accept=".png,.jpg,.jpeg,.mmd,.txt"
+          <label class="{LABEL_CLASS}" for="file-diagram">Architecture diagram <span class="text-c-faint font-normal normal-case">(optional)</span></label>
+          <input id="file-diagram" type="file" accept=".png,.jpg,.jpeg,.mmd,.txt"
             on:change={handleDiagramChange}
-            class="block w-full text-sm text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-          />
-          <p class="mt-1 text-xs text-slate-400">PNG/JPG (max 5 MB) or Mermaid .mmd file. Vision-capable providers will analyze the diagram directly.</p>
+            class="block w-full text-sm text-c-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-panel file:border file:border-c-border file:text-xs file:font-medium file:bg-c-well file:text-c-text2 hover:file:bg-c-panel" />
+          <p class="mt-1 text-xs text-c-faint">PNG/JPG (max 5 MB) or Mermaid .mmd file.</p>
         </div>
         {#if diagramPreview}
-          <img src={diagramPreview} alt="Diagram preview" class="max-h-48 rounded-lg border border-slate-200 object-contain" />
+          <img src={diagramPreview} alt="Diagram preview" class="max-h-48 rounded-panel border border-c-border object-contain" />
         {:else if diagramFile}
-          <div class="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 rounded-md px-3 py-2">
-            <svg class="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+          <div class="flex items-center gap-2 text-sm text-c-muted bg-c-well border border-c-border rounded-panel px-3 py-2">
+            <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
             {diagramFile.name}
           </div>
         {/if}
       </div>
 
     {:else if step === 3}
-      <!-- Code Source (optional) -->
       <div class="space-y-4">
         <div class="flex items-center justify-between">
-          <p class="text-sm font-medium text-slate-700">Code context <span class="text-slate-400 font-normal">(optional)</span></p>
+          <p class="text-sm font-medium text-c-text2">Code context <span class="text-c-faint font-normal">(optional)</span></p>
           <div class="flex items-center gap-3">
             <button type="button" on:click={() => { sourcesLoaded = false }}
-              class="text-xs text-slate-400 hover:text-slate-600" title="Refresh source list">
-              Refresh
-            </button>
-            <a href="/sources" use:link class="text-xs text-indigo-600 hover:underline">Manage sources</a>
+              class="text-xs text-c-muted hover:text-c-text" title="Refresh source list">Refresh</button>
+            <a href="/sources" use:link class="text-xs text-c-accent hover:underline">Manage sources</a>
           </div>
         </div>
-        <p class="text-xs text-slate-500">Select an indexed code repository to give the pipeline additional context about your implementation. Requires a ready source from the Sources page.</p>
+        <p class="text-xs text-c-muted">Select an indexed code repository to give the pipeline additional context.</p>
 
         {#if loadingSources}
-          <p class="text-sm text-slate-400 py-4 text-center">Loading sources…</p>
+          <p class="text-sm text-c-faint py-4 text-center">Loading sources…</p>
         {:else if readySources.length === 0}
-          <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-center space-y-1">
-            <p class="text-sm text-slate-500">No indexed sources available.</p>
-            <a href="/sources" use:link class="text-xs text-indigo-600 hover:underline">Add a repository on the Sources page →</a>
+          <div class="rounded-panel border border-c-border bg-c-well px-4 py-6 text-center space-y-1">
+            <p class="text-sm text-c-muted">No indexed sources available.</p>
+            <a href="/sources" use:link class="text-xs text-c-accent hover:underline">Add a repository on the Sources page →</a>
           </div>
         {:else}
           <div class="space-y-2">
-            <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50
-              {selectedCodeSourceId === null ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200'}">
-              <input type="radio" bind:group={selectedCodeSourceId} value={null}
-                class="text-indigo-600 focus:ring-indigo-500" />
+            <label class="flex items-center gap-3 p-3 rounded-panel border cursor-pointer transition-colors
+              {selectedCodeSourceId === null ? 'border-c-accent/40 bg-c-accent/5' : 'border-c-border hover:bg-c-well'}">
+              <input type="radio" bind:group={selectedCodeSourceId} value={null} class="text-c-accent" />
               <div>
-                <p class="text-sm font-medium text-slate-700">None</p>
-                <p class="text-xs text-slate-400">No code context</p>
+                <p class="text-sm font-medium text-c-text2">None</p>
+                <p class="text-xs text-c-faint">No code context</p>
               </div>
             </label>
             {#each readySources as src (src.id)}
-              <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50
-                {selectedCodeSourceId === src.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200'}">
-                <input type="radio" bind:group={selectedCodeSourceId} value={src.id}
-                  class="text-indigo-600 focus:ring-indigo-500" />
+              <label class="flex items-center gap-3 p-3 rounded-panel border cursor-pointer transition-colors
+                {selectedCodeSourceId === src.id ? 'border-c-accent/40 bg-c-accent/5' : 'border-c-border hover:bg-c-well'}">
+                <input type="radio" bind:group={selectedCodeSourceId} value={src.id} class="text-c-accent" />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-slate-700">{src.name}</p>
-                  <p class="text-xs text-slate-500 truncate">{src.git_url}{src.ref ? ` @ ${src.ref}` : ''}</p>
+                  <p class="text-sm font-medium text-c-text2">{src.name}</p>
+                  <p class="font-mono text-xs text-c-faint truncate">{src.git_url}{src.ref ? ` @ ${src.ref}` : ''}</p>
                 </div>
               </label>
             {/each}
@@ -427,30 +324,23 @@
       </div>
 
     {:else if step === 4}
-      <!-- Assumptions (optional) -->
       <div class="space-y-3">
-        <p class="text-sm font-medium text-slate-700">Assumptions <span class="text-slate-400 font-normal">(optional)</span></p>
-        <p class="text-xs text-slate-500">List existing security controls, scope boundaries, and focus areas. This prevents the pipeline from suggesting threats that are already mitigated and guides it toward what matters most.</p>
+        <p class="text-sm font-medium text-c-text2">Assumptions <span class="text-c-faint font-normal">(optional)</span></p>
+        <p class="text-xs text-c-muted">List existing security controls, scope boundaries, and focus areas.</p>
         <div class="flex gap-2">
-          <input
-            type="text"
-            bind:value={newAssumption}
+          <input type="text" bind:value={newAssumption}
             placeholder="e.g. TLS 1.3 enforced on all client connections"
             on:keydown={e => e.key === 'Enter' && addAssumption()}
-            class="flex-1 rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-          />
-          <button type="button" on:click={addAssumption}
-            class="px-3 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100">
-            Add
-          </button>
+            class="flex-1 field" />
+          <button type="button" on:click={addAssumption} class="btn-ghost text-xs px-3">Add</button>
         </div>
         {#if assumptions.length > 0}
           <ul class="space-y-1">
             {#each assumptions as a, i}
-              <li class="flex items-center justify-between bg-slate-50 rounded px-3 py-1.5 text-sm">
+              <li class="flex items-center justify-between bg-c-well border border-c-border rounded-panel px-3 py-1.5 text-sm text-c-text2">
                 {a}
                 <button type="button" on:click={() => removeAssumption(i)}
-                  class="text-slate-400 hover:text-red-500 ml-2">
+                  class="text-c-faint hover:text-c-critical ml-2 transition-colors">
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
                 </button>
               </li>
@@ -458,154 +348,105 @@
           </ul>
         {/if}
 
-        <!-- LLM-backed assumptions analysis -->
         {#if description.trim().length >= 200}
-          <PreFlightPanel
-            title="Assumptions coverage (AI)"
-            loading={llmAnalysisLoading}
-            gaps={llmAssumptionsGaps}
-
-          />
+          <PreFlightPanel title="Assumptions coverage (AI)" loading={llmAnalysisLoading} gaps={llmAssumptionsGaps} />
         {/if}
       </div>
 
     {:else if step === 5}
-      <!-- Iterations -->
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1" for="iterations">
-            Iteration count: <span class="text-indigo-600 font-semibold">{iterationCount}</span>
+          <label class="{LABEL_CLASS}" for="iterations">
+            Iteration count: <span class="text-c-accent font-semibold font-mono">{iterationCount}</span>
           </label>
-          <input
-            id="iterations"
-            type="range"
-            min="1"
-            max="15"
-            bind:value={iterationCount}
-            class="w-full accent-indigo-600"
-          />
-          <div class="flex justify-between text-xs text-slate-400 mt-1">
+          <input id="iterations" type="range" min="1" max="15" bind:value={iterationCount}
+            class="w-full accent-c-accent mt-2" />
+          <div class="flex justify-between font-mono text-[11px] text-c-faint mt-1">
             <span>1 — Quick</span>
             <span>15 — Thorough</span>
           </div>
         </div>
-        <p class="text-xs text-slate-500">
-          Each iteration runs gap analysis and generates additional threats. More iterations = broader coverage, longer runtime.
-        </p>
+        <p class="text-xs text-c-muted">Each iteration runs gap analysis and generates additional threats. More iterations = broader coverage, longer runtime.</p>
       </div>
 
     {:else if step === 6}
-      <!-- AI Components -->
       <div class="space-y-4">
         {#if framework === 'MAESTRO' || framework === 'HYBRID'}
-          <div class="rounded-lg bg-teal-50 border border-teal-200 px-4 py-3 text-sm text-teal-800">
+          <div class="rounded-panel border border-c-accent/30 bg-c-accent/5 px-4 py-3 text-sm text-c-accent">
             {#if framework === 'MAESTRO'}
-              MAESTRO framework already generates AI/ML-specific threats exclusively. This option only applies to STRIDE.
+              MAESTRO framework already generates AI/ML-specific threats exclusively.
             {:else}
-              HYBRID framework generates threats with both STRIDE and MAESTRO categories in a single pass. This option only applies to STRIDE.
+              HYBRID framework generates threats with both STRIDE and MAESTRO categories in a single pass.
             {/if}
           </div>
         {:else}
           <label class="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={hasAiComponents}
-              class="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
+            <input type="checkbox" bind:checked={hasAiComponents}
+              class="mt-0.5 h-4 w-4 rounded border-c-border text-c-accent focus:ring-c-accent" />
             <div>
-              <p class="text-sm font-medium text-slate-700">System includes AI/ML components</p>
-              <p class="text-xs text-slate-500 mt-0.5">
-                Enables MAESTRO threat generation alongside STRIDE: model inversion, prompt injection, data poisoning, and other AI-specific risks. Threats from both frameworks are deduplicated and merged.
-              </p>
+              <p class="text-sm font-medium text-c-text2">System includes AI/ML components</p>
+              <p class="text-xs text-c-muted mt-0.5">Enables MAESTRO threat generation alongside STRIDE: model inversion, prompt injection, data poisoning, and other AI-specific risks.</p>
             </div>
           </label>
         {/if}
       </div>
 
     {:else if step === 7}
-      <!-- Review & Run -->
       <div class="space-y-4">
-        <h3 class="text-sm font-semibold text-slate-700">Ready to run</h3>
+        <h3 class="text-sm font-semibold text-c-text">Ready to run</h3>
 
-        <!-- Provider API key gate — blocks Run if the configured provider has no key. -->
         {#if providerKeyMissing}
-          <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+          <div class="rounded-panel border border-c-high/40 bg-c-high/5 px-4 py-3 space-y-2">
             <div class="flex items-start gap-2">
-              <svg class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+              <svg class="w-4 h-4 text-c-high mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               <div>
-                <p class="text-sm font-medium text-amber-900">No API key configured for {providerLabel}</p>
-                <p class="text-xs text-amber-800 mt-0.5">
-                  The pipeline can't reach {providerLabel} without a key. Add one in Settings, then come back to run.
-                </p>
+                <p class="text-sm font-medium text-c-high">No API key configured for {providerLabel}</p>
+                <p class="text-xs text-c-muted mt-0.5">The pipeline can't reach {providerLabel} without a key. Add one in Settings, then come back to run.</p>
               </div>
             </div>
-            <a href="/settings" use:link
-              class="inline-block text-xs font-medium text-amber-900 underline hover:text-amber-700">
-              Open Settings →
-            </a>
+            <a href="/settings" use:link class="inline-block text-xs font-medium text-c-accent hover:underline">Open Settings →</a>
           </div>
         {/if}
-
 
         <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <dt class="text-slate-500">Title</dt>
-          <dd class="text-slate-900 font-medium truncate">{title}</dd>
-          <dt class="text-slate-500">Framework</dt>
-          <dd class="text-slate-900">{framework}</dd>
-          <dt class="text-slate-500">Iterations</dt>
-          <dd class="text-slate-900">{iterationCount}</dd>
-          <dt class="text-slate-500">AI components</dt>
-          <dd class="text-slate-900">{hasAiComponents ? 'Yes (MAESTRO enabled)' : 'No'}</dd>
-          <dt class="text-slate-500">Diagram</dt>
-          <dd class="text-slate-900">{diagramFile ? diagramFile.name : '—'}</dd>
-          <dt class="text-slate-500">Code source</dt>
-          <dd class="text-slate-900">{selectedCodeSourceId ? (readySources.find(s => s.id === selectedCodeSourceId)?.name ?? '—') : '—'}</dd>
-          <dt class="text-slate-500">Assumptions</dt>
-          <dd class="text-slate-900">{assumptions.length > 0 ? assumptions.length + ' added' : '—'}</dd>
+          <dt class="text-c-muted">Title</dt>
+          <dd class="text-c-text font-medium truncate">{title}</dd>
+          <dt class="text-c-muted">Framework</dt>
+          <dd class="font-mono text-c-text2">{framework}</dd>
+          <dt class="text-c-muted">Iterations</dt>
+          <dd class="font-mono text-c-text2">{iterationCount}</dd>
+          <dt class="text-c-muted">AI components</dt>
+          <dd class="text-c-text2">{hasAiComponents ? 'Yes (MAESTRO enabled)' : 'No'}</dd>
+          <dt class="text-c-muted">Diagram</dt>
+          <dd class="text-c-text2">{diagramFile ? diagramFile.name : '—'}</dd>
+          <dt class="text-c-muted">Code source</dt>
+          <dd class="text-c-text2">{selectedCodeSourceId ? (readySources.find(s => s.id === selectedCodeSourceId)?.name ?? '—') : '—'}</dd>
+          <dt class="text-c-muted">Assumptions</dt>
+          <dd class="text-c-text2">{assumptions.length > 0 ? assumptions.length + ' added' : '—'}</dd>
         </dl>
 
-        <!-- Pre-flight gap summary -->
         {#if llmDescriptionGaps.length > 0 || llmAssumptionsGaps.length > 0 || llmAnalysisLoading}
-          <div class="space-y-2 pt-2 border-t border-slate-100">
-            <p class="text-xs font-medium text-slate-600">Pre-flight analysis</p>
-            <PreFlightPanel
-              title="Description"
-              loading={llmAnalysisLoading}
-              gaps={llmDescriptionGaps}
-  
-              collapsed={llmDescriptionGaps.length === 0}
-            />
-            <PreFlightPanel
-              title="Assumptions"
-              loading={llmAnalysisLoading}
-              gaps={llmAssumptionsGaps}
-  
-              collapsed={llmAssumptionsGaps.length === 0}
-            />
+          <div class="space-y-2 pt-2 border-t border-c-border">
+            <p class="text-xs font-medium text-c-muted">Pre-flight analysis</p>
+            <PreFlightPanel title="Description" loading={llmAnalysisLoading} gaps={llmDescriptionGaps} collapsed={llmDescriptionGaps.length === 0} />
+            <PreFlightPanel title="Assumptions" loading={llmAnalysisLoading} gaps={llmAssumptionsGaps} collapsed={llmAssumptionsGaps.length === 0} />
           </div>
         {/if}
 
-        <!-- Strict mode toggle -->
-        <div class="flex items-start gap-3 pt-2 border-t border-slate-100">
-          <input
-            id="strict-mode"
-            type="checkbox"
-            bind:checked={strictMode}
-            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-          />
+        <div class="flex items-start gap-3 pt-2 border-t border-c-border">
+          <input id="strict-mode" type="checkbox" bind:checked={strictMode}
+            class="mt-0.5 h-4 w-4 rounded border-c-border text-c-accent focus:ring-c-accent" />
           <label for="strict-mode" class="cursor-pointer">
-            <p class="text-sm font-medium text-slate-700">Block run on error-severity gaps</p>
-            <p class="text-xs text-slate-500 mt-0.5">When enabled, the Run button is disabled if the AI analysis found any error-severity gaps in the description or assumptions.</p>
+            <p class="text-sm font-medium text-c-text2">Block run on error-severity gaps</p>
+            <p class="text-xs text-c-muted mt-0.5">When enabled, the Run button is disabled if the AI analysis found any error-severity gaps.</p>
           </label>
         </div>
 
         {#if strictBlocked}
-          <p class="text-xs text-red-600 font-medium">
-            ✗ Run blocked — fix the error-severity gaps above or disable strict mode.
-          </p>
+          <p class="text-xs text-c-critical font-medium">✗ Run blocked — fix the error-severity gaps above or disable strict mode.</p>
         {/if}
 
-        <p class="text-xs text-slate-500 pt-2 border-t border-slate-100">
+        <p class="text-xs text-c-faint pt-2 border-t border-c-border">
           The pipeline will run {iterationCount} iteration{iterationCount !== 1 ? 's' : ''} of threat generation. You'll see live progress on the next screen.
         </p>
       </div>
