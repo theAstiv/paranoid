@@ -117,6 +117,7 @@ async def create_model(
         model=model_id_str,
         framework=body.framework.value,
         iteration_count=body.iteration_count,
+        project_id=body.project_id,
     )
 
     record = await crud.get_threat_model(model_id)
