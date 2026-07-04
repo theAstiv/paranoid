@@ -291,6 +291,29 @@ CREATE TABLE IF NOT EXISTS project_invitations (
 );
 """
 
+CREATE_COMMENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    threat_model_id TEXT NOT NULL REFERENCES threat_models(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+CREATE_THREAT_MODEL_ASSIGNEES_TABLE = """
+CREATE TABLE IF NOT EXISTS threat_model_assignees (
+    id TEXT PRIMARY KEY,
+    threat_model_id TEXT NOT NULL REFERENCES threat_models(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(threat_model_id, user_id)
+);
+"""
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -312,6 +335,11 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_project_invitations_email ON project_invitations(invited_email);",
     "CREATE INDEX IF NOT EXISTS idx_threat_models_project_id ON threat_models(project_id);",
     "CREATE INDEX IF NOT EXISTS idx_code_sources_project_id ON code_sources(project_id);",
+    # Phase 3 indices
+    "CREATE INDEX IF NOT EXISTS idx_comments_model_id ON comments(threat_model_id);",
+    "CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);",
+    "CREATE INDEX IF NOT EXISTS idx_assignees_model_id ON threat_model_assignees(threat_model_id);",
+    "CREATE INDEX IF NOT EXISTS idx_assignees_user_id ON threat_model_assignees(user_id);",
 ]
 
 
@@ -410,6 +438,9 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     await conn.execute(CREATE_PROJECTS_TABLE)
     await conn.execute(CREATE_PROJECT_MEMBERS_TABLE)
     await conn.execute(CREATE_PROJECT_INVITATIONS_TABLE)
+    # Phase 3 tables
+    await conn.execute(CREATE_COMMENTS_TABLE)
+    await conn.execute(CREATE_THREAT_MODEL_ASSIGNEES_TABLE)
 
     # Add columns to threat_models that link to a code source and (reserved
     # for v2) record the creating user. Wrapped in try/except to stay
