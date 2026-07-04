@@ -5,6 +5,8 @@ Attack tree / test case generation endpoints require a live LLM provider
 and are not tested here (covered by pipeline integration tests).
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -77,6 +79,82 @@ async def test_patch_threat_status(client, saved_threat):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_approve_embeds_vector(client, saved_threat):
+    """Approving a threat embeds it, scoped to its model's project."""
+    with (
+        patch(
+            "backend.routes.threats.crud_projects.resolve_project_id_from_model",
+            new=AsyncMock(return_value="proj-uuid-1"),
+        ),
+        patch(
+            "backend.routes.threats.vectors.upsert_threat_vector", new=AsyncMock()
+        ) as mock_upsert,
+    ):
+        resp = await client.patch(
+            f"/api/threats/{saved_threat['id']}",
+            json={"status": "approved"},
+        )
+
+    assert resp.status_code == 200
+    mock_upsert.assert_awaited_once()
+    assert mock_upsert.await_args.kwargs["threat_id"] == saved_threat["id"]
+    assert mock_upsert.await_args.kwargs["source"] == "approved"
+    assert mock_upsert.await_args.kwargs["project_id"] == "proj-uuid-1"
+    assert "Session Hijacking" in mock_upsert.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_approve_embed_failure_does_not_break_response(client, saved_threat):
+    """Embedding is best-effort — a failure must not surface as a 500."""
+    with patch(
+        "backend.routes.threats.vectors.upsert_threat_vector",
+        new=AsyncMock(side_effect=RuntimeError("embedding model unavailable")),
+    ):
+        resp = await client.patch(
+            f"/api/threats/{saved_threat['id']}",
+            json={"status": "approved"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_unapprove_removes_vector(client, saved_threat):
+    """Moving a threat away from 'approved' removes its stale vector."""
+    with patch("backend.routes.threats.vectors.upsert_threat_vector", new=AsyncMock()):
+        await client.patch(f"/api/threats/{saved_threat['id']}", json={"status": "approved"})
+
+    with patch(
+        "backend.routes.threats.vectors.delete_threat_vector", new=AsyncMock()
+    ) as mock_delete:
+        resp = await client.patch(
+            f"/api/threats/{saved_threat['id']}",
+            json={"status": "rejected"},
+        )
+
+    assert resp.status_code == 200
+    mock_delete.assert_awaited_once_with(saved_threat["id"])
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_non_status_update_does_not_touch_vectors(client, saved_threat):
+    """Editing fields other than status must not call the embed/delete hooks."""
+    with (
+        patch("backend.routes.threats.vectors.upsert_threat_vector", new=AsyncMock()) as mock_up,
+        patch("backend.routes.threats.vectors.delete_threat_vector", new=AsyncMock()) as mock_del,
+    ):
+        resp = await client.patch(
+            f"/api/threats/{saved_threat['id']}",
+            json={"name": "Renamed Threat"},
+        )
+
+    assert resp.status_code == 200
+    mock_up.assert_not_awaited()
+    mock_del.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -156,6 +234,19 @@ async def test_delete_threat_returns_204(client, saved_threat):
 
     resp2 = await client.get(f"/api/threats/{saved_threat['id']}")
     assert resp2.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_threat_removes_vector(client, saved_threat):
+    """Deleting a threat cleans up any embedding before the row (and its
+    cascading threat_metadata row) disappears — otherwise the vector orphans."""
+    with patch(
+        "backend.routes.threats.vectors.delete_threat_vector", new=AsyncMock()
+    ) as mock_delete:
+        resp = await client.delete(f"/api/threats/{saved_threat['id']}")
+
+    assert resp.status_code == 204
+    mock_delete.assert_awaited_once_with(saved_threat["id"])
 
 
 @pytest.mark.asyncio

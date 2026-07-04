@@ -363,6 +363,17 @@ async def test_fetch_rag_context_returns_formatted_strings():
 
 
 @pytest.mark.asyncio
+async def test_fetch_rag_context_forwards_project_id():
+    """project_id is threaded through to search_similar_threats for RAG scoping."""
+    mock_search = AsyncMock(return_value=[])
+    with patch("backend.db.vectors.search_similar_threats", new=mock_search):
+        await fetch_rag_context("web app", limit=5, project_id="proj-uuid-1")
+
+    mock_search.assert_awaited_once()
+    assert mock_search.await_args.kwargs["project_id"] == "proj-uuid-1"
+
+
+@pytest.mark.asyncio
 async def test_fetch_rag_context_empty_results():
     """No matches in vector store returns empty list."""
     with patch(
