@@ -32,8 +32,16 @@ async def create_threat_model(
     model: str,
     framework: str = "STRIDE",
     iteration_count: int = 1,
+    project_id: str | None = None,
 ) -> str:
-    """Create a new threat model."""
+    """Create a new threat model.
+
+    project_id defaults to the Default Project sentinel when not supplied,
+    so every model always resolves to a project — required for require_role()
+    checks and project-scoped RAG to work correctly.
+    """
+    from backend.db.crud_projects import DEFAULT_PROJECT_ID
+
     model_id = generate_id()
     now = now_iso()
 
@@ -42,8 +50,8 @@ async def create_threat_model(
         """
         INSERT INTO threat_models (
             id, title, description, framework, provider, model,
-            status, iteration_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            status, iteration_count, created_at, updated_at, project_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             model_id,
@@ -56,6 +64,7 @@ async def create_threat_model(
             iteration_count,
             now,
             now,
+            project_id or DEFAULT_PROJECT_ID,
         ),
     )
     await conn.commit()

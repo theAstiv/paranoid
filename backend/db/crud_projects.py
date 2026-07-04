@@ -9,7 +9,7 @@ from backend.db.connection import db
 from backend.db.utils import row_to_dict as _row
 
 
-_DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
 
