@@ -340,6 +340,8 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);",
     "CREATE INDEX IF NOT EXISTS idx_assignees_model_id ON threat_model_assignees(threat_model_id);",
     "CREATE INDEX IF NOT EXISTS idx_assignees_user_id ON threat_model_assignees(user_id);",
+    # Phase 4 indices
+    "CREATE INDEX IF NOT EXISTS idx_threat_metadata_project ON threat_metadata(project_id);",
 ]
 
 
@@ -494,6 +496,29 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
         except aiosqlite.OperationalError as exc:
             if "duplicate column name" not in str(exc):
                 raise
+
+    # Phase 4: project_id on threat_metadata (scopes RAG to seed + same-project
+    # approved threats; seed rows keep project_id NULL, identified by source='seed')
+    try:
+        await conn.execute(
+            "ALTER TABLE threat_metadata ADD COLUMN project_id TEXT REFERENCES projects(id)"
+        )
+        await conn.commit()
+        logger.info("Applied schema migration: threat_metadata.project_id")
+    except aiosqlite.OperationalError as exc:
+        if "duplicate column name" not in str(exc):
+            raise
+
+    # Defensive backfill for any non-seed threat_metadata rows predating the
+    # column above. Idempotent — matches 0 rows once every row has a project_id.
+    await conn.execute("""
+        UPDATE threat_metadata SET project_id = (
+            SELECT tm.project_id FROM threats t
+            JOIN threat_models tm ON tm.id = t.model_id
+            WHERE t.id = threat_metadata.threat_id
+        ) WHERE project_id IS NULL AND source != 'seed'
+    """)
+    await conn.commit()
 
     # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
     # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
