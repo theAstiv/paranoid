@@ -4,7 +4,9 @@ The runner coordinates all pipeline nodes, manages the iteration loop,
 and emits server-sent events for real-time progress tracking.
 """
 
+import asyncio
 import json
+import logging
 import time
 from collections import Counter
 from collections.abc import AsyncGenerator
@@ -24,6 +26,8 @@ from backend.providers.base import LLMProvider, ProviderError
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
 
+
+logger = logging.getLogger(__name__)
 
 StopAfter = Literal["extraction"]
 
@@ -415,11 +419,24 @@ class PipelineRunner:
             # per iteration. Skip entirely when keywords produce no rule-engine hits
             # (no RAG hits expected either in that case).
             if self.config.enable_rag and not provider_failed:
+                from backend.db.crud_projects import resolve_project_id_from_model
+
+                try:
+                    # Bounded like other DB operations (RULES.md: 5s default)
+                    # so a slow/unavailable DB degrades RAG scoping rather than
+                    # blocking the whole pipeline run.
+                    project_id = await asyncio.wait_for(
+                        resolve_project_id_from_model(self.model_id), timeout=5.0
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not resolve project_id for RAG scoping: {e}")
+                    project_id = None
                 assets_text = " ".join(a.name for a in assets.assets)
                 rag_context = await fetch_rag_context(
                     description,
                     assets_text=assets_text,
                     limit=settings.rag_top_k,
+                    project_id=project_id,
                 )
             else:
                 rag_context = None

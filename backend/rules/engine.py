@@ -275,6 +275,7 @@ async def fetch_rag_context(
     assets_text: str = "",
     limit: int = 5,
     threshold: float = 0.7,
+    project_id: str | None = None,
 ) -> list[str]:
     """Retrieve similar threats from the vector store for RAG prompt injection.
 
@@ -287,6 +288,8 @@ async def fetch_rag_context(
         assets_text: Optional asset names appended to enrich the query
         limit: Maximum number of similar threats to retrieve
         threshold: Minimum cosine similarity score (0-1)
+        project_id: Scopes results to this project's approved threats plus
+            the global seed corpus. None matches everything (no scoping).
 
     Returns:
         List of formatted threat strings ready for injection into the LLM prompt
@@ -300,6 +303,7 @@ async def fetch_rag_context(
             query_text=query,
             limit=limit,
             threshold=threshold,
+            project_id=project_id,
         )
     except Exception as e:
         logger.warning(f"RAG vector search failed (continuing without context): {e}")
