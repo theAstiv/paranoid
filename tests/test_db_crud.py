@@ -5,7 +5,7 @@ Uses shared test_db fixture from conftest.py (function scope, fresh DB per test)
 
 import pytest
 
-from backend.db import crud
+from backend.db import crud, crud_projects
 
 
 @pytest.mark.asyncio
@@ -32,6 +32,46 @@ async def test_create_and_get_threat_model(test_db):
     assert model["framework"] == "STRIDE"
     assert model["iteration_count"] == 3
     assert model["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_create_threat_model_defaults_to_default_project(test_db):
+    """project_id defaults to the Default Project sentinel when omitted."""
+    model_id = await crud.create_threat_model(
+        title="No Project Specified",
+        description="Test description",
+        provider="anthropic",
+        model="claude-sonnet-4",
+    )
+
+    model = await crud.get_threat_model(model_id)
+    assert model["project_id"] == crud_projects.DEFAULT_PROJECT_ID
+
+
+@pytest.mark.asyncio
+async def test_create_threat_model_honors_explicit_project_id(test_db):
+    """An explicit project_id is stored as given, not overridden by the default."""
+    from backend.db.connection import db
+
+    other_project_id = "11111111-1111-1111-1111-111111111111"
+    conn = await db.get()
+    await conn.execute(
+        "INSERT INTO projects (id, name, is_archived, created_at, updated_at) "
+        "VALUES (?, ?, 0, ?, ?)",
+        (other_project_id, "Other Project", crud.now_iso(), crud.now_iso()),
+    )
+    await conn.commit()
+
+    model_id = await crud.create_threat_model(
+        title="Explicit Project Model",
+        description="Test description",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        project_id=other_project_id,
+    )
+
+    model = await crud.get_threat_model(model_id)
+    assert model["project_id"] == other_project_id
 
 
 @pytest.mark.asyncio

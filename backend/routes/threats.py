@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
-from backend.db import crud
+from backend.db import crud, crud_projects, vectors
 from backend.models.api import UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
@@ -87,6 +87,15 @@ async def update_threat(
         await crud.update_threat_status(threat_id, body.status.value)
 
     updated = await crud.get_threat(threat_id)
+
+    if body.status is not None:
+        was_approved = threat.get("status") == "approved"
+        is_approved = body.status.value == "approved"
+        if is_approved:
+            await _embed_approved_threat(updated)
+        elif was_approved:
+            await _remove_threat_vector(threat_id)
+
     return JSONResponse(content=updated)
 
 
@@ -99,7 +108,37 @@ async def delete_threat(
     threat = await crud.get_threat(threat_id)
     if threat is None:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
+    # Must run before crud.delete_threat: threat_metadata cascades on threat
+    # deletion, so delete_threat_vector's lookup would find nothing afterward,
+    # orphaning the threat_vectors row.
+    await _remove_threat_vector(threat_id)
     await crud.delete_threat(threat_id)
+
+
+# ---------------------------------------------------------------------------
+# RAG vector maintenance (best-effort — never blocks the approve/reject UX)
+# ---------------------------------------------------------------------------
+
+
+async def _embed_approved_threat(threat: dict) -> None:
+    try:
+        project_id = await crud_projects.resolve_project_id_from_model(threat["model_id"])
+        text = f"{threat['name']} {threat['description']}"
+        await vectors.upsert_threat_vector(
+            threat_id=threat["id"],
+            text=text,
+            source="approved",
+            project_id=project_id,
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to embed approved threat {threat['id']}: {exc}")
+
+
+async def _remove_threat_vector(threat_id: str) -> None:
+    try:
+        await vectors.delete_threat_vector(threat_id)
+    except Exception as exc:
+        logger.warning(f"Failed to remove vector for threat {threat_id}: {exc}")
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ class CreateModelRequest(BaseModel):
     provider: Provider | None = None  # None → settings.default_provider
     model: str | None = None  # None → settings.default_model
     iteration_count: int = Field(default=3, ge=1, le=15)
+    project_id: str | None = None  # None → Default Project sentinel
 
 
 class UpdateModelRequest(BaseModel):

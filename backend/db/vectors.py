@@ -93,6 +93,7 @@ async def upsert_threat_vector(
     threat_id: str,
     text: str,
     source: str = "llm",
+    project_id: str | None = None,
 ) -> str:
     """
     Insert or update a threat vector.
@@ -100,7 +101,9 @@ async def upsert_threat_vector(
     Args:
         threat_id: ID of the threat
         text: Text to embed (threat description)
-        source: Source of the threat (llm, rule_engine, seed)
+        source: Source of the threat (llm, rule_engine, seed, approved)
+        project_id: Owning project, for RAG scoping. Left None for seed rows
+            (identified instead by source='seed'), which are global.
 
     Returns:
         ID of the vector record (threat_metadata.id)
@@ -148,10 +151,18 @@ async def upsert_threat_vector(
         await conn.execute(
             """
             INSERT INTO threat_metadata (
-                id, threat_id, source, embedding_model, vector_rowid, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                id, threat_id, source, embedding_model, vector_rowid, created_at, project_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (metadata_id, threat_id, source, settings.embedding_model, vector_rowid, now),
+            (
+                metadata_id,
+                threat_id,
+                source,
+                settings.embedding_model,
+                vector_rowid,
+                now,
+                project_id,
+            ),
         )
 
         # Insert into threat_vectors with matching rowid
@@ -165,10 +176,39 @@ async def upsert_threat_vector(
     return metadata_id
 
 
+async def delete_threat_vector(threat_id: str) -> None:
+    """Remove a threat's embedding, e.g. when an approved threat is un-approved.
+
+    Guarded to never touch seed rows (source='seed'), which aren't tied to
+    the approve/reject workflow and must remain regardless of any threat_id
+    coincidence.
+    """
+    conn = await db.get()
+
+    async with conn.execute(
+        "SELECT vector_rowid FROM threat_metadata WHERE threat_id = ? AND source != 'seed'",
+        (threat_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    if row is None:
+        return
+
+    vector_rowid = row[0]
+    if vector_rowid is not None:
+        await conn.execute("DELETE FROM threat_vectors WHERE rowid = ?", (vector_rowid,))
+    await conn.execute(
+        "DELETE FROM threat_metadata WHERE threat_id = ? AND source != 'seed'", (threat_id,)
+    )
+    await conn.commit()
+    logger.debug(f"Deleted vector for threat {threat_id}")
+
+
 async def search_similar_threats(
     query_text: str,
     limit: int = 10,
     threshold: float = 0.7,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Search for similar threats using vector similarity.
@@ -177,6 +217,11 @@ async def search_similar_threats(
         query_text: Query text to find similar threats
         limit: Maximum number of results
         threshold: Similarity threshold (0-1, cosine similarity)
+        project_id: When given, results are scoped to this project's own
+            approved threats plus the global seed corpus (source='seed').
+            When None, no project filter is applied (legacy/no-context
+            behavior — matches everything, same as before this parameter
+            existed).
 
     Returns:
         List of similar threats with scores
@@ -202,11 +247,17 @@ async def search_similar_threats(
         JOIN threat_metadata tm ON tv.rowid = tm.vector_rowid
         JOIN threats t ON t.id = tm.threat_id
         WHERE similarity >= ?
-        ORDER BY similarity DESC
-        LIMIT ?
     """
+    params: list[Any] = [query_blob, threshold]
 
-    async with conn.execute(query, (query_blob, threshold, limit)) as cursor:
+    if project_id is not None:
+        query += " AND (tm.project_id = ? OR tm.source = 'seed')"
+        params.append(project_id)
+
+    query += " ORDER BY similarity DESC LIMIT ?"
+    params.append(limit)
+
+    async with conn.execute(query, params) as cursor:
         rows = await cursor.fetchall()
         results = []
         for row in rows:
