@@ -157,6 +157,25 @@ class CreateInvitationRequest(BaseModel):
     role: ProjectRole = "viewer"
 
 
+class CreateCommentRequest(BaseModel):
+    """Request body for POST /api/models/{model_id}/comments."""
+
+    body: str = Field(..., min_length=1, max_length=10_000)
+    parent_id: str | None = None
+
+
+class UpdateCommentRequest(BaseModel):
+    """Request body for PATCH /api/comments/{comment_id}."""
+
+    body: str = Field(..., min_length=1, max_length=10_000)
+
+
+class AddAssigneeRequest(BaseModel):
+    """Request body for POST /api/models/{model_id}/assignees."""
+
+    user_id: str = Field(..., min_length=1)
+
+
 class DescriptionGap(BaseModel):
     """A single gap found in the system description or extracted context."""
 
