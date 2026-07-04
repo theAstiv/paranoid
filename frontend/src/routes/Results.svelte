@@ -15,6 +15,8 @@
   import PipelineProgress from '../components/PipelineProgress.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
   import ResourceList from '../components/ResourceList.svelte'
+  import Assignees from '../components/Assignees.svelte'
+  import Comments from '../components/Comments.svelte'
 
   /** @type {{ id: string }} */
   export let params = {}
@@ -155,7 +157,8 @@
           <span class="font-mono text-[11px] text-c-faint">{model.framework}</span>
         </div>
       </div>
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="flex items-center gap-3 flex-shrink-0">
+        <Assignees modelId={params.id} projectId={model.project_id} />
         <ExportMenu modelId={params.id} />
         <a href="/models/{params.id}/context" use:link class="btn-ghost text-xs px-3 py-1.5">
           Edit Context
@@ -409,5 +412,7 @@
         </div>
       </div>
     {/if}
+
+    <Comments modelId={params.id} />
   {/if}
 </div>

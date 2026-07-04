@@ -604,6 +604,45 @@ export function declineInvitation(invitationId) {
   return request('POST', `/invitations/${invitationId}/decline`, {})
 }
 
+// ── Comments (Phase 3) ─────────────────────────────────────────────────────────
+
+/** @param {string} modelId */
+export function listComments(modelId) {
+  return request('GET', `/models/${modelId}/comments`)
+}
+
+/** @param {string} modelId @param {{ body: string, parent_id?: string|null }} body */
+export function createComment(modelId, body) {
+  return request('POST', `/models/${modelId}/comments`, body)
+}
+
+/** @param {string} commentId @param {{ body: string }} body */
+export function updateComment(commentId, body) {
+  return request('PATCH', `/comments/${commentId}`, body)
+}
+
+/** @param {string} commentId */
+export function deleteComment(commentId) {
+  return request('DELETE', `/comments/${commentId}`)
+}
+
+// ── Assignees (Phase 3) ──────────────────────────────────────────────────────
+
+/** @param {string} modelId */
+export function listAssignees(modelId) {
+  return request('GET', `/models/${modelId}/assignees`)
+}
+
+/** @param {string} modelId @param {{ user_id: string }} body */
+export function addAssignee(modelId, body) {
+  return request('POST', `/models/${modelId}/assignees`, body)
+}
+
+/** @param {string} modelId @param {string} userId */
+export function removeAssignee(modelId, userId) {
+  return request('DELETE', `/models/${modelId}/assignees/${userId}`)
+}
+
 // ── Admin: users ──────────────────────────────────────────────────────────────
 
 /** Admin only. Returns all registered users. */
