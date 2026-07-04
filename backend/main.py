@@ -19,6 +19,7 @@ from backend.db.crud import delete_config_value, get_config_value
 from backend.db.seed import load_all_seeds
 from backend.routes.analyze import router as analyze_router
 from backend.routes.auth import router as auth_router
+from backend.routes.comments import router as comments_router
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
@@ -215,6 +216,7 @@ app.include_router(export_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
+app.include_router(comments_router, prefix="/api")
 
 
 @app.get("/")

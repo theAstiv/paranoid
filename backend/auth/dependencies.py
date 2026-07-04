@@ -155,9 +155,10 @@ _ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
 async def resolve_project_id(entity_type: str, entity_id: str) -> str:
     """Resolve project_id from any entity type. Raises 404 if not found.
 
-    entity_type: 'model' | 'threat' | 'source'
+    entity_type: 'model' | 'threat' | 'source' | 'comment'
     """
     from backend.db.crud_projects import (
+        resolve_project_id_from_comment,
         resolve_project_id_from_model,
         resolve_project_id_from_source,
         resolve_project_id_from_threat,
@@ -169,6 +170,8 @@ async def resolve_project_id(entity_type: str, entity_id: str) -> str:
         project_id = await resolve_project_id_from_threat(entity_id)
     elif entity_type == "source":
         project_id = await resolve_project_id_from_source(entity_id)
+    elif entity_type == "comment":
+        project_id = await resolve_project_id_from_comment(entity_id)
     else:
         raise HTTPException(status_code=500, detail=f"Unknown entity_type: {entity_type}")
 

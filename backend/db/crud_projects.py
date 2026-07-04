@@ -6,15 +6,12 @@ from datetime import UTC, datetime, timedelta
 import aiosqlite
 
 from backend.db.connection import db
+from backend.db.utils import row_to_dict as _row
 
 
 _DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 
 ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
-
-
-def _row(row: aiosqlite.Row | None) -> dict | None:
-    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +315,18 @@ async def resolve_project_id_from_source(source_id: str) -> str | None:
     conn = await db.get()
     async with conn.execute(
         "SELECT project_id FROM code_sources WHERE id = ?", (source_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def resolve_project_id_from_comment(comment_id: str) -> str | None:
+    conn = await db.get()
+    async with conn.execute(
+        """SELECT tm.project_id FROM comments c
+           JOIN threat_models tm ON tm.id = c.threat_model_id
+           WHERE c.id = ?""",
+        (comment_id,),
     ) as cur:
         row = await cur.fetchone()
     return row[0] if row else None
