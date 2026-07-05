@@ -16,6 +16,7 @@
   import Login from './routes/Login.svelte'
   import Register from './routes/Register.svelte'
   import Members from './routes/Members.svelte'
+  import ProjectSettings from './routes/ProjectSettings.svelte'
   import AdminUsers from './routes/AdminUsers.svelte'
   import {
     config, notification, notify, currentUser, authLoading,
@@ -38,6 +39,7 @@
     '/threats/:id/test-cases': TestCases,
     '/sources': CodeSources,
     '/members': Members,
+    '/projects/settings': ProjectSettings,
     '/admin/users': AdminUsers,
   }
 
@@ -136,6 +138,7 @@
     '/library': 'Library',
     '/sources': 'Code Sources',
     '/members': 'Members',
+    '/projects/settings': 'Project Settings',
     '/admin/users': 'Users',
     '/settings': 'Settings',
   }
@@ -362,6 +365,23 @@
                     <path d="M14 4a3 3 0 010 6M17 17a5 5 0 00-3-4.6"/>
                   </svg>
                   Members
+                </a>
+              </li>
+              <li>
+                <a href="#/projects/settings" use:link
+                  class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors
+                    {isActive('/projects/settings')
+                      ? 'bg-c-accent/10 text-c-accent font-medium'
+                      : 'text-c-text3 hover:bg-c-panel hover:text-c-text'}"
+                >
+                  <!-- Sliders icon -->
+                  <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" d="M4 5h12M4 10h12M4 15h12"/>
+                    <circle cx="8" cy="5" r="2" fill="currentColor" stroke="none"/>
+                    <circle cx="14" cy="10" r="2" fill="currentColor" stroke="none"/>
+                    <circle cx="7" cy="15" r="2" fill="currentColor" stroke="none"/>
+                  </svg>
+                  Project Settings
                 </a>
               </li>
             {/if}
