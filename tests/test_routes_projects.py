@@ -191,6 +191,34 @@ async def test_archive_project_returns_204(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/projects/{project_id}/activity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_project_activity_returns_200(client):
+    entry = {
+        "id": "activity-uuid-1",
+        "project_id": "proj-uuid-1",
+        "user_id": _ANON_ADMIN_ID,
+        "entity_type": "model",
+        "entity_id": "model-uuid-1",
+        "action": "created",
+        "details": {"title": "Test"},
+        "created_at": "2026-01-01T00:00:00",
+        "username": "admin",
+        "display_name": "Administrator",
+    }
+    with patch(
+        "backend.routes.projects.crud_activity.list_activity",
+        new=AsyncMock(return_value=[entry]),
+    ):
+        res = await client.get("/api/projects/proj-uuid-1/activity")
+    assert res.status_code == 200
+    assert res.json()[0]["action"] == "created"
+
+
+# ---------------------------------------------------------------------------
 # GET /api/projects/{project_id}/members
 # ---------------------------------------------------------------------------
 
@@ -534,9 +562,9 @@ async def test_decline_invitation_unauthorized_user_returns_403_when_auth_enable
 
 @pytest.mark.asyncio
 async def test_list_users_admin_returns_200(client):
-    # Anon admin (is_admin=True) passes require_admin. The route imports
-    # crud_auth lazily inside the function body, so patch at the module level.
-    with patch("backend.db.crud_auth.list_users", new=AsyncMock(return_value=[_USER])):
+    # Anon admin (is_admin=True) passes require_admin. crud_auth.list_users is
+    # imported at module level as _list_users, so patch that bound name.
+    with patch("backend.routes.projects._list_users", new=AsyncMock(return_value=[_USER])):
         res = await client.get("/api/users")
     assert res.status_code == 200
     data = res.json()
