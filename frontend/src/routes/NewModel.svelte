@@ -4,7 +4,7 @@
   import PreFlightPanel from '../components/PreFlightPanel.svelte'
   import { createModel, subscribeToRun, listCodeSources, analyzeBundle } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
-  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config } from '../lib/stores.js'
+  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject } from '../lib/stores.js'
 
   const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
 
@@ -146,7 +146,13 @@
   async function handleSubmit() {
     submitting = true
     try {
-      const model = await createModel({ title: title.trim(), description: description.trim(), framework, iteration_count: iterationCount })
+      const model = await createModel({
+        title: title.trim(),
+        description: description.trim(),
+        framework,
+        iteration_count: iterationCount,
+        project_id: $currentProject?.id,
+      })
       const fd = new FormData()
       fd.append('assumptions', JSON.stringify(assumptions))
       fd.append('has_ai_components', String(hasAiComponents))
