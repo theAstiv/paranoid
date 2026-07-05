@@ -104,3 +104,13 @@ class DiagramFormat(str, Enum):
     PNG = "png"
     JPEG = "jpeg"
     MERMAID = "mermaid"
+
+
+class NotificationType(str, Enum):
+    """Types of user notifications (Phase 5)."""
+
+    COMMENT_ADDED = "comment_added"
+    ASSIGNED = "assigned"
+    THREAT_STATUS_CHANGED = "threat_status_changed"
+    MEMBER_ADDED = "member_added"
+    INVITATION_RECEIVED = "invitation_received"
