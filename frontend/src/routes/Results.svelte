@@ -3,7 +3,7 @@
   import { get } from 'svelte/store'
   import { link } from 'svelte-spa-router'
   import {
-    getModel, getModelAssets, getModelFlows, getModelTrustBoundaries,
+    getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries,
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
@@ -101,6 +101,37 @@
     in_progress: 'chip-blue',
     completed:   'chip-green',
     failed:      'chip-red',
+    in_review:   'chip-amber',
+    approved:    'chip-accent',
+    archived:    'chip-gray',
+  }
+
+  // Manual review-workflow transitions surfaced as buttons. pending/in_progress/failed
+  // are pipeline-driven and not user-selectable here.
+  const STATUS_ACTIONS = {
+    completed: [{ label: 'Send to review', to: 'in_review', primary: true }],
+    in_review: [
+      { label: 'Approve', to: 'approved', primary: true },
+      { label: 'Back to completed', to: 'completed' },
+      { label: 'Archive', to: 'archived' },
+    ],
+    approved: [{ label: 'Archive', to: 'archived' }],
+  }
+  $: statusActions = STATUS_ACTIONS[model?.status] ?? []
+
+  let changingStatus = false
+
+  async function changeStatus(to) {
+    changingStatus = true
+    try {
+      const updated = await updateModel(params.id, { status: to })
+      model = updated
+      currentModel.set(updated)
+    } catch (err) {
+      notify('error', `Status change failed: ${err.message}`)
+    } finally {
+      changingStatus = false
+    }
   }
 
   function rerun() {
@@ -174,6 +205,12 @@
             Review Threats
           </a>
         {/if}
+        {#each statusActions as action (action.to)}
+          <button type="button" on:click={() => changeStatus(action.to)} disabled={changingStatus}
+            class="{action.primary ? 'btn-primary' : 'btn-ghost'} text-xs px-3 py-1.5 disabled:opacity-50">
+            {action.label}
+          </button>
+        {/each}
       </div>
     </div>
 

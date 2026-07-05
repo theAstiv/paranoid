@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { link } from 'svelte-spa-router'
   import { listModels, deleteModel } from '../lib/api.js'
-  import { models, notify } from '../lib/stores.js'
+  import { models, notify, currentProject } from '../lib/stores.js'
   import ModelCard from '../components/ModelCard.svelte'
 
   let loading = true
@@ -11,7 +11,7 @@
   let filterStatus = ''
   let filterFramework = ''
 
-  const STATUS_FILTERS = ['pending', 'in_progress', 'completed', 'failed', 'in_review', 'approved']
+  const STATUS_FILTERS = ['pending', 'in_progress', 'completed', 'failed', 'in_review', 'approved', 'archived']
   const FRAMEWORK_FILTERS = ['STRIDE', 'MAESTRO', 'HYBRID']
 
   $: filtered = $models.filter(m => {
@@ -31,16 +31,22 @@
     }
   }
 
-  onMount(async () => {
+  onMount(loadModels)
+
+  // Re-load whenever the active project changes (sidebar switch)
+  $: if ($currentProject) loadModels()
+
+  async function loadModels() {
+    loading = true
     try {
-      const data = await listModels({ limit: 50 })
+      const data = await listModels({ limit: 50, project_id: $currentProject?.id })
       models.set(data)
     } catch (err) {
       notify('error', `Failed to load models: ${err.message}`)
     } finally {
       loading = false
     }
-  })
+  }
 </script>
 
 <div class="max-w-[1120px] mx-auto">

@@ -141,7 +141,7 @@ export function updateMe(body) {
 // ── Models ────────────────────────────────────────────────────────────────────
 
 /**
- * @param {{ limit?: number, framework?: string, status?: string }} [params]
+ * @param {{ limit?: number, framework?: string, status?: string, project_id?: string }} [params]
  */
 export function listModels(params = {}) {
   const qs = new URLSearchParams(
@@ -151,7 +151,7 @@ export function listModels(params = {}) {
 }
 
 /**
- * @param {{ title: string, description: string, framework: string, iteration_count: number }} body
+ * @param {{ title: string, description: string, framework: string, iteration_count?: number, project_id?: string }} body
  */
 export function createModel(body) {
   return request('POST', '/models', body)
@@ -550,7 +550,10 @@ export function getProject(id) {
   return request('GET', `/projects/${id}`)
 }
 
-/** @param {string} id @param {{ name?: string, description?: string }} body */
+/**
+ * @param {string} id
+ * @param {{ name?: string, description?: string, default_provider?: string, default_model?: string, default_iterations?: number, default_temperature?: number }} body
+ */
 export function updateProject(id, body) {
   return request('PATCH', `/projects/${id}`, body)
 }

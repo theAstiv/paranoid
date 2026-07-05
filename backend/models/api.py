@@ -25,9 +25,10 @@ class CreateModelRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=10)
     framework: Framework = Framework.STRIDE
-    provider: Provider | None = None  # None → settings.default_provider
-    model: str | None = None  # None → settings.default_model
-    iteration_count: int = Field(default=3, ge=1, le=15)
+    provider: Provider | None = None  # None → project default → settings.default_provider
+    model: str | None = None  # None → project default → settings.default_model
+    # None → project default_iterations → settings.default_iterations
+    iteration_count: int | None = Field(default=None, ge=1, le=15)
     project_id: str | None = None  # None → Default Project sentinel
 
 

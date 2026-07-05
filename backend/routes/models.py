@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
-from backend.db import crud, crud_activity
+from backend.db import crud, crud_activity, crud_projects
 from backend.db.gap_utils import decode_gap_summaries
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
@@ -27,7 +27,13 @@ from backend.models.api import (
     UpdateModelRequest,
     UpdateTrustBoundaryRequest,
 )
-from backend.models.enums import DiagramFormat, Framework, ModelStatus, ThreatStatus
+from backend.models.enums import (
+    DiagramFormat,
+    Framework,
+    ModelStatus,
+    ThreatStatus,
+    is_valid_model_status_transition,
+)
 from backend.models.extended import CodeContext, DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.pre_flight import analyze_description_gaps
@@ -109,7 +115,16 @@ async def create_model(
     _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """Create a new threat model record."""
-    provider_type, model_id_str = resolve_provider(body.provider.value if body.provider else None)
+    project = await crud_projects.get_project(body.project_id or crud_projects.DEFAULT_PROJECT_ID)
+
+    provider_type, model_id_str = resolve_provider(
+        body.provider.value if body.provider else None, body.model, project
+    )
+    iteration_count = (
+        body.iteration_count
+        or (project or {}).get("default_iterations")
+        or settings.default_iterations
+    )
 
     model_id = await crud.create_threat_model(
         title=body.title,
@@ -117,7 +132,7 @@ async def create_model(
         provider=provider_type,
         model=model_id_str,
         framework=body.framework.value,
-        iteration_count=body.iteration_count,
+        iteration_count=iteration_count,
         project_id=body.project_id,
     )
 
@@ -138,13 +153,15 @@ async def list_models(
     limit: int = 50,
     framework: str | None = None,
     status: str | None = None,
+    project_id: str | None = None,
     _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
-    """List threat models, optionally filtered by framework or status."""
+    """List threat models, optionally filtered by framework, status, or project."""
     rows = await crud.list_threat_models(
         limit=limit,
         framework=framework,
         status=status,
+        project_id=project_id,
     )
     for row in rows:
         row["gap_summaries"] = decode_gap_summaries(row.get("gap_summaries"))
@@ -180,6 +197,14 @@ async def update_model(
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    if body.status is not None and not is_valid_model_status_transition(
+        record.get("status"), body.status.value
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot transition from '{record.get('status')}' to '{body.status.value}'",
+        )
 
     await crud.update_threat_model(
         model_id,
@@ -416,6 +441,11 @@ async def run_pipeline(
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
     max_iterations = record.get("iteration_count", settings.default_iterations)
+    project = await crud_projects.get_project(record.get("project_id"))
+    project_temperature = (project or {}).get("default_temperature")
+    temperature = (
+        project_temperature if project_temperature is not None else settings.default_temperature
+    )
 
     async def event_generator() -> AsyncGenerator[str, None]:
         # Clear any previous run's data so re-runs start clean
@@ -479,6 +509,7 @@ async def run_pipeline(
                     code_context=code_context,
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,
+                    temperature=temperature,
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()

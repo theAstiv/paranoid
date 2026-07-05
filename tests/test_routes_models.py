@@ -7,7 +7,8 @@ The test_db fixture sets up DB state before each test so db.get() works.
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from backend.db import crud
+from backend.db import crud, crud_projects
+from backend.db.crud_projects import DEFAULT_PROJECT_ID
 from backend.main import app
 
 
@@ -68,6 +69,53 @@ async def test_create_model_defaults_provider_from_settings(client):
     data = resp.json()
     # provider should be set (defaults to settings.default_provider)
     assert data["provider"] in ("anthropic", "openai", "ollama")
+
+
+@pytest.mark.asyncio
+async def test_create_model_honors_project_defaults(client, test_db):
+    await crud_projects.update_project(
+        DEFAULT_PROJECT_ID,
+        default_provider="ollama",
+        default_model="llama3.1:8b",
+        default_iterations=7,
+    )
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Internal Tool",
+            "description": "Uses project defaults since none are specified explicitly",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["provider"] == "ollama"
+    assert data["model"] == "llama3.1:8b"
+    assert data["iteration_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_create_model_explicit_values_override_project_defaults(client, test_db):
+    await crud_projects.update_project(
+        DEFAULT_PROJECT_ID,
+        default_provider="ollama",
+        default_model="llama3.1:8b",
+        default_iterations=7,
+    )
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Internal Tool",
+            "description": "Explicit values should win over project defaults",
+            "provider": "anthropic",
+            "model": "claude-opus-4",
+            "iteration_count": 2,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["provider"] == "anthropic"
+    assert data["model"] == "claude-opus-4"
+    assert data["iteration_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -142,6 +190,43 @@ async def test_list_models_status_filter(client, test_db):
     assert rows[0]["status"] == "completed"
 
 
+@pytest.mark.asyncio
+async def test_list_models_project_id_filter(client, test_db):
+    from backend.auth.passwords import hash_password
+    from backend.db import crud_auth
+
+    owner = await crud_auth.create_user(
+        username="proj-owner",
+        email="proj-owner@test.local",
+        password_hash=hash_password("password123"),
+        display_name="Proj Owner",
+    )
+    other_project = await crud_projects.create_project(name="Other Project", created_by=owner["id"])
+    mid_default = await crud.create_threat_model(
+        title="Default project model",
+        description="Model that stays in the Default Project",
+        provider="anthropic",
+        model="m",
+    )
+    mid_other = await crud.create_threat_model(
+        title="Other project model",
+        description="Model created under a non-default project",
+        provider="anthropic",
+        model="m",
+        project_id=other_project["id"],
+    )
+
+    resp = await client.get(f"/api/models/?project_id={other_project['id']}")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert [r["id"] for r in rows] == [mid_other]
+
+    resp = await client.get(f"/api/models/?project_id={DEFAULT_PROJECT_ID}")
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert [r["id"] for r in rows] == [mid_default]
+
+
 # ---------------------------------------------------------------------------
 # GET /api/models/{model_id}
 # ---------------------------------------------------------------------------
@@ -196,10 +281,53 @@ async def test_update_model_status(client, saved_model):
     model_id = saved_model["id"]
     resp = await client.patch(
         f"/api/models/{model_id}",
-        json={"status": "completed"},
+        json={"status": "in_progress"},
     )
     assert resp.status_code == 200
-    assert resp.json()["status"] == "completed"
+    assert resp.json()["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_update_model_status_noop_is_allowed(client, saved_model):
+    model_id = saved_model["id"]
+    resp = await client.patch(
+        f"/api/models/{model_id}",
+        json={"status": "pending"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_update_model_status_invalid_transition_returns_422(client, saved_model):
+    model_id = saved_model["id"]
+    resp = await client.patch(
+        f"/api/models/{model_id}",
+        json={"status": "completed"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_model_status_review_workflow(client, saved_model, test_db):
+    model_id = saved_model["id"]
+    await crud.update_threat_model_status(model_id, "completed")
+
+    resp = await client.patch(f"/api/models/{model_id}", json={"status": "in_review"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "in_review"
+
+    resp = await client.patch(f"/api/models/{model_id}", json={"status": "approved"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+
+    resp = await client.patch(f"/api/models/{model_id}", json={"status": "archived"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "archived"
+
+    # Archived is terminal — no further transitions allowed
+    resp = await client.patch(f"/api/models/{model_id}", json={"status": "in_review"})
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio

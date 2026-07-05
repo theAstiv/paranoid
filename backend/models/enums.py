@@ -80,6 +80,42 @@ class ModelStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    ARCHIVED = "archived"
+
+
+_MODEL_STATUS_TRANSITIONS: dict[ModelStatus, set[ModelStatus]] = {
+    ModelStatus.PENDING: {ModelStatus.IN_PROGRESS},
+    ModelStatus.IN_PROGRESS: {ModelStatus.COMPLETED, ModelStatus.FAILED},
+    ModelStatus.COMPLETED: {
+        ModelStatus.IN_PROGRESS,
+        ModelStatus.IN_REVIEW,
+        ModelStatus.ARCHIVED,
+    },
+    ModelStatus.FAILED: {ModelStatus.IN_PROGRESS},
+    ModelStatus.IN_REVIEW: {
+        ModelStatus.APPROVED,
+        ModelStatus.COMPLETED,
+        ModelStatus.ARCHIVED,
+    },
+    ModelStatus.APPROVED: {ModelStatus.IN_REVIEW, ModelStatus.ARCHIVED},
+    ModelStatus.ARCHIVED: set(),
+}
+
+
+def is_valid_model_status_transition(current: str, new: str) -> bool:
+    """Whether a threat model may move from `current` status to `new`.
+
+    A no-op (new == current) is always allowed. Unknown status strings are
+    rejected rather than raising, since this guards a user-supplied PATCH body.
+    """
+    if current == new:
+        return True
+    try:
+        return ModelStatus(new) in _MODEL_STATUS_TRANSITIONS.get(ModelStatus(current), set())
+    except ValueError:
+        return False
 
 
 class Framework(str, Enum):

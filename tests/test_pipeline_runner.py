@@ -309,6 +309,63 @@ async def test_run_pipeline_for_model_convenience():
     assert events[-1].status == "completed"
 
 
+@pytest.mark.asyncio
+async def test_run_pipeline_for_model_defaults_temperature_from_settings(monkeypatch):
+    """When no temperature is passed, PipelineConfig falls back to settings.default_temperature."""
+    import backend.pipeline.runner as runner_module
+
+    monkeypatch.setattr(runner_module.settings, "default_temperature", 0.42)
+    captured = {}
+    orig_init = runner_module.PipelineRunner.__init__
+
+    def spy_init(self, *args, **kwargs):
+        captured["config"] = kwargs.get("config") or args[1]
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(runner_module.PipelineRunner, "__init__", spy_init)
+
+    provider = MockProvider(gap_call_threshold=1)
+    async for _ in run_pipeline_for_model(
+        model_id="temp-test-default",
+        description="A document sharing web app",
+        framework=Framework.STRIDE,
+        provider=provider,
+        max_iterations=1,
+    ):
+        pass
+
+    assert captured["config"].temperature == 0.42
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_for_model_honors_explicit_temperature(monkeypatch):
+    """An explicit temperature argument overrides settings.default_temperature."""
+    import backend.pipeline.runner as runner_module
+
+    monkeypatch.setattr(runner_module.settings, "default_temperature", 0.2)
+    captured = {}
+    orig_init = runner_module.PipelineRunner.__init__
+
+    def spy_init(self, *args, **kwargs):
+        captured["config"] = kwargs.get("config") or args[1]
+        orig_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(runner_module.PipelineRunner, "__init__", spy_init)
+
+    provider = MockProvider(gap_call_threshold=1)
+    async for _ in run_pipeline_for_model(
+        model_id="temp-test-explicit",
+        description="A document sharing web app",
+        framework=Framework.STRIDE,
+        provider=provider,
+        max_iterations=1,
+        temperature=0.9,
+    ):
+        pass
+
+    assert captured["config"].temperature == 0.9
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: _is_stride_coverage_balanced
 # ---------------------------------------------------------------------------
