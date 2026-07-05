@@ -135,3 +135,18 @@ export const notifUnread = derived(
  * @type {import('svelte/store').Writable<string|null>}
  */
 export const menuOpen = writable(null)
+
+/**
+ * Reset all per-session, per-user state. Call on logout and on auth-expiry
+ * (401 after a failed refresh) — otherwise the previous user's projects/
+ * notifications survive in these stores until something happens to
+ * overwrite them, which only happens on the initial page-load fetch, not on
+ * a logout→login cycle within the same SPA session.
+ */
+export function clearAuthState() {
+  currentUser.set(null)
+  notifications.set([])
+  projects.set([])
+  currentProject.set(null)
+  menuOpen.set(null)
+}

@@ -10,7 +10,7 @@ let _refreshPromise = null
  * - On second 401 after refresh: clears token + redirects to /app/login.
  */
 async function request(method, path, body, extraHeaders = {}, signal = undefined, _retrying = false) {
-  const { getStoredToken, setStoredToken, clearStoredToken, currentUser } = await import('./stores.js')
+  const { getStoredToken, setStoredToken, clearStoredToken, clearAuthState } = await import('./stores.js')
 
   const token = getStoredToken()
   const headers = { ...extraHeaders }
@@ -26,7 +26,7 @@ async function request(method, path, body, extraHeaders = {}, signal = undefined
   // Retry 401 after refresh still failed: full auth clear
   if (res.status === 401 && _retrying) {
     clearStoredToken()
-    currentUser.set(null)
+    clearAuthState()
     window.location.hash = '#/login'
     throw new Error('Session expired — please log in again')
   }
@@ -49,7 +49,7 @@ async function request(method, path, body, extraHeaders = {}, signal = undefined
     }
     // Refresh failed or returned no token: clear auth and redirect to login
     clearStoredToken()
-    currentUser.set(null)
+    clearAuthState()
     window.location.hash = '#/login'
     throw new Error('Session expired — please log in again')
   }
@@ -95,12 +95,12 @@ export async function login(body) {
 
 /** Log out and clear local auth state. */
 export async function logout() {
-  const { clearStoredToken, currentUser } = await import('./stores.js')
+  const { clearStoredToken, clearAuthState } = await import('./stores.js')
   try {
     await request('POST', '/auth/logout', {})
   } finally {
     clearStoredToken()
-    currentUser.set(null)
+    clearAuthState()
   }
 }
 
@@ -650,16 +650,28 @@ export function listAllUsers() {
   return request('GET', '/users')
 }
 
-// ── Notifications (Phase 5 stubs) ─────────────────────────────────────────────
+// ── Notifications (Phase 5) ───────────────────────────────────────────────────
 
-/** Returns user's notification list. Stubbed until Phase 5 backend ships. */
+/** Returns the current user's notification list, newest first. */
 export function listNotifications() {
-  return Promise.resolve([])
+  return request('GET', '/notifications')
 }
 
-/** Marks all notifications read. Stubbed until Phase 5 backend ships. */
+/** @param {string} notificationId */
+export function markNotificationRead(notificationId) {
+  return request('PATCH', `/notifications/${notificationId}`)
+}
+
+/** Marks all of the current user's notifications read. */
 export function markAllNotificationsRead() {
-  return Promise.resolve()
+  return request('POST', '/notifications/mark-all-read', {})
+}
+
+// ── Activity log (Phase 5) ────────────────────────────────────────────────────
+
+/** @param {string} projectId */
+export function listProjectActivity(projectId) {
+  return request('GET', `/projects/${projectId}/activity`)
 }
 
 // ── Config & Health ───────────────────────────────────────────────────────────
