@@ -23,6 +23,7 @@ from backend.routes.comments import router as comments_router
 from backend.routes.config import router as config_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
+from backend.routes.notifications import router as notifications_router
 from backend.routes.projects import router as projects_router
 from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
@@ -217,6 +218,7 @@ app.include_router(config_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
 app.include_router(comments_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
 
 
 @app.get("/")
