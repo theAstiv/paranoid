@@ -3,6 +3,7 @@
   import { get } from 'svelte/store'
   import Router, { push, location } from 'svelte-spa-router'
   import { link } from 'svelte-spa-router'
+  import Dashboard from './routes/Dashboard.svelte'
   import Home from './routes/Home.svelte'
   import NewModel from './routes/NewModel.svelte'
   import Results from './routes/Results.svelte'
@@ -27,6 +28,7 @@
 
   const routes = {
     '/': Home,
+    '/dashboard': Dashboard,
     '/login': Login,
     '/register': Register,
     '/models/new': NewModel,
@@ -133,6 +135,7 @@
 
   // Breadcrumb screen name
   const SCREEN_LABELS = {
+    '/dashboard': 'Dashboard',
     '/': 'Threat Models',
     '/models/new': 'New Model',
     '/library': 'Library',
@@ -316,6 +319,23 @@
         <div>
           <p class="font-mono text-[10px] text-c-faint uppercase tracking-[0.08em] px-2 mb-1.5">Project</p>
           <ul class="space-y-0.5">
+            <li>
+              <a href="#/dashboard" use:link
+                class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors
+                  {isActive('/dashboard')
+                    ? 'bg-c-accent/10 text-c-accent font-medium'
+                    : 'text-c-text3 hover:bg-c-panel hover:text-c-text'}"
+              >
+                <!-- Dashboard icon -->
+                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <rect x="3" y="3" width="7" height="9" rx="1"/>
+                  <rect x="12" y="3" width="5" height="5" rx="1"/>
+                  <rect x="12" y="10" width="5" height="7" rx="1"/>
+                  <rect x="3" y="14" width="7" height="3" rx="1"/>
+                </svg>
+                Dashboard
+              </a>
+            </li>
             <li>
               <a href="#/" use:link
                 class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors

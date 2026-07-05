@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Multi-User Collaboration (Phases 0–7)
+
+Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collaboration. SQLite remains the only datastore (WAL mode + a pre-warmed reader pool for concurrency).
+
+**Auth foundation**
+- Local accounts: argon2id password hashing (`argon2-cffi`, lazy-imported so the CLI import path stays free of it), 15-minute HS256 JWT access tokens, 7-day refresh tokens with rotation + reuse detection (a stolen refresh token works exactly once — reuse revokes the entire session family)
+- Personal Access Tokens (`pat_<id>_<random>`, sha256-hashed, project-scoped) for the CLI and GitHub Action — `--token` / `PARANOID_TOKEN` / `PARANOID_URL` on `cli/main.py`
+- `PARANOID_REQUIRE_AUTH` (default `false`): anonymous requests get synthetic owner-on-everything access, preserving pre-v2 single-user behavior; `true` requires a valid JWT or PAT on every route except `/health` and `/api/auth/*`
+- Login/refresh rate-limited (10 req/60s); Login/Register pages, Bearer-header `fetch()` wrapper with silent-refresh-and-retry on 401 (including SSE streams)
+
+**Projects, members, RBAC**
+- `projects` / `project_members` / `project_invitations` tables; owner/editor/viewer roles enforced via a `require_role()` FastAPI dependency that resolves any entity (model, threat, comment, code source) back to its owning project
+- Atomic, idempotent v1→v2 migration: creates a sentinel "Default Project", backfills every existing `threat_models`/`code_sources` row's `project_id`, bumps `PRAGMA user_version`
+- Frontend: project selector in the sidebar, `Members.svelte` (invite/role-change/remove), `AdminUsers.svelte` (instance-admin user management)
+
+**Comments and assignments**
+- Threaded (one-level) comments and threat-model assignees, both RBAC-gated (author-only edit, author-or-editor+ moderated delete); `Comments.svelte` + `Assignees.svelte` wired into `Results.svelte`
+
+**Cross-model RAG scoping**
+- `search_similar_threats()` / `upsert_threat_vector()` now scope by `project_id`, matching `tm.project_id = ?` OR the global `source = 'seed'` bucket — a project's approved threats inform its own future runs without leaking across projects
+- Approved threats are now embedded on approve (and removed on unapprove) — previously `upsert_threat_vector` was only ever called from seed loading, so approved threats never entered the RAG index at all
+
+**Activity log and notifications**
+- Append-only `activity_log` (project-scoped) and per-user `notifications` table, both instrumented best-effort across model/threat/comment/project/member/invitation mutations (a logging or notification failure never turns a successful mutation into a 500)
+- `GET/PATCH /api/notifications`, `POST /api/notifications/mark-all-read`, `GET /api/projects/{id}/activity`; topbar notification bell wired to real data
+
+**Status workflow and project defaults**
+- `ModelStatus` expanded (`in_review`, `approved`, `archived` added to `pending`/`in_progress`/`completed`/`failed`) with transition validation enforced on `PATCH /api/models/{id}` (422 on an invalid transition); `Results.svelte` gained status-workflow action buttons (send to review / approve / back to completed / archive)
+- Project-level `default_provider`/`default_model`/`default_iterations`/`default_temperature` (stored since the projects table was added, never read until now) now actually resolve at model-creation and pipeline-run time, with explicit request value > project default > global setting precedence; new `ProjectSettings.svelte` screen for editing them
+- `GET /api/models` and model creation are now actually project-scoped end-to-end (`?project_id=` filter, `NewModel.svelte`/`Home.svelte` send/read the active project) — previously every model from every project was visible to every user regardless of the sidebar's active project
+
+**Project dashboard**
+- `GET /api/projects/{id}/dashboard`: aggregate stat counts (models, open threats, pending review, members, last run), open-threat severity breakdown (critical/high/medium/low), and an "assigned to you" list of open threats in models assigned to the caller, ordered by DREAD score
+- New `Dashboard.svelte` landing screen — stat grid, segmented severity bar, activity feed, and an "assigned to you" panel linking straight into Review; added as `/dashboard` with a new sidebar entry, alongside (not replacing) the existing Threat Models list
+
+---
+
 ### Security
 
 #### Docker container hardening
@@ -551,12 +590,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ## [Planned]
 
-### v1.5+
-- Docker Compose deployment (`docker compose up` single-command startup)
-- Web interface integration — frontend + backend served from one container, static files served by FastAPI
-
 ### v2.0+
-- Multi-user collaboration features
+- OIDC/SSO federation
 
 ---
 

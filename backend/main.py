@@ -21,6 +21,7 @@ from backend.routes.analyze import router as analyze_router
 from backend.routes.auth import router as auth_router
 from backend.routes.comments import router as comments_router
 from backend.routes.config import router as config_router
+from backend.routes.dashboard import router as dashboard_router
 from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
 from backend.routes.notifications import router as notifications_router
@@ -217,6 +218,7 @@ app.include_router(export_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
 app.include_router(comments_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 
