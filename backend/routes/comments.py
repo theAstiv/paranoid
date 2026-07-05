@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.auth.dependencies import get_current_user, require_role
-from backend.db import crud_comments, crud_projects
+from backend.db import crud_activity, crud_comments, crud_projects
 from backend.models.api import AddAssigneeRequest, CreateCommentRequest, UpdateCommentRequest
 
 
@@ -46,6 +46,24 @@ async def create_comment(
     )
     if created is None:
         raise HTTPException(status_code=404, detail="Threat model not found")
+
+    project_id = await crud_projects.resolve_project_id_from_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="comment",
+        entity_id=created["id"],
+        action="created",
+        details={"threat_model_id": model_id},
+    )
+    assignees = await crud_comments.list_assignees(model_id)
+    await crud_activity.safe_notify_users(
+        {a["user_id"] for a in assignees if a["user_id"] != user["id"]},
+        notification_type="comment_added",
+        title=f"{user.get('display_name') or user.get('username', 'Someone')} commented on a threat model",
+        entity_type="comment",
+        entity_id=created["id"],
+    )
     return created
 
 
@@ -77,7 +95,16 @@ async def delete_comment(
     if comment is None:
         raise HTTPException(status_code=404, detail="Comment not found")
     await _require_author_or_moderator(comment, user)
+    project_id = await crud_projects.resolve_project_id_from_comment(comment_id)
     await crud_comments.delete_comment(comment_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="comment",
+        entity_id=comment_id,
+        action="deleted",
+        details={"threat_model_id": comment.get("threat_model_id")},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +132,24 @@ async def add_assignee(
     assignee = await crud_comments.add_assignee(model_id, body.user_id, user["id"])
     if assignee is None:
         raise HTTPException(status_code=404, detail="User not found")
+
+    project_id = await crud_projects.resolve_project_id_from_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="model",
+        entity_id=model_id,
+        action="assignee_added",
+        details={"assignee_id": body.user_id},
+    )
+    if body.user_id != user["id"]:
+        await crud_activity.safe_notify_users(
+            {body.user_id},
+            notification_type="assigned",
+            title=f"You were assigned to a threat model by {user.get('display_name') or user.get('username', 'a teammate')}",
+            entity_type="model",
+            entity_id=model_id,
+        )
     return assignee
 
 
@@ -112,9 +157,19 @@ async def add_assignee(
 async def remove_assignee(
     model_id: str,
     user_id: str,
+    actor: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> None:
     await crud_comments.remove_assignee(model_id, user_id)
+    project_id = await crud_projects.resolve_project_id_from_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=actor["id"],
+        entity_type="model",
+        entity_id=model_id,
+        action="assignee_removed",
+        details={"assignee_id": user_id},
+    )
 
 
 # ---------------------------------------------------------------------------

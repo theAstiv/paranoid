@@ -3,10 +3,12 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.auth.dependencies import get_current_user, require_admin
-from backend.db import crud_projects
+from backend.db import crud_activity, crud_projects
+from backend.db.crud_auth import get_user_by_email
+from backend.db.crud_auth import list_users as _list_users
 from backend.models.api import (
     AddMemberRequest,
     CreateInvitationRequest,
@@ -30,11 +32,20 @@ async def create_project(
     body: CreateProjectRequest,
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    return await crud_projects.create_project(
+    project = await crud_projects.create_project(
         name=body.name,
         created_by=user["id"],
         description=body.description,
     )
+    await crud_activity.safe_log_activity(
+        project_id=project["id"],
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project["id"],
+        action="created",
+        details={"name": body.name},
+    )
+    return project
 
 
 @router.get("/projects")
@@ -70,6 +81,14 @@ async def update_project(
     project = await crud_projects.update_project(project_id, **updates)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="updated",
+        details={"fields": sorted(updates)},
+    )
     return project
 
 
@@ -80,6 +99,23 @@ async def archive_project(
 ) -> None:
     await _require_owner(project_id, user)
     await crud_projects.archive_project(project_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="archived",
+    )
+
+
+@router.get("/projects/{project_id}/activity")
+async def get_project_activity(
+    project_id: str,
+    user: Annotated[dict, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[dict]:
+    await _require_member(project_id, user)
+    return await crud_activity.list_activity(project_id, limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +139,25 @@ async def add_member(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    return await crud_projects.add_member(project_id, body.user_id, body.role)
+    member = await crud_projects.add_member(project_id, body.user_id, body.role)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="member_added",
+        details={"user_id": body.user_id, "role": body.role},
+    )
+    if body.user_id != user["id"]:
+        project = await crud_projects.get_project(project_id)
+        await crud_activity.safe_notify_users(
+            {body.user_id},
+            notification_type="member_added",
+            title=f'You were added to project "{project.get("name", project_id) if project else project_id}" as {body.role}',
+            entity_type="project",
+            entity_id=project_id,
+        )
+    return member
 
 
 @router.patch("/projects/{project_id}/members/{user_id}")
@@ -131,6 +185,14 @@ async def remove_member(
         await crud_projects.remove_member(project_id, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="member_removed",
+        details={"user_id": user_id},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +208,7 @@ async def create_invitation(
 ) -> dict:
     await _require_owner(project_id, user)
     try:
-        return await crud_projects.create_invitation(
+        invitation = await crud_projects.create_invitation(
             project_id=project_id,
             invited_email=body.invited_email,
             role=body.role,
@@ -154,6 +216,28 @@ async def create_invitation(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="invitation_created",
+        details={"invited_email": body.invited_email, "role": body.role},
+    )
+    # Only registered users can receive in-app notifications (no SMTP —
+    # unregistered invitees see the invite when they eventually sign up).
+    invited_user = await get_user_by_email(body.invited_email)
+    if invited_user:
+        project = await crud_projects.get_project(project_id)
+        await crud_activity.safe_notify_users(
+            {invited_user["id"]},
+            notification_type="invitation_received",
+            title=f'You were invited to project "{project.get("name", project_id) if project else project_id}"',
+            entity_type="project",
+            entity_id=project_id,
+        )
+    return invitation
 
 
 @router.get("/projects/{project_id}/invitations")
@@ -175,13 +259,23 @@ async def accept_invitation(
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation not found")
     try:
-        return await crud_projects.accept_invitation(
+        member = await crud_projects.accept_invitation(
             invitation_id, user["id"], user.get("email", "")
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await crud_activity.safe_log_activity(
+        project_id=inv["project_id"],
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=inv["project_id"],
+        action="invitation_accepted",
+        details={"role": inv["role"]},
+    )
+    return member
 
 
 @router.post("/invitations/{invitation_id}/decline", status_code=204)
@@ -207,6 +301,14 @@ async def decline_invitation(
             )
 
     await crud_projects.decline_invitation(invitation_id)
+    await crud_activity.safe_log_activity(
+        project_id=inv["project_id"],
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=inv["project_id"],
+        action="invitation_declined",
+        details={"invited_email": inv["invited_email"]},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +320,6 @@ async def decline_invitation(
 async def list_users(
     _admin: Annotated[dict, Depends(require_admin)],
 ) -> list[dict]:
-    from backend.db.crud_auth import list_users as _list_users
-
     return await _list_users()
 
 

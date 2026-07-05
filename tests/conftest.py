@@ -1,5 +1,6 @@
 """Shared test fixtures for the paranoid test suite."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -40,10 +41,14 @@ async def test_db():
     await conn.commit()
     await init_database_with_connection(conn)
 
-    # Set manager state manually
+    # Set manager state manually. db.reader() requires a non-None pool — reuse
+    # the same connection for both writer and reader roles since sqlite-vec
+    # (needed for a real read-only pool) isn't available in CI.
     db._connection = conn
     db._db_path = db_path
     db._initialized = True
+    db._reader_pool = asyncio.Queue()
+    db._reader_pool.put_nowait(conn)
 
     yield db_path
 
@@ -53,6 +58,7 @@ async def test_db():
     db._connection = None
     db._initialized = False
     db._db_path = None
+    db._reader_pool = None
     Path(db_path).unlink(missing_ok=True)
 
 

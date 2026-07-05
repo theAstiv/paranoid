@@ -21,7 +21,7 @@
     config, notification, notify, currentUser, authLoading,
     currentProject, projects, notifications, notifUnread, menuOpen,
   } from './lib/stores.js'
-  import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead } from './lib/api.js'
+  import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
   import { initials, relativeTime } from './lib/utils.js'
 
   const routes = {
@@ -83,6 +83,14 @@
     try {
       await markAllNotificationsRead()
       notifications.update(ns => ns.map(n => ({ ...n, is_read: true })))
+    } catch { /* ignore */ }
+  }
+
+  async function handleNotificationClick(n) {
+    if (n.is_read) return
+    try {
+      await markNotificationRead(n.id)
+      notifications.update(ns => ns.map(x => (x.id === n.id ? { ...x, is_read: true } : x)))
     } catch { /* ignore */ }
   }
 
@@ -554,7 +562,9 @@
                 {:else}
                   <ul class="max-h-80 overflow-y-auto">
                     {#each $notifications as n}
-                      <li class="flex items-start gap-3 px-4 py-3 border-b border-c-divider last:border-0
+                      <li
+                        on:click={() => handleNotificationClick(n)}
+                        class="flex items-start gap-3 px-4 py-3 border-b border-c-divider last:border-0 cursor-pointer
                         {n.is_read ? '' : 'bg-c-accent/5'}">
                         <div class="w-7 h-7 rounded-chip bg-c-panel2 border border-c-border flex items-center justify-center flex-shrink-0 mt-0.5">
                           <svg class="w-3.5 h-3.5 text-c-muted" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

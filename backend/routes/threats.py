@@ -8,11 +8,11 @@ from fastapi.responses import JSONResponse
 
 from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
-from backend.db import crud, crud_projects, vectors
+from backend.db import crud, crud_activity, crud_projects, vectors
 from backend.models.api import UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
-from backend.routes._helpers import get_api_key
+from backend.routes._helpers import get_api_key, model_assignee_ids
 from backend.security.rate_limit import enrichment_rate_limit
 
 
@@ -59,6 +59,7 @@ async def get_threat(
 async def update_threat(
     threat_id: str,
     body: UpdateThreatRequest,
+    user: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("editor", "threat_id", "threat")),
 ) -> JSONResponse:
     """Update threat fields. Only provided fields are changed."""
@@ -96,12 +97,32 @@ async def update_threat(
         elif was_approved:
             await _remove_threat_vector(threat_id)
 
+        if body.status.value != threat.get("status"):
+            model_id = threat["model_id"]
+            project_id = await crud_projects.resolve_project_id_from_model(model_id)
+            await crud_activity.safe_log_activity(
+                project_id=project_id,
+                user_id=user["id"],
+                entity_type="threat",
+                entity_id=threat_id,
+                action="status_changed",
+                details={"from": threat.get("status"), "to": body.status.value},
+            )
+            await crud_activity.safe_notify_users(
+                await model_assignee_ids(model_id, exclude=user["id"]),
+                notification_type="threat_status_changed",
+                title=f'Threat "{(updated or {}).get("name", threat_id)}" was {body.status.value}',
+                entity_type="threat",
+                entity_id=threat_id,
+            )
+
     return JSONResponse(content=updated)
 
 
 @router.delete("/{threat_id}", status_code=204)
 async def delete_threat(
     threat_id: str,
+    user: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("editor", "threat_id", "threat")),
 ) -> None:
     """Delete a threat and its associated attack trees and test cases."""
@@ -113,6 +134,15 @@ async def delete_threat(
     # orphaning the threat_vectors row.
     await _remove_threat_vector(threat_id)
     await crud.delete_threat(threat_id)
+    project_id = await crud_projects.resolve_project_id_from_model(threat["model_id"])
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="threat",
+        entity_id=threat_id,
+        action="deleted",
+        details={"name": threat.get("name")},
+    )
 
 
 # ---------------------------------------------------------------------------

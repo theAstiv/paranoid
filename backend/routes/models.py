@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
-from backend.db import crud
+from backend.db import crud, crud_activity
 from backend.db.gap_utils import decode_gap_summaries
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
@@ -35,6 +35,7 @@ from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_fo
 from backend.routes._helpers import (
     build_fast_provider,
     build_provider_from_record,
+    model_assignee_ids,
     resolve_provider,
 )
 from backend.security.rate_limit import pipeline_rate_limit, write_rate_limit
@@ -121,6 +122,14 @@ async def create_model(
     )
 
     record = await crud.get_threat_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=record.get("project_id") if record else None,
+        user_id=_user["id"] if _user else None,
+        entity_type="model",
+        entity_id=model_id,
+        action="created",
+        details={"title": body.title},
+    )
     return JSONResponse(status_code=201, content=record)
 
 
@@ -164,6 +173,7 @@ async def get_model(
 async def update_model(
     model_id: str,
     body: UpdateModelRequest,
+    user: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Update threat model metadata."""
@@ -180,12 +190,31 @@ async def update_model(
     )
 
     updated = await crud.get_threat_model(model_id)
+
+    if body.status is not None and body.status.value != record.get("status"):
+        await crud_activity.safe_log_activity(
+            project_id=record.get("project_id"),
+            user_id=user["id"],
+            entity_type="model",
+            entity_id=model_id,
+            action="status_changed",
+            details={"from": record.get("status"), "to": body.status.value},
+        )
+        await crud_activity.safe_notify_users(
+            await model_assignee_ids(model_id, exclude=user["id"]),
+            notification_type="threat_status_changed",
+            title=f'Model "{(updated or {}).get("title", model_id)}" status changed to {body.status.value}',
+            entity_type="model",
+            entity_id=model_id,
+        )
+
     return JSONResponse(content=updated)
 
 
 @router.delete("/{model_id}", status_code=204)
 async def delete_model(
     model_id: str,
+    user: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("owner", "model_id", "model")),
 ) -> None:
     """Delete a threat model and all associated data."""
@@ -193,6 +222,14 @@ async def delete_model(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     await crud.delete_threat_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=record.get("project_id"),
+        user_id=user["id"],
+        entity_type="model",
+        entity_id=model_id,
+        action="deleted",
+        details={"title": record.get("title")},
+    )
 
 
 # ---------------------------------------------------------------------------

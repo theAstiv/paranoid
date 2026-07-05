@@ -314,6 +314,40 @@ CREATE TABLE IF NOT EXISTS threat_model_assignees (
 );
 """
 
+# Append-only audit trail. project_id uses CASCADE — list_activity() only
+# ever queries by an exact project_id, so a SET NULL row would be preserved
+# in the table but permanently unreachable via any API (projects are
+# soft-deleted/archived today, never hard-deleted, but this keeps a future
+# hard-delete from silently orphaning history instead of erroring loudly).
+# user_id stays SET NULL: the entry is still reachable via project_id even
+# after the acting user is deleted.
+CREATE_ACTIVITY_LOG_TABLE = """
+CREATE TABLE IF NOT EXISTS activity_log (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    created_at TEXT NOT NULL
+);
+"""
+
+CREATE_NOTIFICATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    entity_type TEXT,
+    entity_id TEXT,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+"""
+
 CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_threats_model_id ON threats(model_id);",
     "CREATE INDEX IF NOT EXISTS idx_threats_status ON threats(status);",
@@ -342,6 +376,12 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_assignees_user_id ON threat_model_assignees(user_id);",
     # Phase 4 indices
     "CREATE INDEX IF NOT EXISTS idx_threat_metadata_project ON threat_metadata(project_id);",
+    # Phase 5 indices
+    "CREATE INDEX IF NOT EXISTS idx_activity_project_created ON activity_log(project_id, created_at);",
+    "CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_log(user_id, created_at);",
+    "CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created "
+    "ON notifications(user_id, is_read, created_at);",
 ]
 
 
@@ -443,6 +483,9 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
     # Phase 3 tables
     await conn.execute(CREATE_COMMENTS_TABLE)
     await conn.execute(CREATE_THREAT_MODEL_ASSIGNEES_TABLE)
+    # Phase 5 tables
+    await conn.execute(CREATE_ACTIVITY_LOG_TABLE)
+    await conn.execute(CREATE_NOTIFICATIONS_TABLE)
 
     # Add columns to threat_models that link to a code source and (reserved
     # for v2) record the creating user. Wrapped in try/except to stay

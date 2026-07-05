@@ -5,6 +5,7 @@ import logging
 from fastapi import HTTPException
 
 from backend.config import settings
+from backend.db import crud_comments
 from backend.providers.base import LLMProvider, create_provider
 
 
@@ -85,3 +86,18 @@ def build_fast_provider(record: dict) -> LLMProvider | None:
     except ValueError:
         logger.warning("Could not create fast provider for model %s — falling back", fast_model)
         return None
+
+
+async def model_assignee_ids(model_id: str, exclude: str | None = None) -> set[str]:
+    """Return assignee user ids for a model, minus the actor who triggered the event.
+
+    Used by the Phase 5 notification instrumentation in routes/models.py and
+    routes/threats.py — best-effort, never raises, so a lookup failure just
+    means no notifications go out rather than breaking the caller's response.
+    """
+    try:
+        assignees = await crud_comments.list_assignees(model_id)
+    except Exception as exc:
+        logger.warning(f"Failed to list assignees for model {model_id}: {exc}")
+        return set()
+    return {a["user_id"] for a in assignees if a["user_id"] != exclude}
