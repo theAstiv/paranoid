@@ -677,6 +677,13 @@ export function listProjectActivity(projectId) {
   return request('GET', `/projects/${projectId}/activity`)
 }
 
+// ── Dashboard (Phase 7) ───────────────────────────────────────────────────────
+
+/** @param {string} projectId */
+export function getProjectDashboard(projectId) {
+  return request('GET', `/projects/${projectId}/dashboard`)
+}
+
 // ── Config & Health ───────────────────────────────────────────────────────────
 
 export function getConfig() {
