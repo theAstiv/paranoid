@@ -21,10 +21,15 @@ def get_api_key(provider_type: str) -> str | None:
     return None  # ollama needs no key
 
 
-def resolve_provider(provider_name: str | None) -> tuple[str, str]:
-    """Return (provider_type, model) resolving None to settings defaults."""
-    ptype = provider_name or settings.default_provider
-    model = settings.default_model
+def resolve_provider(
+    provider_name: str | None,
+    model_name: str | None = None,
+    project: dict | None = None,
+) -> tuple[str, str]:
+    """Return (provider_type, model), resolving explicit > project default > global settings."""
+    project = project or {}
+    ptype = provider_name or project.get("default_provider") or settings.default_provider
+    model = model_name or project.get("default_model") or settings.default_model
     return ptype, model
 
 

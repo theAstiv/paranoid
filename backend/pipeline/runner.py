@@ -903,6 +903,7 @@ async def run_pipeline_for_model(
     seeded_assets: AssetsList | None = None,
     seeded_flows: FlowsList | None = None,
     fast_provider: LLMProvider | None = None,
+    temperature: float | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -923,6 +924,8 @@ async def run_pipeline_for_model(
         seeded_flows: Pre-edited flows to skip LLM extraction.
         fast_provider: Optional cheaper provider for extraction and enrichment steps.
             Falls back to ``provider`` when not set.
+        temperature: LLM sampling temperature. Falls back to
+            ``settings.default_temperature`` when not set.
 
     Yields:
         PipelineEvent for progress tracking
@@ -930,7 +933,7 @@ async def run_pipeline_for_model(
     config = PipelineConfig(
         max_iterations=max(1, min(15, max_iterations)),  # Clamp to 1-15
         max_execution_time_minutes=settings.pipeline_timeout_minutes,
-        temperature=settings.default_temperature,
+        temperature=temperature if temperature is not None else settings.default_temperature,
         enable_rag=True,
         has_ai_components=has_ai_components,
         similarity_threshold=similarity_threshold,

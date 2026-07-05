@@ -167,6 +167,7 @@ async def list_threat_models(
     limit: int = 50,
     framework: str | None = None,
     status: str | None = None,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """List threat models with per-model threat counts, optionally filtered.
 
@@ -183,6 +184,10 @@ async def list_threat_models(
     if status is not None:
         conditions.append("tm.status = ?")
         params.append(status)
+
+    if project_id is not None:
+        conditions.append("tm.project_id = ?")
+        params.append(project_id)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
