@@ -13,6 +13,8 @@ from backend.models.enums import Framework, StrideCategory
 from backend.models.state import Threat, ThreatsList
 from backend.rules.engine import (
     _MAESTRO_TO_STRIDE,
+    SEED_COLLECTIONS,
+    _load_seed_patterns,
     _pattern_to_threat,
     extract_keywords,
     fetch_rag_context,
@@ -395,3 +397,86 @@ async def test_fetch_rag_context_db_error_returns_empty():
         result = await fetch_rag_context("system description")
 
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# SEED_COLLECTIONS / per-collection filtering
+# ---------------------------------------------------------------------------
+
+
+def test_seed_collections_covers_all_16_files():
+    assert len(SEED_COLLECTIONS) == 16
+
+
+def test_load_seed_patterns_none_loads_all():
+    patterns = _load_seed_patterns(None)
+    # All 16 files have at least one pattern each, so the combined list is large.
+    assert len(patterns) > 100
+
+
+def test_load_seed_patterns_empty_set_loads_all():
+    # Empty set must behave like None — guard against silently neutering the engine.
+    all_patterns = _load_seed_patterns(None)
+    empty_patterns = _load_seed_patterns(set())
+    assert len(empty_patterns) == len(all_patterns)
+
+
+def test_load_seed_patterns_single_collection_returns_subset():
+    all_patterns = _load_seed_patterns(None)
+    stride_only = _load_seed_patterns({"stride"})
+    assert 0 < len(stride_only) < len(all_patterns)
+
+
+def test_load_seed_patterns_excludes_other_collections():
+    # Load stride only; ensure no maestro-only patterns slip through.
+    # Maestro patterns have maestro_category but no stride_category.
+    stride_only = _load_seed_patterns({"stride"})
+    maestro_only_patterns = [
+        p for p in stride_only if p.get("maestro_category") and not p.get("stride_category")
+    ]
+    assert maestro_only_patterns == []
+
+
+def test_load_seed_patterns_multiple_collections():
+    stride = _load_seed_patterns({"stride"})
+    auth = _load_seed_patterns({"auth"})
+    combined = _load_seed_patterns({"stride", "auth"})
+    # Combined must be at least as large as either individual collection and no
+    # larger than their strict sum (patterns could overlap across seed files).
+    assert max(len(stride), len(auth)) <= len(combined) <= len(stride) + len(auth)
+
+
+def test_match_patterns_with_collection_filter():
+    # "aws" collection contains cloud-provider patterns; filtering to "stride"
+    # should still return threats for a generic auth description.
+    result = match_patterns(
+        "JWT authentication with session management",
+        Framework.STRIDE,
+        collections={"stride", "auth"},
+    )
+    # Filtered run must produce some threats for a keyword-rich description.
+    assert len(result.threats) > 0
+
+
+def test_match_patterns_no_filter_matches_more_or_equal():
+    desc = "AWS Lambda with S3 and RDS PostgreSQL using JWT auth"
+    filtered = match_patterns(desc, Framework.STRIDE, collections={"stride"})
+    unfiltered = match_patterns(desc, Framework.STRIDE, collections=None)
+    # Unfiltered has access to cloud/aws patterns too, so it finds ≥ filtered count.
+    assert len(unfiltered.threats) >= len(filtered.threats)
+
+
+def test_run_rule_engine_with_collection_filter():
+    result = run_rule_engine(
+        "OAuth2 API gateway with rate limiting",
+        Framework.STRIDE,
+        collections={"stride", "auth"},
+    )
+    assert isinstance(result.threats, list)
+
+
+def test_run_rule_engine_none_collections_unchanged():
+    desc = "REST API with PostgreSQL and JWT tokens"
+    with_none = run_rule_engine(desc, Framework.STRIDE, collections=None)
+    without_param = run_rule_engine(desc, Framework.STRIDE)
+    assert len(with_none.threats) == len(without_param.threats)

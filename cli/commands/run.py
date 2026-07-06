@@ -337,6 +337,19 @@ async def _extract_code_context(
     default=False,
     help="After the pipeline, generate attack trees and test cases for all threats. Included in markdown/pdf output. Skipped for sarif format.",
 )
+@click.option(
+    "--seed-collections",
+    "seed_collections",
+    multiple=True,
+    metavar="NAME",
+    help=(
+        "Restrict the rule engine to specific seed collections. "
+        "Repeat to include multiple (e.g. --seed-collections stride --seed-collections auth). "
+        "Valid names: stride, maestro, owasp-llm, auth, orm, cloud, frameworks, "
+        "messaging, infrastructure, ai-llm, capec, aws, azure, gcp, attack-cloud, atlas. "
+        "Default: all collections."
+    ),
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -353,6 +366,7 @@ def run(
     model_override: str | None,
     strict: bool,
     enrich: bool,
+    seed_collections: tuple[str, ...],
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -539,6 +553,22 @@ def run(
             click.echo(f"  Format: {output_format}")
             click.echo()
 
+        # Validate --seed-collections names before entering async context.
+        # Settings.validate_seed_collections only runs for the env-var path; the
+        # CLI path bypasses it, so we check here and fail fast with a clear message.
+        resolved_seed_collections: list[str] | None = None
+        if seed_collections:
+            from backend.rules.engine import SEED_COLLECTIONS
+
+            invalid = set(seed_collections) - SEED_COLLECTIONS.keys()
+            if invalid:
+                raise click.BadParameter(
+                    f"Unknown collection name(s): {sorted(invalid)!r}. "
+                    f"Valid names: {sorted(SEED_COLLECTIONS)}",
+                    param_hint="'--seed-collections'",
+                )
+            resolved_seed_collections = list(seed_collections)
+
         # Run pipeline (async)
         asyncio.run(
             _run_pipeline_async(
@@ -560,6 +590,7 @@ def run(
                 code_path=code,
                 diagram_path=diagram,
                 content=content,
+                seed_collections=resolved_seed_collections,
             )
         )
 
@@ -602,6 +633,7 @@ async def _run_pipeline_async(
     strict: bool = False,
     enrich: bool = False,
     fast_provider: LLMProvider | None = None,
+    seed_collections: list[str] | None = None,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -650,6 +682,7 @@ async def _run_pipeline_async(
             content=content,
             strict=strict,
             enrich=enrich,
+            seed_collections=seed_collections,
         )
 
 
@@ -672,6 +705,7 @@ async def _run_pipeline_inside_provider(
     content: str,
     strict: bool,
     enrich: bool = False,
+    seed_collections: list[str] | None = None,
 ) -> None:
     # Pre-flight gap analysis (description + assumptions) — always runs;
     # --strict enforces blocking on error-severity gaps in either section.
@@ -765,6 +799,7 @@ async def _run_pipeline_inside_provider(
             similarity_threshold=settings.similarity_threshold,
             code_context=code_context,
             diagram_data=diagram_data,
+            seed_collections=seed_collections,
         ):
             # Render event (unless quiet mode)
             if renderer:

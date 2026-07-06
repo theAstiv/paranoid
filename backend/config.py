@@ -3,7 +3,7 @@
 import sys
 from typing import Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -116,6 +116,27 @@ class Settings(BaseSettings):
     # (no wildcards, no subdomain matching) can be appended here.
     # Example: ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net
     additional_git_hosts: str = ""
+
+    # Seed collection filter for the deterministic rule engine.
+    # Comma-separated list of collection names (see _KNOWN_SEED_COLLECTIONS).
+    # Empty list (default) loads all 16 collections — no behaviour change.
+    # Example: SEED_COLLECTIONS=stride,auth,cloud
+    seed_collections: list[str] = Field(default_factory=list)
+
+    @field_validator("seed_collections")
+    @classmethod
+    def validate_seed_collections(cls, v: list[str]) -> list[str]:
+        # Deferred import avoids a circular-import risk at module load time
+        # while ensuring the valid set always matches SEED_COLLECTIONS exactly.
+        from backend.rules.engine import SEED_COLLECTIONS
+
+        invalid = set(v) - SEED_COLLECTIONS.keys()
+        if invalid:
+            raise ValueError(
+                f"Unknown seed collections: {sorted(invalid)!r}. "
+                f"Valid names: {sorted(SEED_COLLECTIONS)}"
+            )
+        return v
 
 
 # Global settings instance.

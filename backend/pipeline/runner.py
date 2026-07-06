@@ -110,6 +110,7 @@ class PipelineConfig:
     similarity_threshold: float = 0.85  # Dedup threshold for embedding cosine similarity
     dedup_saturation_threshold: float = 0.7  # Stop if ≥N fraction of new threats were duplicates
     min_iterations: int = 1  # Min iterations before early-stop conditions (gap/saturation) fire
+    seed_collections: list[str] | None = None  # None = all seed collections; [] treated as None
 
 
 @dataclass
@@ -807,7 +808,14 @@ class PipelineRunner:
                 message="Running deterministic rule engine...",
             )
 
-            rule_threats = run_rule_engine(description, framework, max_patterns=settings.rag_top_k)
+            rule_threats = run_rule_engine(
+                description,
+                framework,
+                max_patterns=settings.rag_top_k,
+                collections=set(self.config.seed_collections)
+                if self.config.seed_collections
+                else None,
+            )
 
             if rule_threats.threats:
                 pre_merge_count = len(cumulative_threats.threats)
@@ -947,6 +955,7 @@ async def run_pipeline_for_model(
     seeded_flows: FlowsList | None = None,
     fast_provider: LLMProvider | None = None,
     temperature: float | None = None,
+    seed_collections: list[str] | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -969,6 +978,8 @@ async def run_pipeline_for_model(
             Falls back to ``provider`` when not set.
         temperature: LLM sampling temperature. Falls back to
             ``settings.default_temperature`` when not set.
+        seed_collections: Seed collection names to restrict rule engine loading.
+            None (default) uses settings.seed_collections, which defaults to all.
 
     Yields:
         PipelineEvent for progress tracking
@@ -985,6 +996,12 @@ async def run_pipeline_for_model(
         # Clamp min_iterations to [1, max_iterations] to prevent a floor that
         # can never be satisfied (e.g. MIN_ITERATIONS=5 with max_iterations=2).
         min_iterations=min(settings.min_iterations, _clamped_max),
+        # Per-run override takes priority; fall back to global settings.
+        # Empty list treated as None (all collections) to avoid silently
+        # neutering the rule engine when the env var is unset.
+        seed_collections=seed_collections
+        if seed_collections is not None
+        else (settings.seed_collections or None),
     )
 
     runner = PipelineRunner(
