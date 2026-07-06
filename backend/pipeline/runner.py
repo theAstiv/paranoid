@@ -108,6 +108,8 @@ class PipelineConfig:
     enable_rag: bool = True  # Enable RAG retrieval for threat generation
     has_ai_components: bool = False  # Run MAESTRO alongside STRIDE when True
     similarity_threshold: float = 0.85  # Dedup threshold for embedding cosine similarity
+    dedup_saturation_threshold: float = 0.7  # Stop if ≥N fraction of new threats were duplicates
+    min_iterations: int = 1  # Min iterations before early-stop conditions (gap/saturation) fire
 
 
 @dataclass
@@ -120,7 +122,7 @@ class PipelineResult:
     threats: ThreatsList
     iterations_completed: int
     total_duration_seconds: float
-    stopped_reason: str  # "max_iterations" | "gap_satisfied" | "timeout" | "provider_offline"
+    stopped_reason: str  # "max_iterations" | "gap_satisfied" | "timeout" | "provider_offline" | "dedup_saturated"
 
 
 class PipelineRunner:
@@ -658,6 +660,32 @@ class PipelineRunner:
                                 iteration=iteration,
                                 data={"duplicates_removed": dedup_result.removed_count},
                             )
+                        # Saturation stop: if most of this iteration's threats are
+                        # duplicates, further iterations are unlikely to find novel threats.
+                        saturation_ratio = dedup_result.removed_count / max(
+                            1, len(current_threats.threats)
+                        )
+                        if (
+                            saturation_ratio >= self.config.dedup_saturation_threshold
+                            and iteration >= self.config.min_iterations
+                        ):
+                            yield PipelineEvent(
+                                step=PipelineStep.GENERATE_THREATS,
+                                status="info",
+                                message=(
+                                    f"Dedup saturation reached ({saturation_ratio:.0%} of new threats "
+                                    f"were duplicates) — stopping after iteration {iteration}"
+                                ),
+                                iteration=iteration,
+                                data={
+                                    "saturation_ratio": round(saturation_ratio, 3),
+                                    "duplicates_removed": dedup_result.removed_count,
+                                    "stopped_reason": "dedup_saturated",
+                                },
+                            )
+                            stopped_reason = "dedup_saturated"
+                            iterations_completed = iteration
+                            break
                     else:
                         cumulative_threats.threats.extend(current_threats.threats)
                     iterations_completed = iteration  # Track before potential break in gap analysis
@@ -678,8 +706,10 @@ class PipelineRunner:
                         # threats the catalog is structurally balanced and LLM gap analysis
                         # is unlikely to find meaningful holes (saves ~1536 max-token call).
                         # Only applies to STRIDE framework; MAESTRO coverage is asymmetric.
-                        if framework == Framework.STRIDE and _is_stride_coverage_balanced(
-                            cumulative_threats
+                        if (
+                            framework == Framework.STRIDE
+                            and _is_stride_coverage_balanced(cumulative_threats)
+                            and iteration >= self.config.min_iterations
                         ):
                             yield PipelineEvent(
                                 step=PipelineStep.GAP_ANALYSIS,
@@ -733,7 +763,7 @@ class PipelineRunner:
                             )
                             break
 
-                        if gap_result.stop:
+                        if gap_result.stop and iteration >= self.config.min_iterations:
                             yield PipelineEvent(
                                 step=PipelineStep.GAP_ANALYSIS,
                                 status="completed",
@@ -743,6 +773,19 @@ class PipelineRunner:
                             )
                             stopped_reason = "gap_satisfied"
                             break
+                        elif gap_result.stop:
+                            # gap_result.stop=True but min_iterations floor prevents stopping.
+                            # gap_result.gap is None in this case — don't append it.
+                            yield PipelineEvent(
+                                step=PipelineStep.GAP_ANALYSIS,
+                                status="completed",
+                                message=(
+                                    f"Gap analysis satisfied but min_iterations floor "
+                                    f"({self.config.min_iterations}) requires continuing"
+                                ),
+                                iteration=iteration,
+                                data={"stop": False, "gap": None},
+                            )
                         else:
                             gaps.append(gap_result.gap)
                             yield PipelineEvent(
@@ -930,13 +973,18 @@ async def run_pipeline_for_model(
     Yields:
         PipelineEvent for progress tracking
     """
+    _clamped_max = max(1, min(15, max_iterations))
     config = PipelineConfig(
-        max_iterations=max(1, min(15, max_iterations)),  # Clamp to 1-15
+        max_iterations=_clamped_max,
         max_execution_time_minutes=settings.pipeline_timeout_minutes,
         temperature=temperature if temperature is not None else settings.default_temperature,
         enable_rag=True,
         has_ai_components=has_ai_components,
         similarity_threshold=similarity_threshold,
+        dedup_saturation_threshold=settings.dedup_saturation_threshold,
+        # Clamp min_iterations to [1, max_iterations] to prevent a floor that
+        # can never be satisfied (e.g. MIN_ITERATIONS=5 with max_iterations=2).
+        min_iterations=min(settings.min_iterations, _clamped_max),
     )
 
     runner = PipelineRunner(

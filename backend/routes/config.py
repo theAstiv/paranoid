@@ -87,6 +87,8 @@ async def _config_payload() -> dict:
         "ollama_base_url": settings.ollama_base_url,
         "log_level": settings.log_level,
         "similarity_threshold": settings.similarity_threshold,
+        "dedup_saturation_threshold": settings.dedup_saturation_threshold,
+        "min_iterations": settings.min_iterations,
         # Presence + source of each provider key (never the value itself).
         "anthropic_api_key_set": anthropic_source is not None,
         "anthropic_api_key_source": anthropic_source,
