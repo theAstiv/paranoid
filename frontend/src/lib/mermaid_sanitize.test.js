@@ -77,4 +77,105 @@ describe('sanitizeMermaid', () => {
     const cleaned = sanitizeMermaid(raw)
     expect(cleaned).toContain('User clicks button')
   })
+
+  // XSS hardening — dangerous URI schemes
+  it('strips javascript: URI scheme from node labels', () => {
+    const raw = 'graph TD\nA[javascript:alert(1)] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/javascript\s*:/i)
+    // Node label bracket remains but the URI scheme is gone
+    expect(cleaned).toContain('A[alert(1)] --> B')
+  })
+
+  it('strips encoded javascript: URI — decimal numeric reference decoded first', () => {
+    // &#106; = 'j'. Without numeric-ref decoding the scheme survives as
+    // "&#106;avascript:" and a browser/SVG renderer would later decode it.
+    const raw = 'graph TD\nA[&#106;avascript:alert(1)] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    // Confirm decoding happened (no raw numeric ref remains)
+    expect(cleaned).not.toContain('&#106;')
+    // Confirm the scheme was stripped after decoding
+    expect(cleaned).not.toMatch(/javascript\s*:/i)
+    // Full chain: decoded 'j' + stripped 'javascript:' → only payload text left
+    expect(cleaned).toContain('A[alert(1)] --> B')
+  })
+
+  it('strips hex-encoded javascript: URI — hex numeric reference decoded first', () => {
+    // &#x6A; = 'j' in hex. Same bypass vector via a different encoding.
+    const raw = 'graph TD\nA[&#x6A;avascript:alert(1)] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toContain('&#x6A;')
+    expect(cleaned).not.toMatch(/javascript\s*:/i)
+    expect(cleaned).toContain('A[alert(1)] --> B')
+  })
+
+  it('strips vbscript: URI scheme', () => {
+    const raw = 'graph TD\nA[vbscript:MsgBox(1)] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/vbscript\s*:/i)
+  })
+
+  it('strips data:text/html URI scheme', () => {
+    const raw = 'graph TD\nA[data:text/html,<h1>XSS</h1>] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/data\s*:\s*text\/html/i)
+  })
+
+  // XSS hardening — script tags
+  it('strips embedded <script> blocks', () => {
+    const raw = 'graph TD\nA --> B\n<script>alert(1)</script>'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/<script/i)
+    expect(cleaned).toContain('A --> B')
+  })
+
+  it('strips self-closing <script> opening tags', () => {
+    const raw = 'graph TD\nA --> B\n<script src="evil.js"/>'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/<script/i)
+  })
+
+  it('strips nested / multi-line <script> blocks', () => {
+    const raw = 'graph TD\nA --> B\n<script type="text/javascript">\nalert(1)\n</script>'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/<script/i)
+  })
+
+  // XSS hardening — on* event handlers
+  it('strips onclick event handler attributes', () => {
+    const raw = 'graph TD\nA[Node onclick="alert(1)"] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/\bonclick\s*=/i)
+    // Handler is stripped; bracket and remaining text survive
+    expect(cleaned).toContain('A[Node')
+    expect(cleaned).toContain('--> B')
+  })
+
+  it('strips onload event handler attributes', () => {
+    const raw = 'graph TD\nA[payload onload=\'fetch(evil)\'] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/\bonload\s*=/i)
+  })
+
+  it('strips onerror event handler attributes', () => {
+    const raw = 'graph TD\nA[img onerror="xss()"] --> B'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).not.toMatch(/\bonerror\s*=/i)
+  })
+
+  // Regression — legitimate diagrams must survive unchanged
+  it('does not strip legitimate node labels containing the word "script"', () => {
+    const raw = 'graph TD\nA[Run build script] --> B[Deploy]'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).toContain('Run build script')
+    expect(cleaned).toContain('Deploy')
+  })
+
+  it('does not strip arrows or subgraph blocks', () => {
+    const raw = 'graph TD\nsubgraph Auth\n  A --> B\nend\nB --> C'
+    const cleaned = sanitizeMermaid(raw)
+    expect(cleaned).toContain('subgraph Auth')
+    expect(cleaned).toContain('A --> B')
+    expect(cleaned).toContain('B --> C')
+  })
 })

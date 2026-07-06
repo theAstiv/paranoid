@@ -48,6 +48,11 @@ Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collabo
 
 ### Security
 
+#### Mermaid diagram sanitizer XSS hardening
+- `frontend/src/lib/mermaid_sanitize.js` now strips `javascript:`/`vbscript:`/`data:text/html` URI schemes, embedded `<script>` tags, and `on*` event handler attributes from Mermaid diagram source before rendering, on top of the existing `click`-directive stripping
+- Numeric (`&#106;`) and hex (`&#x6A;`) HTML character references are decoded before scheme-matching, closing a bypass where an entity-encoded payload (e.g. `&#106;avascript:alert(1)`) would survive the original entity-decode step (which only handled `&nbsp;`/`&amp;`/`&lt;`/`&gt;`) and reach the DOM undetected
+- 24 unit tests in `mermaid_sanitize.test.js` cover each vector plus regressions (legitimate labels containing "script", arrows, subgraphs)
+
 #### Docker container hardening
 - **`cap_drop: [ALL]`** added to `docker-compose.yml` — drops every Linux capability at the compose level; the app runs as non-root uid 1000 on port 8000 and requires no elevated capabilities at runtime (`CAP_DAC_READ_SEARCH` is not in Docker's default capset, so host-mounted directory reads are unaffected; `NET_BIND_SERVICE` is dropped — privileged ports < 1024 are now explicitly off-limits)
 - **`security_opt: [no-new-privileges:true]`** added to `docker-compose.yml` — prevents privilege escalation via setuid/setgid binaries inside the container
