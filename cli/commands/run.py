@@ -553,6 +553,22 @@ def run(
             click.echo(f"  Format: {output_format}")
             click.echo()
 
+        # Validate --seed-collections names before entering async context.
+        # Settings.validate_seed_collections only runs for the env-var path; the
+        # CLI path bypasses it, so we check here and fail fast with a clear message.
+        resolved_seed_collections: list[str] | None = None
+        if seed_collections:
+            from backend.rules.engine import SEED_COLLECTIONS
+
+            invalid = set(seed_collections) - SEED_COLLECTIONS.keys()
+            if invalid:
+                raise click.BadParameter(
+                    f"Unknown collection name(s): {sorted(invalid)!r}. "
+                    f"Valid names: {sorted(SEED_COLLECTIONS)}",
+                    param_hint="'--seed-collections'",
+                )
+            resolved_seed_collections = list(seed_collections)
+
         # Run pipeline (async)
         asyncio.run(
             _run_pipeline_async(
@@ -574,7 +590,7 @@ def run(
                 code_path=code,
                 diagram_path=diagram,
                 content=content,
-                seed_collections=list(seed_collections) or None,
+                seed_collections=resolved_seed_collections,
             )
         )
 

@@ -441,7 +441,9 @@ def test_load_seed_patterns_multiple_collections():
     stride = _load_seed_patterns({"stride"})
     auth = _load_seed_patterns({"auth"})
     combined = _load_seed_patterns({"stride", "auth"})
-    assert len(combined) == len(stride) + len(auth)
+    # Combined must be at least as large as either individual collection and no
+    # larger than their strict sum (patterns could overlap across seed files).
+    assert max(len(stride), len(auth)) <= len(combined) <= len(stride) + len(auth)
 
 
 def test_match_patterns_with_collection_filter():

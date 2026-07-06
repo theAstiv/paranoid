@@ -7,29 +7,6 @@ from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Valid seed collection names — mirrors SEED_COLLECTIONS keys in backend/rules/engine.py.
-_KNOWN_SEED_COLLECTIONS: frozenset[str] = frozenset(
-    {
-        "stride",
-        "maestro",
-        "owasp-llm",
-        "auth",
-        "orm",
-        "cloud",
-        "frameworks",
-        "messaging",
-        "infrastructure",
-        "ai-llm",
-        "capec",
-        "aws",
-        "azure",
-        "gcp",
-        "attack-cloud",
-        "atlas",
-    }
-)
-
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -149,11 +126,15 @@ class Settings(BaseSettings):
     @field_validator("seed_collections")
     @classmethod
     def validate_seed_collections(cls, v: list[str]) -> list[str]:
-        invalid = set(v) - _KNOWN_SEED_COLLECTIONS
+        # Deferred import avoids a circular-import risk at module load time
+        # while ensuring the valid set always matches SEED_COLLECTIONS exactly.
+        from backend.rules.engine import SEED_COLLECTIONS
+
+        invalid = set(v) - SEED_COLLECTIONS.keys()
         if invalid:
             raise ValueError(
                 f"Unknown seed collections: {sorted(invalid)!r}. "
-                f"Valid names: {sorted(_KNOWN_SEED_COLLECTIONS)}"
+                f"Valid names: {sorted(SEED_COLLECTIONS)}"
             )
         return v
 

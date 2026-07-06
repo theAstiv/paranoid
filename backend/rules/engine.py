@@ -149,7 +149,18 @@ def _load_seed_patterns(collections: set[str] | None = None) -> list[dict[str, A
     if not collections:
         filenames = list(SEED_COLLECTIONS.values())
     else:
+        unknown = collections - SEED_COLLECTIONS.keys()
+        if unknown:
+            logger.warning(
+                f"Unknown seed collections ignored: {sorted(unknown)!r}. "
+                f"Valid names: {sorted(SEED_COLLECTIONS)}"
+            )
         filenames = [SEED_COLLECTIONS[c] for c in collections if c in SEED_COLLECTIONS]
+        if not filenames:
+            logger.warning(
+                "No valid seed collections after filtering — falling back to all collections."
+            )
+            filenames = list(SEED_COLLECTIONS.values())
 
     all_patterns: list[dict[str, Any]] = []
     for filename in filenames:
