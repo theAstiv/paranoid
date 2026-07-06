@@ -4,6 +4,8 @@ Shared utilities for XML tag construction, assumption formatting, code context
 formatting, and structured input parsing used across all pipeline nodes.
 """
 
+import re
+
 from backend.models.enums import DiagramFormat, Framework
 from backend.models.extended import (
     CodeContext,
@@ -16,6 +18,49 @@ from backend.models.extended import (
 )
 from backend.models.state import AssetsList, FlowsList
 from backend.pipeline import input_parser
+from backend.rules.engine import extract_keywords
+
+
+# (pattern, canonical_label) pairs for detecting existing security controls in
+# a system description.  Only controls that are affirmatively present in the
+# text should be surfaced to the LLM — this list deliberately avoids generic
+# tech terms that are covered by _KEYWORD_PATTERNS.
+_CONTROLS_PATTERNS: list[tuple[str, str]] = [
+    (r"\b(rate[ -]?limit(?:ing)?|throttl(?:ing|e))\b", "rate limiting"),
+    (r"\b(waf|web[ -]?application[ -]?firewall)\b", "WAF"),
+    (
+        r"\b(mfa|multi[ -]?factor[ -]?auth(?:entication)?|two[ -]?factor(?:[ -]?auth(?:entication)?)?|2fa)\b",
+        "MFA",
+    ),
+    (
+        r"\b(encrypt(?:ion|ed)?[ -]?at[ -]?rest|at[ -]?rest[ -]?encrypt(?:ion)?)\b",
+        "encryption at rest",
+    ),
+    (
+        r"\b(tls[ -]?\d*(?:\.\d+)?|https[ -]?only|encrypt(?:ion|ed)?[ -]?in[ -]?transit|transport[ -]?encrypt(?:ion)?)\b",
+        "TLS/HTTPS",
+    ),
+    (r"\b(rbac|role[ -]?based[ -]?access[ -]?control)\b", "RBAC"),
+    (r"\b(abac|attribute[ -]?based[ -]?access[ -]?control)\b", "ABAC"),
+    (r"\b(input[ -]?valid(?:ation)?|sanitiz(?:ation|ing|e|ed))\b", "input validation"),
+    (r"\b(network[ -]?segmentation|security[ -]?group|dmz)\b", "network segmentation"),
+    (
+        r"\b(audit[ -]?log(?:ging)?|access[ -]?log(?:ging)?|security[ -]?log(?:ging)?|immutable[ -]?log(?:ging)?)\b",
+        "audit logging",
+    ),
+    (r"\b(secret[s]?[ -]?management|vault|key[ -]?management|hsm)\b", "secrets/key management"),
+    (r"\b(csp|content[ -]?security[ -]?policy)\b", "CSP"),
+    (r"\b(csrf[ -]?(?:protect(?:ion)?|token(?:s)?))\b", "CSRF protection"),
+    (r"\b(ddos[ -]?protect(?:ion)?|dos[ -]?protect(?:ion)?)\b", "DDoS protection"),
+    (r"\b(least[ -]?privilege)\b", "least privilege"),
+    (r"\b(zero[ -]?trust)\b", "zero trust"),
+    (r"\b(password[ -]?hash(?:ing)?|argon2|bcrypt|pbkdf2|scrypt)\b", "password hashing"),
+    (r"\b(captcha|bot[ -]?protect(?:ion)?)\b", "CAPTCHA/bot protection"),
+    (r"\b(code[ -]?sign(?:ing)?|image[ -]?sign(?:ing)?)\b", "code/image signing"),
+    (r"\b(ip[ -]?(?:allow(?:list)?|whitelist)|allowlist(?:ing)?)\b", "IP allowlisting"),
+    (r"\b(cors[ -]?(?:policy|config(?:uration)?|restrict(?:ion)?))\b", "CORS policy"),
+    (r"\b(pod[ -]?security[ -]?policy|seccomp|apparmor)\b", "container hardening"),
+]
 
 
 def build_xml_tag(tag: str, content: str) -> str:
@@ -30,6 +75,45 @@ def format_assumptions(assumptions: list[str] | None) -> str:
     if not assumptions:
         return ""
     return "\n".join(f"- {assumption}" for assumption in assumptions)
+
+
+def extract_technologies(description: str, max_items: int = 20) -> list[str]:
+    """Extract technology keywords from a system description.
+
+    Reuses the rule engine's keyword extraction so the pipeline and rule engine
+    agree on what counts as a relevant technology term.
+
+    Args:
+        description: System description text
+        max_items: Maximum number of items to return (guards against prompt bloat)
+
+    Returns:
+        Sorted list of lowercase technology keywords (capped at max_items)
+    """
+    keywords = extract_keywords(description)
+    return sorted(keywords)[:max_items]
+
+
+def extract_controls(description: str, max_items: int = 15) -> list[str]:
+    """Extract existing security controls mentioned in a system description.
+
+    Args:
+        description: System description text
+        max_items: Maximum number of items to return (guards against prompt bloat)
+
+    Returns:
+        Deduplicated list of canonical control labels in match order (capped at max_items)
+    """
+    text = description.lower()
+    seen: set[str] = set()
+    controls: list[str] = []
+    for pattern, label in _CONTROLS_PATTERNS:
+        if label not in seen and re.search(pattern, text, re.IGNORECASE):
+            seen.add(label)
+            controls.append(label)
+            if len(controls) >= max_items:
+                break
+    return controls
 
 
 def format_code_context(code_context: CodeContext) -> str:
@@ -205,8 +289,9 @@ def build_shared_context(
     """Assemble the stable prompt context shared across all iteration calls.
 
     Produces an XML-tagged block containing diagram, description, assumptions,
-    assets, flows, and code_summary — everything that is stable from the moment
-    extract_flows completes until the pipeline run ends.
+    detected_technologies, existing_controls, assets, flows, and code_summary —
+    everything that is stable from the moment extract_flows completes until the
+    pipeline run ends.
 
     When passed as shared_context to provider.generate_structured(), the Anthropic
     provider marks this block with cache_control: ephemeral so it is served from
@@ -255,6 +340,16 @@ def build_shared_context(
     assumptions_text = build_assumptions_section(assumptions, structured_assumptions)
     if assumptions_text:
         parts.append(build_xml_tag("assumptions", assumptions_text))
+
+    technologies = extract_technologies(plain_description)
+    if technologies:
+        parts.append(
+            build_xml_tag("detected_technologies", "\n".join(f"- {t}" for t in technologies))
+        )
+
+    controls = extract_controls(plain_description)
+    if controls:
+        parts.append(build_xml_tag("existing_controls", "\n".join(f"- {c}" for c in controls)))
 
     assets_text = "## Assets\n"
     for asset in assets.assets:

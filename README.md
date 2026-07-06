@@ -408,6 +408,8 @@ PORT=8000
 LOG_LEVEL=info
 CORS_ORIGINS=*
 SIMILARITY_THRESHOLD=0.85
+DEDUP_SATURATION_THRESHOLD=0.7   # Stop when ≥70% of new threats are duplicates
+MIN_ITERATIONS=1                  # Minimum iterations before any early-stop fires
 
 # Fast model for extraction/enrichment (Anthropic only, optional)
 FAST_MODEL=claude-haiku-4-5-20251001
