@@ -96,7 +96,12 @@ async def test_runner_single_iteration_emits_all_steps():
 async def test_runner_three_iterations():
     """Three iterations: threat gen + gap analysis on iters 1-2, just threat gen on iter 3."""
     provider = MockProvider(gap_call_threshold=10)  # Never auto-stop
-    config = PipelineConfig(max_iterations=3)
+    config = PipelineConfig(
+        max_iterations=3,
+        # Disable saturation: MockProvider returns identical threats every iteration,
+        # which would otherwise trigger a saturation stop on iteration 2 (ratio=1.0).
+        dedup_saturation_threshold=1.1,
+    )
     runner = PipelineRunner(provider=provider, config=config, model_id="test-3iter")
 
     events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
@@ -452,3 +457,118 @@ async def test_runner_stride_short_circuit_skips_gap_analysis():
     ]
     assert len(gap_completed) == 1
     assert gap_completed[0].data["stop"] is True
+
+
+# ---------------------------------------------------------------------------
+# Stop-condition tests: dedup saturation and min-iterations floor (Phase 2.1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_on_dedup_saturation():
+    """Saturation stop fires when ≥threshold fraction of new threats are duplicates.
+
+    MockProvider returns the same 6 threats every iteration, so on iteration 2
+    all new threats are cross-iteration duplicates (ratio=1.0 ≥ threshold=0.7).
+    """
+    provider = MockProvider(gap_call_threshold=10)  # Would never stop via gap
+    config = PipelineConfig(
+        max_iterations=5,
+        dedup_saturation_threshold=0.7,
+        min_iterations=1,
+    )
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-saturation")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] == "dedup_saturated"
+    assert complete.data["iterations_completed"] == 2
+
+    saturation_events = [
+        e
+        for e in events
+        if e.step == PipelineStep.GENERATE_THREATS
+        and e.status == "info"
+        and e.data.get("stopped_reason") == "dedup_saturated"
+    ]
+    assert len(saturation_events) == 1
+    assert saturation_events[0].data["saturation_ratio"] >= 0.7
+
+
+@pytest.mark.asyncio
+async def test_runner_min_iterations_prevents_dedup_saturation_early_stop():
+    """min_iterations floor suppresses saturation stop until the floor is reached.
+
+    With min_iterations=3, the saturation stop (ratio=1.0 ≥ 0.7) cannot fire on
+    iteration 2. The pipeline must reach at least iteration 3 before stopping.
+    """
+    provider = MockProvider(gap_call_threshold=10)
+    config = PipelineConfig(
+        max_iterations=5,
+        dedup_saturation_threshold=0.7,
+        min_iterations=3,
+    )
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-sat-floor")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] == "dedup_saturated"
+    assert complete.data["iterations_completed"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_runner_min_iterations_prevents_gap_satisfied_early_stop():
+    """min_iterations floor prevents gap_satisfied stop before the floor is reached.
+
+    MockProvider signals stop=True on the very first gap call. With min_iterations=2,
+    the pipeline must continue past iteration 1 and not stop via gap before iteration 2.
+    """
+    provider = MockProvider(gap_call_threshold=1)  # Signals stop on 1st gap call
+    config = PipelineConfig(
+        max_iterations=5,
+        dedup_saturation_threshold=1.1,  # Disable saturation to isolate gap floor
+        min_iterations=2,
+    )
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-gap-floor")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] == "gap_satisfied"
+    assert complete.data["iterations_completed"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_runner_min_iterations_prevents_stride_short_circuit():
+    """min_iterations floor suppresses the STRIDE balance short-circuit before the floor.
+
+    All threats are balanced from iteration 1 (12 threats, 2 per category). With
+    min_iterations=2, the short-circuit cannot fire on iteration 1 — the pipeline
+    must proceed to LLM gap analysis on iteration 1 before stopping on iteration 2.
+    """
+    provider = MockProvider(gap_call_threshold=10)
+    provider.response_overrides[ThreatsList] = _balanced_threats(per_category=2)
+    config = PipelineConfig(
+        max_iterations=5,
+        dedup_saturation_threshold=1.1,  # Disable saturation to isolate STRIDE floor
+        min_iterations=2,
+    )
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-stride-floor")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["iterations_completed"] >= 2
+    assert complete.data["stopped_reason"] == "gap_satisfied"
+
+    # Iteration 1 must have proceeded to LLM gap analysis (not short-circuited)
+    gap_started = [
+        e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "started"
+    ]
+    assert len(gap_started) >= 1, "Iteration 1 should have proceeded to LLM gap analysis"

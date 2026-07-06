@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     # Deduplication threshold for rule engine
     similarity_threshold: float = 0.85
 
+    # Pipeline stop conditions
+    # Fraction of an iteration's new threats removed by cross-iteration dedup that
+    # triggers an early "dedup_saturated" stop.  0.7 = stop when ≥70% of new threats
+    # are duplicates.  Distinct from similarity_threshold (which governs *which*
+    # threats are duplicates); this governs *whether* saturation fires.
+    dedup_saturation_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Runtime iteration floor: early-stop conditions (gap_satisfied, dedup_saturated)
+    # are suppressed until at least this many iterations have completed.
+    # Distinct from min_iteration_count (input-validation bound on user-supplied values);
+    # min_iterations is the execution-time floor applied inside the pipeline runner.
+    min_iterations: int = Field(default=1, ge=1)
+
     # Optional shared secret for PATCH /config.  When set, callers must
     # supply a matching X-Config-Secret header.  Empty string = no auth
     # required (default; safe for local / Docker single-user deployments).
