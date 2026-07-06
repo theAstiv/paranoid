@@ -6,6 +6,8 @@ Produces clean Markdown suitable for PRs, Confluence, Notion, and security revie
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.export._common import MERMAID_DIAGRAM_PREFIXES
+
 
 def export_markdown(
     threats: list[dict[str, Any]],
@@ -14,6 +16,8 @@ def export_markdown(
     title: str | None = None,
     source_file: str | None = None,
     include_header: bool = True,
+    description: str | None = None,
+    assumptions: list[str] | None = None,
     assets: list[dict[str, Any]] | None = None,
     flows: list[dict[str, Any]] | None = None,
     trust_boundaries: list[dict[str, Any]] | None = None,
@@ -32,6 +36,8 @@ def export_markdown(
         source_file: Optional path to the analyzed input file.
         include_header: If False, skips the H1 heading and metadata block.
                         Useful when embedding into an existing document.
+        description: Optional system description text (prose or Mermaid source).
+        assumptions: Optional list of assumption strings.
         assets: Optional list of asset dicts from the DB.
         flows: Optional list of data flow dicts from the DB.
         trust_boundaries: Optional list of trust boundary dicts from the DB.
@@ -54,6 +60,32 @@ def export_markdown(
         )
         if source_file:
             lines.append(f"**Source:** `{source_file}`")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # System Description
+    if description:
+        lines.append("## System Description")
+        lines.append("")
+        # Mermaid source gets a fenced code block; prose is plain text
+        stripped = description.lstrip()
+        if stripped.startswith(MERMAID_DIAGRAM_PREFIXES):
+            lines.append("```mermaid")
+            lines.append(stripped)
+            lines.append("```")
+        else:
+            lines.append(description)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # Assumptions
+    if assumptions:
+        lines.append("## Assumptions")
+        lines.append("")
+        for a in assumptions:
+            lines.append(f"- {a}")
         lines.append("")
         lines.append("---")
         lines.append("")

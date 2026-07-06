@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS threat_models (
     code_source_id TEXT REFERENCES code_sources(id) ON DELETE SET NULL,
     created_by TEXT,
     gap_summaries TEXT,
-    code_summary TEXT
+    code_summary TEXT,
+    assumptions TEXT
 );
 """
 
@@ -499,6 +500,7 @@ async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
         "ALTER TABLE threat_models ADD COLUMN created_by TEXT",
         "ALTER TABLE threat_models ADD COLUMN gap_summaries TEXT",
         "ALTER TABLE threat_models ADD COLUMN code_summary TEXT",
+        "ALTER TABLE threat_models ADD COLUMN assumptions TEXT",
     ):
         try:
             await conn.execute(column_sql)

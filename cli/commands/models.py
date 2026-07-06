@@ -357,6 +357,13 @@ async def _export_model_async(
     else:
         output_path = output
 
+    # Decode JSON-encoded list columns shared by markdown + PDF exports
+    from backend.db.gap_utils import decode_gap_summaries
+
+    _description: str | None = model.get("description") or None
+    _assumptions: list[str] | None = decode_gap_summaries(model.get("assumptions")) or None
+    _gap_summaries: list[str] | None = decode_gap_summaries(model.get("gap_summaries")) or None
+
     # Dispatch to export function
     if output_format == "markdown":
         from backend.export.markdown import export_markdown
@@ -366,6 +373,9 @@ async def _export_model_async(
             model_id=model["id"],
             framework=model.get("framework", "STRIDE"),
             title=model.get("title"),
+            description=_description,
+            assumptions=_assumptions,
+            gap_summaries=_gap_summaries,
         )
         output_path.write_text(md, encoding="utf-8")
 
@@ -377,6 +387,9 @@ async def _export_model_async(
             model_id=model["id"],
             framework=model.get("framework", "STRIDE"),
             title=model.get("title"),
+            description=_description,
+            assumptions=_assumptions,
+            gap_summaries=_gap_summaries,
         )
         output_path.write_bytes(pdf_bytes)
 

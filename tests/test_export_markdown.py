@@ -307,6 +307,91 @@ def test_markdown_omits_gap_analysis_when_empty() -> None:
     assert "Gap Analysis" not in md_empty_list
 
 
+# ---------------------------------------------------------------------------
+# System Description + Assumptions sections
+# ---------------------------------------------------------------------------
+
+
+def test_markdown_prose_description_renders() -> None:
+    """Prose description renders under '## System Description' as plain text."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        description="A web app that handles authentication and stores PII.",
+    )
+    assert "## System Description" in md
+    assert "A web app that handles authentication" in md
+
+
+def test_markdown_mermaid_description_renders_fenced() -> None:
+    """Mermaid source renders as a fenced ```mermaid block."""
+    mermaid = "graph TD\n    A[User] --> B[API]\n    B --> C[DB]"
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", description=mermaid)
+    assert "## System Description" in md
+    assert "```mermaid" in md
+    assert "graph TD" in md
+
+
+def test_markdown_assumptions_render_as_list() -> None:
+    """Assumptions render under '## Assumptions' as a bullet list."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        assumptions=["TLS 1.2+ enforced", "OAuth2 for all auth flows"],
+    )
+    assert "## Assumptions" in md
+    assert "- TLS 1.2+ enforced" in md
+    assert "- OAuth2 for all auth flows" in md
+
+
+def test_markdown_description_and_assumptions_appear_before_assets() -> None:
+    """Description and Assumptions sections come before Assets/Summary."""
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT],
+        "mid",
+        "STRIDE",
+        description="A web application.",
+        assumptions=["TLS enforced"],
+        assets=[_ASSET],
+    )
+    desc_pos = md.index("## System Description")
+    assump_pos = md.index("## Assumptions")
+    assets_pos = md.index("## Assets")
+    summary_pos = md.index("## Summary")
+    assert desc_pos < assump_pos < assets_pos < summary_pos
+
+
+def test_markdown_omits_description_when_none() -> None:
+    """No description → no System Description section."""
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", description=None)
+    assert "## System Description" not in md
+
+
+def test_markdown_omits_assumptions_when_empty() -> None:
+    """Empty/None assumptions → no Assumptions section."""
+    md_none = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", assumptions=None)
+    md_empty = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", assumptions=[])
+    assert "## Assumptions" not in md_none
+    assert "## Assumptions" not in md_empty
+
+
+def test_markdown_zero_threats_with_description_no_exception() -> None:
+    """export_markdown() with empty threats, description, and assumptions produces valid output."""
+    md = export_markdown(
+        threats=[],
+        model_id="zero-mid",
+        framework="STRIDE",
+        title="Zero Threat",
+        description="A minimal internal system.",
+        assumptions=["No public endpoints"],
+    )
+    assert "## System Description" in md
+    assert "## Assumptions" in md
+    assert "No threats recorded" in md
+
+
 def test_markdown_gap_section_between_summary_and_threats() -> None:
     """Gap section sits between Summary table and Threats detail."""
     md = export_markdown(

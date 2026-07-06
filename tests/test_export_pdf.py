@@ -277,6 +277,102 @@ def test_pdf_realistic_size_is_non_trivial() -> None:
 
 
 # ---------------------------------------------------------------------------
+# System Description + Assumptions sections
+# ---------------------------------------------------------------------------
+
+
+def test_pdf_with_prose_description() -> None:
+    """export_pdf() renders a prose System Description section without error."""
+    result = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        description="A web application that handles user authentication and stores PII.",
+    )
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_with_mermaid_description() -> None:
+    """export_pdf() renders Mermaid source as a preformatted block without error."""
+    mermaid = "graph TD\n    A[User] --> B[API Gateway]\n    B --> C[Database]"
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", description=mermaid)
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_with_assumptions() -> None:
+    """export_pdf() renders an Assumptions bullet list without error."""
+    result = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        assumptions=["TLS 1.2+ is enforced on all connections", "OAuth2 is used for auth"],
+    )
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_description_section_adds_content() -> None:
+    """A PDF with a description is larger than one without."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        description="A web application that handles user authentication.",
+    )
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_assumptions_section_adds_content() -> None:
+    """A PDF with assumptions is larger than one without."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf(
+        [_STRIDE_FLAT],
+        "mid",
+        "STRIDE",
+        assumptions=["TLS enforced", "No legacy protocol support"],
+    )
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_zero_threats_with_description_no_exception() -> None:
+    """export_pdf() with empty threats AND a description/assumptions produces a valid PDF.
+
+    Exercises the zero-threat path through _build_summary_table (division-by-zero guard)
+    and the new sections together to ensure no exception is raised.
+    """
+    result = export_pdf(
+        threats=[],
+        model_id="zero-threats-model",
+        framework="STRIDE",
+        title="Zero Threat Model",
+        description="A minimal system with no identified threats.",
+        assumptions=["All traffic is internal", "No public endpoints"],
+    )
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+    assert len(result) > 500
+
+
+def test_pdf_none_description_omits_section() -> None:
+    """Passing description=None produces the same output as omitting the param."""
+    pdf_omitted = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_none = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", description=None)
+    assert abs(len(pdf_omitted) - len(pdf_none)) < 200
+
+
+def test_pdf_none_assumptions_omits_section() -> None:
+    """Passing assumptions=None or [] produces the same output as omitting the param."""
+    pdf_omitted = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_none = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assumptions=None)
+    pdf_empty = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", assumptions=[])
+    assert abs(len(pdf_omitted) - len(pdf_none)) < 200
+    assert abs(len(pdf_omitted) - len(pdf_empty)) < 200
+
+
+# ---------------------------------------------------------------------------
 # Integration test: _export_model_async PDF format
 # ---------------------------------------------------------------------------
 

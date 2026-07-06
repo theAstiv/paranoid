@@ -451,6 +451,8 @@ async def run_pipeline(
         # Clear any previous run's data so re-runs start clean
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+        # Persist assumptions unconditionally — clears stale data from prior runs
+        await crud.update_threat_model(model_id, assumptions=json.dumps(parsed_assumptions))
 
         # Extract code context from the indexed clone directory (if requested).
         # This runs inside the SSE stream so the user sees extraction progress.
