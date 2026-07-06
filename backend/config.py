@@ -3,8 +3,31 @@
 import sys
 from typing import Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Valid seed collection names — mirrors SEED_COLLECTIONS keys in backend/rules/engine.py.
+_KNOWN_SEED_COLLECTIONS: frozenset[str] = frozenset(
+    {
+        "stride",
+        "maestro",
+        "owasp-llm",
+        "auth",
+        "orm",
+        "cloud",
+        "frameworks",
+        "messaging",
+        "infrastructure",
+        "ai-llm",
+        "capec",
+        "aws",
+        "azure",
+        "gcp",
+        "attack-cloud",
+        "atlas",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -116,6 +139,23 @@ class Settings(BaseSettings):
     # (no wildcards, no subdomain matching) can be appended here.
     # Example: ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net
     additional_git_hosts: str = ""
+
+    # Seed collection filter for the deterministic rule engine.
+    # Comma-separated list of collection names (see _KNOWN_SEED_COLLECTIONS).
+    # Empty list (default) loads all 16 collections — no behaviour change.
+    # Example: SEED_COLLECTIONS=stride,auth,cloud
+    seed_collections: list[str] = Field(default_factory=list)
+
+    @field_validator("seed_collections")
+    @classmethod
+    def validate_seed_collections(cls, v: list[str]) -> list[str]:
+        invalid = set(v) - _KNOWN_SEED_COLLECTIONS
+        if invalid:
+            raise ValueError(
+                f"Unknown seed collections: {sorted(invalid)!r}. "
+                f"Valid names: {sorted(_KNOWN_SEED_COLLECTIONS)}"
+            )
+        return v
 
 
 # Global settings instance.

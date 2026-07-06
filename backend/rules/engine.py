@@ -19,6 +19,27 @@ logger = logging.getLogger(__name__)
 
 SEEDS_DIR = Path(__file__).parent.parent.parent / "seeds"
 
+# Mapping of friendly collection names to seed filenames.
+# Used to validate --seed-collections inputs and drive filtered loads.
+SEED_COLLECTIONS: dict[str, str] = {
+    "stride": "stride_patterns.json",
+    "maestro": "maestro_patterns.json",
+    "owasp-llm": "owasp_llm_top10.json",
+    "auth": "auth_provider_patterns.json",
+    "orm": "orm_patterns.json",
+    "cloud": "cloud_service_patterns.json",
+    "frameworks": "framework_patterns.json",
+    "messaging": "message_broker_patterns.json",
+    "infrastructure": "infrastructure_patterns.json",
+    "ai-llm": "ai_llm_patterns.json",
+    "capec": "capec_patterns.json",
+    "aws": "aws_prowler_patterns.json",
+    "azure": "azure_prowler_patterns.json",
+    "gcp": "gcp_prowler_patterns.json",
+    "attack-cloud": "attack_cloud_patterns.json",
+    "atlas": "atlas_patterns.json",
+}
+
 # Maps MAESTRO categories to the nearest STRIDE equivalent.
 # Required because Threat.stride_category is a mandatory field in the pipeline's
 # shared ThreatsList model, even when threats originate from MAESTRO patterns.
@@ -113,32 +134,25 @@ def extract_keywords(description: str) -> set[str]:
     return keywords
 
 
-def _load_seed_patterns() -> list[dict[str, Any]]:
-    """Load all seed patterns from JSON files on disk.
+def _load_seed_patterns(collections: set[str] | None = None) -> list[dict[str, Any]]:
+    """Load seed patterns from JSON files on disk.
+
+    Args:
+        collections: Friendly collection names to load (see SEED_COLLECTIONS).
+            None loads all 16 collections — the default, backward-compatible behaviour.
+            An empty set is treated as None (all collections) to avoid silently
+            neutering the rule engine.
 
     Returns:
-        Combined list of all seed pattern dicts
+        Combined list of seed pattern dicts from the requested collections
     """
-    all_patterns: list[dict[str, Any]] = []
+    if not collections:
+        filenames = list(SEED_COLLECTIONS.values())
+    else:
+        filenames = [SEED_COLLECTIONS[c] for c in collections if c in SEED_COLLECTIONS]
 
-    for filename in (
-        "stride_patterns.json",
-        "maestro_patterns.json",
-        "owasp_llm_top10.json",
-        "auth_provider_patterns.json",
-        "orm_patterns.json",
-        "cloud_service_patterns.json",
-        "framework_patterns.json",
-        "message_broker_patterns.json",
-        "infrastructure_patterns.json",
-        "ai_llm_patterns.json",
-        "capec_patterns.json",
-        "aws_prowler_patterns.json",
-        "azure_prowler_patterns.json",
-        "gcp_prowler_patterns.json",
-        "attack_cloud_patterns.json",
-        "atlas_patterns.json",
-    ):
+    all_patterns: list[dict[str, Any]] = []
+    for filename in filenames:
         path = SEEDS_DIR / filename
         if not path.exists():
             logger.warning(f"Seed file not found: {path}")
@@ -222,6 +236,7 @@ def match_patterns(
     framework: Framework,
     max_results: int = 10,
     min_score: int = 1,
+    collections: set[str] | None = None,
 ) -> ThreatsList:
     """Match seed patterns against keywords extracted from the description.
 
@@ -236,6 +251,7 @@ def match_patterns(
         framework: Active framework — filters which seed patterns are considered
         max_results: Maximum number of matched threats to return
         min_score: Minimum keyword match score to include a pattern
+        collections: Friendly seed collection names to restrict loading (None = all).
 
     Returns:
         ThreatsList of matched seed patterns (may be empty)
@@ -245,7 +261,7 @@ def match_patterns(
         logger.debug("No keywords extracted — rule engine returning empty result")
         return ThreatsList(threats=[])
 
-    patterns = _load_seed_patterns()
+    patterns = _load_seed_patterns(collections)
 
     if framework == Framework.STRIDE:
         patterns = [p for p in patterns if p.get("stride_category")]
@@ -368,6 +384,7 @@ def run_rule_engine(
     description: str,
     framework: Framework,
     max_patterns: int = 10,
+    collections: set[str] | None = None,
 ) -> ThreatsList:
     """Run the deterministic rule engine on a system description.
 
@@ -377,8 +394,9 @@ def run_rule_engine(
         description: System description text
         framework: Active threat modeling framework
         max_patterns: Cap on matched patterns returned
+        collections: Friendly seed collection names to restrict loading (None = all).
 
     Returns:
         ThreatsList of matched patterns (may be empty if no keywords extracted)
     """
-    return match_patterns(description, framework, max_results=max_patterns)
+    return match_patterns(description, framework, max_results=max_patterns, collections=collections)
