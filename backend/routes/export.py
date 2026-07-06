@@ -71,6 +71,8 @@ async def export_model(
     title = model.get("title")
     framework = model.get("framework", "STRIDE")
     gap_summaries = decode_gap_summaries(model.get("gap_summaries"))
+    description: str | None = model.get("description") or None
+    assumptions: list[str] | None = decode_gap_summaries(model.get("assumptions")) or None
     # Strip characters that would break Content-Disposition or filesystem paths.
     raw = title or model_id[:8]
     safe_title = re.sub(r"[^\w\-]", "_", raw).lower().strip("_") or "export"
@@ -99,6 +101,8 @@ async def export_model(
             model_id=model_id,
             framework=framework,
             title=title,
+            description=description,
+            assumptions=assumptions,
             assets=assets,
             flows=flows,
             trust_boundaries=trust_boundaries,
@@ -120,6 +124,8 @@ async def export_model(
             model_id=model_id,
             framework=framework,
             title=title,
+            description=description,
+            assumptions=assumptions,
             assets=assets,
             flows=flows,
             trust_boundaries=trust_boundaries,

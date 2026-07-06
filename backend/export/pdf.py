@@ -23,6 +23,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from backend.export._common import MERMAID_DIAGRAM_PREFIXES
+
 
 def export_pdf(
     threats: list[dict[str, Any]],
@@ -30,6 +32,8 @@ def export_pdf(
     framework: str,
     title: str | None = None,
     source_file: str | None = None,
+    description: str | None = None,
+    assumptions: list[str] | None = None,
     assets: list[dict[str, Any]] | None = None,
     flows: list[dict[str, Any]] | None = None,
     trust_boundaries: list[dict[str, Any]] | None = None,
@@ -46,6 +50,8 @@ def export_pdf(
         framework: Framework used (STRIDE or MAESTRO).
         title: Optional display title. Falls back to model_id[:8].
         source_file: Optional path to the analyzed input file.
+        description: Optional system description text (prose or Mermaid source).
+        assumptions: Optional list of assumption strings.
         assets: Optional list of asset dicts from the DB.
         flows: Optional list of data flow dicts from the DB.
         trust_boundaries: Optional list of trust boundary dicts from the DB.
@@ -86,6 +92,44 @@ def export_pdf(
     story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#374151")))
     story.append(Spacer(1, 12))
+
+    # --- System Description ---
+    if description:
+        story.append(Paragraph("System Description", styles["h2"]))
+        story.append(Spacer(1, 6))
+        # Render Mermaid source as a preformatted code block; prose as body text.
+        # Decision 11 (tech-decision-rationale.md) explicitly rejects a Node/mermaid-cli dep.
+        stripped_desc = description.lstrip()
+        if stripped_desc.startswith(MERMAID_DIAGRAM_PREFIXES):
+            for line in stripped_desc.splitlines():
+                story.append(
+                    Paragraph(
+                        line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        or "&nbsp;",
+                        styles["code"],
+                    )
+                )
+        else:
+            story.append(Paragraph(_escape_pdf_text(description), styles["body"]))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
+    # --- Assumptions ---
+    if assumptions:
+        story.append(Paragraph("Assumptions", styles["h2"]))
+        story.append(Spacer(1, 6))
+        bullet_style = ParagraphStyle(
+            "bullet",
+            parent=styles["body"],
+            leftIndent=12,
+            spaceAfter=2,
+        )
+        for a in assumptions:
+            story.append(Paragraph(f"• {_escape_pdf_text(a)}", bullet_style))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
 
     # --- Assets ---
     if assets:
