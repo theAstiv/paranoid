@@ -46,6 +46,17 @@ Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collabo
 
 ---
 
+### Refactored
+
+#### Migration ledger — versioned schema changes via `backend/db/migrations/`
+- **`backend/db/migrations/runner.py`** — new migration ledger runner: creates `schema_migrations` table (checksum + timestamp per entry), backfills legacy v2 databases without re-running migrations, applies pending migrations in `BEGIN IMMEDIATE` transactions (ledger entry written in the same transaction, so a half-applied migration can never appear as recorded); rollback on any failure
+- **`backend/db/migrations/0001_initial.py`** — full schema snapshot covering all tables, indices, and idempotent `ADD COLUMN` patches for upgrade paths (columns added by earlier inline `ALTER TABLE` patches are applied via `try/except` on `duplicate column name`)
+- **`backend/db/migrations/0002_projects.py`** — Default Project backfill (extracted from the old inline `_migrate_v1_to_v2` in `schema.py`): creates sentinel UUID `00000000-0000-0000-0000-000000000000`, backfills `project_id` on `threat_models`/`code_sources`, adds admin as owner
+- **`backend/db/schema.py`** — `init_database_with_connection` now delegates entirely to `run_migrations(conn)`; the old `_migrate_v1_to_v2` function and all inline `CREATE TABLE` / `ALTER TABLE` / index creation calls are removed; `SCHEMA_VERSION` constant retained as a read-only fallback for one release
+- **Adding a schema change going forward**: drop `backend/db/migrations/NNNN_description.py`, implement `async def up(conn: aiosqlite.Connection) -> None` — do not call `BEGIN`/`COMMIT` inside `up()`, do not add inline patches to `schema.py`
+
+---
+
 ### Security
 
 #### Mermaid diagram sanitizer XSS hardening
