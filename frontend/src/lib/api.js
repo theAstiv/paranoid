@@ -200,6 +200,16 @@ export function getModelStats(id) {
   return request('GET', `/models/${id}/stats`)
 }
 
+/**
+ * Compare two models: show what threats were added, removed, or changed.
+ * @param {string} headId  The newer / re-run model
+ * @param {string} baseId  The older / reference model
+ * @param {number} [threshold=0.75]  Cosine similarity threshold for matching
+ */
+export function compareModels(headId, baseId, threshold = 0.75) {
+  return request('GET', `/models/${headId}/diff?base_id=${encodeURIComponent(baseId)}&threshold=${threshold}`)
+}
+
 // ── Pipeline SSE ──────────────────────────────────────────────────────────────
 
 /**

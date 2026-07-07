@@ -201,6 +201,11 @@
           </button>
         {/if}
         {#if model.status === 'completed'}
+          <a href="/models/{params.id}/diff" use:link class="btn-ghost text-xs px-3 py-1.5">
+            Compare
+          </a>
+        {/if}
+        {#if model.status === 'completed'}
           <a href="/models/{params.id}/review" use:link class="btn-primary text-xs px-3 py-1.5">
             Review Threats
           </a>

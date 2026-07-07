@@ -19,6 +19,7 @@
   import Members from './routes/Members.svelte'
   import ProjectSettings from './routes/ProjectSettings.svelte'
   import AdminUsers from './routes/AdminUsers.svelte'
+  import ModelDiff from './routes/ModelDiff.svelte'
   import {
     config, notification, notify, currentUser, authLoading,
     currentProject, projects, notifications, notifUnread, menuOpen,
@@ -34,6 +35,7 @@
     '/models/new': NewModel,
     '/models/:id': Results,
     '/models/:id/review': Review,
+    '/models/:id/diff': ModelDiff,
     '/models/:id/context': ReviewContext,
     '/library': Library,
     '/settings': Settings,
