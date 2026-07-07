@@ -1,4 +1,11 @@
-"""Database schema definitions for SQLite."""
+"""Database schema — public constants and the init_database_with_connection entry point.
+
+Schema changes: add a new file to backend/db/migrations/ (NNNN_description.py)
+exposing  async def up(conn).  Do NOT add inline ALTER TABLE patches here.
+
+SCHEMA_VERSION is kept for one release as a read-only fallback; new code
+should use the schema_migrations ledger table as the authoritative source.
+"""
 
 import logging
 
@@ -386,243 +393,20 @@ CREATE_INDICES = [
 ]
 
 
-async def _migrate_v1_to_v2(conn: aiosqlite.Connection) -> None:
-    """Idempotent v1→v2 migration inside a single IMMEDIATE transaction.
-
-    Creates the Default Project (sentinel UUID), backfills project_id on
-    threat_models and code_sources, sets user_version=2.
-    Only runs when user_version < 2.
-    """
-    import uuid
-    from datetime import UTC, datetime
-
-    async with conn.execute("PRAGMA user_version;") as cur:
-        row = await cur.fetchone()
-    version = row[0] if row else 0
-    if version >= 2:
-        return
-
-    default_project_id = "00000000-0000-0000-0000-000000000000"
-    now = datetime.now(UTC).isoformat()
-
-    # Resolve the admin user_id — may not exist yet if first run
-    async with conn.execute("SELECT id FROM users WHERE username = 'admin' LIMIT 1") as cur:
-        row = await cur.fetchone()
-    admin_id = row[0] if row else None
-
-    try:
-        await conn.execute("BEGIN IMMEDIATE")
-
-        # Create Default Project (idempotent via OR IGNORE)
-        await conn.execute(
-            """INSERT OR IGNORE INTO projects
-               (id, name, description, is_archived, created_by, created_at, updated_at)
-               VALUES (?, 'Default Project', 'Automatically created on first startup', 0, ?, ?, ?)""",
-            (default_project_id, admin_id, now, now),
-        )
-
-        # Backfill threat_models
-        await conn.execute(
-            "UPDATE threat_models SET project_id = ? WHERE project_id IS NULL",
-            (default_project_id,),
-        )
-
-        # Backfill code_sources
-        await conn.execute(
-            "UPDATE code_sources SET project_id = ? WHERE project_id IS NULL",
-            (default_project_id,),
-        )
-
-        # Add admin as owner of Default Project (idempotent via OR IGNORE)
-        if admin_id:
-            member_id = str(uuid.uuid4())
-            await conn.execute(
-                """INSERT OR IGNORE INTO project_members
-                   (id, project_id, user_id, role, created_at)
-                   VALUES (?, ?, ?, 'owner', ?)""",
-                (member_id, default_project_id, admin_id, now),
-            )
-
-        # Bump schema version — inside the same transaction
-        await conn.execute("PRAGMA user_version = 2;")
-        await conn.commit()
-        logger.info("Schema migration v1→v2 complete (Default Project created)")
-    except Exception:
-        await conn.rollback()
-        raise
-
-
 async def init_database_with_connection(conn: aiosqlite.Connection) -> None:
-    """Initialize database schema using an existing connection.
+    """Initialize (or migrate) the database schema using an existing connection.
+
+    Delegates entirely to the migration ledger runner.  To add a new schema
+    change, drop a file in backend/db/migrations/ — do not add code here.
 
     Args:
-        conn: Active aiosqlite connection (PRAGMA foreign_keys already set)
+        conn: Active aiosqlite connection (PRAGMA foreign_keys already ON).
     """
-    logger.info("Initializing database schema")
+    from backend.db.migrations.runner import run_migrations
 
-    # Create all tables
-    await conn.execute(CREATE_THREAT_MODELS_TABLE)
-    await conn.execute(CREATE_THREATS_TABLE)
-    await conn.execute(CREATE_ASSETS_TABLE)
-    await conn.execute(CREATE_FLOWS_TABLE)
-    await conn.execute(CREATE_TRUST_BOUNDARIES_TABLE)
-    await conn.execute(CREATE_THREAT_SOURCES_TABLE)
-    await conn.execute(CREATE_ATTACK_TREES_TABLE)
-    await conn.execute(CREATE_TEST_CASES_TABLE)
-    await conn.execute(CREATE_THREAT_METADATA_TABLE)
-    await conn.execute(CREATE_PIPELINE_RUNS_TABLE)
-    await conn.execute(CREATE_CONFIG_TABLE)
-    await conn.execute(CREATE_CODE_SOURCES_TABLE)
-    # Auth tables (Phase 0)
-    await conn.execute(CREATE_USERS_TABLE)
-    await conn.execute(CREATE_SESSIONS_TABLE)
-    await conn.execute(CREATE_PERSONAL_ACCESS_TOKENS_TABLE)
-    # Phase 2 tables
-    await conn.execute(CREATE_PROJECTS_TABLE)
-    await conn.execute(CREATE_PROJECT_MEMBERS_TABLE)
-    await conn.execute(CREATE_PROJECT_INVITATIONS_TABLE)
-    # Phase 3 tables
-    await conn.execute(CREATE_COMMENTS_TABLE)
-    await conn.execute(CREATE_THREAT_MODEL_ASSIGNEES_TABLE)
-    # Phase 5 tables
-    await conn.execute(CREATE_ACTIVITY_LOG_TABLE)
-    await conn.execute(CREATE_NOTIFICATIONS_TABLE)
-
-    # Add columns to threat_models that link to a code source and (reserved
-    # for v2) record the creating user. Wrapped in try/except to stay
-    # idempotent on databases that already ran this migration — same
-    # pattern as the threat_metadata / user_edited migrations above.
-    # Fresh DBs get these columns from CREATE_THREAT_MODELS_TABLE; only
-    # pre-Task-4 DBs need the ALTER path.
-    for column_sql in (
-        "ALTER TABLE threat_models ADD COLUMN code_source_id TEXT "
-        "REFERENCES code_sources(id) ON DELETE SET NULL",
-        "ALTER TABLE threat_models ADD COLUMN created_by TEXT",
-        "ALTER TABLE threat_models ADD COLUMN gap_summaries TEXT",
-        "ALTER TABLE threat_models ADD COLUMN code_summary TEXT",
-        "ALTER TABLE threat_models ADD COLUMN assumptions TEXT",
-    ):
-        try:
-            await conn.execute(column_sql)
-            await conn.commit()
-            logger.info(f"Applied schema migration: {column_sql.split(' ADD COLUMN ', 1)[1]}")
-        except aiosqlite.OperationalError as exc:
-            if "duplicate column name" not in str(exc):
-                raise
-
-    # Migrate existing threat_metadata tables that lack vector_rowid column
-    try:
-        await conn.execute("ALTER TABLE threat_metadata ADD COLUMN vector_rowid INTEGER")
-        await conn.commit()
-        logger.info("Migrated threat_metadata: added vector_rowid column")
-    except aiosqlite.OperationalError as exc:
-        if "duplicate column name" not in str(exc):
-            raise
-
-    # Migrate existing assets/flows/trust_boundaries tables that lack user_edited column
-    for table in ("assets", "flows", "trust_boundaries"):
-        try:
-            await conn.execute(f"ALTER TABLE {table} ADD COLUMN user_edited INTEGER DEFAULT 0")
-            await conn.commit()
-            logger.info(f"Migrated {table}: added user_edited column")
-        except aiosqlite.OperationalError as exc:
-            if "duplicate column name" not in str(exc):
-                raise
-
-    # Phase 2: project_id on threat_models and code_sources
-    for column_sql in (
-        "ALTER TABLE threat_models ADD COLUMN project_id TEXT REFERENCES projects(id)",
-        "ALTER TABLE code_sources ADD COLUMN project_id TEXT REFERENCES projects(id)",
-    ):
-        try:
-            await conn.execute(column_sql)
-            await conn.commit()
-            logger.info(f"Applied schema migration: {column_sql.split(' ADD COLUMN ', 1)[1]}")
-        except aiosqlite.OperationalError as exc:
-            if "duplicate column name" not in str(exc):
-                raise
-
-    # Phase 4: project_id on threat_metadata (scopes RAG to seed + same-project
-    # approved threats; seed rows keep project_id NULL, identified by source='seed')
-    try:
-        await conn.execute(
-            "ALTER TABLE threat_metadata ADD COLUMN project_id TEXT REFERENCES projects(id)"
-        )
-        await conn.commit()
-        logger.info("Applied schema migration: threat_metadata.project_id")
-    except aiosqlite.OperationalError as exc:
-        if "duplicate column name" not in str(exc):
-            raise
-
-    # Defensive backfill for any non-seed threat_metadata rows predating the
-    # column above. Idempotent — matches 0 rows once every row has a project_id.
-    await conn.execute("""
-        UPDATE threat_metadata SET project_id = (
-            SELECT tm.project_id FROM threats t
-            JOIN threat_models tm ON tm.id = t.model_id
-            WHERE t.id = threat_metadata.threat_id
-        ) WHERE project_id IS NULL AND source != 'seed'
-    """)
-    await conn.commit()
-
-    # Create vector table for embeddings (384-dim, BAAI/bge-small-en-v1.5)
-    # vec0 requires the sqlite-vec extension; skip gracefully if unavailable
-    try:
-        await conn.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS threat_vectors
-            USING vec0(
-                embedding float[384]
-            );
-        """)
-    except Exception:
-        logger.warning(
-            "sqlite-vec extension not available — threat_vectors table not created. "
-            "Vector search features will be unavailable."
-        )
-
-    # Create indices
-    for index_sql in CREATE_INDICES:
-        await conn.execute(index_sql)
-
-    await conn.commit()
-
-    await _migrate_v1_to_v2(conn)
-
+    logger.info("Initializing database schema via migration ledger")
+    await run_migrations(conn)
     logger.info("Database schema initialized successfully")
-
-
-async def init_database(db_path: str) -> None:
-    """Initialize database with schema (legacy function for standalone use).
-
-    Prefer init_database_with_connection() when using ConnectionManager.
-    """
-    logger.info(f"Initializing database at {db_path}")
-
-    async with aiosqlite.connect(db_path) as db:
-        # Enable foreign keys
-        await db.execute("PRAGMA foreign_keys = ON;")
-
-        # Create all tables
-        await db.execute(CREATE_THREAT_MODELS_TABLE)
-        await db.execute(CREATE_THREATS_TABLE)
-        await db.execute(CREATE_ASSETS_TABLE)
-        await db.execute(CREATE_FLOWS_TABLE)
-        await db.execute(CREATE_TRUST_BOUNDARIES_TABLE)
-        await db.execute(CREATE_THREAT_SOURCES_TABLE)
-        await db.execute(CREATE_ATTACK_TREES_TABLE)
-        await db.execute(CREATE_TEST_CASES_TABLE)
-        await db.execute(CREATE_THREAT_METADATA_TABLE)
-        await db.execute(CREATE_PIPELINE_RUNS_TABLE)
-        await db.execute(CREATE_CONFIG_TABLE)
-        await db.execute(CREATE_CODE_SOURCES_TABLE)
-
-        # Create indices
-        for index_sql in CREATE_INDICES:
-            await db.execute(index_sql)
-
-        await db.commit()
-
-    logger.info("Database initialized successfully")
 
 
 async def get_schema_version() -> int:

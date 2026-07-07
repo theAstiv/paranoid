@@ -194,7 +194,7 @@ Backend (pytest):
 - Pipeline tests: 38
 - Provider tests: 7
 - Deduplication tests: 16
-- Export tests (markdown, PDF, SARIF): 37
+- Export tests (markdown, PDF, SARIF): 52
 - Image/diagram tests: 36
 - MCP tests: 8
 - Routes / API tests: 100+
