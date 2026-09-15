@@ -353,16 +353,20 @@ _INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_activity_project_created ON activity_log(project_id, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_log(user_id, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);",
-    "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created "
-    "ON notifications(user_id, is_read, created_at);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created "
+        "ON notifications(user_id, is_read, created_at);"
+    ),
 ]
 
 # Columns added by inline ALTER TABLE patches in early versions.
 # On fresh databases these already exist (CREATE TABLE includes them).
 # On upgrade paths the try/except makes this idempotent.
 _ADD_COLUMN_PATCHES = [
-    "ALTER TABLE threat_models ADD COLUMN code_source_id TEXT "
-    "REFERENCES code_sources(id) ON DELETE SET NULL",
+    (
+        "ALTER TABLE threat_models ADD COLUMN code_source_id TEXT "
+        "REFERENCES code_sources(id) ON DELETE SET NULL"
+    ),
     "ALTER TABLE threat_models ADD COLUMN created_by TEXT",
     "ALTER TABLE threat_models ADD COLUMN gap_summaries TEXT",
     "ALTER TABLE threat_models ADD COLUMN code_summary TEXT",
