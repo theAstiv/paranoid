@@ -6,10 +6,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from backend.auth.dependencies import get_current_user, require_role
+from backend.auth.dependencies import ROLE_ORDER, get_current_user, require_role
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects, vectors
-from backend.models.api import UpdateThreatRequest
+from backend.models.api import BulkStatusRequest, UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
 from backend.routes._helpers import get_api_key, model_assignee_ids
@@ -117,6 +117,64 @@ async def update_threat(
             )
 
     return JSONResponse(content=updated)
+
+
+@router.post("/bulk-status")
+async def bulk_status(
+    body: BulkStatusRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+) -> JSONResponse:
+    """Bulk-update threat status. All threats must belong to the same model."""
+    threats = await crud.get_threats_by_ids(body.threat_ids)
+    if len(threats) != len(body.threat_ids):
+        found = {t["id"] for t in threats}
+        missing = [tid for tid in body.threat_ids if tid not in found]
+        raise HTTPException(status_code=404, detail=f"Threats not found: {missing}")
+
+    model_ids = {t["model_id"] for t in threats}
+    if len(model_ids) > 1:
+        raise HTTPException(status_code=400, detail="All threats must belong to the same model")
+    model_id = model_ids.pop()
+
+    if settings.paranoid_require_auth and not user.get("is_admin"):
+        project_id = await crud_projects.resolve_project_id_from_model(model_id)
+        role = await crud_projects.get_user_role_in_project(project_id, user["id"])
+        if role is None or ROLE_ORDER.get(role, 0) < ROLE_ORDER["editor"]:
+            raise HTTPException(status_code=403, detail="Requires editor role")
+
+    updated = await crud.bulk_update_threat_status(body.threat_ids, body.status.value)
+
+    new_status = body.status.value
+    for prior in threats:
+        was_approved = prior.get("status") == "approved"
+        is_approved = new_status == "approved"
+        if is_approved and not was_approved:
+            # Use already-fetched data — _embed_approved_threat only needs
+            # id, model_id, name, description (status doesn't matter for embedding)
+            await _embed_approved_threat(prior)
+        elif was_approved and not is_approved:
+            await _remove_threat_vector(prior["id"])
+
+    project_id = await crud_projects.resolve_project_id_from_model(model_id)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="model",
+        entity_id=model_id,
+        action="bulk_status_changed",
+        details={"count": updated, "status": new_status},
+    )
+    assignee_ids = await model_assignee_ids(model_id, exclude=user["id"])
+    if assignee_ids:
+        await crud_activity.safe_notify_users(
+            assignee_ids,
+            notification_type="threat_status_changed",
+            title=f"{updated} threats bulk-{new_status}",
+            entity_type="model",
+            entity_id=model_id,
+        )
+
+    return JSONResponse(content={"updated": updated})
 
 
 @router.delete("/{threat_id}", status_code=204)

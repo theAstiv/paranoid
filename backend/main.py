@@ -16,6 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import db
 from backend.db.crud import delete_config_value, get_config_value
+from backend.db.crud_activity import safe_notify_users
+from backend.db.crud_projects import list_members as list_project_members
+from backend.db.crud_staleness import find_stale_models, get_recently_notified_model_ids
 from backend.db.seed import load_all_seeds
 from backend.routes.analyze import router as analyze_router
 from backend.routes.auth import router as auth_router
@@ -72,6 +75,31 @@ async def _bootstrap_admin_if_needed() -> None:
         is_admin=True,
     )
     logger.info("Created initial admin user (username: admin)")
+
+
+async def _run_staleness_check() -> None:
+    """Find stale threat models and notify project members."""
+    stale = await find_stale_models()
+    if not stale:
+        return
+    recently_notified = await get_recently_notified_model_ids(since_hours=23)
+    for model in stale:
+        if model["id"] in recently_notified:
+            continue
+        members = await list_project_members(model["project_id"])
+        user_ids = [m["user_id"] for m in members]
+        if not user_ids:
+            continue
+        await safe_notify_users(
+            user_ids,
+            notification_type="model_stale",
+            title=f'Threat model "{model["title"]}" hasn\'t been updated in {model["days_stale"]} days',
+            entity_type="model",
+            entity_id=model["id"],
+        )
+    logger.info(
+        f"Staleness check: {len(stale)} stale models, notified for {len(stale) - len(recently_notified & {m['id'] for m in stale})}"
+    )
 
 
 @asynccontextmanager
@@ -145,8 +173,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _gc_task = asyncio.create_task(_session_gc_loop())
 
+    # Background task: check for stale threat models daily.
+    async def _staleness_check_loop() -> None:
+        await asyncio.sleep(60)  # let startup finish
+        while True:
+            try:
+                await _run_staleness_check()
+            except Exception as exc:
+                logger.warning(f"Staleness check error: {exc}")
+            await asyncio.sleep(86_400)
+
+    _staleness_task = asyncio.create_task(_staleness_check_loop())
+
     yield
 
+    _staleness_task.cancel()
+    try:
+        await _staleness_task
+    except asyncio.CancelledError:
+        pass
     _gc_task.cancel()
     try:
         await _gc_task

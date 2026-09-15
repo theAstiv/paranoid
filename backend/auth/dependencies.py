@@ -149,7 +149,7 @@ async def _authenticate_pat(token: str) -> dict[str, Any]:
 # Phase 2: RBAC helpers
 # ---------------------------------------------------------------------------
 
-_ROLE_ORDER = {"owner": 3, "editor": 2, "viewer": 1}
+ROLE_ORDER: dict[str, int] = {"owner": 3, "editor": 2, "viewer": 1}
 
 
 async def resolve_project_id(entity_type: str, entity_id: str) -> str:
@@ -158,7 +158,9 @@ async def resolve_project_id(entity_type: str, entity_id: str) -> str:
     entity_type: 'model' | 'threat' | 'source' | 'comment'
     """
     from backend.db.crud_projects import (
+        resolve_project_id_from_asset,
         resolve_project_id_from_comment,
+        resolve_project_id_from_flow,
         resolve_project_id_from_model,
         resolve_project_id_from_source,
         resolve_project_id_from_threat,
@@ -172,6 +174,10 @@ async def resolve_project_id(entity_type: str, entity_id: str) -> str:
         project_id = await resolve_project_id_from_source(entity_id)
     elif entity_type == "comment":
         project_id = await resolve_project_id_from_comment(entity_id)
+    elif entity_type == "asset":
+        project_id = await resolve_project_id_from_asset(entity_id)
+    elif entity_type == "flow":
+        project_id = await resolve_project_id_from_flow(entity_id)
     else:
         raise HTTPException(status_code=500, detail=f"Unknown entity_type: {entity_type}")
 
@@ -220,7 +226,7 @@ def require_role(min_role: str, entity_param: str, entity_type: str):
         if role is None:
             raise HTTPException(status_code=403, detail="Not a member of this project")
 
-        if _ROLE_ORDER.get(role, 0) < _ROLE_ORDER.get(min_role, 0):
+        if ROLE_ORDER.get(role, 0) < ROLE_ORDER.get(min_role, 0):
             raise HTTPException(
                 status_code=403,
                 detail=f"Requires {min_role} role (you have {role})",

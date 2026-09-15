@@ -259,6 +259,8 @@ async def create_threat(
     dread_affected_users: float | None = None,
     dread_discoverability: float | None = None,
     iteration_number: int = 1,
+    source: str = "llm",
+    confidence: float | None = None,
 ) -> str:
     """Create a new threat."""
     threat_id = generate_id()
@@ -273,8 +275,9 @@ async def create_threat(
             description, target, impact, likelihood,
             dread_damage, dread_reproducibility, dread_exploitability,
             dread_affected_users, dread_discoverability, dread_score,
-            mitigations, status, iteration_number, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            mitigations, status, iteration_number, source, confidence,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             threat_id,
@@ -295,6 +298,8 @@ async def create_threat(
             mitigations_json,
             "pending",
             iteration_number,
+            source,
+            confidence,
             now,
             now,
         ),
@@ -352,6 +357,37 @@ async def update_threat_status(threat_id: str, status: str) -> None:
     await conn.commit()
 
     logger.info(f"Updated threat {threat_id} status to {status}")
+
+
+async def get_threats_by_ids(threat_ids: list[str]) -> list[dict[str, Any]]:
+    """Fetch multiple threats by their IDs."""
+    if not threat_ids:
+        return []
+    conn = await db.get()
+    placeholders = ",".join("?" for _ in threat_ids)
+    async with conn.execute(
+        f"SELECT * FROM threats WHERE id IN ({placeholders})",
+        threat_ids,
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def bulk_update_threat_status(threat_ids: list[str], status: str) -> int:
+    """Bulk-update threat status in a single statement. Returns rows affected."""
+    if not threat_ids:
+        return 0
+    conn = await db.get()
+    now = now_iso()
+    placeholders = ",".join("?" for _ in threat_ids)
+    cursor = await conn.execute(
+        f"UPDATE threats SET status = ?, updated_at = ? WHERE id IN ({placeholders})",
+        [status, now, *threat_ids],
+    )
+    await conn.commit()
+    updated = cursor.rowcount
+    logger.info(f"Bulk-updated {updated} threats to status={status}")
+    return updated
 
 
 async def update_threat(
@@ -554,9 +590,11 @@ async def delete_threat(threat_id: str) -> None:
     Args:
         threat_id: ID of threat to delete
     """
-    conn = await db.get()
+    from backend.db.crud_comments import delete_entity_comments
 
-    # Delete threat (CASCADE will handle related records)
+    await delete_entity_comments("threat", threat_id)
+
+    conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE id = ?", (threat_id,))
     await conn.commit()
 
@@ -573,6 +611,10 @@ async def get_asset(asset_id: str) -> dict[str, Any] | None:
 
 async def delete_asset(asset_id: str) -> None:
     """Delete an asset by ID."""
+    from backend.db.crud_comments import delete_entity_comments
+
+    await delete_entity_comments("asset", asset_id)
+
     conn = await db.get()
     await conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     await conn.commit()
@@ -785,6 +827,10 @@ async def update_flow(
 
 async def delete_flow(flow_id: str) -> None:
     """Delete a data flow by ID."""
+    from backend.db.crud_comments import delete_entity_comments
+
+    await delete_entity_comments("flow", flow_id)
+
     conn = await db.get()
     await conn.execute("DELETE FROM flows WHERE id = ?", (flow_id,))
     await conn.commit()

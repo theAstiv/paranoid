@@ -226,7 +226,7 @@ def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat 
             maestro_cat = pattern.get("maestro_category", "")
             stride_cat = _MAESTRO_TO_STRIDE.get(maestro_cat, StrideCategory.TAMPERING)
 
-        return Threat(
+        threat = Threat(
             name=pattern["name"],
             stride_category=stride_cat,
             description=pattern["description"],
@@ -237,6 +237,8 @@ def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat 
                 "mitigations", ["Review security controls", "Apply defense in depth"]
             ),
         )
+        threat._source = "rule_engine"
+        return threat
     except (KeyError, ValueError) as e:
         logger.warning(f"Skipping seed pattern '{pattern.get('name')}': {e}")
         return None

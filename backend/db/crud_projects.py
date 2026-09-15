@@ -78,6 +78,7 @@ async def update_project(project_id: str, **fields) -> dict | None:
         "default_model",
         "default_iterations",
         "default_temperature",
+        "staleness_threshold_days",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -315,6 +316,30 @@ async def resolve_project_id_from_source(source_id: str) -> str | None:
     conn = await db.get()
     async with conn.execute(
         "SELECT project_id FROM code_sources WHERE id = ?", (source_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def resolve_project_id_from_asset(asset_id: str) -> str | None:
+    conn = await db.get()
+    async with conn.execute(
+        """SELECT tm.project_id FROM assets a
+           JOIN threat_models tm ON tm.id = a.model_id
+           WHERE a.id = ?""",
+        (asset_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def resolve_project_id_from_flow(flow_id: str) -> str | None:
+    conn = await db.get()
+    async with conn.execute(
+        """SELECT tm.project_id FROM flows f
+           JOIN threat_models tm ON tm.id = f.model_id
+           WHERE f.id = ?""",
+        (flow_id,),
     ) as cur:
         row = await cur.fetchone()
     return row[0] if row else None

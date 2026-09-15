@@ -36,6 +36,7 @@ from backend.models.enums import (
 )
 from backend.models.extended import CodeContext, DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.pipeline.confidence import score_threat_confidence
 from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
 from backend.routes._helpers import (
@@ -324,8 +325,14 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
     elif event.step == PipelineStep.COMPLETE:
         threats_list: ThreatsList | None = event.data.get("threats")
         if threats_list and hasattr(threats_list, "threats"):
+            model_record = await crud.get_threat_model(model_id)
+            sys_description = (model_record or {}).get("description", "")
+            assets = await crud.list_assets(model_id)
+            flows = await crud.list_flows(model_id)
+
             for threat in threats_list.threats:
                 try:
+                    confidence = score_threat_confidence(threat, assets, flows, sys_description)
                     dread = threat.dread
                     await crud.create_threat(
                         model_id=model_id,
@@ -345,6 +352,8 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dread_exploitability=dread.exploitability if dread else None,
                         dread_affected_users=dread.affected_users if dread else None,
                         dread_discoverability=dread.discoverability if dread else None,
+                        source=threat._source,
+                        confidence=confidence,
                     )
                 except Exception:
                     logger.warning(
