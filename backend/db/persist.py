@@ -21,12 +21,15 @@ from backend.db.crud import (
     create_threat_model,
     create_threat_source,
     create_trust_boundary,
+    list_assets,
+    list_flows,
     update_threat_model,
     update_threat_model_status,
 )
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.pipeline.confidence import score_threat_confidence
 
 
 logger = logging.getLogger(__name__)
@@ -159,6 +162,11 @@ async def _persist(
             f"{len(flows.threat_sources)} threat sources"
         )
 
+    # Fetch persisted assets/flows as dicts for confidence scoring — mirrors
+    # the web API path in backend/routes/models.py:_persist_pipeline_event().
+    assets_dicts = await list_assets(model_id) if assets else []
+    flows_dicts = await list_flows(model_id) if flows else []
+
     # threat_db_ids maps synthetic index → real DB UUID so attack trees and
     # test suites (keyed by str(i)) can be saved against the correct threat.
     threat_db_ids: list[str] = []
@@ -179,6 +187,8 @@ async def _persist(
                 dread_discoverability = threat.dread.discoverability
                 dread_score = threat.dread.score
 
+            confidence = score_threat_confidence(threat, assets_dicts, flows_dicts, description)
+
             threat_db_id = await create_threat(
                 model_id=model_id,
                 name=threat.name,
@@ -194,6 +204,8 @@ async def _persist(
                 dread_exploitability=dread_exploitability,
                 dread_affected_users=dread_affected_users,
                 dread_discoverability=dread_discoverability,
+                source=threat._source,
+                confidence=confidence,
             )
             threat_db_ids.append(threat_db_id)
 
