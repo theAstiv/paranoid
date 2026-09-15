@@ -53,25 +53,22 @@ describe('Wizard', () => {
   })
 
   it('dispatches back event when Back is clicked', async () => {
-    const { component } = render(Wizard, { props: { steps, currentStep: 1 } })
     const handler = vi.fn()
-    component.$on('back', handler)
+    render(Wizard, { props: { steps, currentStep: 1 }, events: { back: handler } })
     await fireEvent.click(screen.getByText('Back'))
     expect(handler).toHaveBeenCalledOnce()
   })
 
   it('dispatches next event when Next is clicked on non-last step', async () => {
-    const { component } = render(Wizard, { props: { steps, currentStep: 0 } })
     const handler = vi.fn()
-    component.$on('next', handler)
+    render(Wizard, { props: { steps, currentStep: 0 }, events: { next: handler } })
     await fireEvent.click(screen.getByText('Next'))
     expect(handler).toHaveBeenCalledOnce()
   })
 
   it('dispatches submit event when Create & Run is clicked on last step', async () => {
-    const { component } = render(Wizard, { props: { steps, currentStep: steps.length - 1 } })
     const handler = vi.fn()
-    component.$on('submit', handler)
+    render(Wizard, { props: { steps, currentStep: steps.length - 1 }, events: { submit: handler } })
     await fireEvent.click(screen.getByText('Create & Run'))
     expect(handler).toHaveBeenCalledOnce()
   })

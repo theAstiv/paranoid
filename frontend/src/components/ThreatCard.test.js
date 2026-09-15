@@ -110,18 +110,16 @@ describe('ThreatCard', () => {
   })
 
   it('dispatches approve event when Approve is clicked', async () => {
-    const { component } = render(ThreatCard, { props: { threat: baseThreat } })
     const handler = vi.fn()
-    component.$on('approve', handler)
+    render(ThreatCard, { props: { threat: baseThreat }, events: { approve: handler } })
     await fireEvent.click(screen.getByText('Approve'))
     expect(handler).toHaveBeenCalledOnce()
     expect(handler.mock.calls[0][0].detail).toMatchObject({ id: 'threat-1' })
   })
 
   it('dispatches reject event when Reject is clicked', async () => {
-    const { component } = render(ThreatCard, { props: { threat: baseThreat } })
     const handler = vi.fn()
-    component.$on('reject', handler)
+    render(ThreatCard, { props: { threat: baseThreat }, events: { reject: handler } })
     await fireEvent.click(screen.getByText('Reject'))
     expect(handler).toHaveBeenCalledOnce()
   })

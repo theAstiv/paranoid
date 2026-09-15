@@ -82,10 +82,12 @@
       {#each models as m (m.id)}
         <div class="card overflow-hidden transition-colors
           {expandedModel === m.id ? 'border-c-accent/40' : ''}">
-          <button
-            type="button"
+          <div
+            role="button"
+            tabindex="0"
             on:click={() => toggleModel(m.id)}
-            class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-c-well/60 transition-colors">
+            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleModel(m.id) }}
+            class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-c-well/60 transition-colors cursor-pointer">
             <div class="flex items-center gap-3 min-w-0">
               <span class="font-medium text-c-text2 truncate">{m.title}</span>
               <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-accent flex-shrink-0">{m.framework}</span>
@@ -108,7 +110,7 @@
                 <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
               </svg>
             </div>
-          </button>
+          </div>
 
           {#if expandedModel === m.id}
             <div class="border-t border-c-border p-4 space-y-4 bg-c-well/30">
