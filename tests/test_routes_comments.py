@@ -24,10 +24,19 @@ _COMMENT_BY_ADMIN = {
     "user_id": _ANON_ADMIN_ID,
     "parent_id": None,
     "body": "Looks good to me.",
+    "entity_type": None,
+    "entity_id": None,
     "created_at": "2026-01-01T00:00:00",
     "updated_at": "2026-01-01T00:00:00",
     "username": "admin",
     "display_name": "Administrator",
+}
+
+_ENTITY_COMMENT = {
+    **_COMMENT_BY_ADMIN,
+    "id": "comment-entity-1",
+    "entity_type": "threat",
+    "entity_id": "threat-uuid-1",
 }
 
 _COMMENT_BY_OTHER = {
@@ -488,3 +497,136 @@ async def test_remove_assignee_returns_204(client):
     ):
         res = await client.delete("/api/models/model-uuid-1/assignees/other-user-uuid")
     assert res.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Entity-level comments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_entity_comment_returns_201(client):
+    threat = {"id": "threat-uuid-1", "model_id": "model-uuid-1"}
+    with (
+        patch("backend.routes.comments.crud.get_threat", new=AsyncMock(return_value=threat)),
+        patch(
+            "backend.routes.comments.crud_comments.create_comment",
+            new=AsyncMock(return_value=_ENTITY_COMMENT),
+        ),
+    ):
+        res = await client.post(
+            "/api/models/model-uuid-1/comments",
+            json={"body": "Entity comment", "entity_type": "threat", "entity_id": "threat-uuid-1"},
+        )
+    assert res.status_code == 201
+    assert res.json()["entity_type"] == "threat"
+
+
+@pytest.mark.asyncio
+async def test_create_comment_entity_type_without_id_returns_422(client):
+    res = await client.post(
+        "/api/models/model-uuid-1/comments",
+        json={"body": "Bad", "entity_type": "threat"},
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_comment_nonexistent_entity_returns_422(client):
+    with patch("backend.routes.comments.crud.get_threat", new=AsyncMock(return_value=None)):
+        res = await client.post(
+            "/api/models/model-uuid-1/comments",
+            json={"body": "Orphan", "entity_type": "threat", "entity_id": "no-such-threat"},
+        )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_comment_entity_in_wrong_model_returns_422(client):
+    threat_other = {"id": "threat-uuid-1", "model_id": "model-uuid-OTHER"}
+    with patch("backend.routes.comments.crud.get_threat", new=AsyncMock(return_value=threat_other)):
+        res = await client.post(
+            "/api/models/model-uuid-1/comments",
+            json={"body": "Wrong model", "entity_type": "threat", "entity_id": "threat-uuid-1"},
+        )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_comments_with_entity_filter(client):
+    with patch(
+        "backend.routes.comments.crud_comments.list_comments",
+        new=AsyncMock(return_value=[_ENTITY_COMMENT]),
+    ) as mock_list:
+        res = await client.get(
+            "/api/models/model-uuid-1/comments?entity_type=threat&entity_id=threat-uuid-1"
+        )
+    assert res.status_code == 200
+    mock_list.assert_called_once_with("model-uuid-1", "threat", "threat-uuid-1")
+
+
+@pytest.mark.asyncio
+async def test_list_comments_without_filter_returns_all(client):
+    with patch(
+        "backend.routes.comments.crud_comments.list_comments",
+        new=AsyncMock(return_value=[_COMMENT_BY_ADMIN]),
+    ) as mock_list:
+        res = await client.get("/api/models/model-uuid-1/comments")
+    assert res.status_code == 200
+    mock_list.assert_called_once_with("model-uuid-1", None, None)
+
+
+@pytest.mark.asyncio
+async def test_get_comment_counts_returns_200(client):
+    counts = [{"entity_type": "threat", "entity_id": "t1", "count": 3}]
+    with patch(
+        "backend.routes.comments.crud_comments.count_comments_by_entity",
+        new=AsyncMock(return_value=counts),
+    ):
+        res = await client.get("/api/models/model-uuid-1/comments/counts")
+    assert res.status_code == 200
+    assert res.json()[0]["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reply_mismatched_entity_scope_returns_422(client):
+    parent_model_level = {**_COMMENT_BY_ADMIN, "entity_type": None, "entity_id": None}
+    threat = {"id": "threat-uuid-1", "model_id": "model-uuid-1"}
+    with (
+        patch("backend.routes.comments.crud.get_threat", new=AsyncMock(return_value=threat)),
+        patch(
+            "backend.routes.comments.crud_comments.get_comment",
+            new=AsyncMock(return_value=parent_model_level),
+        ),
+    ):
+        res = await client.post(
+            "/api/models/model-uuid-1/comments",
+            json={
+                "body": "Cross-scope reply",
+                "parent_id": "comment-uuid-1",
+                "entity_type": "threat",
+                "entity_id": "threat-uuid-1",
+            },
+        )
+    assert res.status_code == 422
+    assert "same entity" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reply_model_level_to_model_level_succeeds(client):
+    parent_model_level = {**_COMMENT_BY_ADMIN, "entity_type": None, "entity_id": None}
+    with (
+        patch(
+            "backend.routes.comments.crud_comments.get_comment",
+            new=AsyncMock(return_value=parent_model_level),
+        ),
+        patch(
+            "backend.routes.comments.crud_comments.create_comment",
+            new=AsyncMock(return_value=_COMMENT_BY_ADMIN),
+        ),
+    ):
+        res = await client.post(
+            "/api/models/model-uuid-1/comments",
+            json={"body": "Reply", "parent_id": "comment-uuid-1"},
+        )
+    assert res.status_code == 201

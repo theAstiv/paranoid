@@ -3,10 +3,10 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.auth.dependencies import get_current_user, require_role
-from backend.db import crud_activity, crud_comments, crud_projects
+from backend.db import crud, crud_activity, crud_comments, crud_projects
 from backend.models.api import AddAssigneeRequest, CreateCommentRequest, UpdateCommentRequest
 
 
@@ -20,12 +20,22 @@ router = APIRouter(tags=["comments"])
 # ---------------------------------------------------------------------------
 
 
-@router.get("/models/{model_id}/comments")
-async def list_comments(
+@router.get("/models/{model_id}/comments/counts")
+async def get_comment_counts(
     model_id: str,
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> list[dict]:
-    return await crud_comments.list_comments(model_id)
+    return await crud_comments.count_comments_by_entity(model_id)
+
+
+@router.get("/models/{model_id}/comments")
+async def list_comments(
+    model_id: str,
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> list[dict]:
+    return await crud_comments.list_comments(model_id, entity_type, entity_id)
 
 
 @router.post("/models/{model_id}/comments", status_code=201)
@@ -35,14 +45,19 @@ async def create_comment(
     user: Annotated[dict, Depends(get_current_user)],
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> dict:
+    if body.entity_type is not None:
+        await _require_valid_entity(model_id, body.entity_type, body.entity_id)
+
     if body.parent_id is not None:
-        await _require_valid_parent(model_id, body.parent_id)
+        await _require_valid_parent(model_id, body.parent_id, body.entity_type, body.entity_id)
 
     created = await crud_comments.create_comment(
         threat_model_id=model_id,
         user_id=user["id"],
         body=body.body,
         parent_id=body.parent_id,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
     )
     if created is None:
         raise HTTPException(status_code=404, detail="Threat model not found")
@@ -60,7 +75,7 @@ async def create_comment(
     await crud_activity.safe_notify_users(
         {a["user_id"] for a in assignees if a["user_id"] != user["id"]},
         notification_type="comment_added",
-        title=f"{user.get('display_name') or user.get('username', 'Someone')} commented on a threat model",
+        title=f"{user.get('display_name') or user.get('username', 'Someone')} commented{f' on a {body.entity_type}' if body.entity_type else ''}",
         entity_type="comment",
         entity_id=created["id"],
     )
@@ -184,7 +199,29 @@ def _require_author(comment: dict, user: dict) -> None:
         raise HTTPException(status_code=403, detail="Only the comment author may edit this comment")
 
 
-async def _require_valid_parent(model_id: str, parent_id: str) -> None:
+async def _require_valid_entity(
+    model_id: str,
+    entity_type: str,
+    entity_id: str,
+) -> None:
+    lookup = {"threat": crud.get_threat, "asset": crud.get_asset, "flow": crud.get_flow}
+    getter = lookup.get(entity_type)
+    if getter is None:
+        raise HTTPException(status_code=422, detail=f"Invalid entity_type: {entity_type}")
+    entity = await getter(entity_id)
+    if entity is None or entity.get("model_id") != model_id:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{entity_type} {entity_id} not found in this model",
+        )
+
+
+async def _require_valid_parent(
+    model_id: str,
+    parent_id: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> None:
     parent = await crud_comments.get_comment(parent_id)
     if parent is None or parent["threat_model_id"] != model_id:
         raise HTTPException(
@@ -195,6 +232,11 @@ async def _require_valid_parent(model_id: str, parent_id: str) -> None:
         raise HTTPException(
             status_code=422,
             detail="Cannot reply to a reply — only one level of nesting is supported",
+        )
+    if parent.get("entity_type") != entity_type or parent.get("entity_id") != entity_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Replies must belong to the same entity as the parent comment",
         )
 
 
