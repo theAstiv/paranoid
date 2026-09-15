@@ -382,6 +382,7 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);",
     "CREATE INDEX IF NOT EXISTS idx_assignees_model_id ON threat_model_assignees(threat_model_id);",
     "CREATE INDEX IF NOT EXISTS idx_assignees_user_id ON threat_model_assignees(user_id);",
+    "CREATE INDEX IF NOT EXISTS idx_comments_entity ON comments(entity_type, entity_id);",
     # Phase 4 indices
     "CREATE INDEX IF NOT EXISTS idx_threat_metadata_project ON threat_metadata(project_id);",
     # Phase 5 indices
