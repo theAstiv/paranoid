@@ -30,6 +30,7 @@
     "vitest": "^4.1.11"
   },
   "overrides": {
-    "dompurify": "^3.4.13"
+    "dompurify": "^3.4.13",
+    "picomatch": "^4.0.7"
   }
 }
