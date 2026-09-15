@@ -32,6 +32,7 @@ vi.mock('../lib/api.js', () => ({
   createComment: vi.fn(),
   updateComment: vi.fn(),
   deleteComment: vi.fn(),
+  getCommentCounts: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {

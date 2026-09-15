@@ -351,6 +351,10 @@ export function updateThreat(id, body) {
   return request('PATCH', `/threats/${id}`, body)
 }
 
+export function bulkUpdateThreatStatus(threatIds, status) {
+  return request('POST', '/threats/bulk-status', { threat_ids: threatIds, status })
+}
+
 /** @param {string} id */
 export function deleteThreat(id) {
   return request('DELETE', `/threats/${id}`)
@@ -620,8 +624,16 @@ export function declineInvitation(invitationId) {
 // ── Comments (Phase 3) ─────────────────────────────────────────────────────────
 
 /** @param {string} modelId */
-export function listComments(modelId) {
-  return request('GET', `/models/${modelId}/comments`)
+export function listComments(modelId, opts = {}) {
+  const params = new URLSearchParams()
+  if (opts.entity_type) params.set('entity_type', opts.entity_type)
+  if (opts.entity_id) params.set('entity_id', opts.entity_id)
+  const qs = params.toString()
+  return request('GET', `/models/${modelId}/comments${qs ? '?' + qs : ''}`)
+}
+
+export function getCommentCounts(modelId) {
+  return request('GET', `/models/${modelId}/comments/counts`)
 }
 
 /** @param {string} modelId @param {{ body: string, parent_id?: string|null }} body */

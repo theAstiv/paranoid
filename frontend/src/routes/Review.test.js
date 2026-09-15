@@ -10,6 +10,8 @@ vi.mock('svelte-spa-router', () => ({
 vi.mock('../lib/api.js', () => ({
   getModelThreats: vi.fn(),
   updateThreat: vi.fn(),
+  bulkUpdateThreatStatus: vi.fn(),
+  getCommentCounts: vi.fn(),
   exportUrl: vi.fn(() => '/api/export/x'),
 }))
 
@@ -18,7 +20,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { getModelThreats, updateThreat } from '../lib/api.js'
+import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
 import { notify, threats, currentModel } from '../lib/stores.js'
 
 function threat(overrides = {}) {
@@ -38,6 +40,8 @@ beforeEach(() => {
   currentModel.set(null)
   getModelThreats.mockResolvedValue([])
   updateThreat.mockResolvedValue({})
+  bulkUpdateThreatStatus.mockResolvedValue({ updated: 0 })
+  getCommentCounts.mockResolvedValue([])
 })
 
 describe('Review — loading', () => {
@@ -76,7 +80,7 @@ describe('Review — filtering', () => {
   it('shows filter counts', async () => {
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
-    expect(screen.getByText('(3)', { exact: false })).toBeTruthy()
+    expect(screen.getAllByText('(3)').length).toBeGreaterThanOrEqual(1)
   })
 
   it('filters to only pending threats', async () => {
@@ -139,6 +143,7 @@ describe('Review — individual approve/reject', () => {
 
 describe('Review — bulk actions', () => {
   it('approves all pending threats', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 2 })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'One' }),
       threat({ id: 't2', name: 'Two' }),
@@ -148,24 +153,25 @@ describe('Review — bulk actions', () => {
 
     await fireEvent.click(screen.getByText('Approve all (2)'))
 
-    await waitFor(() => expect(updateThreat).toHaveBeenCalledWith('t1', { status: 'approved' }))
-    expect(updateThreat).toHaveBeenCalledWith('t2', { status: 'approved' })
-    await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Approved 2 threats'))
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1', 't2'], 'approved'))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Approved all: 2 threats'))
   })
 
   it('rejects all pending threats', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 2 })
     getModelThreats.mockResolvedValue([threat({ id: 't1' }), threat({ id: 't2' })])
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Reject all (2)')).toBeInTheDocument())
 
     await fireEvent.click(screen.getByText('Reject all (2)'))
 
-    await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Rejected 2 threats'))
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1', 't2'], 'rejected'))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Rejected all: 2 threats'))
   })
 
   it('rolls back all optimistic updates on bulk failure', async () => {
     getModelThreats.mockResolvedValue([threat({ id: 't1' }), threat({ id: 't2' })])
-    updateThreat.mockRejectedValue(new Error('network down'))
+    bulkUpdateThreatStatus.mockRejectedValue(new Error('network down'))
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Approve all (2)')).toBeInTheDocument())
 
@@ -178,6 +184,7 @@ describe('Review — bulk actions', () => {
   })
 
   it('shows and applies "Approve Critical+High" only for high-severity pending threats', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'Critical one', dread_score: 9 }),
       threat({ id: 't2', name: 'Low one', dread_score: 2 }),
@@ -187,11 +194,12 @@ describe('Review — bulk actions', () => {
 
     await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
 
-    await waitFor(() => expect(updateThreat).toHaveBeenCalledWith('t1', { status: 'approved' }))
-    expect(updateThreat).not.toHaveBeenCalledWith('t2', expect.anything())
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
   })
 
   it('shows and applies "Reject Low" only for low-severity pending threats', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'Critical one', dread_score: 9 }),
       threat({ id: 't2', name: 'Low one', dread_score: 2 }),
@@ -201,8 +209,8 @@ describe('Review — bulk actions', () => {
 
     await fireEvent.click(screen.getByText('Reject Low (1)'))
 
-    await waitFor(() => expect(updateThreat).toHaveBeenCalledWith('t2', { status: 'rejected' }))
-    expect(updateThreat).not.toHaveBeenCalledWith('t1', expect.anything())
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t2'], 'rejected'))
+    expect(get(threats).find(t => t.id === 't1').status).toBe('pending')
   })
 
   it('hides bulk-action buttons when there are no pending threats', async () => {

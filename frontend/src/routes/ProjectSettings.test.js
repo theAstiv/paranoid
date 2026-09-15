@@ -86,13 +86,14 @@ describe('ProjectSettings — form', () => {
     await waitFor(() => expect(screen.getByDisplayValue('5')).toBeInTheDocument())
 
     await fireEvent.input(screen.getByLabelText('Default iterations'), { target: { value: '7' } })
-    await fireEvent.click(screen.getByText('Save'))
+    await fireEvent.click(screen.getAllByText('Save')[0])
 
     await waitFor(() => expect(updateProject).toHaveBeenCalledWith('p1', {
       default_provider: 'anthropic',
       default_model: 'claude-sonnet-4-20250514',
       default_iterations: 7,
       default_temperature: 0.3,
+      staleness_threshold_days: 30,
     }))
     await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Project defaults saved.'))
     expect(get(currentProject)).toMatchObject(updated)
@@ -104,13 +105,14 @@ describe('ProjectSettings — form', () => {
     render(ProjectSettings)
     await waitFor(() => expect(screen.getByText('Pipeline defaults')).toBeInTheDocument())
 
-    await fireEvent.click(screen.getByText('Save'))
+    await fireEvent.click(screen.getAllByText('Save')[0])
 
     await waitFor(() => expect(updateProject).toHaveBeenCalledWith('p1', {
       default_provider: null,
       default_model: null,
       default_iterations: null,
       default_temperature: null,
+      staleness_threshold_days: 30,
     }))
   })
 
@@ -119,7 +121,7 @@ describe('ProjectSettings — form', () => {
     render(ProjectSettings)
     await waitFor(() => expect(screen.getByText('Pipeline defaults')).toBeInTheDocument())
 
-    await fireEvent.click(screen.getByText('Save'))
+    await fireEvent.click(screen.getAllByText('Save')[0])
 
     await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('forbidden')))
   })

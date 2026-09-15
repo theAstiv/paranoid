@@ -10,6 +10,7 @@
     default_model: '',
     default_iterations: '',
     default_temperature: '',
+    staleness_threshold_days: '',
   }
 
   $: projectId = $currentProject?.id
@@ -27,6 +28,7 @@
         default_model: proj.default_model ?? '',
         default_iterations: proj.default_iterations ?? '',
         default_temperature: proj.default_temperature ?? '',
+        staleness_threshold_days: proj.staleness_threshold_days ?? 30,
       }
     } catch (err) {
       notify('error', `Failed to load project settings: ${err.message}`)
@@ -43,6 +45,7 @@
         default_model: draft.default_model || null,
         default_iterations: draft.default_iterations === '' ? null : Number(draft.default_iterations),
         default_temperature: draft.default_temperature === '' ? null : Number(draft.default_temperature),
+        staleness_threshold_days: draft.staleness_threshold_days === '' ? null : Number(draft.staleness_threshold_days),
       }
       const updated = await updateProject(projectId, body)
       currentProject.update(p => ({ ...p, ...updated }))
@@ -127,6 +130,24 @@
           </button>
         </div>
       </form>
+    </div>
+
+    <div class="card p-5">
+      <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">Staleness Notifications</h2>
+      <div class="grid grid-cols-3 items-start gap-4">
+        <label for="proj-staleness" class="{LABEL_CLASS}">
+          Threshold (days)
+          <span class="{SUBLABEL_CLASS}">Notify members when a completed model hasn't been updated in this many days</span>
+        </label>
+        <input id="proj-staleness" type="number" min="1" max="365" bind:value={draft.staleness_threshold_days}
+          class="col-span-2 w-24 {FIELD_CLASS}" />
+      </div>
+      <div class="flex justify-end pt-3">
+        <button type="button" on:click={save} disabled={saving}
+          class="btn-primary text-sm px-4 disabled:opacity-50 disabled:cursor-not-allowed">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
     </div>
   {/if}
 </div>

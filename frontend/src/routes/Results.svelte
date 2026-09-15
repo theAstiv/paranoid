@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun,
+    subscribeToRun, getCommentCounts,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -17,6 +17,7 @@
   import ResourceList from '../components/ResourceList.svelte'
   import Assignees from '../components/Assignees.svelte'
   import Comments from '../components/Comments.svelte'
+  import EntityComments from '../components/EntityComments.svelte'
 
   /** @type {{ id: string }} */
   export let params = {}
@@ -25,6 +26,9 @@
   let assets = []
   let flows = []
   let trustBoundaries = []
+  let assetCommentCounts = {}
+  let flowCommentCounts = {}
+  let threatCommentCounts = {}
   /** @type {any} */ let assetsList
   /** @type {any} */ let flowsList
   /** @type {any} */ let boundariesList
@@ -88,12 +92,22 @@
   }
 
   async function loadSupplementary() {
-    const [a, f, tb] = await Promise.all([
+    const [a, f, tb, rawCounts] = await Promise.all([
       getModelAssets(params.id).catch(() => []),
       getModelFlows(params.id).catch(() => []),
       getModelTrustBoundaries(params.id).catch(() => []),
+      getCommentCounts(params.id).catch(() => []),
     ])
     assets = a; flows = f; trustBoundaries = tb
+    assetCommentCounts = {}
+    flowCommentCounts = {}
+    threatCommentCounts = {}
+    for (const row of rawCounts) {
+      if (!row.entity_type || !row.entity_id) continue
+      if (row.entity_type === 'asset') assetCommentCounts[row.entity_id] = row.count
+      else if (row.entity_type === 'flow') flowCommentCounts[row.entity_id] = row.count
+      else if (row.entity_type === 'threat') threatCommentCounts[row.entity_id] = row.count
+    }
   }
 
   const STATUS_CHIPS = {
@@ -394,6 +408,7 @@
             onDelete={(id) => deleteAsset(params.id, id)}
             emptyLabel="No assets yet."
           />
+          <EntityComments items={assets} modelId={params.id} entityType="asset" commentCounts={assetCommentCounts} />
         </div>
 
         <div class="card p-4">
@@ -423,6 +438,7 @@
             onDelete={(id) => deleteFlow(params.id, id)}
             emptyLabel="No data flows yet."
           />
+          <EntityComments items={flows} modelId={params.id} entityType="flow" commentCounts={flowCommentCounts} />
         </div>
 
         <div class="card p-4">

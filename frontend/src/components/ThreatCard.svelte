@@ -2,12 +2,23 @@
   import { createEventDispatcher } from 'svelte'
   import { link } from 'svelte-spa-router'
   import DreadBadge from './DreadBadge.svelte'
+  import Comments from './Comments.svelte'
   import { updateThreat } from '../lib/api.js'
 
   /** @type {object} */
   export let threat = {}
   /** @type {boolean} */
   export let readonly = false
+  /** @type {boolean} */
+  export let selectable = false
+  /** @type {boolean} */
+  export let selected = false
+  /** @type {string} */
+  export let modelId = ''
+  /** @type {number} */
+  export let commentCount = 0
+
+  let showComments = false
 
   const dispatch = createEventDispatcher()
 
@@ -92,11 +103,29 @@
   $: mitigations = typeof threat.mitigations === 'string'
     ? JSON.parse(threat.mitigations)
     : (threat.mitigations ?? [])
+
+  $: sourceChip = threat.source === 'rule_engine' ? 'chip-amber' : 'chip-blue'
+  $: sourceLabel = threat.source === 'rule_engine' ? 'Rule Engine' : 'LLM'
+
+  $: confidencePct = threat.confidence != null ? Math.round(threat.confidence * 100) : null
+  $: confidenceColor = confidencePct == null ? ''
+    : confidencePct >= 70 ? 'text-c-green'
+    : confidencePct >= 40 ? 'text-c-medium'
+    : 'text-c-high'
 </script>
 
-<div class="card p-5 space-y-3">
+<div class="card p-5 space-y-3 {selectable && selected ? 'ring-2 ring-c-accent/40' : ''}">
   <!-- Header -->
   <div class="flex items-start justify-between gap-2">
+    {#if selectable}
+      <label class="flex items-center pt-0.5 cursor-pointer shrink-0">
+        <input
+          type="checkbox"
+          checked={selected}
+          on:change={() => dispatch('toggle-select', threat)}
+          class="w-4 h-4 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />
+      </label>
+    {/if}
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 flex-wrap mb-1.5">
         <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {categoryChip}">{category}</span>
@@ -105,7 +134,21 @@
             {threat.status}
           </span>
         {/if}
+        {#if threat.source}
+          <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {sourceChip}">{sourceLabel}</span>
+        {/if}
         <DreadBadge {threat} />
+        {#if confidencePct != null}
+          <span class="font-mono text-[11px] font-medium {confidenceColor}" title="Confidence: how well-grounded in the system description">{confidencePct}%</span>
+        {/if}
+        {#if commentCount > 0}
+          <button type="button" on:click|stopPropagation={() => showComments = !showComments}
+            class="inline-flex items-center gap-0.5 font-mono text-[11px] text-c-faint hover:text-c-accent transition-colors"
+            title="Comments">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zm-4 0H9v2h2V9z" clip-rule="evenodd"/></svg>
+            {commentCount}
+          </button>
+        {/if}
         {#if !readonly && threat.id && !editingDread}
           <button
             type="button"
@@ -219,5 +262,16 @@
         </div>
       {/if}
     </div>
+  {/if}
+
+  <!-- Inline comments -->
+  {#if modelId && (showComments || commentCount === 0)}
+    <Comments {modelId} entityType="threat" entityId={threat.id} compact={true}
+      on:comment-change={e => { commentCount += e.detail.delta; dispatch('comment-change', e.detail) }} />
+  {:else if modelId && !showComments}
+    <button type="button" on:click={() => showComments = true}
+      class="text-xs text-c-faint hover:text-c-accent transition-colors pt-1">
+      Show comments ({commentCount})
+    </button>
   {/if}
 </div>

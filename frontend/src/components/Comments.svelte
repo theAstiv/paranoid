@@ -1,11 +1,19 @@
 <script>
-  import { onMount } from 'svelte'
+  import { createEventDispatcher, onMount } from 'svelte'
   import { currentUser, notify } from '../lib/stores.js'
   import { listComments, createComment, updateComment, deleteComment } from '../lib/api.js'
   import { initials, relativeTime } from '../lib/utils.js'
 
   /** @type {string} */
   export let modelId = ''
+  /** @type {string|null} */
+  export let entityType = null
+  /** @type {string|null} */
+  export let entityId = null
+  /** @type {boolean} */
+  export let compact = false
+
+  const dispatch = createEventDispatcher()
 
   let comments = []
   let loading = true
@@ -25,7 +33,10 @@
   async function load() {
     loading = true
     try {
-      comments = await listComments(modelId)
+      comments = await listComments(modelId, {
+        entity_type: entityType || 'model',
+        entity_id: entityId,
+      })
     } catch (err) {
       notify('error', `Failed to load comments: ${err.message}`)
     } finally {
@@ -54,9 +65,12 @@
     if (!draft.trim()) return
     posting = true
     try {
-      const created = await createComment(modelId, { body: draft.trim() })
+      const payload = { body: draft.trim() }
+      if (entityType) { payload.entity_type = entityType; payload.entity_id = entityId }
+      const created = await createComment(modelId, payload)
       comments = [...comments, created]
       draft = ''
+      dispatch('comment-change', { delta: 1 })
     } catch (err) {
       notify('error', `Comment failed: ${err.message}`)
     } finally {
@@ -67,10 +81,13 @@
   async function postReply(parentId) {
     if (!replyDraft.trim()) return
     try {
-      const created = await createComment(modelId, { body: replyDraft.trim(), parent_id: parentId })
+      const payload = { body: replyDraft.trim(), parent_id: parentId }
+      if (entityType) { payload.entity_type = entityType; payload.entity_id = entityId }
+      const created = await createComment(modelId, payload)
       comments = [...comments, created]
       replyToId = null
       replyDraft = ''
+      dispatch('comment-change', { delta: 1 })
     } catch (err) {
       notify('error', `Reply failed: ${err.message}`)
     }
@@ -96,16 +113,18 @@
     if (!confirm('Delete this comment?')) return
     try {
       await deleteComment(comment.id)
+      const removed = comments.filter(c => c.id === comment.id || c.parent_id === comment.id)
       comments = comments.filter(c => c.id !== comment.id && c.parent_id !== comment.id)
+      dispatch('comment-change', { delta: -removed.length })
     } catch (err) {
       notify('error', `Delete failed: ${err.message}`)
     }
   }
 </script>
 
-<div class="card p-5">
-  <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">
-    Discussion {#if comments.length > 0}<span class="normal-case font-mono text-c-faint">({comments.length})</span>{/if}
+<div class="{compact ? 'pt-3 border-t border-c-border' : 'card p-5'}">
+  <h2 class="{compact ? 'text-[10px]' : 'text-xs'} font-semibold text-c-muted uppercase tracking-wide mb-{compact ? '2' : '4'}">
+    {compact ? 'Comments' : 'Discussion'} {#if comments.length > 0}<span class="normal-case font-mono text-c-faint">({comments.length})</span>{/if}
   </h2>
 
   {#if loading}
