@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from backend.models.enums import AssetType, StrideCategory
 
@@ -148,6 +148,8 @@ class Threat(BaseModel):
             max_length=MITIGATION_MAX_ITEMS,
         ),
     ]
+
+    _source: str = PrivateAttr(default="llm")
 
 
 class ThreatsList(BaseModel):

@@ -150,3 +150,4 @@ class NotificationType(str, Enum):
     THREAT_STATUS_CHANGED = "threat_status_changed"
     MEMBER_ADDED = "member_added"
     INVITATION_RECEIVED = "invitation_received"
+    MODEL_STALE = "model_stale"

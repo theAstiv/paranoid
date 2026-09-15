@@ -7,7 +7,7 @@ API accepts and returns.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.models.enums import (
     Framework,
@@ -56,6 +56,13 @@ class UpdateThreatRequest(BaseModel):
     dread_exploitability: float | None = Field(default=None, ge=0, le=10)
     dread_affected_users: float | None = Field(default=None, ge=0, le=10)
     dread_discoverability: float | None = Field(default=None, ge=0, le=10)
+
+
+class BulkStatusRequest(BaseModel):
+    """Request body for POST /api/threats/bulk-status."""
+
+    threat_ids: list[str] = Field(..., min_length=1, max_length=500)
+    status: ThreatStatus
 
 
 class CreateAssetRequest(BaseModel):
@@ -137,6 +144,7 @@ class UpdateProjectRequest(BaseModel):
     default_model: str | None = None
     default_iterations: int | None = Field(default=None, ge=1, le=15)
     default_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    staleness_threshold_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class AddMemberRequest(BaseModel):
@@ -164,6 +172,14 @@ class CreateCommentRequest(BaseModel):
 
     body: str = Field(..., min_length=1, max_length=10_000)
     parent_id: str | None = None
+    entity_type: Literal["threat", "asset", "flow"] | None = None
+    entity_id: str | None = None
+
+    @model_validator(mode="after")
+    def entity_fields_paired(self):
+        if (self.entity_type is None) != (self.entity_id is None):
+            raise ValueError("entity_type and entity_id must both be provided or both be null")
+        return self
 
 
 class UpdateCommentRequest(BaseModel):
