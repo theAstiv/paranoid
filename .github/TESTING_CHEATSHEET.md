@@ -36,7 +36,7 @@ scripts\install-hooks.bat   # Windows
 | Step | What it checks |
 |------|---------------|
 | 1 | Version consistency (pyproject.toml) |
-| 2 | Full test suite (all 172+ tests) |
+| 2 | Full test suite (1,104+ tests) |
 | 3 | Code quality (ruff check + format) |
 | 4 | PyPI package build (.whl + .tar.gz) |
 | 5 | Binary build (PyInstaller) |
@@ -109,9 +109,9 @@ python -m ruff format backend/ cli/ tests/
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| **test.yml** | Push to main/develop, PRs | Matrix tests (3 OS × 2 Python) + Lint |
-| **pr-validation.yml** | PR opened/updated | Version check + Full tests + PR summary |
-| **release.yml** | Tag push (`v*.*.*`) | Build binaries + PyPI + GitHub release |
+| **ci.yml** | Push to main, PRs | 8 jobs: lint, test, build-check, frontend-test, frontend-build, action-version-sync, action-docker-build, docker |
+| **release.yml** | Tag push (`v*.*.*`) | Build binaries + PyPI publish + GitHub release |
+| **docker.yml** | Tag push (`v*.*.*`) | Multi-arch Docker images → Docker Hub |
 
 ### Check Status
 
@@ -130,7 +130,7 @@ https://github.com/theAstiv/paranoid/pull/123/checks
 version = "1.3.0"
 
 # 2. Update CHANGELOG.md
-## [1.3.0] - 2024-XX-XX
+## [1.3.0] - 2026-XX-XX
 ### Added
 - Feature X
 

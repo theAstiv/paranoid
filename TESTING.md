@@ -125,7 +125,7 @@ git push --no-verify
 
 **Concurrency:** cancels in-progress runs for the same ref on rapid pushes.
 
-**Jobs:**
+**Jobs (8 total):**
 
 | Job | Needs | What it does |
 |-----|-------|-------------|
@@ -185,19 +185,19 @@ paranoid_cli-1.2.1.tar.gz
 Current test suite breakdown:
 
 ```
-Total tests: 664 passed, 6 skipped
+Total: 1,104+ tests
 
 Backend (pytest):
 - CLI tests: 16
-- Database / CRUD tests: 57
+- Database / CRUD tests: 57+
 - Model tests: 24
-- Pipeline tests: 38
+- Pipeline tests: 38+  (includes confidence scoring)
 - Provider tests: 7
 - Deduplication tests: 16
 - Export tests (markdown, PDF, SARIF): 52
 - Image/diagram tests: 36
 - MCP tests: 8
-- Routes / API tests: 100+
+- Routes / API tests: 100+  (includes bulk threat operations)
 - Seeds integrity: 96
 - Security / source key: 12
 - Sources manager: 18
@@ -208,9 +208,9 @@ Frontend (Vitest):
 - Svelte stores: 9
 ```
 
-### Phase 15 test modules
+### Test modules added in v1.5.0
 
-Four new test modules were added in v1.5.0 covering the Docker UX features:
+Four new test modules cover the Docker UX and code-source features:
 
 **`tests/test_security_source_key.py`** — Fernet key derivation and encryption
 - PBKDF2 path (CONFIG_SECRET env var)
@@ -304,7 +304,7 @@ git push origin feature-branch
    - Check status at: `https://github.com/theAstiv/paranoid/actions`
 
 3. **Wait for CI:**
-   - All 6 test matrix jobs must pass
+   - All 8 CI jobs must pass
    - PR validation must pass
    - Review any failures and push fixes
 
@@ -320,7 +320,7 @@ git push origin feature-branch
    version = "1.3.0"
 
    # Update CHANGELOG.md
-   ## [1.3.0] - 2024-XX-XX
+   ## [1.3.0] - 2026-XX-XX
    ### Added
    - New feature X
    ```
@@ -431,5 +431,5 @@ pytest tests/test_pipeline_nodes.py -vv
 ## 📚 Related Documentation
 
 - [scripts/README.md](scripts/README.md) - Build and release process
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines (if exists)
-- [.github/workflows/](. github/workflows/) - CI/CD workflow definitions
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- [.github/workflows/](.github/workflows/) - CI/CD workflow definitions

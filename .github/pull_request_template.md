@@ -29,10 +29,10 @@
 
 <!-- Delete this section if not applicable -->
 
-- [ ] New pipeline step added to `backend/pipeline/nodes.py`
+- [ ] New pipeline step added to `backend/pipeline/nodes/`
 - [ ] New or modified Pydantic models in `backend/models/`
 - [ ] New LLM provider in `backend/providers/`
-- [ ] Database schema change in `backend/db/schema.py`
+- [ ] Database schema change — migration added to `backend/db/migrations/`
 - [ ] New API route in `backend/routes/`
 - [ ] New export format in `backend/export/`
 - [ ] Seed data changed in `seeds/`
