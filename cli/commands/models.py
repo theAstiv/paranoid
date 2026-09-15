@@ -252,6 +252,11 @@ async def _show_model_async(model_id: str, as_json: bool, show_mitigations: bool
         else:
             click.echo()
 
+        source = threat.get("source") or "llm"
+        confidence = threat.get("confidence")
+        conf_str = f"{confidence:.2f}" if confidence is not None else "—"
+        click.echo(f"      Source: {source}  |  Confidence: {conf_str}")
+
         if show_mitigations and threat.get("mitigations"):
             mitig_list = threat["mitigations"]
             if isinstance(mitig_list, str):
@@ -437,6 +442,8 @@ async def _export_model_async(
                     "likelihood": t.get("likelihood"),
                     "dread_score": t.get("dread_score"),
                     "mitigation_count": len(t.get("mitigations") or []),
+                    "source": t.get("source") or "llm",
+                    "confidence": t.get("confidence"),
                 }
                 for t in threats
             ],
@@ -454,6 +461,108 @@ async def _export_model_async(
         f"  ✓ Exported {len(threats)} threat(s) → {output_path}",
         fg="green",
     )
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# review command
+# ---------------------------------------------------------------------------
+
+
+@models.command(name="review")
+@click.argument("model_id")
+@click.option(
+    "--status",
+    type=click.Choice(["approved", "rejected", "pending", "mitigated"], case_sensitive=False),
+    required=True,
+    help="Target status to apply to matching threats",
+)
+@click.option(
+    "--source",
+    "source_filter",
+    type=click.Choice(["llm", "rule_engine"], case_sensitive=False),
+    default=None,
+    help="Only update threats from this source (default: all sources)",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt (for scripting/CI)",
+)
+def review_threats(model_id: str, status: str, source_filter: str | None, yes: bool) -> None:
+    """Bulk-update threat status for a saved model.
+
+    MODEL_ID can be a full UUID or a unique prefix (e.g. 'a1b2c3d4').
+
+    Examples:
+
+        \b
+        paranoid models review a1b2c3d4 --status approved
+        paranoid models review a1b2c3d4 --status approved --source rule_engine --yes
+        paranoid models review a1b2c3d4 --status rejected --yes
+    """
+    try:
+        asyncio.run(
+            _review_threats_async(
+                model_id=model_id,
+                status=status,
+                source_filter=source_filter,
+                yes=yes,
+            )
+        )
+    except CLIError as e:
+        click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
+        raise SystemExit(e.exit_code) from e
+    except Exception as e:
+        click.secho(f"\n✗ Unexpected error: {e}", fg="red", err=True)
+        raise SystemExit(1) from e
+
+
+async def _review_threats_async(
+    model_id: str, status: str, source_filter: str | None, yes: bool
+) -> None:
+    from backend.db import crud
+
+    if len(model_id) == 36:
+        model = await crud.get_threat_model(model_id)
+    else:
+        try:
+            model = await crud.find_threat_model_by_prefix(model_id)
+        except ValueError as e:
+            raise CLIError(str(e)) from e
+
+    if model is None:
+        raise CLIError(
+            f"No threat model found matching '{model_id}'.\n"
+            "Run 'paranoid models list' to see available models."
+        )
+
+    threats = await crud.list_threats(model["id"])
+    if source_filter:
+        threats = [t for t in threats if (t.get("source") or "llm") == source_filter]
+
+    if not threats:
+        filter_note = f" with source='{source_filter}'" if source_filter else ""
+        click.secho(f"  No threats found{filter_note}.", fg="yellow")
+        return
+
+    filter_note = f" (source: {source_filter})" if source_filter else ""
+    click.echo()
+    click.echo(
+        f"  {len(threats)} threat(s){filter_note} will be set to "
+        + click.style(status, bold=True)
+        + f" in model {model['id'][:8]}…"
+    )
+
+    if not yes:
+        click.confirm("  Proceed?", abort=True)
+
+    threat_ids = [t["id"] for t in threats]
+    updated = await crud.bulk_update_threat_status(threat_ids, status)
+    click.echo()
+    click.secho(f"  ✓ Updated {updated} threat(s) to {status}.", fg="green")
     click.echo()
 
 
