@@ -389,8 +389,10 @@ CREATE_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_activity_project_created ON activity_log(project_id, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_activity_user_created ON activity_log(user_id, created_at);",
     "CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id);",
-    "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created "
-    "ON notifications(user_id, is_read, created_at);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_created "
+        "ON notifications(user_id, is_read, created_at);"
+    ),
 ]
 
 
