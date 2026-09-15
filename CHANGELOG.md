@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 1.5.1-dev
 
+### Security
+
+- **Frontend dependency audit** — resolved all 19 Dependabot alerts: `mermaid` →11.16.1 (CSS injection, prototype pollution, DoS), `postcss` →8.5.23 (path traversal), `vitest` →4.1.11 (path traversal via mocker), `dompurify` →3.4.13 (XSS), plus transitive patches for `undici`, `brace-expansion`, `browserslist`, `baseline-browser-mapping`
+- **Vite 5→8, Svelte 4→5** — clears remaining dev-server CVEs; Svelte 5 runs in legacy mode (all existing component syntax unchanged)
+
 ### Added
 
 #### Multi-User Collaboration (Phases 0–7)

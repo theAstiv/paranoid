@@ -31,7 +31,7 @@ graph TD
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.12, FastAPI, aiosqlite |
-| Frontend | Svelte 4, Tailwind CSS, svelte-spa-router |
+| Frontend | Svelte 5 (legacy mode), Tailwind CSS, svelte-spa-router |
 | Database | SQLite + sqlite-vec (vector search) |
 | Embeddings | fastembed (ONNX, local — no external API) |
 | LLM providers | Anthropic, OpenAI, Ollama (protocol-based) |
