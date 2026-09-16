@@ -85,6 +85,13 @@
     menuOpen.set(null)
   }
 
+  // The `autofocus` attribute is flagged because it is disorienting on page
+  // load. Here the input only exists after the user opens the new-project
+  // form, so focusing it on mount is the expected behavior.
+  function focusOnMount(node) {
+    node.focus()
+  }
+
   async function handleMarkAllRead() {
     try {
       await markAllNotificationsRead()
@@ -242,8 +249,7 @@
 
         <!-- Project switcher dropdown -->
         {#if $menuOpen === 'project'}
-          <div class="absolute left-3 mt-1 w-[240px] bg-c-panel border border-c-border rounded-card shadow-xl z-50 animate-pop-in py-1.5"
-            on:click|stopPropagation>
+          <div class="absolute left-3 mt-1 w-[240px] bg-c-panel border border-c-border rounded-card shadow-xl z-50 animate-pop-in py-1.5">
             <p class="font-mono text-[10px] text-c-faint uppercase tracking-[0.08em] px-3 pb-1.5 pt-0.5">Switch project</p>
             <!-- Current project -->
             <button class="w-full flex items-center gap-2.5 px-3 py-2 bg-c-accent/10 text-left">
@@ -271,13 +277,13 @@
             {/each}
             <div class="border-t border-c-divider mt-1 pt-1">
               {#if showNewProjectForm}
-                <div class="px-3 py-2 space-y-2" on:click|stopPropagation>
+                <div class="px-3 py-2 space-y-2">
                   <input
                     type="text"
                     bind:value={newProjectName}
                     placeholder="Project name"
                     class="field text-sm w-full"
-                    autofocus
+                    use:focusOnMount
                     on:keydown={(e) => { if (e.key === 'Enter') handleCreateProject(); if (e.key === 'Escape') { showNewProjectForm = false; newProjectName = '' } }}
                   />
                   <div class="flex gap-2">
@@ -497,7 +503,6 @@
         {#if $menuOpen === 'user'}
           <div
             class="absolute bottom-full left-3 right-3 mb-2 bg-c-panel border border-c-border rounded-card shadow-xl z-50 animate-pop-in overflow-hidden"
-            on:click|stopPropagation
           >
             <!-- Identity header -->
             <div class="px-4 py-3 border-b border-c-divider">
@@ -586,7 +591,6 @@
             {#if $menuOpen === 'notif'}
               <div
                 class="absolute right-0 mt-2 w-80 bg-c-panel border border-c-border rounded-card shadow-xl z-50 animate-pop-in overflow-hidden"
-                on:click|stopPropagation
               >
                 <div class="flex items-center justify-between px-4 py-3 border-b border-c-divider">
                   <span class="text-[13px] font-semibold text-c-text">Notifications</span>
@@ -604,22 +608,24 @@
                 {:else}
                   <ul class="max-h-80 overflow-y-auto">
                     {#each $notifications as n}
-                      <li
-                        on:click={() => handleNotificationClick(n)}
-                        class="flex items-start gap-3 px-4 py-3 border-b border-c-divider last:border-0 cursor-pointer
-                        {n.is_read ? '' : 'bg-c-accent/5'}">
-                        <div class="w-7 h-7 rounded-chip bg-c-panel2 border border-c-border flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <svg class="w-3.5 h-3.5 text-c-muted" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path stroke-linecap="round" d="M10 2a6 6 0 00-6 6v3.5L3 13h14l-1-1.5V8a6 6 0 00-6-6z"/>
-                          </svg>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                          <p class="text-[13px] text-c-text2 leading-snug">{n.title}</p>
-                          <p class="font-mono text-[11px] text-c-faint mt-0.5">{relativeTime(n.created_at)}</p>
-                        </div>
-                        {#if !n.is_read}
-                          <span class="w-1.5 h-1.5 rounded-full bg-c-accent flex-shrink-0 mt-1.5"></span>
-                        {/if}
+                      <li class="border-b border-c-divider last:border-0 {n.is_read ? '' : 'bg-c-accent/5'}">
+                        <button
+                          type="button"
+                          on:click={() => handleNotificationClick(n)}
+                          class="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-c-panel2 transition-colors">
+                          <div class="w-7 h-7 rounded-chip bg-c-panel2 border border-c-border flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5 text-c-muted" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                              <path stroke-linecap="round" d="M10 2a6 6 0 00-6 6v3.5L3 13h14l-1-1.5V8a6 6 0 00-6-6z"/>
+                            </svg>
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <p class="text-[13px] text-c-text2 leading-snug">{n.title}</p>
+                            <p class="font-mono text-[11px] text-c-faint mt-0.5">{relativeTime(n.created_at)}</p>
+                          </div>
+                          {#if !n.is_read}
+                            <span class="w-1.5 h-1.5 rounded-full bg-c-accent flex-shrink-0 mt-1.5"></span>
+                          {/if}
+                        </button>
                       </li>
                     {/each}
                   </ul>
@@ -647,7 +653,7 @@
               </svg>
             {/if}
             {$notification.message}
-            <button on:click={() => $notification = null} class="ml-1 opacity-60 hover:opacity-100">
+            <button on:click={() => $notification = null} aria-label="Dismiss notification" class="ml-1 opacity-60 hover:opacity-100">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
               </svg>
