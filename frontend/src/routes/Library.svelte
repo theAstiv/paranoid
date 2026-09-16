@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte'
-  import { link } from 'svelte-spa-router'
   import { listModels, getModelThreats, deleteModel } from '../lib/api.js'
   import { notify } from '../lib/stores.js'
   import ThreatCard from '../components/ThreatCard.svelte'

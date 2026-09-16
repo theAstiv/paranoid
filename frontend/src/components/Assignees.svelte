@@ -11,7 +11,6 @@
 
   let assignees = []
   let members = []
-  let loading = true
   let open = false
 
   $: sameProject = $currentProject?.id === projectId
@@ -24,13 +23,10 @@
   onMount(load)
 
   async function load() {
-    loading = true
     try {
       assignees = await listAssignees(modelId)
     } catch (err) {
       notify('error', `Failed to load assignees: ${err.message}`)
-    } finally {
-      loading = false
     }
   }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { getModel, getConfig, login, subscribeToRun } from './api.js'
-import { getStoredToken, setStoredToken, clearStoredToken } from './stores.js'
+import { getStoredToken, setStoredToken } from './stores.js'
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {

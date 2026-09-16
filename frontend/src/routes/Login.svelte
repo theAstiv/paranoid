@@ -1,7 +1,6 @@
 <script>
   import { push } from 'svelte-spa-router'
   import { login } from '../lib/api.js'
-  import { currentUser } from '../lib/stores.js'
 
   let username = ''
   let password = ''
