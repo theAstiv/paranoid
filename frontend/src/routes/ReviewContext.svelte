@@ -234,10 +234,10 @@
               {/if}
             </div>
             <div class="flex gap-1 flex-shrink-0">
-              <button type="button" on:click={() => startEditAsset(a)} class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
+              <button type="button" on:click={() => startEditAsset(a)} aria-label="Edit asset {a.name}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
               </button>
-              <button type="button" on:click={() => removeAsset(a.id)} class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
+              <button type="button" on:click={() => removeAsset(a.id)} aria-label="Delete asset {a.name}" class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
@@ -303,10 +303,10 @@
               {/if}
             </div>
             <div class="flex gap-1 flex-shrink-0">
-              <button type="button" on:click={() => startEditFlow(f)} class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
+              <button type="button" on:click={() => startEditFlow(f)} aria-label="Edit flow from {f.source_entity} to {f.target_entity}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
               </button>
-              <button type="button" on:click={() => removeFlow(f.id)} class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
+              <button type="button" on:click={() => removeFlow(f.id)} aria-label="Delete flow from {f.source_entity} to {f.target_entity}" class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
@@ -371,10 +371,10 @@
               {/if}
             </div>
             <div class="flex gap-1 flex-shrink-0">
-              <button type="button" on:click={() => startEditBoundary(b)} class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
+              <button type="button" on:click={() => startEditBoundary(b)} aria-label="Edit trust boundary between {b.source_entity} and {b.target_entity}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
               </button>
-              <button type="button" on:click={() => removeBoundary(b.id)} class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
+              <button type="button" on:click={() => removeBoundary(b.id)} aria-label="Delete trust boundary between {b.source_entity} and {b.target_entity}" class="p-1 text-c-faint hover:text-c-critical rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
