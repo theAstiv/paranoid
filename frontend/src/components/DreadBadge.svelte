@@ -1,5 +1,5 @@
 <script>
-  import { dreadChip, dreadLabel, dreadColor } from '../lib/utils.js'
+  import { dreadChip, dreadColor } from '../lib/utils.js'
 
   /**
    * Pass the full threat object. DreadBadge normalizes the DREAD data internally.

@@ -1,6 +1,6 @@
 <script>
   import { link } from 'svelte-spa-router'
-  import { currentProject, currentUser, notify } from '../lib/stores.js'
+  import { currentProject, notify } from '../lib/stores.js'
   import { getProjectDashboard } from '../lib/api.js'
   import { dreadChip, dreadColor, dreadLabel, initials, relativeTime } from '../lib/utils.js'
 

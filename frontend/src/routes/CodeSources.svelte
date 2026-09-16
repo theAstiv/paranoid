@@ -1,6 +1,5 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { link } from 'svelte-spa-router'
   import {
     listCodeSources,
     createCodeSource,

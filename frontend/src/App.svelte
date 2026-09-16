@@ -21,7 +21,7 @@
   import AdminUsers from './routes/AdminUsers.svelte'
   import ModelDiff from './routes/ModelDiff.svelte'
   import {
-    config, notification, notify, currentUser, authLoading,
+    config, notification, notify, currentUser,
     currentProject, projects, notifications, notifUnread, menuOpen,
   } from './lib/stores.js'
   import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
@@ -57,9 +57,6 @@
     if (path === '/') return $location === '/'
     return $location.startsWith(path)
   }
-
-  // Nav model count (approx from store)
-  let modelCount = 0
 
   // Backend health
   let backendOk = true
