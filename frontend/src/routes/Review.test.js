@@ -435,6 +435,22 @@ describe('Review — selection pruning across filter changes', () => {
     expect(get(threats).find(t => t.id === 't3').status).toBe('rejected')
   })
 
+  it('restores a hidden selection when the filter widens again', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+    await fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
+    expect(screen.getByText('1 of 1 selected')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^all/ }))
+
+    // Narrowing a filter hides a selection rather than destroying it — the
+    // safety rule is enforced by deriving from what is visible, so there is
+    // no need to discard the rest.
+    expect(screen.getByText('3 of 3 selected')).toBeInTheDocument()
+  })
+
   it('clears the selection bar when the filter hides every selected threat', async () => {
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
