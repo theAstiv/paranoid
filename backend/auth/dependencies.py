@@ -19,14 +19,38 @@ logger = logging.getLogger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)
 
-# Synthetic admin used when auth is disabled (PARANOID_REQUIRE_AUTH=false).
-_ANON_ADMIN: dict[str, Any] = {
-    "id": "00000000-0000-0000-0000-000000000001",
-    "username": "admin",
-    "display_name": "Administrator",
-    "is_admin": True,
-    "is_active": True,
-}
+
+async def _resolve_anon_admin() -> dict[str, Any]:
+    """Return the real 'admin' user from the DB for anon mode.
+
+    Avoids FK violations: the projects table has created_by REFERENCES users(id),
+    so we must use the id the DB actually assigned at bootstrap time, not a
+    hardcoded phantom.
+
+    Falls back to a synthetic identity only during the brief window before the
+    admin user is seeded (initial app startup). Logs a warning in that case.
+    """
+    try:
+        from backend.db.crud_auth import get_user_by_username
+
+        user = await get_user_by_username("admin")
+        if user is not None:
+            return user
+    except Exception as exc:
+        logger.warning("Could not resolve anon admin from DB: %s", exc)
+
+    # Should only be reached before _bootstrap_admin_if_needed completes.
+    logger.warning(
+        "Admin user not found in DB — using synthetic identity. "
+        "This is expected only during initial startup before bootstrap completes."
+    )
+    return {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "username": "admin",
+        "display_name": "Administrator",
+        "is_admin": True,
+        "is_active": True,
+    }
 
 
 async def get_current_user(
@@ -34,15 +58,15 @@ async def get_current_user(
 ) -> dict[str, Any]:
     """Resolve the authenticated user from a Bearer JWT or PAT.
 
-    When PARANOID_REQUIRE_AUTH is false, returns _ANON_ADMIN without
-    checking credentials (backwards-compatible single-user mode).
+    When PARANOID_REQUIRE_AUTH is false, resolves the real admin user from the
+    DB (backwards-compatible single-user mode).
 
     Raises HTTP 401 when auth is enabled and no valid credential is supplied.
     """
     from backend.config import settings
 
     if not settings.paranoid_require_auth:
-        return _ANON_ADMIN
+        return await _resolve_anon_admin()
 
     if credentials is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -61,7 +85,7 @@ async def get_optional_user(
     from backend.config import settings
 
     if not settings.paranoid_require_auth:
-        return _ANON_ADMIN
+        return await _resolve_anon_admin()
 
     if credentials is None:
         return None

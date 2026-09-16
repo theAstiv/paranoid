@@ -1,9 +1,14 @@
 """Tests for /api/projects/* and /api/users routes (Phase 2).
 
-Mocks at the usage site (backend.routes.projects.*) so inner dependencies
-do not require a real database.  The PARANOID_REQUIRE_AUTH=false default
-makes get_current_user return the synthetic _ANON_ADMIN user, which is
-is_admin=True — giving full access in all anon-mode tests.
+Most tests mock at the usage site (backend.routes.projects.*) so inner
+dependencies do not require a real database.  The PARANOID_REQUIRE_AUTH=false
+default makes get_current_user resolve the admin user from the DB (or fall
+back to a synthetic identity), which is is_admin=True — giving full access in
+all anon-mode tests.
+
+The regression test at the bottom (test_create_project_anon_mode_no_fk_violation)
+runs against a real DB with FK enforcement to guard against the phantom-id bug
+where _ANON_ADMIN's hardcoded id was not present in the users table.
 """
 
 from __future__ import annotations
@@ -679,3 +684,39 @@ async def test_owner_operations_allowed_in_anon_mode(client):
     ):
         res = await client.delete("/api/projects/proj-uuid-1")
     assert res.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Regression: anon admin FK violation (real DB, no mocks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_project_anon_mode_no_fk_violation(test_db):
+    """Regression: POST /api/projects must return 201, not 500, in anon mode.
+
+    Before the fix, _ANON_ADMIN carried a phantom id
+    ("00000000-0000-0000-0000-000000000001") that was never inserted into the
+    users table.  projects.created_by has a FOREIGN KEY reference to users(id),
+    so with PRAGMA foreign_keys = ON the INSERT raised IntegrityError → 500.
+
+    This test runs against a real aiosqlite DB (FK enforcement on), seeds the
+    admin user the way _bootstrap_admin_if_needed does, and hits the route
+    without mocking crud_projects so the full INSERT executes.
+    """
+    from backend.auth.passwords import hash_password
+    from backend.db.crud_auth import create_user
+
+    await create_user(
+        username="admin",
+        email="admin@localhost",
+        password_hash=hash_password("password"),
+        display_name="Administrator",
+        is_admin=True,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        res = await c.post("/api/projects", json={"name": "Regression Test Project"})
+
+    assert res.status_code == 201, res.text
+    assert res.json()["name"] == "Regression Test Project"
