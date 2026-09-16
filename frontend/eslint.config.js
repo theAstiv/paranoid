@@ -47,14 +47,6 @@ export default [
   },
 
   {
-    // TODO: delete this exemption once #76 lands — it replaces this file's
-    // plain Set with SvelteSet, which is exactly what the rule asks for.
-    // Without the exemption this config cannot pass CI on its own.
-    files: ['src/routes/Review.svelte'],
-    rules: { 'svelte/prefer-svelte-reactivity': 'off' },
-  },
-
-  {
     files: ['**/*.test.js', 'src/setupTests.js'],
     languageOptions: { globals: globals.vitest },
   },
