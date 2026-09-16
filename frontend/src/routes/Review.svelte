@@ -1,29 +1,32 @@
+<svelte:options runes={true} />
+
 <script>
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
   import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
   import { threats, currentModel, notify } from '../lib/stores.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
 
-  /** @type {{ id: string }} */
-  export let params = {}
+  /** @type {{ params?: { id: string } }} */
+  let { params = {} } = $props()
 
-  let loading = true
-  let filter = 'all'
-  let sortBy = 'default'
-  let sourceFilter = 'all'
-  let selectedCategories = []
-  let dreadMin = 0
-  let dreadMax = 10
-  let confMin = 0
-  let confMax = 100
-  let showFilters = false
+  let loading = $state(true)
+  let filter = $state('all')
+  let sortBy = $state('default')
+  let sourceFilter = $state('all')
+  let selectedCategories = $state([])
+  let dreadMin = $state(0)
+  let dreadMax = $state(10)
+  let confMin = $state(0)
+  let confMax = $state(100)
+  let showFilters = $state(false)
 
-  /** @type {Set<string>} */
-  let selectedIds = new Set()
-  let bulkBusy = false
-  let commentCounts = {}
+  /** @type {SvelteSet<string>} mutations are reactive — no wholesale reassignment */
+  const selectedIds = new SvelteSet()
+  let bulkBusy = $state(false)
+  let commentCounts = $state({})
 
   const STATUS_FILTERS = ['all', 'pending', 'approved', 'rejected']
 
@@ -64,35 +67,29 @@
     return null
   }
 
-  // Filter chain — clear selection when filters change so users never act on hidden threats
-  $: statusFiltered = filter === 'all' ? $threats : $threats.filter(t => t.status === filter)
-  $: categoryFiltered = selectedCategories.length === 0
-    ? statusFiltered
-    : statusFiltered.filter(t => selectedCategories.includes(t.stride_category))
-  $: sourceFiltered = sourceFilter === 'all'
-    ? categoryFiltered
-    : categoryFiltered.filter(t => t.source === sourceFilter)
-  $: dreadFiltered = sourceFiltered.filter(t => {
+  /** A threat with no DREAD score is never hidden by the range filter. */
+  function dreadInRange(t) {
     const s = dreadScoreOf(t)
     return s == null || (s >= dreadMin && s <= dreadMax)
-  })
-  $: confFiltered = dreadFiltered.filter(t => {
+  }
+
+  /** A threat with no confidence value is never hidden by the range filter. */
+  function confInRange(t) {
     if (t.confidence == null) return true
     const pct = Math.round(t.confidence * 100)
     return pct >= confMin && pct <= confMax
-  })
-
-  // Sort
-  $: filtered = sortThreats(confFiltered, sortBy)
-
-  // Prune selectedIds to only contain threats visible after filtering
-  $: {
-    const visibleIds = new Set(filtered.map(t => t.id))
-    const pruned = new Set([...selectedIds].filter(id => visibleIds.has(id)))
-    if (pruned.size !== selectedIds.size) {
-      selectedIds = pruned
-    }
   }
+
+  const filtered = $derived.by(() => {
+    const matched = $threats.filter(t =>
+      (filter === 'all' || t.status === filter) &&
+      (selectedCategories.length === 0 || selectedCategories.includes(t.stride_category)) &&
+      (sourceFilter === 'all' || t.source === sourceFilter) &&
+      dreadInRange(t) &&
+      confInRange(t)
+    )
+    return sortThreats(matched, sortBy)
+  })
 
   function sortThreats(list, by) {
     if (by === 'default') return list
@@ -107,11 +104,15 @@
     return copy
   }
 
-  $: pendingThreats = $threats.filter(t => t.status === 'pending')
-  $: criticalHighPending = pendingThreats.filter(t => { const s = severityOf(t); return s === 'critical' || s === 'high' })
-  $: lowPending = pendingThreats.filter(t => severityOf(t) === 'low')
-  $: selectedCount = selectedIds.size
-  $: allFilteredSelected = filtered.length > 0 && filtered.every(t => selectedIds.has(t.id))
+  const pendingThreats = $derived($threats.filter(t => t.status === 'pending'))
+  const criticalHighPending = $derived(pendingThreats.filter(t => { const s = severityOf(t); return s === 'critical' || s === 'high' }))
+  const lowPending = $derived(pendingThreats.filter(t => severityOf(t) === 'low'))
+
+  // Selection is scoped to what is on screen by derivation rather than by a
+  // cleanup pass, so a bulk action can never reach a threat the filter hides.
+  const visibleSelected = $derived(filtered.filter(t => selectedIds.has(t.id)).map(t => t.id))
+  const selectedCount = $derived(visibleSelected.length)
+  const allFilteredSelected = $derived(filtered.length > 0 && visibleSelected.length === filtered.length)
 
   onMount(async () => {
     try {
@@ -125,7 +126,6 @@
           commentCounts[row.entity_id] = row.count
         }
       }
-      commentCounts = commentCounts
     } catch (err) {
       notify('error', `Failed to load threats: ${err.message}`)
     } finally {
@@ -154,33 +154,32 @@
   }
 
   function handleToggleSelect(threat) {
-    const next = new Set(selectedIds)
-    if (next.has(threat.id)) {
-      next.delete(threat.id)
+    if (selectedIds.has(threat.id)) {
+      selectedIds.delete(threat.id)
     } else {
-      next.add(threat.id)
+      selectedIds.add(threat.id)
     }
-    selectedIds = next
   }
 
   function toggleSelectAll() {
-    if (allFilteredSelected) {
-      selectedIds = new Set()
-    } else {
-      selectedIds = new Set(filtered.map(t => t.id))
+    const selectAll = !allFilteredSelected
+    selectedIds.clear()
+    if (selectAll) {
+      for (const t of filtered) selectedIds.add(t.id)
     }
   }
 
   async function bulkAction(status) {
-    const ids = [...selectedIds]
+    const ids = visibleSelected
     if (ids.length === 0) return
     bulkBusy = true
-    const originals = $threats.filter(t => selectedIds.has(t.id)).map(t => ({ id: t.id, status: t.status }))
-    threats.update(ts => ts.map(t => selectedIds.has(t.id) ? { ...t, status } : t))
+    const idSet = new Set(ids)
+    const originals = $threats.filter(t => idSet.has(t.id)).map(t => ({ id: t.id, status: t.status }))
+    threats.update(ts => ts.map(t => idSet.has(t.id) ? { ...t, status } : t))
     try {
       const result = await bulkUpdateThreatStatus(ids, status)
       notify('success', `${result.updated} threats ${status}`)
-      selectedIds = new Set()
+      selectedIds.clear()
     } catch (err) {
       threats.update(ts => ts.map(t => {
         const orig = originals.find(o => o.id === t.id)
@@ -247,7 +246,7 @@
       {#each STATUS_FILTERS as f}
         <button
           type="button"
-          on:click={() => filter = f}
+          onclick={() => filter = f}
           class="px-3 py-1 text-sm rounded-panel capitalize transition-colors
             {filter === f ? 'bg-c-accent text-[#04141A] font-medium' : 'text-c-muted hover:bg-c-well hover:text-c-text2'}">
           {f}
@@ -258,28 +257,28 @@
       {/each}
     </div>
     <div class="flex items-center gap-3 flex-wrap">
-      <button type="button" on:click={() => showFilters = !showFilters}
+      <button type="button" onclick={() => showFilters = !showFilters}
         class="text-xs font-medium text-c-accent hover:text-c-accent/80 transition-colors">
         {showFilters ? 'Hide filters' : 'Filters'}
       </button>
       {#if pendingThreats.length > 0}
         {#if criticalHighPending.length > 0}
-          <button type="button" on:click={() => bulkActionFor(criticalHighPending, 'approved', 'Approved Critical/High')} disabled={bulkBusy}
+          <button type="button" onclick={() => bulkActionFor(criticalHighPending, 'approved', 'Approved Critical/High')} disabled={bulkBusy}
             class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors disabled:opacity-50">
             Approve Critical+High ({criticalHighPending.length})
           </button>
         {/if}
         {#if lowPending.length > 0}
-          <button type="button" on:click={() => bulkActionFor(lowPending, 'rejected', 'Rejected Low')} disabled={bulkBusy}
+          <button type="button" onclick={() => bulkActionFor(lowPending, 'rejected', 'Rejected Low')} disabled={bulkBusy}
             class="text-xs font-medium text-c-high hover:text-c-high/80 transition-colors disabled:opacity-50">
             Reject Low ({lowPending.length})
           </button>
         {/if}
-        <button type="button" on:click={() => bulkActionFor(pendingThreats, 'approved', 'Approved all')} disabled={bulkBusy}
+        <button type="button" onclick={() => bulkActionFor(pendingThreats, 'approved', 'Approved all')} disabled={bulkBusy}
           class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors disabled:opacity-50">
           Approve all ({pendingThreats.length})
         </button>
-        <button type="button" on:click={() => bulkActionFor(pendingThreats, 'rejected', 'Rejected all')} disabled={bulkBusy}
+        <button type="button" onclick={() => bulkActionFor(pendingThreats, 'rejected', 'Rejected all')} disabled={bulkBusy}
           class="text-xs font-medium text-c-critical hover:text-c-critical/80 transition-colors disabled:opacity-50">
           Reject all ({pendingThreats.length})
         </button>
@@ -296,7 +295,7 @@
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">STRIDE Category</p>
           <div class="flex flex-wrap gap-1">
             {#each STRIDE_CATEGORIES as cat}
-              <button type="button" on:click={() => toggleCategory(cat)}
+              <button type="button" onclick={() => toggleCategory(cat)}
                 class="px-2 py-0.5 text-[11px] font-mono rounded-chip border transition-colors
                   {selectedCategories.includes(cat) ? 'chip-accent' : 'chip-gray'}">
                 {cat}
@@ -310,7 +309,7 @@
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Source</p>
           <div class="flex gap-1">
             {#each [['all', 'All'], ['llm', 'LLM'], ['rule_engine', 'Rule Engine']] as [val, label]}
-              <button type="button" on:click={() => sourceFilter = val}
+              <button type="button" onclick={() => sourceFilter = val}
                 class="px-2 py-0.5 text-[11px] font-mono rounded-chip border transition-colors
                   {sourceFilter === val ? 'chip-accent' : 'chip-gray'}">
                 {label}
@@ -364,15 +363,15 @@
   {#if selectedCount > 0}
     <div class="flex items-center gap-3 bg-c-accent/10 border border-c-accent/30 rounded-panel px-4 py-2">
       <span class="text-xs font-medium text-c-text">{selectedCount} of {filtered.length} selected</span>
-      <button type="button" on:click={() => bulkAction('approved')} disabled={bulkBusy}
+      <button type="button" onclick={() => bulkAction('approved')} disabled={bulkBusy}
         class="btn-primary text-xs px-3 py-1 disabled:opacity-50">
         Approve selected ({selectedCount})
       </button>
-      <button type="button" on:click={() => bulkAction('rejected')} disabled={bulkBusy}
+      <button type="button" onclick={() => bulkAction('rejected')} disabled={bulkBusy}
         class="btn-ghost text-xs px-3 py-1 disabled:opacity-50">
         Reject selected ({selectedCount})
       </button>
-      <button type="button" on:click={() => selectedIds = new Set()}
+      <button type="button" onclick={() => selectedIds.clear()}
         class="ml-auto text-xs text-c-faint hover:text-c-text2 transition-colors">
         Clear selection
       </button>
@@ -391,7 +390,7 @@
   {:else}
     <div class="flex items-center justify-between mb-2">
       <label class="flex items-center gap-2 text-xs text-c-muted cursor-pointer">
-        <input type="checkbox" checked={allFilteredSelected} on:change={toggleSelectAll}
+        <input type="checkbox" checked={allFilteredSelected} onchange={toggleSelectAll}
           class="w-3.5 h-3.5 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />
         Select all ({filtered.length})
       </label>
@@ -410,7 +409,7 @@
           onreject={handleReject}
           ontoggleSelect={handleToggleSelect}
           ondreadUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
-          oncommentChange={detail => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + detail.delta; commentCounts = commentCounts }} />
+          oncommentChange={detail => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + detail.delta }} />
       {/each}
     </div>
   {/if}
