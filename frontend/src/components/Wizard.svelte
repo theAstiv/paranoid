@@ -1,19 +1,31 @@
+<svelte:options runes={true} />
+
 <script>
-  import { createEventDispatcher } from 'svelte'
+  /**
+   * @type {{
+   *   steps?: string[],
+   *   currentStep?: number,
+   *   nextDisabled?: boolean,
+   *   submitting?: boolean,
+   *   onback?: () => void,
+   *   onnext?: () => void,
+   *   onsubmit?: () => void,
+   *   children?: import('svelte').Snippet,
+   * }}
+   */
+  let {
+    steps = [],
+    currentStep = 0,
+    nextDisabled = false,
+    submitting = false,
+    onback,
+    onnext,
+    onsubmit,
+    children,
+  } = $props()
 
-  /** @type {string[]} step labels */
-  export let steps = []
-  /** @type {number} 0-based current step index */
-  export let currentStep = 0
-  /** @type {boolean} disable the Next/Submit button */
-  export let nextDisabled = false
-  /** @type {boolean} show loading state on submit button */
-  export let submitting = false
-
-  const dispatch = createEventDispatcher()
-
-  $: isLast = currentStep === steps.length - 1
-  $: isFirst = currentStep === 0
+  const isLast = $derived(currentStep === steps.length - 1)
+  const isFirst = $derived(currentStep === 0)
 </script>
 
 <div class="card overflow-hidden">
@@ -48,21 +60,21 @@
 
   <!-- Step content -->
   <div class="p-6">
-    <slot />
+    {@render children?.()}
   </div>
 
   <!-- Navigation -->
   <div class="border-t border-c-border px-6 py-4 flex justify-between">
     <button
       type="button"
-      on:click={() => dispatch('back')}
+      onclick={() => onback?.()}
       disabled={isFirst}
       class="px-4 py-2 text-sm font-medium text-c-muted hover:text-c-text hover:bg-c-well rounded-panel disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
       Back
     </button>
     <button
       type="button"
-      on:click={() => isLast ? dispatch('submit') : dispatch('next')}
+      onclick={() => isLast ? onsubmit?.() : onnext?.()}
       disabled={nextDisabled || submitting}
       class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
       {#if submitting}

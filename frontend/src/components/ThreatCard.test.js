@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/svelte'
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
 import ThreatCard from './ThreatCard.svelte'
 
 vi.mock('../lib/api.js', () => ({
@@ -109,19 +109,48 @@ describe('ThreatCard', () => {
     expect(screen.queryByText('DREAD')).toBeNull()
   })
 
-  it('dispatches approve event when Approve is clicked', async () => {
+  it('calls onapprove with the threat when Approve is clicked', async () => {
     const handler = vi.fn()
-    render(ThreatCard, { props: { threat: baseThreat }, events: { approve: handler } })
+    render(ThreatCard, { props: { threat: baseThreat, onapprove: handler } })
     await fireEvent.click(screen.getByText('Approve'))
     expect(handler).toHaveBeenCalledOnce()
-    expect(handler.mock.calls[0][0].detail).toMatchObject({ id: 'threat-1' })
+    expect(handler.mock.calls[0][0]).toMatchObject({ id: 'threat-1' })
   })
 
-  it('dispatches reject event when Reject is clicked', async () => {
+  it('calls onreject with the threat when Reject is clicked', async () => {
     const handler = vi.fn()
-    render(ThreatCard, { props: { threat: baseThreat }, events: { reject: handler } })
+    render(ThreatCard, { props: { threat: baseThreat, onreject: handler } })
     await fireEvent.click(screen.getByText('Reject'))
     expect(handler).toHaveBeenCalledOnce()
+    expect(handler.mock.calls[0][0]).toMatchObject({ id: 'threat-1' })
+  })
+
+  it('calls ondreadUpdated with the merged threat after saving DREAD scores', async () => {
+    const handler = vi.fn()
+    render(ThreatCard, { props: { threat: baseThreat, ondreadUpdated: handler } })
+    await fireEvent.click(screen.getByText('DREAD'))
+
+    const [damage] = screen.getAllByRole('spinbutton')
+    await fireEvent.input(damage, { target: { value: '7' } })
+    await fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(handler).toHaveBeenCalledOnce())
+    // Props are read-only under runes — the card reports the merged record
+    // upward instead of mutating its own prop.
+    expect(handler.mock.calls[0][0]).toMatchObject({ id: 'threat-1', dread_damage: 7 })
+  })
+
+  it('does not call ondreadUpdated when a score is out of range', async () => {
+    const handler = vi.fn()
+    render(ThreatCard, { props: { threat: baseThreat, ondreadUpdated: handler } })
+    await fireEvent.click(screen.getByText('DREAD'))
+
+    const [damage] = screen.getAllByRole('spinbutton')
+    await fireEvent.input(damage, { target: { value: '42' } })
+    await fireEvent.click(screen.getByText('Save'))
+
+    expect(await screen.findByText(/must be integers between 1 and 10/)).toBeInTheDocument()
+    expect(handler).not.toHaveBeenCalled()
   })
 
   it('opens DREAD edit form when DREAD button is clicked', async () => {

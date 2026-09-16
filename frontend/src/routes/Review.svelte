@@ -133,8 +133,7 @@
     }
   })
 
-  async function handleApprove(evt) {
-    const threat = evt.detail
+  async function handleApprove(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'approved' } : t))
     try {
       await updateThreat(threat.id, { status: 'approved' })
@@ -144,8 +143,7 @@
     }
   }
 
-  async function handleReject(evt) {
-    const threat = evt.detail
+  async function handleReject(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'rejected' } : t))
     try {
       await updateThreat(threat.id, { status: 'rejected' })
@@ -155,8 +153,7 @@
     }
   }
 
-  function handleToggleSelect(evt) {
-    const threat = evt.detail
+  function handleToggleSelect(threat) {
     const next = new Set(selectedIds)
     if (next.has(threat.id)) {
       next.delete(threat.id)
@@ -409,11 +406,11 @@
           selected={selectedIds.has(threat.id)}
           modelId={params.id}
           commentCount={commentCounts[threat.id] || 0}
-          on:approve={handleApprove}
-          on:reject={handleReject}
-          on:toggle-select={handleToggleSelect}
-          on:dread-updated={e => threats.update(ts => ts.map(t => t.id === e.detail.id ? { ...t, ...e.detail } : t))}
-          on:comment-change={e => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + e.detail.delta; commentCounts = commentCounts }} />
+          onapprove={handleApprove}
+          onreject={handleReject}
+          ontoggleSelect={handleToggleSelect}
+          ondreadUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
+          oncommentChange={detail => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + detail.delta; commentCounts = commentCounts }} />
       {/each}
     </div>
   {/if}

@@ -1,31 +1,46 @@
+<svelte:options runes={true} />
+
 <script>
-  import { createEventDispatcher } from 'svelte'
   import { link } from 'svelte-spa-router'
   import DreadBadge from './DreadBadge.svelte'
   import Comments from './Comments.svelte'
   import { updateThreat } from '../lib/api.js'
 
-  /** @type {object} */
-  export let threat = {}
-  /** @type {boolean} */
-  export let readonly = false
-  /** @type {boolean} */
-  export let selectable = false
-  /** @type {boolean} */
-  export let selected = false
-  /** @type {string} */
-  export let modelId = ''
-  /** @type {number} */
-  export let commentCount = 0
+  /**
+   * @type {{
+   *   threat?: object,
+   *   readonly?: boolean,
+   *   selectable?: boolean,
+   *   selected?: boolean,
+   *   modelId?: string,
+   *   commentCount?: number,
+   *   onapprove?: (threat: object) => void,
+   *   onreject?: (threat: object) => void,
+   *   ontoggleSelect?: (threat: object) => void,
+   *   ondreadUpdated?: (threat: object) => void,
+   *   oncommentChange?: (detail: { delta: number }) => void,
+   * }}
+   */
+  let {
+    threat = {},
+    readonly = false,
+    selectable = false,
+    selected = false,
+    modelId = '',
+    commentCount = 0,
+    onapprove,
+    onreject,
+    ontoggleSelect,
+    ondreadUpdated,
+    oncommentChange,
+  } = $props()
 
-  let showComments = false
+  let showComments = $state(false)
 
-  const dispatch = createEventDispatcher()
-
-  let editingDread = false
-  let savingDread = false
-  let dreadError = ''
-  let draftDread = {}
+  let editingDread = $state(false)
+  let savingDread = $state(false)
+  let dreadError = $state('')
+  let draftDread = $state({})
 
   const DREAD_DIMS = [
     ['Damage', 'dread_damage'],
@@ -63,8 +78,9 @@
     savingDread = true
     try {
       await updateThreat(threat.id, body)
-      threat = { ...threat, ...body }
-      dispatch('dread-updated', threat)
+      // Props are read-only under runes: the parent owns the threat list and
+      // re-renders this card with the merged record.
+      ondreadUpdated?.({ ...threat, ...body })
       editingDread = false
     } catch (e) {
       dreadError = e.message
@@ -96,22 +112,22 @@
     mitigated: 'chip-blue',
   }
 
-  $: category = threat.stride_category ?? threat.maestro_category ?? ''
-  $: categoryChip = threat.stride_category
+  const category = $derived(threat.stride_category ?? threat.maestro_category ?? '')
+  const categoryChip = $derived(threat.stride_category
     ? (STRIDE_CHIPS[threat.stride_category] ?? 'chip-blue')
-    : 'chip-accent'
-  $: mitigations = typeof threat.mitigations === 'string'
+    : 'chip-accent')
+  const mitigations = $derived(typeof threat.mitigations === 'string'
     ? JSON.parse(threat.mitigations)
-    : (threat.mitigations ?? [])
+    : (threat.mitigations ?? []))
 
-  $: sourceChip = threat.source === 'rule_engine' ? 'chip-amber' : 'chip-blue'
-  $: sourceLabel = threat.source === 'rule_engine' ? 'Rule Engine' : 'LLM'
+  const sourceChip = $derived(threat.source === 'rule_engine' ? 'chip-amber' : 'chip-blue')
+  const sourceLabel = $derived(threat.source === 'rule_engine' ? 'Rule Engine' : 'LLM')
 
-  $: confidencePct = threat.confidence != null ? Math.round(threat.confidence * 100) : null
-  $: confidenceColor = confidencePct == null ? ''
+  const confidencePct = $derived(threat.confidence != null ? Math.round(threat.confidence * 100) : null)
+  const confidenceColor = $derived(confidencePct == null ? ''
     : confidencePct >= 70 ? 'text-c-green'
     : confidencePct >= 40 ? 'text-c-medium'
-    : 'text-c-high'
+    : 'text-c-high')
 </script>
 
 <div class="card p-5 space-y-3 {selectable && selected ? 'ring-2 ring-c-accent/40' : ''}">
@@ -122,7 +138,7 @@
         <input
           type="checkbox"
           checked={selected}
-          on:change={() => dispatch('toggle-select', threat)}
+          onchange={() => ontoggleSelect?.(threat)}
           class="w-4 h-4 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />
       </label>
     {/if}
@@ -142,7 +158,7 @@
           <span class="font-mono text-[11px] font-medium {confidenceColor}" title="Confidence: how well-grounded in the system description">{confidencePct}%</span>
         {/if}
         {#if commentCount > 0}
-          <button type="button" on:click|stopPropagation={() => showComments = !showComments}
+          <button type="button" onclick={e => { e.stopPropagation(); showComments = !showComments }}
             class="inline-flex items-center gap-0.5 font-mono text-[11px] text-c-faint hover:text-c-accent transition-colors"
             title="Comments">
             <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zm-4 0H9v2h2V9z" clip-rule="evenodd"/></svg>
@@ -152,7 +168,7 @@
         {#if !readonly && threat.id && !editingDread}
           <button
             type="button"
-            on:click={startEditDread}
+            onclick={startEditDread}
             title="Edit DREAD scores"
             class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 text-c-faint hover:text-c-accent hover:bg-c-accent/10 rounded transition-colors">
             <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
@@ -187,14 +203,14 @@
       <div class="flex gap-2 pt-1">
         <button
           type="button"
-          on:click={saveDread}
+          onclick={saveDread}
           disabled={savingDread}
           class="btn-primary text-xs px-3 py-1 disabled:opacity-50">
           {savingDread ? 'Saving…' : 'Save'}
         </button>
         <button
           type="button"
-          on:click={() => { editingDread = false; dreadError = '' }}
+          onclick={() => { editingDread = false; dreadError = '' }}
           class="btn-ghost text-xs px-3 py-1">
           Cancel
         </button>
@@ -234,7 +250,7 @@
       {#if threat.status !== 'approved'}
         <button
           type="button"
-          on:click={() => dispatch('approve', threat)}
+          onclick={() => onapprove?.(threat)}
           class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-[#04141A] bg-c-green rounded-panel hover:bg-c-green/80 transition-colors">
           <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
           Approve
@@ -243,7 +259,7 @@
       {#if threat.status !== 'rejected'}
         <button
           type="button"
-          on:click={() => dispatch('reject', threat)}
+          onclick={() => onreject?.(threat)}
           class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-c-muted bg-c-well border border-c-border rounded-panel hover:border-c-critical hover:text-c-critical transition-colors">
           <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           Reject
@@ -267,9 +283,9 @@
   <!-- Inline comments -->
   {#if modelId && (showComments || commentCount === 0)}
     <Comments {modelId} entityType="threat" entityId={threat.id} compact={true}
-      on:comment-change={e => { commentCount += e.detail.delta; dispatch('comment-change', e.detail) }} />
+      oncommentChange={detail => oncommentChange?.(detail)} />
   {:else if modelId && !showComments}
-    <button type="button" on:click={() => showComments = true}
+    <button type="button" onclick={() => showComments = true}
       class="text-xs text-c-faint hover:text-c-accent transition-colors pt-1">
       Show comments ({commentCount})
     </button>

@@ -1,32 +1,40 @@
+<svelte:options runes={true} />
+
 <script>
-  import { createEventDispatcher, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import { currentUser, notify } from '../lib/stores.js'
   import { listComments, createComment, updateComment, deleteComment } from '../lib/api.js'
   import { initials, relativeTime } from '../lib/utils.js'
 
-  /** @type {string} */
-  export let modelId = ''
-  /** @type {string|null} */
-  export let entityType = null
-  /** @type {string|null} */
-  export let entityId = null
-  /** @type {boolean} */
-  export let compact = false
+  /**
+   * @type {{
+   *   modelId?: string,
+   *   entityType?: string|null,
+   *   entityId?: string|null,
+   *   compact?: boolean,
+   *   oncommentChange?: (detail: { delta: number }) => void,
+   * }}
+   */
+  let {
+    modelId = '',
+    entityType = null,
+    entityId = null,
+    compact = false,
+    oncommentChange,
+  } = $props()
 
-  const dispatch = createEventDispatcher()
-
-  let comments = []
-  let loading = true
-  let draft = ''
-  let posting = false
-  let editingId = null
-  let editDraft = ''
-  let replyToId = null
-  let replyDraft = ''
+  let comments = $state([])
+  let loading = $state(true)
+  let draft = $state('')
+  let posting = $state(false)
+  let editingId = $state(null)
+  let editDraft = $state('')
+  let replyToId = $state(null)
+  let replyDraft = $state('')
 
   // One level of nesting only — replies never get their own reply/edit UI
   // for grandchildren, matching the comments.parent_id self-reference model.
-  $: threaded = nest(comments)
+  const threaded = $derived(nest(comments))
 
   onMount(load)
 
@@ -70,7 +78,7 @@
       const created = await createComment(modelId, payload)
       comments = [...comments, created]
       draft = ''
-      dispatch('comment-change', { delta: 1 })
+      oncommentChange?.({ delta: 1 })
     } catch (err) {
       notify('error', `Comment failed: ${err.message}`)
     } finally {
@@ -87,7 +95,7 @@
       comments = [...comments, created]
       replyToId = null
       replyDraft = ''
-      dispatch('comment-change', { delta: 1 })
+      oncommentChange?.({ delta: 1 })
     } catch (err) {
       notify('error', `Reply failed: ${err.message}`)
     }
@@ -115,7 +123,7 @@
       await deleteComment(comment.id)
       const removed = comments.filter(c => c.id === comment.id || c.parent_id === comment.id)
       comments = comments.filter(c => c.id !== comment.id && c.parent_id !== comment.id)
-      dispatch('comment-change', { delta: -removed.length })
+      oncommentChange?.({ delta: -removed.length })
     } catch (err) {
       notify('error', `Delete failed: ${err.message}`)
     }
@@ -152,18 +160,18 @@
               {#if editingId === comment.id}
                 <textarea bind:value={editDraft} rows="2" class="field text-sm w-full mt-1.5"></textarea>
                 <div class="flex gap-2 mt-1.5">
-                  <button type="button" on:click={() => saveEdit(comment)} class="btn-primary text-xs px-3 py-1">Save</button>
-                  <button type="button" on:click={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
+                  <button type="button" onclick={() => saveEdit(comment)} class="btn-primary text-xs px-3 py-1">Save</button>
+                  <button type="button" onclick={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
                 </div>
               {:else}
                 <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{comment.body}</p>
                 <div class="flex items-center gap-3 mt-1">
-                  <button type="button" on:click={() => { replyToId = replyToId === comment.id ? null : comment.id; replyDraft = '' }} class="text-xs text-c-faint hover:text-c-accent transition-colors">
+                  <button type="button" onclick={() => { replyToId = replyToId === comment.id ? null : comment.id; replyDraft = '' }} class="text-xs text-c-faint hover:text-c-accent transition-colors">
                     Reply
                   </button>
                   {#if isAuthor(comment)}
-                    <button type="button" on:click={() => startEdit(comment)} class="text-xs text-c-faint hover:text-c-accent transition-colors">Edit</button>
-                    <button type="button" on:click={() => remove(comment)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
+                    <button type="button" onclick={() => startEdit(comment)} class="text-xs text-c-faint hover:text-c-accent transition-colors">Edit</button>
+                    <button type="button" onclick={() => remove(comment)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
                   {/if}
                 </div>
               {/if}
@@ -171,7 +179,7 @@
               {#if replyToId === comment.id}
                 <div class="flex gap-2 mt-2">
                   <textarea bind:value={replyDraft} rows="2" placeholder="Write a reply…" class="field text-sm flex-1"></textarea>
-                  <button type="button" on:click={() => postReply(comment.id)} class="btn-primary text-xs px-3 self-start">Reply</button>
+                  <button type="button" onclick={() => postReply(comment.id)} class="btn-primary text-xs px-3 self-start">Reply</button>
                 </div>
               {/if}
 
@@ -191,15 +199,15 @@
                     {#if editingId === reply.id}
                       <textarea bind:value={editDraft} rows="2" class="field text-sm w-full mt-1.5"></textarea>
                       <div class="flex gap-2 mt-1.5">
-                        <button type="button" on:click={() => saveEdit(reply)} class="btn-primary text-xs px-3 py-1">Save</button>
-                        <button type="button" on:click={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
+                        <button type="button" onclick={() => saveEdit(reply)} class="btn-primary text-xs px-3 py-1">Save</button>
+                        <button type="button" onclick={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
                       </div>
                     {:else}
                       <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{reply.body}</p>
                       {#if isAuthor(reply)}
                         <div class="flex items-center gap-3 mt-1">
-                          <button type="button" on:click={() => startEdit(reply)} class="text-xs text-c-faint hover:text-c-accent transition-colors">Edit</button>
-                          <button type="button" on:click={() => remove(reply)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
+                          <button type="button" onclick={() => startEdit(reply)} class="text-xs text-c-faint hover:text-c-accent transition-colors">Edit</button>
+                          <button type="button" onclick={() => remove(reply)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
                         </div>
                       {/if}
                     {/if}
@@ -214,7 +222,7 @@
 
     <div class="flex gap-2 mt-5 pt-4 border-t border-c-border">
       <textarea bind:value={draft} rows="2" placeholder="Add a comment…" class="field text-sm flex-1"></textarea>
-      <button type="button" on:click={post} disabled={posting || !draft.trim()} class="btn-primary text-sm px-4 self-start disabled:opacity-50">
+      <button type="button" onclick={post} disabled={posting || !draft.trim()} class="btn-primary text-sm px-4 self-start disabled:opacity-50">
         Post
       </button>
     </div>

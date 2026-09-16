@@ -16,8 +16,8 @@
     expandedId = expandedId === id ? null : id
   }
 
-  function handleChange(id, e) {
-    commentCounts[id] = (commentCounts[id] || 0) + e.detail.delta
+  function handleChange(id, detail) {
+    commentCounts[id] = (commentCounts[id] || 0) + detail.delta
     commentCounts = commentCounts
   }
 
@@ -37,7 +37,7 @@
       {#if expandedId === item.id}
         <div class="mt-1">
           <Comments {modelId} {entityType} entityId={item.id} compact={true}
-            on:comment-change={e => handleChange(item.id, e)} />
+            oncommentChange={detail => handleChange(item.id, detail)} />
         </div>
       {/if}
     </div>
