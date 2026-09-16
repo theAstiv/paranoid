@@ -105,6 +105,349 @@ describe('Review — filtering', () => {
   })
 })
 
+/** Open the collapsed "Filters" panel that holds category/source/sort/range controls. */
+async function openFilters() {
+  await fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+}
+
+/** Rendered threat names, in DOM order — used to assert sort results. */
+function renderedNames(container) {
+  return [...container.querySelectorAll('h3')].map(el => el.textContent.trim())
+}
+
+/** Per-card selection checkboxes, excluding the leading "Select all" checkbox. */
+function cardCheckboxes() {
+  return screen.getAllByRole('checkbox').slice(1)
+}
+
+describe('Review — category filter', () => {
+  beforeEach(() => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Tamper one', stride_category: 'Tampering' }),
+      threat({ id: 't2', name: 'Spoof one', stride_category: 'Spoofing' }),
+      threat({ id: 't3', name: 'Dos one', stride_category: 'Denial of Service' }),
+    ])
+  })
+
+  it('filters to a single STRIDE category', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Tamper one')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'Tampering' }))
+
+    expect(screen.getByText('Tamper one')).toBeInTheDocument()
+    expect(screen.queryByText('Spoof one')).toBeNull()
+    expect(screen.queryByText('Dos one')).toBeNull()
+  })
+
+  it('accumulates multiple categories', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Tamper one')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'Tampering' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Spoofing' }))
+
+    expect(screen.getByText('Tamper one')).toBeInTheDocument()
+    expect(screen.getByText('Spoof one')).toBeInTheDocument()
+    expect(screen.queryByText('Dos one')).toBeNull()
+  })
+
+  it('deselecting the last category restores all threats', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Tamper one')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'Tampering' }))
+    expect(screen.queryByText('Spoof one')).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Tampering' }))
+
+    expect(screen.getByText('Tamper one')).toBeInTheDocument()
+    expect(screen.getByText('Spoof one')).toBeInTheDocument()
+    expect(screen.getByText('Dos one')).toBeInTheDocument()
+  })
+})
+
+describe('Review — source filter', () => {
+  beforeEach(() => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'From model', source: 'llm' }),
+      threat({ id: 't2', name: 'From rules', source: 'rule_engine' }),
+    ])
+  })
+
+  it('filters to LLM-sourced threats', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'LLM' }))
+
+    expect(screen.getByText('From model')).toBeInTheDocument()
+    expect(screen.queryByText('From rules')).toBeNull()
+  })
+
+  it('filters to rule-engine threats', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'Rule Engine' }))
+
+    expect(screen.getByText('From rules')).toBeInTheDocument()
+    expect(screen.queryByText('From model')).toBeNull()
+  })
+
+  it('returns to all sources when "All" is chosen again', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'LLM' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'All' }))
+
+    expect(screen.getByText('From model')).toBeInTheDocument()
+    expect(screen.getByText('From rules')).toBeInTheDocument()
+  })
+})
+
+describe('Review — DREAD and confidence ranges', () => {
+  it('filters out threats whose DREAD score falls outside the range', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'High risk', dread_score: 9 }),
+      threat({ id: 't2', name: 'Low risk', dread_score: 2 }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('High risk')).toBeInTheDocument())
+
+    await openFilters()
+    const [dreadMin] = screen.getAllByRole('spinbutton')
+    await fireEvent.input(dreadMin, { target: { value: '8' } })
+
+    expect(screen.getByText('High risk')).toBeInTheDocument()
+    expect(screen.queryByText('Low risk')).toBeNull()
+  })
+
+  it('keeps threats that have no DREAD score at all', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Scored', dread_score: 2 }),
+      threat({ id: 't2', name: 'Unscored' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Unscored')).toBeInTheDocument())
+
+    await openFilters()
+    const [dreadMin] = screen.getAllByRole('spinbutton')
+    await fireEvent.input(dreadMin, { target: { value: '8' } })
+
+    // Null-score threats pass through rather than being silently hidden.
+    expect(screen.getByText('Unscored')).toBeInTheDocument()
+    expect(screen.queryByText('Scored')).toBeNull()
+  })
+
+  it('filters out threats whose confidence falls outside the range', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Confident', confidence: 0.9 }),
+      threat({ id: 't2', name: 'Unsure', confidence: 0.2 }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Confident')).toBeInTheDocument())
+
+    await openFilters()
+    const confMin = screen.getAllByRole('spinbutton')[2]
+    await fireEvent.input(confMin, { target: { value: '50' } })
+
+    expect(screen.getByText('Confident')).toBeInTheDocument()
+    expect(screen.queryByText('Unsure')).toBeNull()
+  })
+
+  it('keeps threats that have no confidence value at all', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Unsure', confidence: 0.2 }),
+      threat({ id: 't2', name: 'No confidence' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('No confidence')).toBeInTheDocument())
+
+    await openFilters()
+    const confMin = screen.getAllByRole('spinbutton')[2]
+    await fireEvent.input(confMin, { target: { value: '50' } })
+
+    expect(screen.getByText('No confidence')).toBeInTheDocument()
+    expect(screen.queryByText('Unsure')).toBeNull()
+  })
+})
+
+describe('Review — sorting', () => {
+  it('sorts by DREAD score, highest first', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Middle', dread_score: 5 }),
+      threat({ id: 't2', name: 'Highest', dread_score: 9 }),
+      threat({ id: 't3', name: 'Lowest', dread_score: 1 }),
+    ])
+    const { container } = render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Middle')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dread' } })
+
+    expect(renderedNames(container)).toEqual(['Highest', 'Middle', 'Lowest'])
+  })
+
+  it('sorts by confidence, highest first', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Middle', confidence: 0.5 }),
+      threat({ id: 't2', name: 'Highest', confidence: 0.9 }),
+      threat({ id: 't3', name: 'Lowest', confidence: 0.1 }),
+    ])
+    const { container } = render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Middle')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.change(screen.getByRole('combobox'), { target: { value: 'confidence' } })
+
+    expect(renderedNames(container)).toEqual(['Highest', 'Middle', 'Lowest'])
+  })
+
+  it('sorts by category alphabetically', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Tamper one', stride_category: 'Tampering' }),
+      threat({ id: 't2', name: 'Dos one', stride_category: 'Denial of Service' }),
+      threat({ id: 't3', name: 'Spoof one', stride_category: 'Spoofing' }),
+    ])
+    const { container } = render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Tamper one')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.change(screen.getByRole('combobox'), { target: { value: 'category' } })
+
+    expect(renderedNames(container)).toEqual(['Dos one', 'Spoof one', 'Tamper one'])
+  })
+
+  it('preserves source order under the default sort', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'First', dread_score: 1 }),
+      threat({ id: 't2', name: 'Second', dread_score: 9 }),
+    ])
+    const { container } = render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('First')).toBeInTheDocument())
+
+    expect(renderedNames(container)).toEqual(['First', 'Second'])
+  })
+})
+
+describe('Review — selection', () => {
+  beforeEach(() => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Pending one', status: 'pending' }),
+      threat({ id: 't2', name: 'Approved one', status: 'approved' }),
+    ])
+  })
+
+  it('selects every filtered threat via "Select all"', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+
+    expect(screen.getByText('2 of 2 selected')).toBeInTheDocument()
+  })
+
+  it('"Select all" only covers threats visible under the active filter', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+
+    expect(screen.getByText('1 of 1 selected')).toBeInTheDocument()
+  })
+
+  it('clicking "Select all" again clears the selection', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+    expect(screen.getByText('2 of 2 selected')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+
+    expect(screen.queryByText(/selected/)).toBeNull()
+  })
+
+  it('"Clear selection" empties the selection bar', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+    await fireEvent.click(screen.getByText('Clear selection'))
+
+    expect(screen.queryByText(/selected/)).toBeNull()
+  })
+
+  it('toggles an individual threat on and off', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(cardCheckboxes()[0])
+    expect(screen.getByText('1 of 2 selected')).toBeInTheDocument()
+
+    await fireEvent.click(cardCheckboxes()[0])
+    expect(screen.queryByText(/selected/)).toBeNull()
+  })
+})
+
+describe('Review — selection pruning across filter changes', () => {
+  beforeEach(() => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Pending one', status: 'pending' }),
+      threat({ id: 't2', name: 'Approved one', status: 'approved' }),
+      threat({ id: 't3', name: 'Rejected one', status: 'rejected' }),
+    ])
+  })
+
+  it('drops now-hidden threats from the selection when a filter narrows', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+    expect(screen.getByText('3 of 3 selected')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
+
+    expect(screen.getByText('1 of 1 selected')).toBeInTheDocument()
+  })
+
+  it('never bulk-applies to a threat hidden by the active filter', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByLabelText(/Select all/))
+    await fireEvent.click(screen.getByRole('button', { name: /^pending/ }))
+    await fireEvent.click(screen.getByText('Approve selected (1)'))
+
+    // t2/t3 were selected before the filter narrowed — they must not be touched.
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('approved')
+    expect(get(threats).find(t => t.id === 't3').status).toBe('rejected')
+  })
+
+  it('clears the selection bar when the filter hides every selected threat', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Pending one')).toBeInTheDocument())
+
+    await fireEvent.click(cardCheckboxes()[0]) // 'Pending one'
+    expect(screen.getByText('1 of 3 selected')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^approved/ }))
+
+    expect(screen.queryByText(/selected/)).toBeNull()
+  })
+})
+
 describe('Review — individual approve/reject', () => {
   it('optimistically approves a threat and persists it', async () => {
     getModelThreats.mockResolvedValue([threat()])
