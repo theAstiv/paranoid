@@ -192,9 +192,9 @@
     currentStep={step}
     {nextDisabled}
     {submitting}
-    on:next={() => step++}
-    on:back={() => step--}
-    on:submit={handleSubmit}
+    onnext={() => step++}
+    onback={() => step--}
+    onsubmit={handleSubmit}
   >
     {#if step === 0}
       <div class="space-y-5">

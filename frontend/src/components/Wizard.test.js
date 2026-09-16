@@ -52,23 +52,23 @@ describe('Wizard', () => {
     expect(screen.getByText('Create & Run')).toBeDisabled()
   })
 
-  it('dispatches back event when Back is clicked', async () => {
+  it('calls onback when Back is clicked', async () => {
     const handler = vi.fn()
-    render(Wizard, { props: { steps, currentStep: 1 }, events: { back: handler } })
+    render(Wizard, { props: { steps, currentStep: 1, onback: handler } })
     await fireEvent.click(screen.getByText('Back'))
     expect(handler).toHaveBeenCalledOnce()
   })
 
-  it('dispatches next event when Next is clicked on non-last step', async () => {
+  it('calls onnext when Next is clicked on non-last step', async () => {
     const handler = vi.fn()
-    render(Wizard, { props: { steps, currentStep: 0 }, events: { next: handler } })
+    render(Wizard, { props: { steps, currentStep: 0, onnext: handler } })
     await fireEvent.click(screen.getByText('Next'))
     expect(handler).toHaveBeenCalledOnce()
   })
 
-  it('dispatches submit event when Create & Run is clicked on last step', async () => {
+  it('calls onsubmit when Create & Run is clicked on last step', async () => {
     const handler = vi.fn()
-    render(Wizard, { props: { steps, currentStep: steps.length - 1 }, events: { submit: handler } })
+    render(Wizard, { props: { steps, currentStep: steps.length - 1, onsubmit: handler } })
     await fireEvent.click(screen.getByText('Create & Run'))
     expect(handler).toHaveBeenCalledOnce()
   })
