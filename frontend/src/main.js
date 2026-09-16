@@ -1,5 +1,6 @@
 import './app.css'
 import App from './App.svelte'
+import { mount } from 'svelte'
 
 // After a deploy the content-hashed chunk filenames change. If a user has an
 // old tab open, the browser may try to dynamically import a chunk that no longer
@@ -10,7 +11,7 @@ window.addEventListener('vite:preloadError', () => {
   window.location.reload()
 })
 
-const app = new App({
+const app = mount(App, {
   target: document.getElementById('app'),
 })
 
