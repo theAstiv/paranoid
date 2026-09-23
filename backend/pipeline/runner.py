@@ -193,6 +193,13 @@ class PipelineRunner:
             PipelineEvent for each step and iteration
         """
         self.start_time = datetime.now()
+        logger.info(
+            "Pipeline started: model=%s framework=%s iterations=%d has_ai=%s",
+            self.model_id,
+            framework.value,
+            self.config.max_iterations,
+            self.config.has_ai_components,
+        )
 
         # Iteration state is initialized here (not inside the try) so that a
         # ProviderError in the pre-loop steps can still fall through to the rule
@@ -206,6 +213,7 @@ class PipelineRunner:
         gaps: list[str] = []
         code_summary = None
         shared_ctx: str | None = None
+        consecutive_zero = 0
 
         try:
             # Steps 1-3: Summarize, Extract Assets, Extract Flows.
@@ -398,6 +406,7 @@ class PipelineRunner:
                 summary = SummaryState(summary=description)
                 assets = AssetsList(assets=[])
                 flows = FlowsList(data_flows=[], trust_boundaries=[], threat_sources=[])
+                logger.warning("Provider unavailable during pre-loop steps: %s", e)
                 yield PipelineEvent(
                     step=PipelineStep.RULE_ENGINE,
                     status="info",
@@ -446,6 +455,12 @@ class PipelineRunner:
 
             if not provider_failed:
                 while iteration <= self.config.max_iterations:
+                    logger.info(
+                        "Iteration %d/%d started: cumulative_threats=%d",
+                        iteration,
+                        self.config.max_iterations,
+                        len(cumulative_threats.threats),
+                    )
                     # Check time limit
                     if self._check_time_limit():
                         yield PipelineEvent(
@@ -489,6 +504,11 @@ class PipelineRunner:
                         except ProviderError as e:
                             provider_failed = True
                             stopped_reason = "provider_offline"
+                            logger.warning(
+                                "Provider unavailable during STRIDE generation (iteration %d): %s",
+                                iteration,
+                                e,
+                            )
                             yield PipelineEvent(
                                 step=PipelineStep.RULE_ENGINE,
                                 status="info",
@@ -543,6 +563,11 @@ class PipelineRunner:
                             # Preserve STRIDE threats from this iteration before yielding
                             # so the event stream is monotonic (state updated, then announced).
                             cumulative_threats.threats.extend(stride_threats.threats)
+                            logger.warning(
+                                "Provider unavailable during MAESTRO generation (iteration %d): %s",
+                                iteration,
+                                e,
+                            )
                             yield PipelineEvent(
                                 step=PipelineStep.RULE_ENGINE,
                                 status="info",
@@ -623,6 +648,11 @@ class PipelineRunner:
                         except ProviderError as e:
                             provider_failed = True
                             stopped_reason = "provider_offline"
+                            logger.warning(
+                                "Provider unavailable during threat generation (iteration %d): %s",
+                                iteration,
+                                e,
+                            )
                             yield PipelineEvent(
                                 step=PipelineStep.RULE_ENGINE,
                                 status="info",
@@ -645,6 +675,34 @@ class PipelineRunner:
                             },
                         )
 
+                    # Zero-threat detection: fires after the provider returns, before
+                    # cross-iteration dedup. Measures what the LLM returned this iteration.
+                    # The saturation gate cannot catch this: removed_count=0 gives
+                    # saturation_ratio=0, so it never trips on all-zero iterations.
+                    # Detection is informational only; a stop condition is not added here
+                    # because two consecutive zeros is a signal worth surfacing but not
+                    # a definitive failure mode on its own.
+                    if len(current_threats.threats) == 0:
+                        consecutive_zero += 1
+                        if consecutive_zero >= 2:
+                            yield PipelineEvent(
+                                step=PipelineStep.ITERATE,
+                                status="info",
+                                message=f"Zero threats produced in {consecutive_zero} consecutive iterations",
+                                iteration=iteration,
+                                data={"consecutive_zero_iterations": consecutive_zero},
+                            )
+                        else:
+                            yield PipelineEvent(
+                                step=PipelineStep.ITERATE,
+                                status="info",
+                                message=f"Provider returned no threats in iteration {iteration}",
+                                iteration=iteration,
+                                data={"warning": "zero_threats", "iteration": iteration},
+                            )
+                    else:
+                        consecutive_zero = 0
+
                     # Deduplicate against cumulative threats from prior iterations
                     if iteration > 1:
                         dedup_result = deduplicate_threats(
@@ -653,6 +711,13 @@ class PipelineRunner:
                             threshold=self.config.similarity_threshold,
                         )
                         cumulative_threats.threats.extend(dedup_result.threats.threats)
+                        logger.info(
+                            "Iteration %d dedup: new=%d removed=%d cumulative=%d",
+                            iteration,
+                            len(current_threats.threats),
+                            dedup_result.removed_count,
+                            len(cumulative_threats.threats),
+                        )
                         if dedup_result.removed_count > 0:
                             yield PipelineEvent(
                                 step=PipelineStep.GENERATE_THREATS,
@@ -689,6 +754,12 @@ class PipelineRunner:
                             break
                     else:
                         cumulative_threats.threats.extend(current_threats.threats)
+                        logger.info(
+                            "Iteration %d dedup: new=%d cumulative=%d",
+                            iteration,
+                            len(current_threats.threats),
+                            len(cumulative_threats.threats),
+                        )
                     iterations_completed = iteration  # Track before potential break in gap analysis
 
                     # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
@@ -753,6 +824,11 @@ class PipelineRunner:
                         except ProviderError as e:
                             provider_failed = True
                             stopped_reason = "provider_offline"
+                            logger.warning(
+                                "Provider unavailable during gap analysis (iteration %d): %s",
+                                iteration,
+                                e,
+                            )
                             yield PipelineEvent(
                                 step=PipelineStep.RULE_ENGINE,
                                 status="info",
@@ -862,6 +938,14 @@ class PipelineRunner:
                     "gaps": gaps,
                     "code_summary": code_summary,
                 },
+            )
+            logger.info(
+                "Pipeline complete: model=%s iterations=%d threats=%d stopped_reason=%s duration=%.1fs",
+                self.model_id,
+                iterations_completed,
+                len(cumulative_threats.threats),
+                stopped_reason,
+                total_duration,
             )
 
         except Exception as e:
