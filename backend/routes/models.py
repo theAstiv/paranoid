@@ -352,7 +352,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dread_exploitability=dread.exploitability if dread else None,
                         dread_affected_users=dread.affected_users if dread else None,
                         dread_discoverability=dread.discoverability if dread else None,
-                        source=threat._source,
+                        source=threat.source,
                         confidence=confidence,
                     )
                 except Exception:

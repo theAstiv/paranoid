@@ -204,7 +204,7 @@ async def _persist(
                 dread_exploitability=dread_exploitability,
                 dread_affected_users=dread_affected_users,
                 dread_discoverability=dread_discoverability,
-                source=threat._source,
+                source=threat.source,
                 confidence=confidence,
             )
             threat_db_ids.append(threat_db_id)

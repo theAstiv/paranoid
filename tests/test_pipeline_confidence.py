@@ -23,7 +23,7 @@ def _make_threat(
         likelihood="Medium",
         mitigations=["Use parameterized queries", "Input validation"],
     )
-    threat._source = source
+    threat.source = source
     return threat
 
 
