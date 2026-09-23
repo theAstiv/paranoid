@@ -572,3 +572,59 @@ async def test_runner_min_iterations_prevents_stride_short_circuit():
         e for e in events if e.step == PipelineStep.GAP_ANALYSIS and e.status == "started"
     ]
     assert len(gap_started) >= 1, "Iteration 1 should have proceeded to LLM gap analysis"
+
+
+# ---------------------------------------------------------------------------
+# Logging: zero-threat detection and consecutive-zero warning (Feature 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zero_threat_info_event_emitted():
+    """When LLM returns zero threats, an info event with warning=zero_threats is emitted."""
+    provider = MockProvider(gap_call_threshold=1)
+    provider.response_overrides[ThreatsList] = ThreatsList(threats=[])
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-zero")
+
+    events = await _collect_events(runner, "A simple web app", Framework.STRIDE)
+
+    zero_events = [
+        e
+        for e in events
+        if e.step == PipelineStep.ITERATE
+        and e.status == "info"
+        and isinstance(e.data, dict)
+        and e.data.get("warning") == "zero_threats"
+    ]
+    assert len(zero_events) >= 1, "Expected at least one zero_threats info event"
+
+
+@pytest.mark.asyncio
+async def test_consecutive_zero_threat_event():
+    """After 2+ consecutive zero-threat iterations, a consecutive_zero_iterations event is emitted.
+
+    min_iterations=3 suppresses gap/saturation early-stop gates so we can observe
+    both consecutive zero iterations before any stop condition fires.
+    """
+    provider = MockProvider(gap_call_threshold=10)
+    provider.response_overrides[ThreatsList] = ThreatsList(threats=[])
+    config = PipelineConfig(
+        max_iterations=3,
+        min_iterations=3,
+        dedup_saturation_threshold=1.1,  # Disable saturation to avoid early stop
+    )
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-consec-zero")
+
+    events = await _collect_events(runner, "A simple web app", Framework.STRIDE)
+
+    consec_events = [
+        e
+        for e in events
+        if e.step == PipelineStep.ITERATE
+        and e.status == "info"
+        and isinstance(e.data, dict)
+        and "consecutive_zero_iterations" in e.data
+    ]
+    assert len(consec_events) >= 1, "Expected a consecutive_zero_iterations info event"
+    assert consec_events[0].data["consecutive_zero_iterations"] >= 2
