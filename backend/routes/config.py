@@ -17,6 +17,7 @@ from backend.db.crud import (
 from backend.providers.healthcheck import (
     ProbeResult,
     ping_anthropic,
+    ping_bedrock,
     ping_ollama,
     ping_openai,
     rate_limit_check,
@@ -33,11 +34,13 @@ router = APIRouter(prefix="/config", tags=["config"])
 # Shared across UpdateConfigRequest.default_provider and
 # TestProviderRequest.provider — keep as one source of truth so a new
 # provider lands in both places at once.
-ProviderName = Literal["anthropic", "openai", "ollama"]
+ProviderName = Literal["anthropic", "openai", "ollama", "bedrock"]
 
 
 async def _api_key_source(provider: str) -> str | None:
     """Return ``"env"``, ``"db"``, or ``None`` for a provider's current key source."""
+    if provider not in API_KEY_FIELDS:
+        return None  # bedrock and ollama have no API key concept
     env_name, db_key = API_KEY_FIELDS[provider]
     if os.environ.get(env_name, "").strip():
         return "env"
@@ -58,7 +61,7 @@ async def _is_first_run() -> bool:
     Ollama is exempt — it has no API key concept and its base URL may point
     at a server not yet running. Users can verify via test-connection.
     """
-    if settings.default_provider == "ollama":
+    if settings.default_provider in ("ollama", "bedrock"):
         return False
     env_name, db_key = API_KEY_FIELDS[settings.default_provider]
     if os.environ.get(env_name, "").strip():
@@ -85,6 +88,8 @@ async def _config_payload() -> dict:
         "max_iteration_count": settings.max_iteration_count,
         "min_iteration_count": settings.min_iteration_count,
         "ollama_base_url": settings.ollama_base_url,
+        "aws_region": settings.aws_region,
+        "aws_profile": settings.aws_profile,
         "log_level": settings.log_level,
         "similarity_threshold": settings.similarity_threshold,
         "dedup_saturation_threshold": settings.dedup_saturation_threshold,
@@ -128,6 +133,8 @@ class UpdateConfigRequest(BaseModel):
     default_iterations: int | None = Field(None, ge=1, le=15)
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     ollama_base_url: str | None = None
+    aws_region: str | None = None
+    aws_profile: str | None = None
     anthropic_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
 
@@ -198,6 +205,10 @@ async def update_config(
         settings.similarity_threshold = body.similarity_threshold
     if body.ollama_base_url is not None:
         settings.ollama_base_url = body.ollama_base_url
+    if body.aws_region is not None:
+        settings.aws_region = body.aws_region
+    if body.aws_profile is not None:
+        settings.aws_profile = body.aws_profile
 
     if "anthropic_api_key" in fields_set:
         await _apply_key_update("anthropic", body.anthropic_api_key)
@@ -215,6 +226,9 @@ class TestProviderRequest(BaseModel):
     model: str | None = None
     # Only used when provider == "ollama"; falls back to settings if absent.
     ollama_base_url: str | None = None
+    # Only used when provider == "bedrock"; fall back to settings if absent.
+    aws_region: str | None = None
+    aws_profile: str | None = None
 
 
 def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
@@ -244,6 +258,11 @@ async def test_provider(body: TestProviderRequest) -> JSONResponse:
     if body.provider == "ollama":
         base_url = body.ollama_base_url or settings.ollama_base_url
         result = await ping_ollama(base_url)
+    elif body.provider == "bedrock":
+        model = body.model or settings.default_model
+        region = body.aws_region if body.aws_region is not None else settings.aws_region
+        profile = body.aws_profile if body.aws_profile is not None else settings.aws_profile
+        result = await ping_bedrock(model, region, profile)
     else:
         key = _resolve_probe_key(body.provider, body.api_key)
         if not key:

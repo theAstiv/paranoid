@@ -240,4 +240,17 @@ def create_provider(
 
         return OllamaProvider(model=model, base_url=base_url, **kwargs)
 
-    raise ValueError(f"Unsupported provider: {provider_type}. Supported: anthropic, openai, ollama")
+    if provider_type == "bedrock":
+        try:
+            from backend.providers.bedrock import BedrockProvider
+
+            return BedrockProvider(model=model, **kwargs)
+        except ImportError:
+            raise ValueError(
+                "boto3 is required for the Bedrock provider. "
+                "Install with: pip install paranoid-cli[bedrock]"
+            )
+
+    raise ValueError(
+        f"Unsupported provider: {provider_type}. Supported: anthropic, openai, ollama, bedrock"
+    )

@@ -314,7 +314,7 @@ async def _extract_code_context(
 @click.option(
     "--provider",
     "provider_override",
-    type=click.Choice(["anthropic", "openai", "ollama"], case_sensitive=False),
+    type=click.Choice(["anthropic", "openai", "ollama", "bedrock"], case_sensitive=False),
     default=None,
     help="Override configured LLM provider",
 )
@@ -437,6 +437,7 @@ def run(
             settings.default_model = model_override
 
         # Re-validate API key after provider override
+        # bedrock and ollama use credential-chain auth — no API key check required.
         if provider_override is not None:
             if settings.default_provider == "anthropic" and not settings.anthropic_api_key:
                 raise ConfigurationError(
@@ -471,6 +472,9 @@ def run(
 
         # Create provider
         try:
+            _extra: dict = {}
+            if settings.default_provider == "bedrock":
+                _extra = {"region": settings.aws_region, "profile": settings.aws_profile}
             provider = create_provider(
                 provider_type=settings.default_provider,
                 model=settings.default_model,
@@ -484,6 +488,7 @@ def run(
                 base_url=(
                     settings.ollama_base_url if settings.default_provider == "ollama" else None
                 ),
+                **_extra,
             )
         except Exception as e:
             raise ConfigurationError(f"Failed to initialize LLM provider: {e}") from e

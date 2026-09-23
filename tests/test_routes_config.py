@@ -198,3 +198,28 @@ def test_api_key_fields_in_sync_with_request_model():
         f"API_KEY_FIELDS and UpdateConfigRequest diverged: "
         f"only in map={map_keys - model_keys}, only in model={model_keys - map_keys}"
     )
+
+
+@pytest.mark.asyncio
+async def test_config_exposes_aws_fields(client, monkeypatch):
+    """GET /api/config/ must include aws_region and aws_profile."""
+    monkeypatch.setattr(settings, "aws_region", "eu-west-1")
+    monkeypatch.setattr(settings, "aws_profile", "myprofile")
+    resp = await client.get("/api/config/")
+    data = resp.json()
+    assert data["aws_region"] == "eu-west-1"
+    assert data["aws_profile"] == "myprofile"
+
+
+@pytest.mark.asyncio
+async def test_config_patch_aws_region_and_profile(client, monkeypatch):
+    """PATCH updates aws_region and aws_profile in settings."""
+    monkeypatch.setattr(settings, "aws_region", "")
+    monkeypatch.setattr(settings, "aws_profile", "")
+    resp = await client.patch(
+        "/api/config/",
+        json={"aws_region": "us-west-2", "aws_profile": "prod"},
+    )
+    assert resp.status_code == 200
+    assert settings.aws_region == "us-west-2"
+    assert settings.aws_profile == "prod"

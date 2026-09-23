@@ -18,7 +18,17 @@ def get_api_key(provider_type: str) -> str | None:
         return settings.anthropic_api_key or None
     if provider_type == "openai":
         return settings.openai_api_key or None
-    return None  # ollama needs no key
+    return None  # ollama / bedrock need no key
+
+
+def bedrock_kwargs(provider_type: str) -> dict:
+    """Return region/profile kwargs for create_provider when provider is bedrock.
+
+    Non-bedrock callers spread an empty dict, so this is always safe to pass through.
+    """
+    if provider_type != "bedrock":
+        return {}
+    return {"region": settings.aws_region, "profile": settings.aws_profile}
 
 
 def resolve_provider(
@@ -51,6 +61,7 @@ def build_provider_from_record(record: dict) -> LLMProvider:
             model=model_str,
             api_key=api_key,
             base_url=base_url,
+            **bedrock_kwargs(provider_type),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

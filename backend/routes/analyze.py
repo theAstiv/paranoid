@@ -13,6 +13,7 @@ from backend.config import settings
 from backend.models.api import AnalyzeBundleRequest, AnalyzeBundleResponse
 from backend.pipeline.pre_flight import analyze_bundle
 from backend.providers import create_provider
+from backend.routes._helpers import bedrock_kwargs
 from backend.security.rate_limit import analyze_rate_limit
 
 
@@ -47,6 +48,7 @@ async def analyze_description_and_assumptions(
             else None
         ),
         base_url=(settings.ollama_base_url if settings.default_provider == "ollama" else None),
+        **bedrock_kwargs(settings.default_provider),
     )
 
     async with provider:

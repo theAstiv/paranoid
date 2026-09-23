@@ -22,6 +22,7 @@
   let keys = {
     anthropic: { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
     openai:    { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
+    bedrock:   { set: false, source: null, testing: false, testResult: null },
   }
 
   let draft = {
@@ -31,6 +32,8 @@
     default_iterations: 3,
     similarity_threshold: 0.85,
     ollama_base_url: '',
+    aws_region: '',
+    aws_profile: '',
   }
 
   onMount(async () => {
@@ -55,10 +58,13 @@
       default_iterations: cfg.default_iterations ?? 3,
       similarity_threshold: cfg.similarity_threshold ?? 0.85,
       ollama_base_url: cfg.ollama_base_url ?? '',
+      aws_region: cfg.aws_region ?? '',
+      aws_profile: cfg.aws_profile ?? '',
     }
     keys = {
       anthropic: { set: cfg.anthropic_api_key_set ?? false, source: cfg.anthropic_api_key_source ?? null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
       openai:    { set: cfg.openai_api_key_set ?? false, source: cfg.openai_api_key_source ?? null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
+      bedrock:   { set: false, source: null, testing: false, testResult: null },
     }
   }
 
@@ -69,6 +75,11 @@
       if (apiKey) payload.api_key = apiKey
       if (provider === 'anthropic' && draft.model) payload.model = draft.model
       if (provider === 'ollama' && draft.ollama_base_url) payload.ollama_base_url = draft.ollama_base_url
+      if (provider === 'bedrock') {
+        if (draft.model) payload.model = draft.model
+        payload.aws_region = draft.aws_region
+        payload.aws_profile = draft.aws_profile
+      }
       const result = await testProvider(payload)
       keys[provider] = { ...keys[provider], testing: false, testResult: result }
     } catch (err) {
@@ -104,6 +115,8 @@
         default_iterations: Number(draft.default_iterations),
         similarity_threshold: Number(draft.similarity_threshold),
         ollama_base_url: draft.ollama_base_url || undefined,
+        aws_region: draft.aws_region,
+        aws_profile: draft.aws_profile,
         ...buildKeyPayload('anthropic'),
         ...buildKeyPayload('openai'),
       }
@@ -188,6 +201,7 @@
             <option value="anthropic">anthropic</option>
             <option value="openai">openai</option>
             <option value="ollama">ollama</option>
+            <option value="bedrock">bedrock (AWS)</option>
           </select>
         </div>
 
@@ -229,6 +243,46 @@
             placeholder="http://host.docker.internal:11434"
             class="col-span-2 {FIELD_CLASS} font-mono" />
         </div>
+
+        <!-- Bedrock settings -->
+        {#if draft.default_provider === 'bedrock'}
+          <div class="grid grid-cols-3 items-center gap-4">
+            <label for="cfg-aws-region" class="{LABEL_CLASS}">
+              AWS region
+              <span class="{SUBLABEL_CLASS}">empty = env/profile default</span>
+            </label>
+            <input id="cfg-aws-region" type="text" bind:value={draft.aws_region}
+              placeholder="us-east-1"
+              class="col-span-2 {FIELD_CLASS} font-mono" />
+          </div>
+          <div class="grid grid-cols-3 items-start gap-4">
+            <label for="cfg-aws-profile" class="{LABEL_CLASS} pt-2">
+              AWS profile
+              <span class="{SUBLABEL_CLASS}">empty = default chain</span>
+            </label>
+            <div class="col-span-2 space-y-1.5">
+              <div class="flex items-center gap-2">
+                <input id="cfg-aws-profile" type="text" bind:value={draft.aws_profile}
+                  placeholder="default"
+                  class="flex-1 {FIELD_CLASS} font-mono" />
+                <button type="button" on:click={() => testButtonClick('bedrock')}
+                  disabled={keys.bedrock.testing}
+                  class="text-xs font-medium text-c-muted hover:text-c-accent transition-colors disabled:opacity-50">
+                  {keys.bedrock.testing ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+              {#if keys.bedrock.testResult}
+                <div class="font-mono text-[11px]">
+                  {#if keys.bedrock.testResult.ok}
+                    <span class="text-c-green">✓ Connected ({keys.bedrock.testResult.latency_ms} ms)</span>
+                  {:else}
+                    <span class="text-c-critical">✗ {keys.bedrock.testResult.message || keys.bedrock.testResult.error || 'Connection failed'}</span>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
 
         <!-- API keys -->
         {#each [['anthropic', 'Anthropic', 'ANTHROPIC_API_KEY'], ['openai', 'OpenAI', 'OPENAI_API_KEY']] as [prov, label, envName]}

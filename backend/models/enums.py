@@ -132,6 +132,7 @@ class Provider(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OLLAMA = "ollama"
+    BEDROCK = "bedrock"
 
 
 class DiagramFormat(str, Enum):
