@@ -16,7 +16,7 @@ from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, TestSuite
-from backend.models.state import ThreatsList
+from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.pre_flight import analyze_bundle
 from backend.pipeline.runner import (
     PipelineConfig,
@@ -350,6 +350,24 @@ async def _extract_code_context(
         "Default: all collections."
     ),
 )
+@click.option(
+    "--seeded-assets",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a JSON file containing an AssetsList to use instead of running LLM asset extraction.",
+)
+@click.option(
+    "--seeded-flows",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a JSON file containing a FlowsList to use instead of running LLM flow extraction.",
+)
+@click.option(
+    "--seeded-threats",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a JSON file containing known threats to seed into the catalog before the iteration loop.",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -367,6 +385,9 @@ def run(
     strict: bool,
     enrich: bool,
     seed_collections: tuple[str, ...],
+    seeded_assets: Path | None,
+    seeded_flows: Path | None,
+    seeded_threats: Path | None,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -558,6 +579,55 @@ def run(
             click.echo(f"  Format: {output_format}")
             click.echo()
 
+        # Parse --seeded-assets / --seeded-flows / --seeded-threats JSON files.
+        seeded_assets_data: AssetsList | None = None
+        if seeded_assets:
+            try:
+                seeded_assets_data = AssetsList.model_validate_json(
+                    seeded_assets.read_text(encoding="utf-8")
+                )
+                if not quiet:
+                    click.secho(
+                        f"  Seeded assets:  {len(seeded_assets_data.assets)} assets from {seeded_assets.name}",
+                        fg="cyan",
+                    )
+            except Exception as e:
+                raise click.BadParameter(
+                    f"Invalid AssetsList JSON: {e}", param_hint="'--seeded-assets'"
+                )
+
+        seeded_flows_data: FlowsList | None = None
+        if seeded_flows:
+            try:
+                seeded_flows_data = FlowsList.model_validate_json(
+                    seeded_flows.read_text(encoding="utf-8")
+                )
+                if not quiet:
+                    click.secho(
+                        f"  Seeded flows:   {len(seeded_flows_data.data_flows)} flows from {seeded_flows.name}",
+                        fg="cyan",
+                    )
+            except Exception as e:
+                raise click.BadParameter(
+                    f"Invalid FlowsList JSON: {e}", param_hint="'--seeded-flows'"
+                )
+
+        seeded_threats_data: ThreatsList | None = None
+        if seeded_threats:
+            try:
+                seeded_threats_data = ThreatsList.model_validate_json(
+                    seeded_threats.read_text(encoding="utf-8")
+                )
+                if not quiet:
+                    click.secho(
+                        f"  Seeded threats: {len(seeded_threats_data.threats)} threats from {seeded_threats.name}",
+                        fg="cyan",
+                    )
+            except Exception as e:
+                raise click.BadParameter(
+                    f"Invalid ThreatsList JSON: {e}", param_hint="'--seeded-threats'"
+                )
+
         # Validate --seed-collections names before entering async context.
         # Settings.validate_seed_collections only runs for the env-var path; the
         # CLI path bypasses it, so we check here and fail fast with a clear message.
@@ -596,6 +666,9 @@ def run(
                 diagram_path=diagram,
                 content=content,
                 seed_collections=resolved_seed_collections,
+                seeded_assets=seeded_assets_data,
+                seeded_flows=seeded_flows_data,
+                seeded_threats=seeded_threats_data,
             )
         )
 
@@ -605,6 +678,10 @@ def run(
         click.secho(f"✗ Error: {e.message}", fg="red", err=True)
         click.echo()
         raise SystemExit(e.exit_code) from e
+    except click.ClickException:
+        # Re-raise Click exceptions (BadParameter, UsageError, etc.) so Click
+        # can format and display them correctly with exit code 2.
+        raise
     except KeyboardInterrupt:
         click.echo()
         click.secho("✗ Interrupted by user", fg="yellow")
@@ -639,6 +716,9 @@ async def _run_pipeline_async(
     enrich: bool = False,
     fast_provider: LLMProvider | None = None,
     seed_collections: list[str] | None = None,
+    seeded_assets: AssetsList | None = None,
+    seeded_flows: FlowsList | None = None,
+    seeded_threats: ThreatsList | None = None,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -688,6 +768,9 @@ async def _run_pipeline_async(
             strict=strict,
             enrich=enrich,
             seed_collections=seed_collections,
+            seeded_assets=seeded_assets,
+            seeded_flows=seeded_flows,
+            seeded_threats=seeded_threats,
         )
 
 
@@ -711,6 +794,9 @@ async def _run_pipeline_inside_provider(
     strict: bool,
     enrich: bool = False,
     seed_collections: list[str] | None = None,
+    seeded_assets: AssetsList | None = None,
+    seeded_flows: FlowsList | None = None,
+    seeded_threats: ThreatsList | None = None,
 ) -> None:
     # Pre-flight gap analysis (description + assumptions) — always runs;
     # --strict enforces blocking on error-severity gaps in either section.
@@ -805,6 +891,9 @@ async def _run_pipeline_inside_provider(
             code_context=code_context,
             diagram_data=diagram_data,
             seed_collections=seed_collections,
+            seeded_assets=seeded_assets,
+            seeded_flows=seeded_flows,
+            seeded_threats=seeded_threats,
         ):
             # Render event (unless quiet mode)
             if renderer:

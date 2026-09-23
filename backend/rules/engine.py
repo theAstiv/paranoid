@@ -237,7 +237,7 @@ def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat 
                 "mitigations", ["Review security controls", "Apply defense in depth"]
             ),
         )
-        threat._source = "rule_engine"
+        threat.source = "rule_engine"
         return threat
     except (KeyError, ValueError) as e:
         logger.warning(f"Skipping seed pattern '{pattern.get('name')}': {e}")

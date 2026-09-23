@@ -171,6 +171,7 @@ class PipelineRunner:
         stop_after: StopAfter | None = None,
         seeded_assets: AssetsList | None = None,
         seeded_flows: FlowsList | None = None,
+        seeded_threats: ThreatsList | None = None,
     ) -> AsyncGenerator[PipelineEvent, None]:
         """Run the complete threat modeling pipeline with SSE events.
 
@@ -188,6 +189,9 @@ class PipelineRunner:
                 When provided the EXTRACT_ASSETS step is skipped.
             seeded_flows: Pre-edited flows/boundaries to use instead of running LLM
                 extraction. When provided the EXTRACT_FLOWS step is skipped.
+            seeded_threats: Known threats to seed the catalog before the iteration loop.
+                Each threat is tagged with _source="seeded". The iteration loop deduplicates
+                new LLM threats against these, so overlapping threats are not duplicated.
 
         Yields:
             PipelineEvent for each step and iteration
@@ -208,6 +212,19 @@ class PipelineRunner:
         current_threats: ThreatsList | None = None
         cumulative_threats = ThreatsList(threats=[])
         iteration = 1
+
+        # Pre-load seeded threats: tag each with _source="seeded" and add to the
+        # cumulative catalog so the iteration loop deduplicates LLM output against them.
+        if seeded_threats and seeded_threats.threats:
+            for t in seeded_threats.threats:
+                t.source = "seeded"
+            cumulative_threats.threats.extend(seeded_threats.threats)
+            yield PipelineEvent(
+                step=PipelineStep.GENERATE_THREATS,
+                status="info",
+                message=f"Loaded {len(seeded_threats.threats)} seeded threats into catalog",
+                data={"seeded_threat_count": len(seeded_threats.threats)},
+            )
         iterations_completed = 0
         stopped_reason = "max_iterations"
         gaps: list[str] = []
@@ -493,7 +510,9 @@ class PipelineRunner:
                                 flows=flows,
                                 framework=Framework.STRIDE,
                                 provider=self.provider,
-                                existing_threats=current_threats if iteration > 1 else None,
+                                existing_threats=current_threats
+                                if iteration > 1
+                                else (cumulative_threats if cumulative_threats.threats else None),
                                 gap_analysis=gaps[-1] if gaps else None,
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
@@ -637,7 +656,9 @@ class PipelineRunner:
                                 flows=flows,
                                 framework=framework,
                                 provider=self.provider,
-                                existing_threats=current_threats if iteration > 1 else None,
+                                existing_threats=current_threats
+                                if iteration > 1
+                                else (cumulative_threats if cumulative_threats.threats else None),
                                 gap_analysis=gaps[-1] if gaps else None,
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
@@ -703,8 +724,10 @@ class PipelineRunner:
                     else:
                         consecutive_zero = 0
 
-                    # Deduplicate against cumulative threats from prior iterations
-                    if iteration > 1:
+                    # Deduplicate against cumulative threats (prior iterations or seeded threats).
+                    # When seeded threats were pre-loaded, cumulative_threats is non-empty even on
+                    # iteration 1, so always dedup when there is something to check against.
+                    if cumulative_threats.threats:
                         dedup_result = deduplicate_threats(
                             current_threats,
                             existing_threats=cumulative_threats,
@@ -728,11 +751,14 @@ class PipelineRunner:
                             )
                         # Saturation stop: if most of this iteration's threats are
                         # duplicates, further iterations are unlikely to find novel threats.
+                        # iteration > 1 guard prevents seeds pre-loaded into cumulative
+                        # from triggering saturation on the very first LLM pass.
                         saturation_ratio = dedup_result.removed_count / max(
                             1, len(current_threats.threats)
                         )
                         if (
                             saturation_ratio >= self.config.dedup_saturation_threshold
+                            and iteration > 1
                             and iteration >= self.config.min_iterations
                         ):
                             yield PipelineEvent(
@@ -778,9 +804,15 @@ class PipelineRunner:
                         # threats the catalog is structurally balanced and LLM gap analysis
                         # is unlikely to find meaningful holes (saves ~1536 max-token call).
                         # Only applies to STRIDE framework; MAESTRO coverage is asymmetric.
+                        # Exclude pre-loaded seeded threats from the balance check:
+                        # seeds may already cover all STRIDE categories, which would
+                        # short-circuit gap analysis before the LLM runs even once.
+                        _llm_threats = ThreatsList(
+                            threats=[t for t in cumulative_threats.threats if t.source != "seeded"]
+                        )
                         if (
                             framework == Framework.STRIDE
-                            and _is_stride_coverage_balanced(cumulative_threats)
+                            and _is_stride_coverage_balanced(_llm_threats)
                             and iteration >= self.config.min_iterations
                         ):
                             yield PipelineEvent(
@@ -1037,6 +1069,7 @@ async def run_pipeline_for_model(
     stop_after: StopAfter | None = None,
     seeded_assets: AssetsList | None = None,
     seeded_flows: FlowsList | None = None,
+    seeded_threats: ThreatsList | None = None,
     fast_provider: LLMProvider | None = None,
     temperature: float | None = None,
     seed_collections: list[str] | None = None,
@@ -1058,6 +1091,7 @@ async def run_pipeline_for_model(
         stop_after: Stop pipeline after "extraction" step (for context preview).
         seeded_assets: Pre-edited assets to skip LLM extraction.
         seeded_flows: Pre-edited flows to skip LLM extraction.
+        seeded_threats: Known threats to seed the catalog before the iteration loop.
         fast_provider: Optional cheaper provider for extraction and enrichment steps.
             Falls back to ``provider`` when not set.
         temperature: LLM sampling temperature. Falls back to
@@ -1105,5 +1139,6 @@ async def run_pipeline_for_model(
         stop_after=stop_after,
         seeded_assets=seeded_assets,
         seeded_flows=seeded_flows,
+        seeded_threats=seeded_threats,
     ):
         yield event

@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field
 
 from backend.models.enums import AssetType, StrideCategory
 
@@ -149,7 +149,7 @@ class Threat(BaseModel):
         ),
     ]
 
-    _source: str = PrivateAttr(default="llm")
+    source: str = Field(default="llm")
 
 
 class ThreatsList(BaseModel):

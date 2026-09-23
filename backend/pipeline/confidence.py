@@ -311,7 +311,7 @@ def score_threat_confidence(
     Returns:
         Confidence score between 0.0 and 1.0.
     """
-    if threat._source == "rule_engine":
+    if threat.source == "rule_engine":
         return 0.85
 
     asset_score = _asset_match_score(threat.target, assets)
