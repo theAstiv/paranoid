@@ -171,3 +171,51 @@ async def test_test_provider_ollama(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_test_provider_bedrock_uses_body_region_profile(client, monkeypatch):
+    """Bedrock test-provider uses aws_region/aws_profile from the request body."""
+    monkeypatch.setattr(settings, "aws_region", "us-east-1")
+    monkeypatch.setattr(settings, "aws_profile", "")
+    seen: dict = {}
+
+    async def fake_ping(model, region, profile):
+        seen.update({"model": model, "region": region, "profile": profile})
+        return _FakeResult(ok=True, latency_ms=10)
+
+    monkeypatch.setattr("backend.routes.config.ping_bedrock", fake_ping)
+    resp = await client.post(
+        "/api/config/test-provider",
+        json={
+            "provider": "bedrock",
+            "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "aws_region": "eu-central-1",
+            "aws_profile": "staging",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert seen["region"] == "eu-central-1"
+    assert seen["profile"] == "staging"
+
+
+@pytest.mark.asyncio
+async def test_test_provider_bedrock_falls_back_to_settings(client, monkeypatch):
+    """When body omits aws_region/aws_profile, settings values are used."""
+    monkeypatch.setattr(settings, "aws_region", "ap-southeast-1")
+    monkeypatch.setattr(settings, "aws_profile", "myprofile")
+    seen: dict = {}
+
+    async def fake_ping(model, region, profile):
+        seen.update({"region": region, "profile": profile})
+        return _FakeResult(ok=True)
+
+    monkeypatch.setattr("backend.routes.config.ping_bedrock", fake_ping)
+    resp = await client.post(
+        "/api/config/test-provider",
+        json={"provider": "bedrock"},
+    )
+    assert resp.status_code == 200
+    assert seen["region"] == "ap-southeast-1"
+    assert seen["profile"] == "myprofile"

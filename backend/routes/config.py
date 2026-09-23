@@ -88,6 +88,8 @@ async def _config_payload() -> dict:
         "max_iteration_count": settings.max_iteration_count,
         "min_iteration_count": settings.min_iteration_count,
         "ollama_base_url": settings.ollama_base_url,
+        "aws_region": settings.aws_region,
+        "aws_profile": settings.aws_profile,
         "log_level": settings.log_level,
         "similarity_threshold": settings.similarity_threshold,
         "dedup_saturation_threshold": settings.dedup_saturation_threshold,
@@ -131,6 +133,8 @@ class UpdateConfigRequest(BaseModel):
     default_iterations: int | None = Field(None, ge=1, le=15)
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     ollama_base_url: str | None = None
+    aws_region: str | None = None
+    aws_profile: str | None = None
     anthropic_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
 
@@ -201,6 +205,10 @@ async def update_config(
         settings.similarity_threshold = body.similarity_threshold
     if body.ollama_base_url is not None:
         settings.ollama_base_url = body.ollama_base_url
+    if body.aws_region is not None:
+        settings.aws_region = body.aws_region
+    if body.aws_profile is not None:
+        settings.aws_profile = body.aws_profile
 
     if "anthropic_api_key" in fields_set:
         await _apply_key_update("anthropic", body.anthropic_api_key)
@@ -218,6 +226,9 @@ class TestProviderRequest(BaseModel):
     model: str | None = None
     # Only used when provider == "ollama"; falls back to settings if absent.
     ollama_base_url: str | None = None
+    # Only used when provider == "bedrock"; fall back to settings if absent.
+    aws_region: str | None = None
+    aws_profile: str | None = None
 
 
 def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
@@ -249,7 +260,9 @@ async def test_provider(body: TestProviderRequest) -> JSONResponse:
         result = await ping_ollama(base_url)
     elif body.provider == "bedrock":
         model = body.model or settings.default_model
-        result = await ping_bedrock(model, settings.aws_region, settings.aws_profile)
+        region = body.aws_region if body.aws_region is not None else settings.aws_region
+        profile = body.aws_profile if body.aws_profile is not None else settings.aws_profile
+        result = await ping_bedrock(model, region, profile)
     else:
         key = _resolve_probe_key(body.provider, body.api_key)
         if not key:

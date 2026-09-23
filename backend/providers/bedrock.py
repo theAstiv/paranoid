@@ -53,7 +53,7 @@ class BedrockProvider:
     def __init__(
         self,
         model: str,
-        region: str = "us-east-1",
+        region: str = "",
         profile: str = "",
     ):
         """Initialise Bedrock provider.
@@ -83,9 +83,14 @@ class BedrockProvider:
         self._region = region
 
         session = boto3.Session(profile_name=profile or None)
+        # Omit region_name when empty so boto3's own resolution runs
+        # (AWS_DEFAULT_REGION → profile → instance metadata service).
+        client_kwargs: dict = {}
+        if region:
+            client_kwargs["region_name"] = region
         self._client = session.client(
             "bedrock-runtime",
-            region_name=region,
+            **client_kwargs,
             config=botocore.config.Config(
                 read_timeout=240,
                 retries={"max_attempts": 3, "mode": "adaptive"},

@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     default_provider: Literal["anthropic", "openai", "ollama", "bedrock"] = "anthropic"
     # AWS Bedrock settings — uses standard boto3 credential chain (env vars,
     # ~/.aws/credentials, IAM roles). No explicit key fields: boto3 handles auth.
-    aws_region: str = "us-east-1"
+    # Empty string defers region to boto3's own resolution order
+    # (AWS_DEFAULT_REGION → profile → instance metadata).
+    aws_region: str = ""
     aws_profile: str = ""
     default_model: str = "claude-sonnet-4-20250514"
     # Fast model is used for cheaper extraction steps (assets/flows) and

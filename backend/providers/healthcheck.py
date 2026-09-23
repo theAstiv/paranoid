@@ -211,9 +211,13 @@ async def ping_bedrock(model: str, region: str, profile: str) -> ProbeResult:
         import botocore.config
 
         session = boto3.Session(profile_name=profile or None)
+        # Omit region_name when empty so boto3's own resolution runs.
+        probe_kwargs: dict = {}
+        if region:
+            probe_kwargs["region_name"] = region
         client = session.client(
             "bedrock-runtime",
-            region_name=region,
+            **probe_kwargs,
             # connect_timeout=5: DNS + TCP. read_timeout=15: waiting for first byte.
             # retries max_attempts=1: we want fast failure, not silent retry here.
             config=botocore.config.Config(
@@ -248,7 +252,7 @@ async def ping_bedrock(model: str, region: str, profile: str) -> ProbeResult:
             ok=False,
             latency_ms=_elapsed(started),
             error="timeout",
-            message=f"Bedrock did not respond within 20s (region={region})",
+            message=f"Bedrock did not respond within 20s (region={region or 'default'})",
         )
     except Exception as exc:
         return ProbeResult(
@@ -264,6 +268,13 @@ def _map_bedrock_probe_error(exc: Exception, model: str, region: str) -> dict:
 
         bce = importlib.import_module("botocore.exceptions")
 
+        # botocore ReadTimeoutError/ConnectTimeoutError don't subclass Python's
+        # TimeoutError — handle them here so they surface as "timeout", not "network_error".
+        if isinstance(exc, (bce.ReadTimeoutError, bce.ConnectTimeoutError)):
+            return {
+                "error": "timeout",
+                "message": f"Bedrock timed out (region={region or 'default'})",
+            }
         if isinstance(exc, bce.NoCredentialsError):
             return {
                 "error": "invalid_api_key",
