@@ -17,6 +17,7 @@ from backend.db.crud import (
 from backend.providers.healthcheck import (
     ProbeResult,
     ping_anthropic,
+    ping_bedrock,
     ping_ollama,
     ping_openai,
     rate_limit_check,
@@ -33,11 +34,13 @@ router = APIRouter(prefix="/config", tags=["config"])
 # Shared across UpdateConfigRequest.default_provider and
 # TestProviderRequest.provider — keep as one source of truth so a new
 # provider lands in both places at once.
-ProviderName = Literal["anthropic", "openai", "ollama"]
+ProviderName = Literal["anthropic", "openai", "ollama", "bedrock"]
 
 
 async def _api_key_source(provider: str) -> str | None:
     """Return ``"env"``, ``"db"``, or ``None`` for a provider's current key source."""
+    if provider not in API_KEY_FIELDS:
+        return None  # bedrock and ollama have no API key concept
     env_name, db_key = API_KEY_FIELDS[provider]
     if os.environ.get(env_name, "").strip():
         return "env"
@@ -58,7 +61,7 @@ async def _is_first_run() -> bool:
     Ollama is exempt — it has no API key concept and its base URL may point
     at a server not yet running. Users can verify via test-connection.
     """
-    if settings.default_provider == "ollama":
+    if settings.default_provider in ("ollama", "bedrock"):
         return False
     env_name, db_key = API_KEY_FIELDS[settings.default_provider]
     if os.environ.get(env_name, "").strip():
@@ -244,6 +247,9 @@ async def test_provider(body: TestProviderRequest) -> JSONResponse:
     if body.provider == "ollama":
         base_url = body.ollama_base_url or settings.ollama_base_url
         result = await ping_ollama(base_url)
+    elif body.provider == "bedrock":
+        model = body.model or settings.default_model
+        result = await ping_bedrock(model, settings.aws_region, settings.aws_profile)
     else:
         key = _resolve_probe_key(body.provider, body.api_key)
         if not key:

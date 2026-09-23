@@ -21,7 +21,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     ollama_base_url: str = "http://host.docker.internal:11434"
-    default_provider: Literal["anthropic", "openai", "ollama"] = "anthropic"
+    default_provider: Literal["anthropic", "openai", "ollama", "bedrock"] = "anthropic"
+    # AWS Bedrock settings — uses standard boto3 credential chain (env vars,
+    # ~/.aws/credentials, IAM roles). No explicit key fields: boto3 handles auth.
+    aws_region: str = "us-east-1"
+    aws_profile: str = ""
     default_model: str = "claude-sonnet-4-20250514"
     # Fast model is used for cheaper extraction steps (assets/flows) and
     # enrichment (attack trees / test cases).  Only applies when

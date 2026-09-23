@@ -198,6 +198,94 @@ async def ping_ollama(base_url: str) -> ProbeResult:
     )
 
 
+async def ping_bedrock(model: str, region: str, profile: str) -> ProbeResult:
+    """1-token Converse call to validate AWS credentials and model reachability.
+
+    Uses its own client with aggressive timeouts because boto3 defaults are
+    too long for an interactive "Test connection" flow. Spends real (minimal)
+    tokens — there is no free endpoint equivalent to GET /v1/models on OpenAI.
+    """
+    started = time.monotonic()
+    try:
+        import boto3
+        import botocore.config
+
+        session = boto3.Session(profile_name=profile or None)
+        client = session.client(
+            "bedrock-runtime",
+            region_name=region,
+            # connect_timeout=5: DNS + TCP. read_timeout=15: waiting for first byte.
+            # retries max_attempts=1: we want fast failure, not silent retry here.
+            config=botocore.config.Config(
+                connect_timeout=5,
+                read_timeout=15,
+                retries={"max_attempts": 1},
+            ),
+        )
+
+        def _call() -> dict:
+            return client.converse(
+                modelId=model,
+                messages=[{"role": "user", "content": [{"text": "."}]}],
+                inferenceConfig={"maxTokens": 1},
+            )
+
+        # Outer asyncio timeout as a safety net in case botocore stalls.
+        await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(None, _call),
+            timeout=20,
+        )
+
+    except ImportError:
+        return ProbeResult(
+            ok=False,
+            latency_ms=_elapsed(started),
+            error="config_error",
+            message="boto3 not installed. Run: pip install paranoid-cli[bedrock]",
+        )
+    except TimeoutError:
+        return ProbeResult(
+            ok=False,
+            latency_ms=_elapsed(started),
+            error="timeout",
+            message=f"Bedrock did not respond within 20s (region={region})",
+        )
+    except Exception as exc:
+        return ProbeResult(
+            ok=False, latency_ms=_elapsed(started), **_map_bedrock_probe_error(exc, model, region)
+        )
+    return ProbeResult(ok=True, latency_ms=_elapsed(started))
+
+
+def _map_bedrock_probe_error(exc: Exception, model: str, region: str) -> dict:
+    """Map a botocore exception to a ProbeResult error dict."""
+    try:
+        import importlib
+
+        bce = importlib.import_module("botocore.exceptions")
+
+        if isinstance(exc, bce.NoCredentialsError):
+            return {
+                "error": "invalid_api_key",
+                "message": (
+                    "No AWS credentials found. "
+                    "Configure via env vars, ~/.aws/credentials, or IAM role."
+                ),
+            }
+        if isinstance(exc, bce.ClientError):
+            code = exc.response["Error"]["Code"]
+            if code == "AccessDeniedException":
+                return {
+                    "error": "invalid_api_key",
+                    "message": f"AWS access denied (model={model}, region={region})",
+                }
+            if code == "ThrottlingException":
+                return {"error": "rate_limited", "message": "Bedrock rate limit exceeded"}
+    except ImportError:
+        pass
+    return {"error": "network_error", "message": str(exc)}
+
+
 def _elapsed(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
