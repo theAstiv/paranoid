@@ -619,26 +619,6 @@ class PipelineRunner:
                                 "framework": "COMBINED",
                             },
                         )
-
-                        if len(current_threats.threats) == 0:
-                            consecutive_zero += 1
-                            yield PipelineEvent(
-                                step=PipelineStep.ITERATE,
-                                status="info",
-                                message=f"No new threats generated in iteration {iteration}",
-                                iteration=iteration,
-                                data={"warning": "zero_threats", "iteration": iteration},
-                            )
-                            if consecutive_zero >= 2:
-                                yield PipelineEvent(
-                                    step=PipelineStep.ITERATE,
-                                    status="info",
-                                    message=f"Zero threats produced in {consecutive_zero} consecutive iterations",
-                                    iteration=iteration,
-                                    data={"consecutive_zero_iterations": consecutive_zero},
-                                )
-                        else:
-                            consecutive_zero = 0
                     else:
                         # Single framework execution
                         yield PipelineEvent(
@@ -695,25 +675,33 @@ class PipelineRunner:
                             },
                         )
 
-                        if len(current_threats.threats) == 0:
-                            consecutive_zero += 1
+                    # Zero-threat detection: fires after the provider returns, before
+                    # cross-iteration dedup. Measures what the LLM returned this iteration.
+                    # The saturation gate cannot catch this: removed_count=0 gives
+                    # saturation_ratio=0, so it never trips on all-zero iterations.
+                    # Detection is informational only; a stop condition is not added here
+                    # because two consecutive zeros is a signal worth surfacing but not
+                    # a definitive failure mode on its own.
+                    if len(current_threats.threats) == 0:
+                        consecutive_zero += 1
+                        if consecutive_zero >= 2:
                             yield PipelineEvent(
                                 step=PipelineStep.ITERATE,
                                 status="info",
-                                message=f"No new threats generated in iteration {iteration}",
+                                message=f"Zero threats produced in {consecutive_zero} consecutive iterations",
+                                iteration=iteration,
+                                data={"consecutive_zero_iterations": consecutive_zero},
+                            )
+                        else:
+                            yield PipelineEvent(
+                                step=PipelineStep.ITERATE,
+                                status="info",
+                                message=f"Provider returned no threats in iteration {iteration}",
                                 iteration=iteration,
                                 data={"warning": "zero_threats", "iteration": iteration},
                             )
-                            if consecutive_zero >= 2:
-                                yield PipelineEvent(
-                                    step=PipelineStep.ITERATE,
-                                    status="info",
-                                    message=f"Zero threats produced in {consecutive_zero} consecutive iterations",
-                                    iteration=iteration,
-                                    data={"consecutive_zero_iterations": consecutive_zero},
-                                )
-                        else:
-                            consecutive_zero = 0
+                    else:
+                        consecutive_zero = 0
 
                     # Deduplicate against cumulative threats from prior iterations
                     if iteration > 1:
@@ -723,6 +711,13 @@ class PipelineRunner:
                             threshold=self.config.similarity_threshold,
                         )
                         cumulative_threats.threats.extend(dedup_result.threats.threats)
+                        logger.info(
+                            "Iteration %d dedup: new=%d removed=%d cumulative=%d",
+                            iteration,
+                            len(current_threats.threats),
+                            dedup_result.removed_count,
+                            len(cumulative_threats.threats),
+                        )
                         if dedup_result.removed_count > 0:
                             yield PipelineEvent(
                                 step=PipelineStep.GENERATE_THREATS,
@@ -759,12 +754,12 @@ class PipelineRunner:
                             break
                     else:
                         cumulative_threats.threats.extend(current_threats.threats)
-                    logger.info(
-                        "Iteration %d dedup: new=%d cumulative=%d",
-                        iteration,
-                        len(current_threats.threats),
-                        len(cumulative_threats.threats),
-                    )
+                        logger.info(
+                            "Iteration %d dedup: new=%d cumulative=%d",
+                            iteration,
+                            len(current_threats.threats),
+                            len(cumulative_threats.threats),
+                        )
                     iterations_completed = iteration  # Track before potential break in gap analysis
 
                     # Show cumulative count only from iteration 2+ (iteration 1 is same as current)
