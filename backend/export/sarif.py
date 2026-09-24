@@ -154,6 +154,7 @@ def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dic
                 "target": threat.target,
                 "impact": threat.impact,
                 "likelihood": threat.likelihood,
+                "source": threat.source,
             },
         }
 
