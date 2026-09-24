@@ -1,0 +1,18 @@
+rules:
+  - id: environment-json-stringify-env
+    languages: [js, ts]
+    severity: WARNING
+    message: Serializes the full process environment — a common exfiltration shape.
+    metadata:
+      category: environment
+    pattern: JSON.stringify(process.env)
+
+  - id: environment-env-spread
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Spreads the full process environment into a new object — a common
+      exfiltration shape.
+    metadata:
+      category: environment
+    pattern: "{...process.env}"

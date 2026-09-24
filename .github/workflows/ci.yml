@@ -57,6 +57,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,bedrock]"
 
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Semgrep rule pack precision test
+        run: semgrep --test --metrics=off backend/deps/rules/js
+
       - name: Run tests
         # test_pipeline_e2e.py requires a live LLM provider (ANTHROPIC_API_KEY)
         # and the context-link binary — both absent in CI runners.

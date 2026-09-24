@@ -1,0 +1,62 @@
+rules:
+  - id: filesystem-fs-write-or-delete
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Writes, deletes, renames, or changes permissions on a file via the `fs`
+      module — called directly, or passed by reference (util.promisify,
+      .bind, callbacks). Reads are intentionally not flagged.
+    metadata:
+      category: filesystem
+    # References are matched only in use contexts; a bare `$M.$FUNC` would
+    # also match inside `const { writeFileSync } = require(...)`, which Semgrep
+    # desugars into a member access on the required module.
+    patterns:
+      - pattern-either:
+          - pattern: require($MOD).$FUNC(...)
+          - pattern: require($MOD).promises.$FUNC(...)
+          - pattern: $CALLEE(..., require($MOD).$FUNC, ...)
+          - pattern: require($MOD).$FUNC.bind(...)
+          # Module object bound to a name: plain require (var/let/const),
+          # require wrapped by TypeScript's __importDefault/__importStar
+          # helpers, or an ESM default/namespace import.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $M = <... require($MOD) ...>;
+                      ...
+                  - pattern-inside: |
+                      import $M from $MOD;
+                      ...
+                  - pattern-inside: |
+                      import * as $M from $MOD;
+                      ...
+              - pattern-either:
+                  - pattern: $M.$FUNC(...)
+                  - pattern: $M.default.$FUNC(...)
+                  - pattern: $M.promises.$FUNC(...)
+                  # tsc's CommonJS emit for named/default imports
+                  - pattern: (0, $M.$FUNC)(...)
+                  - pattern: (0, $M.default.$FUNC)(...)
+                  - pattern: $CALLEE(..., $M.$FUNC, ...)
+                  - pattern: $CALLEE(..., $M.default.$FUNC, ...)
+                  - pattern: $M.$FUNC.bind(...)
+          # Individual functions pulled out by destructuring or named import.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      const {..., $FUNC, ...} = require($MOD);
+                      ...
+                  - pattern-inside: |
+                      import {..., $FUNC, ...} from $MOD;
+                      ...
+              - pattern-either:
+                  - pattern: $FUNC(...)
+                  - pattern: $CALLEE(..., $FUNC, ...)
+                  - pattern: $FUNC.bind(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["']?(node:)?fs(/promises)?["']?$
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(write|append|unlink|rm|rename|chmod|chown|mkdir|rmdir|symlink|truncate|copy|cp)(File|dir)?(Sync)?$
