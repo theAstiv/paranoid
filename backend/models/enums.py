@@ -143,6 +143,38 @@ class DiagramFormat(str, Enum):
     MERMAID = "mermaid"
 
 
+class CapabilityCategory(str, Enum):
+    """What a dependency's static analysis shows it is capable of doing."""
+
+    NETWORK = "network"
+    FILESYSTEM = "filesystem"
+    PROCESS = "process"
+    CRYPTO = "crypto"
+    DESERIALIZATION = "deserialization"
+    DYNAMIC_CODE = "dynamic_code"
+    NATIVE_FFI = "native_ffi"
+    PERSISTENCE = "persistence"
+    AUTHENTICATION = "authentication"
+    ENVIRONMENT = "environment"
+    BUILD_INSTALL = "build_install"
+
+
+class SourceKind(str, Enum):
+    """Where a dependency's scanned source came from."""
+
+    GITHUB = "github"
+    NPM_TARBALL = "npm_tarball"
+
+
+class PathClass(str, Enum):
+    """Classification of a file's role within a package, by path."""
+
+    SHIPPED = "shipped"
+    TEST = "test"
+    EXAMPLE = "example"
+    BUILD = "build"
+
+
 class NotificationType(str, Enum):
     """Types of user notifications (Phase 5)."""
 
