@@ -1,0 +1,52 @@
+rules:
+  - id: native-ffi-node-addon-require
+    languages: [js, ts]
+    severity: WARNING
+    message: Loads a compiled native addon (`.node` binary) directly via `require()`.
+    metadata:
+      category: native_ffi
+    patterns:
+      - pattern: require($X)
+      - metavariable-regex:
+          metavariable: $X
+          regex: ^["'].*\.node["']$
+
+  - id: native-ffi-bindings-module
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Uses the `bindings` or `node-gyp-build` helper to locate and load a
+      compiled native addon for the current platform.
+    metadata:
+      category: native_ffi
+    patterns:
+      - pattern-either:
+          - pattern: require("bindings")(...)
+          - pattern: require('bindings')(...)
+          - pattern: require("node-gyp-build")(...)
+          - pattern: require('node-gyp-build')(...)
+
+  - id: native-ffi-ffi-napi-library
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Declares a foreign-function interface into a native shared library via
+      `ffi-napi`/`ffi-rs`'s `Library(...)`.
+    metadata:
+      category: native_ffi
+    patterns:
+      - pattern-either:
+          - pattern: new (require($MOD)).Library(...)
+          - patterns:
+              - pattern-inside: |
+                  $F = <... require($MOD) ...>;
+                  ...
+              - pattern: new $F.Library(...)
+          - patterns:
+              - pattern-inside: |
+                  const { Library } = require($MOD);
+                  ...
+              - pattern: new Library(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["']ffi-napi["']$

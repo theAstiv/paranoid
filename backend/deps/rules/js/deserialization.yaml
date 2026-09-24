@@ -1,0 +1,59 @@
+rules:
+  - id: deserialization-node-serialize-unserialize
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls `unserialize()` from the `node-serialize` package, which can
+      execute embedded `_$$ND_FUNC$$_` function payloads found in the input.
+    metadata:
+      category: deserialization
+    patterns:
+      - pattern-either:
+          - pattern: require("node-serialize").unserialize(...)
+          - pattern: require('node-serialize').unserialize(...)
+          - patterns:
+              - pattern-inside: |
+                  $S = <... require("node-serialize") ...>;
+                  ...
+              - pattern: $S.unserialize(...)
+          - patterns:
+              - pattern-inside: |
+                  const { unserialize } = require("node-serialize");
+                  ...
+              - pattern: unserialize(...)
+
+  - id: deserialization-js-yaml-unsafe-load
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Loads YAML with `js-yaml`'s unsafe `load()` (default schema executes
+      arbitrary tags) instead of `safeLoad()`/`load(..., {schema: ...})`.
+    metadata:
+      category: deserialization
+    patterns:
+      - pattern-either:
+          - pattern: require("js-yaml").load(...)
+          - pattern: require('js-yaml').load(...)
+          - patterns:
+              - pattern-inside: |
+                  $Y = <... require("js-yaml") ...>;
+                  ...
+              - pattern: $Y.load(...)
+          - patterns:
+              - pattern-inside: |
+                  const { load } = require("js-yaml");
+                  ...
+              - pattern: load(...)
+
+  - id: deserialization-unserialize-package-call
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls the `unserialize` package's exported function directly, which
+      reconstructs objects (including function-shaped payloads) from a string.
+    metadata:
+      category: deserialization
+    patterns:
+      - pattern-either:
+          - pattern: require("unserialize")(...)
+          - pattern: require('unserialize')(...)
