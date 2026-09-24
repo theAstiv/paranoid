@@ -1,0 +1,56 @@
+rules:
+  - id: persistence-cron-scheduler
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Schedules a recurring job via `node-cron`/`node-schedule` — a way for
+      a dependency to keep running code after the initiating process exits.
+    metadata:
+      category: persistence
+    patterns:
+      - pattern-either:
+          - pattern: require($MOD).schedule(...)
+          - patterns:
+              - pattern-inside: |
+                  $C = <... require($MOD) ...>;
+                  ...
+              - pattern: $C.schedule(...)
+          - patterns:
+              - pattern-inside: |
+                  const { schedule } = require($MOD);
+                  ...
+              - pattern: schedule(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["'](node-cron|node-schedule)["']$
+
+  - id: persistence-crontab-write
+    languages: [js, ts]
+    severity: WARNING
+    message: Reads/writes the system crontab via the `crontab` package.
+    metadata:
+      category: persistence
+    patterns:
+      - pattern-either:
+          - pattern: require("crontab")(...)
+          - pattern: require('crontab')(...)
+
+  - id: persistence-shell-profile-path
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      References a shell startup file (.bashrc/.bash_profile/.zshrc/.profile)
+      by path — a common target for persisting a payload across shell sessions.
+    metadata:
+      category: persistence
+    pattern-regex: '["''][^"'']*\.(bashrc|bash_profile|zshrc|profile)["'']'
+
+  - id: persistence-windows-run-key
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      References the Windows `Run`/`RunOnce` registry key path, used to start
+      a program automatically on login.
+    metadata:
+      category: persistence
+    pattern-regex: '["''][^"'']*CurrentVersion\\\\Run[^"'']*["'']'

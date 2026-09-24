@@ -1,0 +1,81 @@
+rules:
+  - id: authentication-jsonwebtoken-sign-or-verify
+    languages: [js, ts]
+    severity: WARNING
+    message: Signs or verifies a JSON Web Token via `jsonwebtoken`.
+    metadata:
+      category: authentication
+    patterns:
+      - pattern-either:
+          - pattern: require($MOD).$FUNC(...)
+          - patterns:
+              - pattern-inside: |
+                  $J = <... require($MOD) ...>;
+                  ...
+              - pattern: $J.$FUNC(...)
+          - patterns:
+              - pattern-inside: |
+                  const {..., $FUNC, ...} = require($MOD);
+                  ...
+              - pattern: $FUNC(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["'](jsonwebtoken|jose)["']$
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(sign|verify|decode)$
+
+  - id: authentication-password-hash-call
+    languages: [js, ts]
+    severity: WARNING
+    message: Hashes or compares a password via `bcrypt`/`bcryptjs`/`argon2`.
+    metadata:
+      category: authentication
+    patterns:
+      - pattern-either:
+          - pattern: require($MOD).$FUNC(...)
+          - patterns:
+              - pattern-inside: |
+                  $B = <... require($MOD) ...>;
+                  ...
+              - pattern: $B.$FUNC(...)
+          - patterns:
+              - pattern-inside: |
+                  const {..., $FUNC, ...} = require($MOD);
+                  ...
+              - pattern: $FUNC(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["'](bcrypt|bcryptjs|argon2)["']$
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(hash|hashSync|compare|compareSync|verify)$
+
+  - id: authentication-passport-strategy-use
+    languages: [js, ts]
+    severity: WARNING
+    message: Registers an authentication strategy via `passport.use(...)`.
+    metadata:
+      category: authentication
+    patterns:
+      - pattern-either:
+          - pattern: require("passport").use(...)
+          - pattern: require('passport').use(...)
+          - patterns:
+              - pattern-inside: |
+                  $P = <... require("passport") ...>;
+                  ...
+              - pattern: $P.use(...)
+
+  - id: authentication-set-authorization-header
+    languages: [js, ts]
+    severity: WARNING
+    message: Sets an `Authorization` header — carries a bearer token, API key, or basic-auth credential.
+    metadata:
+      category: authentication
+    patterns:
+      - pattern-either:
+          - pattern: $HEADERS['Authorization'] = ...
+          - pattern: $HEADERS["Authorization"] = ...
+          - pattern: $HEADERS.set('Authorization', ...)
+          - pattern: $HEADERS.set("Authorization", ...)
