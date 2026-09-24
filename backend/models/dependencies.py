@@ -64,3 +64,50 @@ class CapabilityProfile(BaseModel):
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons."""
         return {e.category for e in self.evidence if e.path_class == PathClass.SHIPPED}
+
+
+class VersionDelta(BaseModel):
+    """What changed in a package's capabilities between two published versions."""
+
+    name: str
+    previous_version: str
+    current_version: str
+    categories_added: list[CapabilityCategory] = Field(default_factory=list)
+    categories_removed: list[CapabilityCategory] = Field(default_factory=list)
+    publisher_changed: bool = False
+    previous_publisher: str | None = None
+    current_publisher: str | None = None
+    days_since_previous_publish: float | None = None
+    install_hooks_added: list[str] = Field(default_factory=list)
+    semver_jump: Literal["major", "minor", "patch", "prerelease", "unknown"] = "unknown"
+    # Supply-chain heuristics from `backend.deps.delta.supply_chain_flags` —
+    # "suspicious_capability_addition" | "install_hook_added" |
+    # "dormant_package_new_capability".
+    flags: list[str] = Field(default_factory=list)
+
+
+class DriftReport(BaseModel):
+    """Comparison of a package's npm-tarball source against its GitHub source.
+
+    Every tarball-only file is classified into exactly one bucket below.
+    `signal` is true only when an `unexplained` file carries a capability
+    category absent from the GitHub scan (`unexplained_categories`) — the
+    one drift finding strong enough to surface as a flag rather than
+    information (see `backend.deps.drift`).
+    """
+
+    name: str
+    version: str
+    status: Literal[
+        "compared",
+        "skipped_github_unavailable",
+        "skipped_npm_unavailable",
+        "skipped_scan_incomplete",
+    ] = "skipped_github_unavailable"
+    matched: list[str] = Field(default_factory=list)
+    explained_by_sourcemap: list[str] = Field(default_factory=list)
+    explained_by_build: list[str] = Field(default_factory=list)
+    bundled_dependency: list[str] = Field(default_factory=list)
+    unexplained: list[str] = Field(default_factory=list)
+    signal: bool = False
+    unexplained_categories: list[CapabilityCategory] = Field(default_factory=list)
