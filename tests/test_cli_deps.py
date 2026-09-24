@@ -129,6 +129,64 @@ def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
     assert "(not scanned)" in result.output  # GitHub capability grid has nothing to show
 
 
+def test_scan_github_hostile_tarball_degrades_instead_of_aborting_whole_scan(
+    runner, monkeypatch, tmp_path
+):
+    """A real repo tripping the safe-extraction net on one file (e.g. a legitimate
+    symlink) must not discard an already-successful npm-side scan — found via the
+    dependency-engine benchmark (esbuild's GitHub tarball has exactly this shape)."""
+    resolved = _resolved(github_status="resolved")
+    npm_profile = _profile(categories=[CapabilityCategory.NATIVE_FFI])
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        if kind == SourceKind.GITHUB:
+            raise deps_cli.FetchError("Refusing to extract symlink/hardlink member: 'x'")
+        return tmp_path / "npm"
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return npm_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert result.exit_code == 0, result.output
+    assert "native_ffi" in result.output  # npm-side result survived
+    assert "GitHub source unavailable — drift skipped." in result.output
+
+
+def test_scan_npm_hostile_tarball_still_raises(runner, monkeypatch, tmp_path):
+    """The npm tarball is the primary, integrity-checked source: a hostile/tampered
+    npm tarball (traversal, symlink, integrity mismatch) must still surface as an
+    error, not silently degrade to "(not scanned)" with exit 0 — that would hide
+    exactly the flagged dependency this command exists to catch."""
+    resolved = _resolved(github_status="unavailable")
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        assert kind == SourceKind.NPM_TARBALL
+        raise deps_cli.FetchError("Refusing path-traversal member: '../../etc/passwd'")
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "npm"])
+    assert result.exit_code == 1
+    assert "path-traversal" in result.output
+
+
 def test_scan_warns_when_semgrep_missing(runner, monkeypatch, tmp_path):
     resolved = _resolved()
     profile = _profile(categories=())

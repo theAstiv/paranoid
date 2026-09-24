@@ -8,6 +8,7 @@ command only ever runs Semgrep against it.
 
 import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -32,6 +33,8 @@ from backend.models.dependencies import (
 )
 from backend.models.enums import SourceKind
 
+
+logger = logging.getLogger(__name__)
 
 _SPEC_RE = re.compile(r"^(?P<name>@[^/@]+/[^/@]+|[^/@]+)@(?P<version>.+)$")
 _MANIFEST_CONCURRENCY = 4
@@ -70,7 +73,31 @@ async def _resolve_one(
 async def _fetch_and_scan(
     resolved: ResolvedPackage, kind: SourceKind, client: httpx.AsyncClient
 ) -> tuple[Path | None, CapabilityProfile | None]:
-    path = await fetch_source(resolved, kind, client)
+    """Fetch + scan one source.
+
+    For GitHub only, a hostile/corrupt tarball degrades this source to
+    "unavailable" rather than raising — the same outcome as GitHub not
+    resolving — so a real repo tripping the safety net on one file (e.g. a
+    legitimate symlink) never discards results already obtained from the npm
+    side in `_scan_one`. The npm tarball is the primary, integrity-checked
+    source: a hostile/tampered *npm* tarball (integrity mismatch, path
+    traversal, symlink member) is exactly the kind of finding this command
+    exists to surface, so it still raises — silently reporting it as
+    "(not scanned)" would hide a flagged dependency behind an ordinary miss.
+    """
+    if kind == SourceKind.GITHUB:
+        try:
+            path = await fetch_source(resolved, kind, client)
+        except FetchError as e:
+            logger.warning(
+                "GitHub fetch rejected for %s@%s: %s — treating GitHub source as unavailable",
+                resolved.name,
+                resolved.version,
+                e,
+            )
+            return None, None
+    else:
+        path = await fetch_source(resolved, kind, client)
     if path is None:
         return None, None
     profile = await scan_source(path, kind, name=resolved.name, version=resolved.version)
