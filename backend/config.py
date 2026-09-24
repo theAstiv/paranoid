@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     # Example: ADDITIONAL_GIT_HOSTS=git.company.com,git.internal.net
     additional_git_hosts: str = ""
 
+    # Dependency capability engine (npm/JS+TS). See backend/deps/.
+    deps_cache_dir: str = "./data/deps_cache"
+    deps_max_tarball_mb: int = Field(default=50, gt=0)
+    # Empty = auto-detect via PATH (shutil.which("semgrep")); set SEMGREP_BINARY
+    # to override, same pattern as CONTEXT_LINK_BINARY.
+    semgrep_binary: str = ""
+
     # Seed collection filter for the deterministic rule engine.
     # Comma-separated list of collection names (see _KNOWN_SEED_COLLECTIONS).
     # Empty list (default) loads all 16 collections — no behaviour change.
