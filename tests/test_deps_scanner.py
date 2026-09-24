@@ -6,6 +6,7 @@ are skipped when the binary isn't installed. The failure-mode tests
 never depend on Semgrep being present.
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,24 @@ async def test_scan_source_includes_flagged_install_hook():
 
     assert any("postinstall" in h for h in profile.install_hooks)
     assert not any("prepare" in h for h in profile.install_hooks)  # husky install is benign
+
+
+@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
+@pytest.mark.asyncio
+async def test_scan_source_finds_install_hooks_inside_wrapper_directory(tmp_path):
+    """fetch_source() never strips the tarball's single top-level wrapper
+    directory (npm's `package/`) — package.json lives inside it, not at the
+    scanned root, so install-hook detection must look there too."""
+    fetch_dir = tmp_path / "fetched"
+    wrapped = fetch_dir / "package"
+    shutil.copytree(FIXTURE_DIR, wrapped)
+    (fetch_dir / ".complete").touch()
+
+    profile = await scanner.scan_source(
+        fetch_dir, SourceKind.NPM_TARBALL, name="mini-package", version="1.0.0"
+    )
+
+    assert any("postinstall" in h for h in profile.install_hooks)
 
 
 @pytest.mark.asyncio

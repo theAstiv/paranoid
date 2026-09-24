@@ -16,6 +16,7 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.deps.install_hooks import find_install_hooks
+from backend.deps.paths import content_root
 from backend.models.dependencies import CapabilityEvidence, CapabilityProfile
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
@@ -237,7 +238,7 @@ async def scan_source(
         if item is not None:
             evidence.append(item)
 
-    package_json = path / "package.json"
+    package_json = content_root(path) / "package.json"
     install_hooks = find_install_hooks(package_json) if package_json.is_file() else []
 
     capability_vector = sorted({e.category for e in evidence}, key=lambda c: c.value)
