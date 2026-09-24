@@ -244,6 +244,34 @@ async def test_saturation_cannot_fire_on_iteration_1(mock_provider: MockProvider
 
 
 @pytest.mark.asyncio
+async def test_maestro_iteration_one_receives_seeded_threats(mock_provider: MockProvider):
+    """MAESTRO's iteration-1 call must receive seeded threats, like the STRIDE call does.
+
+    Regression: before the fix, the MAESTRO generate_threats call always passed
+    existing_threats=None, so seeded threats (loaded into cumulative_threats before
+    iteration 1) were invisible to MAESTRO generation even though STRIDE saw them.
+    """
+    seeded = ThreatsList(threats=[_make_threat("Seeded MAESTRO Marker Threat")])
+
+    async for _event in run_pipeline_for_model(
+        model_id="test-model",
+        description="AI system with an LLM component",
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        max_iterations=1,
+        has_ai_components=True,
+        seeded_threats=seeded,
+    ):
+        pass
+
+    # With max_iterations=1, gap analysis is skipped, so the MAESTRO generate_threats
+    # call (issued after STRIDE's) is the last LLM call made — its prompt is preserved
+    # in last_prompt.
+    assert mock_provider.last_prompt is not None
+    assert "Seeded MAESTRO Marker Threat" in mock_provider.last_prompt
+
+
+@pytest.mark.asyncio
 async def test_balance_gate_excludes_seeded_threats(mock_provider: MockProvider):
     """STRIDE balance gate must evaluate only LLM-generated threats, not seeds.
 
