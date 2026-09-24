@@ -568,7 +568,9 @@ class PipelineRunner:
                                 flows=flows,
                                 framework=Framework.MAESTRO,
                                 provider=self.provider,
-                                existing_threats=None,  # MAESTRO threats are separate
+                                existing_threats=current_threats
+                                if iteration > 1
+                                else (cumulative_threats if cumulative_threats.threats else None),
                                 gap_analysis=gaps[-1] if gaps else None,
                                 rag_context=rag_context,
                                 temperature=self.config.temperature,
