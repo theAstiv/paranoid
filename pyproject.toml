@@ -99,6 +99,7 @@ include = ["backend*", "cli*", "seeds*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json"]
+"backend.deps" = ["rules/js/*.yaml"]
 
 [tool.ruff]
 line-length = 100

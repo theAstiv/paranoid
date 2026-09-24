@@ -27,6 +27,11 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Dependency-scanner fixtures model published npm packages, whose shipped
+# code commonly lives in dist/ or build/ — keep those tracked.
+!tests/fixtures/deps/**/dist/
+!tests/fixtures/deps/**/build/
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

@@ -1,0 +1,73 @@
+rules:
+  - id: network-fetch-call
+    languages: [js, ts]
+    severity: WARNING
+    message: Makes an HTTP request via the global `fetch`.
+    metadata:
+      category: network
+    pattern: fetch(...)
+
+  - id: network-node-module-call
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Opens a network connection via a Node.js networking module
+      (http/https/http2/net/tls/dgram) — called directly, or passed by
+      reference (util.promisify, .bind, callbacks).
+    metadata:
+      category: network
+    # References are matched only in use contexts; a bare `$M.$FUNC` would
+    # also match inside `const { get } = require(...)`, which Semgrep desugars
+    # into a member access on the required module.
+    patterns:
+      - pattern-either:
+          - pattern: require($MOD).$FUNC(...)
+          - pattern: $CALLEE(..., require($MOD).$FUNC, ...)
+          - pattern: require($MOD).$FUNC.bind(...)
+          # Module object bound to a name: plain require (var/let/const),
+          # require wrapped by TypeScript's __importDefault/__importStar
+          # helpers, or an ESM default/namespace import.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $M = <... require($MOD) ...>;
+                      ...
+                  - pattern-inside: |
+                      import $M from $MOD;
+                      ...
+                  - pattern-inside: |
+                      import * as $M from $MOD;
+                      ...
+              - pattern-either:
+                  - pattern: $M.$FUNC(...)
+                  - pattern: $M.default.$FUNC(...)
+                  # tsc's CommonJS emit for named/default imports
+                  - pattern: (0, $M.$FUNC)(...)
+                  - pattern: (0, $M.default.$FUNC)(...)
+                  - pattern: $CALLEE(..., $M.$FUNC, ...)
+                  - pattern: $CALLEE(..., $M.default.$FUNC, ...)
+                  - pattern: $M.$FUNC.bind(...)
+          # Individual functions pulled out by destructuring or named import.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      const {..., $FUNC, ...} = require($MOD);
+                      ...
+                  - pattern-inside: |
+                      import {..., $FUNC, ...} from $MOD;
+                      ...
+              - pattern-either:
+                  - pattern: $FUNC(...)
+                  - pattern: $CALLEE(..., $FUNC, ...)
+                  - pattern: $FUNC.bind(...)
+      - metavariable-regex:
+          metavariable: $MOD
+          regex: ^["']?(node:)?(http|https|http2|net|tls|dgram)["']?$
+
+  - id: network-websocket-construction
+    languages: [js, ts]
+    severity: WARNING
+    message: Opens a WebSocket connection.
+    metadata:
+      category: network
+    pattern: new WebSocket(...)
