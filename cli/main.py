@@ -6,6 +6,7 @@ Command-line interface for iterative threat modeling powered by LLMs.
 import click
 
 from cli.commands.config import config
+from cli.commands.deps import deps
 from cli.commands.models import models
 from cli.commands.run import run
 from cli.commands.version import version
@@ -39,6 +40,7 @@ def cli() -> None:
 # Register commands
 cli.add_command(run)
 cli.add_command(config)
+cli.add_command(deps)
 cli.add_command(models)
 cli.add_command(version)
 
