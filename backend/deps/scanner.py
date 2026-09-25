@@ -17,8 +17,7 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.deps.install_hooks import find_install_hooks, find_install_time_files
-from backend.deps.paths import content_root
-from backend.deps.references import find_reachable_files
+from backend.deps.references import find_install_time_closure, find_reachable_files
 from backend.models.dependencies import CapabilityEvidence, CapabilityProfile
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
@@ -115,24 +114,13 @@ async def _run_semgrep(binary: str, target: Path) -> tuple[int, str, str]:
     )
 
 
-def _wrapper_prefix(target: Path, root: Path) -> str:
-    """`root` (`content_root(target)`) relative to `target`, as a posix
-    prefix — empty unless `content_root` performed its defensive
-    single-subdirectory collapse (see `backend/deps/paths.py`)."""
-    if root == target:
-        return ""
-    return root.relative_to(target).as_posix() + "/"
-
-
-def _canonicalize(rel_path: str, wrapper: str) -> str:
-    """`rel_path` (relative to the scan `target`) with any wrapper prefix
-    stripped and normalized, matching the root-relative paths
+def _canonicalize(rel_path: str) -> str:
+    """`rel_path` (relative to the scan target, which is already the
+    package's content root — `fetch_source()` extracts without any wrapper
+    directory) normalized to match the root-relative paths
     `references.find_reachable_files` and `install_hooks.find_install_time_files`
     operate on."""
-    normalized = posixpath.normpath(rel_path.replace("\\", "/"))
-    if wrapper and normalized.startswith(wrapper):
-        return normalized[len(wrapper) :]
-    return normalized
+    return posixpath.normpath(rel_path.replace("\\", "/"))
 
 
 def _read_lines(path: Path, cache: dict[Path, list[str]]) -> list[str]:
@@ -183,7 +171,6 @@ def _build_evidence(
     source_kind: SourceKind,
     *,
     line_cache: dict[Path, list[str]],
-    wrapper: str,
     promoted: dict[str, str],
     install_time_files: set[str],
 ) -> CapabilityEvidence | None:
@@ -202,7 +189,7 @@ def _build_evidence(
         rel_path = str(abs_path.relative_to(target))
     except ValueError:
         rel_path = str(abs_path)
-    canonical = _canonicalize(rel_path, wrapper)
+    canonical = _canonicalize(rel_path)
 
     snippet = _extract_snippet(
         _read_lines(abs_path, line_cache), result.get("start", {}), result.get("end", {})
@@ -326,13 +313,18 @@ async def scan_source(
             version,
         )
 
-    root = content_root(path)
-    wrapper = _wrapper_prefix(path, root)
-    promoted = find_reachable_files(root, classify_path) if root.is_dir() else {}
-    package_json = root / "package.json"
+    package_json = path / "package.json"
     install_hooks = find_install_hooks(package_json) if package_json.is_file() else []
-    install_time_files = find_install_time_files(package_json) if package_json.is_file() else set()
-    install_time_files = {f.replace("\\", "/") for f in install_time_files}
+    raw_install_time_files = (
+        find_install_time_files(package_json) if package_json.is_file() else set()
+    )
+    raw_install_time_files = frozenset(f.replace("\\", "/") for f in raw_install_time_files)
+    install_time_files = (
+        find_install_time_closure(path, raw_install_time_files) | raw_install_time_files
+    )
+    promoted = (
+        find_reachable_files(path, classify_path, raw_install_time_files) if path.is_dir() else {}
+    )
 
     line_cache: dict[Path, list[str]] = {}
     evidence = []
@@ -342,7 +334,6 @@ async def scan_source(
             path,
             source_kind,
             line_cache=line_cache,
-            wrapper=wrapper,
             promoted=promoted,
             install_time_files=install_time_files,
         )

@@ -97,12 +97,19 @@ def _resolve(root: Path, from_dir: Path, specifier: str) -> Path | None:
     return None
 
 
-def find_reachable_files(root: Path, classify: Callable[[str], PathClass]) -> dict[str, str]:
+def find_reachable_files(
+    root: Path,
+    classify: Callable[[str], PathClass],
+    install_time_files: frozenset[str] = frozenset(),
+) -> dict[str, str]:
     """Return `{promoted_rel_path: via_rel_path}` for every TEST/EXAMPLE/BUILD
     file reachable, through relative require()/import specifiers, from a
-    declared package.json entry point or another SHIPPED file. A declared
-    entry point that is itself TEST/EXAMPLE/BUILD-classified is promoted too
-    (`via` = "package.json").
+    declared package.json entry point, another SHIPPED file, or a file an
+    install lifecycle hook runs directly (`install_time_files`, from
+    `backend.deps.install_hooks.find_install_time_files`) — a payload
+    required by an install-hook target must be promoted too, not just the
+    hook target itself. A declared entry point that is itself
+    TEST/EXAMPLE/BUILD-classified is promoted too (`via` = "package.json").
 
     `classify` is `backend.deps.scanner.classify_path`, injected rather than
     imported directly — `scanner` imports this module, so importing it back
@@ -125,6 +132,21 @@ def find_reachable_files(root: Path, classify: Callable[[str], PathClass]) -> di
     promoted: dict[str, str] = {}
     queue: list[Path] = list(shipped)
     visited: set[Path] = set(queue)
+
+    for rel in install_time_files:
+        try:
+            candidate = (root / rel).resolve()
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if not candidate.is_file() or candidate in visited:
+            continue
+        visited.add(candidate)
+        via_rel = candidate.relative_to(root).as_posix()
+        if classify(via_rel) != PathClass.SHIPPED:
+            promoted.setdefault(via_rel, "package.json (install hook)")
+        queue.append(candidate)
+
     for spec in _entry_specifiers(root):
         resolved = _resolve(root, root, spec)
         if resolved is None or resolved in visited:
@@ -154,3 +176,52 @@ def find_reachable_files(root: Path, classify: Callable[[str], PathClass]) -> di
             queue.append(target)
 
     return promoted
+
+
+def find_install_time_closure(root: Path, install_time_files: frozenset[str]) -> set[str]:
+    """Every file transitively reachable, via relative require()/import, from
+    `install_time_files` (an install lifecycle hook's direct targets),
+    including those targets themselves.
+
+    Code reached this way also runs whenever the lifecycle hook runs, even if
+    nothing else in the package ever require()'s it — so it deserves the same
+    `CapabilityEvidence.install_time=True` marker as the hook target itself,
+    not just the target's own evidence.
+    """
+    try:
+        root = root.resolve()
+    except OSError:
+        return set()
+
+    closure: set[str] = set()
+    queue: list[Path] = []
+    visited: set[Path] = set()
+    for rel in install_time_files:
+        try:
+            candidate = (root / rel).resolve()
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if not candidate.is_file() or candidate in visited:
+            continue
+        visited.add(candidate)
+        queue.append(candidate)
+        closure.add(candidate.relative_to(root).as_posix())
+
+    idx = 0
+    while idx < len(queue):
+        current = queue[idx]
+        idx += 1
+        try:
+            text = current.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for spec in _extract_specifiers(text):
+            target = _resolve(root, current.parent, spec)
+            if target is None or target in visited:
+                continue
+            visited.add(target)
+            closure.add(target.relative_to(root).as_posix())
+            queue.append(target)
+
+    return closure
