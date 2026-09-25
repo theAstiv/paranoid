@@ -72,8 +72,12 @@ async def _resolve_one(
 
 async def _fetch_and_scan(
     resolved: ResolvedPackage, kind: SourceKind, client: httpx.AsyncClient
-) -> tuple[Path | None, CapabilityProfile | None]:
+) -> tuple[Path | None, CapabilityProfile | None, str | None]:
     """Fetch + scan one source.
+
+    Returns (path, profile, skip_reason) — `skip_reason` is set exactly when
+    `path` is None, so the caller can label *why* a source wasn't compared
+    instead of collapsing every skip into one opaque status.
 
     For GitHub only, a hostile/corrupt tarball degrades this source to
     "unavailable" rather than raising — the same outcome as GitHub not
@@ -87,7 +91,7 @@ async def _fetch_and_scan(
     """
     if kind == SourceKind.GITHUB:
         try:
-            path = await fetch_source(resolved, kind, client)
+            result = await fetch_source(resolved, kind, client)
         except FetchError as e:
             logger.warning(
                 "GitHub fetch rejected for %s@%s: %s — treating GitHub source as unavailable",
@@ -95,13 +99,27 @@ async def _fetch_and_scan(
                 resolved.version,
                 e,
             )
-            return None, None
+            return None, None, f"github_fetch_rejected:{type(e).__name__}"
     else:
-        path = await fetch_source(resolved, kind, client)
-    if path is None:
-        return None, None
-    profile = await scan_source(path, kind, name=resolved.name, version=resolved.version)
-    return path, profile
+        result = await fetch_source(resolved, kind, client)
+    if result.path is None:
+        return None, None, result.reason
+    profile = await scan_source(result.path, kind, name=resolved.name, version=resolved.version)
+    if result.skipped_long_paths or result.skipped_link_names:
+        # Fetch-time skips are recorded on the profile itself (not just
+        # logged) so they survive into the JSON output and the capability
+        # grid — and, when the scan otherwise finished cleanly, downgrading
+        # status away from "ok" makes drift.compare_sources treat this the
+        # same as an incomplete scan without drift.py needing to know about
+        # fetch-time skips at all.
+        updates: dict = {
+            "skipped_long_paths": result.skipped_long_paths,
+            "skipped_link_names": list(result.skipped_link_names),
+        }
+        if result.skipped_long_paths and profile.status == "ok":
+            updates["status"] = "partial_fetch"
+        profile = profile.model_copy(update=updates)
+    return result.path, profile, None
 
 
 async def _scan_one(
@@ -118,26 +136,44 @@ async def _scan_one(
 
     resolved = await _resolve_one(name, version, want_github, client)
 
-    tarball_path = tarball_profile = None
+    tarball_path = tarball_profile = tarball_skip_reason = None
     if want_npm:
-        tarball_path, tarball_profile = await _fetch_and_scan(
+        tarball_path, tarball_profile, tarball_skip_reason = await _fetch_and_scan(
             resolved, SourceKind.NPM_TARBALL, client
         )
 
-    github_path = github_profile = None
+    github_path = github_profile = github_skip_reason = None
     if want_github:
-        github_path, github_profile = await _fetch_and_scan(resolved, SourceKind.GITHUB, client)
+        github_path, github_profile, github_skip_reason = await _fetch_and_scan(
+            resolved, SourceKind.GITHUB, client
+        )
 
     drift = None
     if want_npm and want_github:
         if tarball_path is None or tarball_profile is None:
             # compare_sources requires a resolved tarball dir/profile — this is
             # the npm side failing to fetch, not GitHub, so it gets its own label.
-            drift = DriftReport(name=name, version=version, status="skipped_npm_unavailable")
+            drift = DriftReport(
+                name=name,
+                version=version,
+                status="skipped_npm_unavailable",
+                skip_reason=tarball_skip_reason,
+            )
         else:
             drift = compare_sources(
                 name, version, tarball_path, tarball_profile, github_path, github_profile
             )
+            if drift.status == "skipped_github_unavailable" and github_skip_reason:
+                drift = drift.model_copy(update={"skip_reason": github_skip_reason})
+            elif drift.status == "skipped_scan_incomplete":
+                incomplete_sides = [
+                    side
+                    for side, profile in (("npm", tarball_profile), ("github", github_profile))
+                    if profile is not None and profile.status != "ok"
+                ]
+                drift = drift.model_copy(
+                    update={"skip_reason": f"scan_incomplete:{','.join(incomplete_sides)}"}
+                )
 
     return resolved, tarball_profile, github_profile, drift
 
@@ -151,9 +187,15 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
     if profile is None:
         click.echo("    (not scanned)")
         return
-    if profile.status != "ok":
+    if profile.status not in ("ok", "partial_fetch"):
         click.secho(f"    status: {profile.status}", fg="yellow")
         return
+    if profile.status == "partial_fetch":
+        click.secho(
+            f"    partial: {profile.skipped_long_paths} file(s) skipped "
+            "(path exceeds Windows path-length limits)",
+            fg="yellow",
+        )
     categories = profile.category_set()
     if not categories:
         click.echo("    (no capabilities detected)")
@@ -165,6 +207,10 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
         click.secho("    install hooks:", fg="yellow")
         for hook in profile.install_hooks:
             click.echo(f"      - {hook}")
+    if profile.skipped_link_names:
+        click.secho("    skipped symlinks/hardlinks:", fg="yellow")
+        for name in profile.skipped_link_names:
+            click.echo(f"      - {name}")
 
 
 def _render_drift(drift: DriftReport | None) -> None:
@@ -172,13 +218,16 @@ def _render_drift(drift: DriftReport | None) -> None:
         return
     click.secho("  Drift (npm tarball vs GitHub source):", fg="cyan", bold=True)
     if drift.status == "skipped_github_unavailable":
-        click.echo("    GitHub source unavailable — drift skipped.")
+        suffix = f" ({drift.skip_reason})" if drift.skip_reason else ""
+        click.echo(f"    GitHub source unavailable{suffix} — drift skipped.")
         return
     if drift.status == "skipped_npm_unavailable":
-        click.echo("    npm tarball unavailable — drift skipped.")
+        suffix = f" ({drift.skip_reason})" if drift.skip_reason else ""
+        click.echo(f"    npm tarball unavailable{suffix} — drift skipped.")
         return
     if drift.status == "skipped_scan_incomplete":
-        click.echo("    One or both scans did not finish cleanly — drift skipped.")
+        suffix = f" ({drift.skip_reason})" if drift.skip_reason else ""
+        click.echo(f"    One or both scans did not finish cleanly{suffix} — drift skipped.")
         return
     click.echo(
         f"    matched={len(drift.matched)} sourcemap={len(drift.explained_by_sourcemap)} "
@@ -387,7 +436,7 @@ def diff(
                     raise ValueError(f"No published version before {v2} found for {name}")
 
             prev_resolved = await resolve_npm(name, prev_version, client)
-            _, prev_tarball_profile = await _fetch_and_scan(
+            _, prev_tarball_profile, _ = await _fetch_and_scan(
                 prev_resolved, SourceKind.NPM_TARBALL, client
             )
 

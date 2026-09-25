@@ -358,8 +358,8 @@ async def test_historical_version_deltas_compute_cleanly():
             try:
                 prev_resolved = await resolve_npm(name, prev_version, client)
                 curr_resolved = await resolve_npm(name, curr_version, client)
-                prev_path = await fetch_source(prev_resolved, SourceKind.NPM_TARBALL, client)
-                curr_path = await fetch_source(curr_resolved, SourceKind.NPM_TARBALL, client)
+                prev_path = (await fetch_source(prev_resolved, SourceKind.NPM_TARBALL, client)).path
+                curr_path = (await fetch_source(curr_resolved, SourceKind.NPM_TARBALL, client)).path
             except (httpx.HTTPStatusError, ValueError) as e:
                 unavailable.append(f"{pair_label}: {type(e).__name__}: {e}")
                 continue
