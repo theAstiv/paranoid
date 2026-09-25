@@ -31,7 +31,7 @@ from backend.models.dependencies import (
     ResolvedPackage,
     VersionDelta,
 )
-from backend.models.enums import SourceKind
+from backend.models.enums import CapabilityCategory, SourceKind
 
 
 logger = logging.getLogger(__name__)
@@ -202,11 +202,24 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
     else:
         for category in sorted(categories, key=lambda c: c.value):
             count = sum(1 for e in profile.evidence if e.category == category)
+            # BUILD_INSTALL can come purely from a flagged install hook, with
+            # no matching Semgrep evidence at all (see category_set()).
+            if count == 0 and category == CapabilityCategory.BUILD_INSTALL:
+                count = len(profile.install_hooks)
             click.echo(f"    {category.value:<16} {count} finding(s)")
     if profile.install_hooks:
         click.secho("    install hooks:", fg="yellow")
         for hook in profile.install_hooks:
             click.echo(f"      - {hook}")
+    reclassified = {
+        e.file: (e.reclassified_from, e.reclassified_via)
+        for e in profile.evidence
+        if e.reclassified_from is not None
+    }
+    if reclassified:
+        click.secho("    reclassified as shipped:", fg="yellow")
+        for file, (was, via) in sorted(reclassified.items()):
+            click.echo(f"      - {file} (was {was.value}, loaded from {via})")
     if profile.skipped_link_names:
         click.secho("    skipped symlinks/hardlinks:", fg="yellow")
         for name in profile.skipped_link_names:

@@ -11,7 +11,7 @@ gaining a new capability.
 import re
 
 from backend.models.dependencies import CapabilityProfile, ResolvedPackage, VersionDelta
-from backend.models.enums import CapabilityCategory
+from backend.models.enums import CapabilityCategory, PathClass
 
 
 # packaging is PEP 440, not semver — a small local parser is used instead,
@@ -33,6 +33,14 @@ _RISKY_CATEGORIES = frozenset(
     }
 )
 _DORMANCY_THRESHOLD_DAYS = 365.0
+
+# Categories that matter specifically because a file carrying them also runs
+# at install time (`CapabilityEvidence.install_time`) — narrower than
+# `_RISKY_CATEGORIES` above (which includes BUILD_INSTALL, already implied by
+# running at install time at all).
+_INSTALL_TIME_RISKY_CATEGORIES = frozenset(
+    {CapabilityCategory.NETWORK, CapabilityCategory.PROCESS, CapabilityCategory.DYNAMIC_CODE}
+)
 
 
 def _parse_semver(version: str) -> tuple[int, int, int, str | None] | None:
@@ -115,7 +123,25 @@ def compute_delta(
         ),
         semver_jump=semver_jump(prev_pkg.version, curr_pkg.version),
     )
-    return delta.model_copy(update={"flags": supply_chain_flags(delta)})
+    flags = supply_chain_flags(delta)
+    if _has_new_install_time_risky_capability(curr_profile, set(delta.categories_added)):
+        flags.append("install_time_capability")
+    return delta.model_copy(update={"flags": flags})
+
+
+def _has_new_install_time_risky_capability(
+    curr_profile: CapabilityProfile, categories_added: set[CapabilityCategory]
+) -> bool:
+    """Whether a newly-added capability category is backed by a file that
+    also runs at install time — the ua-parser-js/event-stream shape where
+    the payload doesn't wait for the package to be `require()`'d at all."""
+    risky_added = categories_added & _INSTALL_TIME_RISKY_CATEGORIES
+    if not risky_added:
+        return False
+    return any(
+        e.install_time and e.path_class == PathClass.SHIPPED and e.category in risky_added
+        for e in curr_profile.evidence
+    )
 
 
 def supply_chain_flags(delta: VersionDelta) -> list[str]:

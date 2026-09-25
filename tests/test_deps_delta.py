@@ -91,6 +91,77 @@ def test_compute_delta_category_sets_use_shipped_evidence_only():
     assert delta.categories_removed == []
 
 
+def _evidence(category, *, file="index.js", path_class=None, install_time=False):
+    from backend.models.dependencies import CapabilityEvidence
+    from backend.models.enums import PathClass
+
+    return CapabilityEvidence(
+        category=category,
+        rule_id="r",
+        file=file,
+        line=1,
+        snippet="x",
+        source_kind=SourceKind.NPM_TARBALL,
+        path_class=path_class or PathClass.SHIPPED,
+        install_time=install_time,
+    )
+
+
+def test_compute_delta_flags_install_time_capability_for_newly_added_risky_category():
+    prev_profile = _profile()
+    curr_profile = CapabilityProfile(
+        name="pkg",
+        version="1.0.1",
+        source_kind=SourceKind.NPM_TARBALL,
+        evidence=[
+            _evidence(CapabilityCategory.NETWORK, file="scripts/setup.js", install_time=True)
+        ],
+        status="ok",
+    )
+
+    delta = compute_delta(_pkg("1.0.0"), _pkg("1.0.1"), prev_profile, curr_profile)
+
+    assert "install_time_capability" in delta.flags
+
+
+def test_compute_delta_no_install_time_capability_flag_when_not_install_time():
+    prev_profile = _profile()
+    curr_profile = CapabilityProfile(
+        name="pkg",
+        version="1.0.1",
+        source_kind=SourceKind.NPM_TARBALL,
+        evidence=[_evidence(CapabilityCategory.NETWORK, install_time=False)],
+        status="ok",
+    )
+
+    delta = compute_delta(_pkg("1.0.0"), _pkg("1.0.1"), prev_profile, curr_profile)
+
+    assert "install_time_capability" not in delta.flags
+
+
+def test_compute_delta_no_install_time_capability_flag_when_category_not_new():
+    prev_profile = CapabilityProfile(
+        name="pkg",
+        version="1.0.0",
+        source_kind=SourceKind.NPM_TARBALL,
+        evidence=[_evidence(CapabilityCategory.NETWORK)],
+        status="ok",
+    )
+    curr_profile = CapabilityProfile(
+        name="pkg",
+        version="1.0.1",
+        source_kind=SourceKind.NPM_TARBALL,
+        evidence=[
+            _evidence(CapabilityCategory.NETWORK, file="scripts/setup.js", install_time=True)
+        ],
+        status="ok",
+    )
+
+    delta = compute_delta(_pkg("1.0.0"), _pkg("1.0.1"), prev_profile, curr_profile)
+
+    assert "install_time_capability" not in delta.flags
+
+
 def test_compute_delta_publisher_changed():
     delta = compute_delta(
         _pkg("1.0.0", publisher="alice"),

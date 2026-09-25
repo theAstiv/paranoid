@@ -10,6 +10,18 @@ eval(userInput);
 // ok: dynamic-code-eval
 myEvalLikeHelper(userInput);
 
+// ruleid: dynamic-code-nonliteral-require
+require(moduleNameFromEnv);
+
+// ruleid: dynamic-code-nonliteral-require
+require(`./plugins/${pluginName}`);
+
+// ok: dynamic-code-nonliteral-require
+require('lodash');
+
+// ok: dynamic-code-nonliteral-require
+require("./local-helper");
+
 // ruleid: dynamic-code-vm-module
 require('vm').runInNewContext(code);
 
