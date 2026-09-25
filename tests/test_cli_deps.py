@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 import cli.commands.deps as deps_cli
+from backend.deps.fetcher import FetchResult
 from backend.models.dependencies import CapabilityEvidence, CapabilityProfile, ResolvedPackage
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
@@ -71,7 +72,7 @@ def test_scan_json_round_trip(runner, monkeypatch, tmp_path):
         source_dir = tmp_path / kind.value
         source_dir.mkdir(parents=True, exist_ok=True)
         (source_dir / "index.js").write_text("module.exports = {};")
-        return source_dir
+        return FetchResult(path=source_dir)
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -97,6 +98,56 @@ def test_scan_json_round_trip(runner, monkeypatch, tmp_path):
     assert data["drift"]["signal"] is False
 
 
+def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch, tmp_path):
+    """Fetch-time skips (Windows path-length limit, skipped symlinks) must be
+    visible in both the human-readable and JSON output, and a partial fetch
+    must make drift report the scan as incomplete rather than silently
+    comparing an incomplete tree as if it were clean."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    npm_profile = _profile(categories=[CapabilityCategory.NETWORK])
+    github_profile = _profile(categories=[CapabilityCategory.NETWORK])
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        source_dir = tmp_path / kind.value
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "index.js").write_text("module.exports = {};")
+        if kind == SourceKind.NPM_TARBALL:
+            return FetchResult(
+                path=source_dir, skipped_long_paths=1, skipped_link_names=("vendor/dead-link",)
+            )
+        return FetchResult(path=source_dir)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    text_result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert text_result.exit_code == 0, text_result.output
+    assert "partial: 1 file(s) skipped" in text_result.output
+    assert "vendor/dead-link" in text_result.output
+    assert "One or both scans did not finish cleanly (scan_incomplete:npm)" in text_result.output
+
+    json_result = runner.invoke(
+        deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both", "--format", "json"]
+    )
+    assert json_result.exit_code == 0, json_result.output
+    data = json.loads(json_result.output)
+    assert data["npm"]["status"] == "partial_fetch"
+    assert data["npm"]["skipped_long_paths"] == 1
+    assert data["npm"]["skipped_link_names"] == ["vendor/dead-link"]
+
+
 def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
     runner, monkeypatch, tmp_path
 ):
@@ -111,8 +162,8 @@ def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
 
     async def fake_fetch_source(r, kind, client):
         if kind == SourceKind.GITHUB:
-            return None
-        return tmp_path / "npm"
+            return FetchResult(path=None, reason="github_unresolved")
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -125,8 +176,45 @@ def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
     assert result.exit_code == 0, result.output
-    assert "GitHub source unavailable — drift skipped." in result.output
+    assert "GitHub source unavailable (github_unresolved) — drift skipped." in result.output
     assert "(not scanned)" in result.output  # GitHub capability grid has nothing to show
+
+
+def test_scan_incomplete_drift_reports_which_side(runner, monkeypatch, tmp_path):
+    """When both sources fetch but one scan doesn't finish cleanly, the drift
+    skip_reason must name which side (npm, github, or both) so a "compared"
+    rate can be computed without every skip collapsing into one opaque
+    status string."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    npm_profile = _profile(categories=[CapabilityCategory.NETWORK]).model_copy(
+        update={"status": "semgrep_timeout"}
+    )
+    github_profile = _profile(categories=[CapabilityCategory.NETWORK])
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        return FetchResult(path=tmp_path / kind.value)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "One or both scans did not finish cleanly (scan_incomplete:npm) — drift skipped."
+        in result.output
+    )
 
 
 def test_scan_github_hostile_tarball_degrades_instead_of_aborting_whole_scan(
@@ -147,7 +235,7 @@ def test_scan_github_hostile_tarball_degrades_instead_of_aborting_whole_scan(
     async def fake_fetch_source(r, kind, client):
         if kind == SourceKind.GITHUB:
             raise deps_cli.FetchError("Refusing to extract symlink/hardlink member: 'x'")
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return npm_profile
@@ -161,7 +249,10 @@ def test_scan_github_hostile_tarball_degrades_instead_of_aborting_whole_scan(
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
     assert result.exit_code == 0, result.output
     assert "native_ffi" in result.output  # npm-side result survived
-    assert "GitHub source unavailable — drift skipped." in result.output
+    assert (
+        "GitHub source unavailable (github_fetch_rejected:FetchError) — drift skipped."
+        in result.output
+    )
 
 
 def test_scan_npm_hostile_tarball_still_raises(runner, monkeypatch, tmp_path):
@@ -195,7 +286,7 @@ def test_scan_warns_when_semgrep_missing(runner, monkeypatch, tmp_path):
         return resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -220,7 +311,7 @@ def test_diff_two_explicit_versions(runner, monkeypatch, tmp_path):
         return prev_resolved if version == "1.0.0" else curr_resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / kind.value / r.version
+        return FetchResult(path=tmp_path / kind.value / r.version)
 
     async def fake_scan_source(path, kind, *, name, version):
         return prev_profile if version == "1.0.0" else curr_profile
@@ -251,7 +342,7 @@ def test_diff_defaults_previous_version_from_registry(runner, monkeypatch, tmp_p
         return prev_resolved if version == "1.0.0" else curr_resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm" / r.version
+        return FetchResult(path=tmp_path / "npm" / r.version)
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -299,7 +390,7 @@ def test_scan_manifest_v3_lockfile(runner, monkeypatch, tmp_path):
         return resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -331,7 +422,7 @@ def test_scan_manifest_v1_lockfile(runner, monkeypatch, tmp_path):
         return resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -359,7 +450,7 @@ def test_scan_manifest_falls_back_to_range_pin_without_lockfile(runner, monkeypa
         return resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return profile
@@ -420,7 +511,7 @@ def test_scan_manifest_isolates_one_dependency_failure(runner, monkeypatch, tmp_
         return good_resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm"
+        return FetchResult(path=tmp_path / "npm")
 
     async def fake_scan_source(path, kind, *, name, version):
         return good_profile
@@ -448,7 +539,7 @@ def test_diff_refuses_when_previous_scan_incomplete(runner, monkeypatch, tmp_pat
         return prev_resolved if version == "1.0.0" else curr_resolved
 
     async def fake_fetch_source(r, kind, client):
-        return tmp_path / "npm" / r.version
+        return FetchResult(path=tmp_path / "npm" / r.version)
 
     async def fake_scan_source(path, kind, *, name, version):
         return prev_profile if version == "1.0.0" else curr_profile

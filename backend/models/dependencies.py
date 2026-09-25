@@ -59,7 +59,16 @@ class CapabilityProfile(BaseModel):
     # Display-only summary of evidence categories — never diffed as strings.
     # Comparisons always operate on category sets built from `evidence`.
     capability_vector: list[CapabilityCategory] = Field(default_factory=list)
-    status: Literal["ok", "semgrep_unavailable", "semgrep_timeout", "semgrep_error"] = "ok"
+    # "partial_fetch": some source files couldn't be extracted (Windows
+    # path-length limit) — set by the CLI from FetchResult.skipped_long_paths
+    # when the scan itself otherwise finished cleanly. Deliberately != "ok"
+    # so `backend.deps.drift.compare_sources` treats it the same as an
+    # incomplete scan, without drift.py needing to know about fetch-time skips.
+    status: Literal[
+        "ok", "semgrep_unavailable", "semgrep_timeout", "semgrep_error", "partial_fetch"
+    ] = "ok"
+    skipped_long_paths: int = 0
+    skipped_link_names: list[str] = Field(default_factory=list)
 
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons."""
@@ -111,3 +120,8 @@ class DriftReport(BaseModel):
     unexplained: list[str] = Field(default_factory=list)
     signal: bool = False
     unexplained_categories: list[CapabilityCategory] = Field(default_factory=list)
+    # Set when status != "compared": a specific reason for the skip, e.g.
+    # "github_unresolved", "repo_directory_missing", "path_too_long", or
+    # "github_fetch_rejected:<ErrorType>" — so a "compared" rate can be
+    # computed without every skip collapsing into one opaque status string.
+    skip_reason: str | None = None

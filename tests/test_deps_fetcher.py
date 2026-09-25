@@ -6,8 +6,10 @@ in-memory; none of them are ever executed, only fed through the safe extractor.
 
 import asyncio
 import base64
+import errno
 import hashlib
 import io
+import os
 import tarfile
 
 import httpx
@@ -98,9 +100,9 @@ async def test_fetch_valid_npm_tarball_extracts_and_marks_complete():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
-    assert (result / ".complete").is_file()
-    assert (result / "package" / "index.js").is_file()
+    assert result.path is not None
+    assert (result.path / ".complete").is_file()
+    assert (result.path / "index.js").is_file()  # wrapper "package/" stripped during extraction
 
 
 @pytest.mark.asyncio
@@ -132,7 +134,7 @@ async def test_github_fetch_uses_shared_url_builder():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
 
-    assert result is not None
+    assert result.path is not None
     assert requested == [fetcher.github_tarball_url("o", "r", "v1.0.0")]
 
 
@@ -144,8 +146,8 @@ async def test_github_monorepo_directory_found():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
 
-    assert result is not None
-    assert (result / "index.js").is_file()
+    assert result.path is not None
+    assert (result.path / "index.js").is_file()
 
 
 @pytest.mark.asyncio
@@ -161,7 +163,7 @@ async def test_github_monorepo_directory_missing_returns_none_not_whole_repo():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
 
-    assert result is None
+    assert result.path is None
 
 
 @pytest.mark.asyncio
@@ -176,7 +178,7 @@ async def test_github_source_unresolved_returns_none_without_network_call():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
 
-    assert result is None
+    assert result.path is None
     assert calls == []
 
 
@@ -201,7 +203,7 @@ async def test_cache_hit_skips_network():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result == cache_dir
+    assert result.path == cache_dir
     assert calls == []
 
 
@@ -216,10 +218,10 @@ async def test_directory_without_marker_is_refetched():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
-    assert (result / ".complete").is_file()
-    assert (result / "package" / "index.js").is_file()
-    assert not (result / "stale.txt").exists()
+    assert result.path is not None
+    assert (result.path / ".complete").is_file()
+    assert (result.path / "index.js").is_file()  # wrapper "package/" stripped during extraction
+    assert not (result.path / "stale.txt").exists()
 
 
 @pytest.mark.asyncio
@@ -253,7 +255,7 @@ async def test_lock_table_does_not_grow_after_fetch_completes():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
+    assert result.path is not None
     assert fetcher._locks == {}
     assert fetcher._lock_refcounts == {}
 
@@ -286,7 +288,7 @@ async def test_integrity_hash_runs_over_compressed_bytes():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
+    assert result.path is not None
 
 
 @pytest.mark.asyncio
@@ -299,7 +301,7 @@ async def test_legacy_shasum_integrity_is_verified():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
+    assert result.path is not None
 
 
 @pytest.mark.asyncio
@@ -327,7 +329,7 @@ async def test_multi_hash_ssri_picks_strongest():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
+    assert result.path is not None
 
 
 @pytest.mark.asyncio
@@ -566,6 +568,348 @@ async def test_scoped_package_name_sanitized_for_cache_dir():
     async with _client(data) as client:
         result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
-    assert result is not None
-    assert "/" not in result.name  # a single path segment, not "@babel" then "core"
-    assert result.name == "@babel__core@1.0.0"
+    assert result.path is not None
+    assert "/" not in result.path.name  # a single path segment, not "@babel" then "core"
+    assert result.path.name == "@babel__core@1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Per-entry wrapper stripping (PR A: fix/deps-fetch-coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_npm_strips_each_entrys_own_leading_segment_independently():
+    """`npm install <tarball>` strips one leading path component from each
+    entry *independently* — it never assumes a single wrapper name taken
+    from whichever entry happened to come first. A tarball whose entries
+    disagree on their top-level folder must still install every one of
+    them, matching what a real `npm install` would actually put on disk;
+    assuming one global wrapper would silently drop the divergent entries
+    from the scan instead."""
+
+    def build(tar):
+        _add_file(tar, "package/package.json", b"{}")
+        _add_file(tar, "evil/backdoor.js", b"require('child_process').exec('pwned')")
+
+    data = _build_tar_gz(build)
+    resolved = _resolved(integrity=_integrity_for(data))
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert result.path is not None
+    assert (result.path / "package.json").is_file()
+    assert (result.path / "backdoor.js").is_file()
+
+
+@pytest.mark.asyncio
+async def test_npm_colliding_stripped_paths_rejected():
+    """Two entries under different top-level folders that strip to the same
+    install path is not something a real `npm pack` ever produces — treated
+    as tampering rather than silently letting one overwrite the other."""
+
+    def build(tar):
+        _add_file(tar, "package/index.js", b"real")
+        _add_file(tar, "evil/index.js", b"shadow")
+
+    data = _build_tar_gz(build)
+    resolved = _resolved(integrity=_integrity_for(data))
+
+    async with _client(data) as client:
+        with pytest.raises(fetcher.UnsafeTarMemberError):
+            await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+
+@pytest.mark.asyncio
+async def test_github_inconsistent_wrapper_rejected():
+    """Unlike an npm tarball, a GitHub codeload archive always uses one
+    consistent `{repo}-{ref}/` prefix for every entry. A member that departs
+    from the wrapper established by the first entry is a hostile/corrupt
+    shape and must reject the whole tarball, not be silently skipped as if
+    it were an ordinary out-of-scope sibling."""
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/index.js", b"x")
+        _add_file(tar, "other-repo-abc/sneaky.js", b"x")
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved()
+
+    async with _client(data) as client:
+        with pytest.raises(fetcher.UnsafeTarMemberError):
+            await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+
+@pytest.mark.asyncio
+async def test_repo_directory_leading_dot_slash_normalized():
+    """A `repository.directory` value like "./packages/core" (a leading
+    "./", as some package.json authors write it) must still match the
+    tarball's real member paths instead of silently missing and being
+    reported as `repo_directory_missing`."""
+    data = _build_tar_gz(lambda tar: _add_file(tar, "r-v1.0.0/packages/core/index.js", b"x"))
+    resolved = _github_resolved(repo_directory="./packages/core/")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert (result.path / "index.js").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Windows path-length limit (PR A: fix/deps-fetch-coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific path-length behavior")
+async def test_windows_long_path_skipped_and_counted_not_silently_invisible():
+    """A file whose extraction target would exceed Windows' MAX_PATH must be
+    skipped and counted rather than written via a `\\\\?\\`-escaped path —
+    on a machine without LongPathsEnabled, a `\\\\?\\`-written file becomes
+    invisible to ordinary directory walks (drift, Semgrep), producing a
+    silent partial scan instead of a loud, counted one."""
+
+    def build(tar):
+        _add_file(tar, "package/short.js", b"x")
+        _add_file(tar, "package/" + ("a" * 300) + "/deep.js", b"x")
+
+    data = _build_tar_gz(build)
+    resolved = _resolved(integrity=_integrity_for(data))
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert result.path is not None
+    assert (result.path / "short.js").is_file()
+    assert result.skipped_long_paths == 1
+    assert not any(p.name == "deep.js" for p in result.path.rglob("*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific path-length behavior")
+def test_windows_directory_limit_checked_separately_from_file_limit():
+    """Windows caps *directory* creation at 248 chars, shorter than the
+    260-char full-path limit — a short filename inside a long-enough
+    directory chain must still be flagged even though the full path stays
+    under 260. Uses a short synthetic base path (rather than going through
+    a real fetch, whose temp-directory prefix length is unpredictable) so
+    the 248-vs-260 boundary is exact and deterministic."""
+    from pathlib import Path as _Path
+
+    base = _Path("C:/x")
+    deep_dir = base / ("d" * 245) / "f.js"  # dir portion: 250 chars (>=248); full: 255 (<260)
+
+    assert len(str(deep_dir.parent)) >= fetcher._WINDOWS_MAX_DIR_PATH
+    assert len(str(deep_dir)) < fetcher._WINDOWS_MAX_PATH
+    assert fetcher._exceeds_windows_path_limits(deep_dir)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific path-length behavior")
+async def test_skipped_long_paths_persists_across_cache_hit():
+    """A cache hit never re-runs `_safe_extract`, so the skip count must be
+    recorded in the `.complete` marker itself — otherwise a second call for
+    the same version silently reports the extraction as clean."""
+
+    def build(tar):
+        _add_file(tar, "package/short.js", b"x")
+        _add_file(tar, "package/" + ("a" * 300) + "/deep.js", b"x")
+
+    data = _build_tar_gz(build)
+    resolved = _resolved(integrity=_integrity_for(data))
+
+    async with _client(data) as client:
+        first = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+    assert first.skipped_long_paths == 1
+
+    async with _client(data) as client:
+        second = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert second.path == first.path
+    assert second.skipped_long_paths == 1
+
+
+# ---------------------------------------------------------------------------
+# Scoped extraction (PR A: fix/deps-fetch-coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scoped_extraction_writes_only_package_subtree_with_prefix_stripped():
+    """A monorepo tarball's sibling package must never be written to disk, and
+    the returned directory must hold the scoped package's files directly —
+    not nested under `{wrapper}/{repo_directory}/`."""
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/packages/core/index.js", b"x")
+        _add_file(tar, "r-v1.0.0/packages/core/package.json", b"{}")
+        _add_file(tar, "r-v1.0.0/packages/other/index.js", b"unrelated sibling package")
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(repo_directory="packages/core")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert (result.path / "index.js").is_file()
+    assert (result.path / "package.json").is_file()
+    assert not (result.path / "packages").exists()  # not nested under the stripped prefix
+    assert not (result.path.parent / "other").exists()  # sibling package never written
+
+
+@pytest.mark.asyncio
+async def test_scoped_extraction_caps_count_only_in_scope_members(monkeypatch):
+    """An oversized member in a sibling package (outside `repo_directory`) must
+    never trip this package's extraction caps — only members actually written
+    for this package count."""
+    monkeypatch.setattr(fetcher, "_MAX_EXTRACTED_BYTES", 10)
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/packages/core/index.js", b"x")
+        _add_file(tar, "r-v1.0.0/packages/other/big.bin", b"x" * 1000)  # out of scope
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(repo_directory="packages/core")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert (result.path / "index.js").is_file()
+
+
+@pytest.mark.asyncio
+async def test_traversal_disguised_by_scoped_prefix_rejected():
+    """A member name that only escapes `extract_root` *after* the
+    `{wrapper}/{repo_directory}/` prefix is stripped must still be rejected.
+
+    Regression: the containment check ran on the raw, prefix-included member
+    name (`extract_root / "r-v1.0.0/packages/core/../../../secrets_leak"`),
+    which resolves right back inside `extract_root` (the three ".." segments
+    exactly cancel the three prefix segments) — but the member is actually
+    extracted as `extract_root / rel_name` after the prefix is stripped,
+    i.e. `extract_root / "../../../secrets_leak"`, which is three levels
+    *outside* extract_root. The manual check must validate that real target,
+    not the pre-strip one.
+    """
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/packages/core/index.js", b"x")
+        _add_file(tar, "r-v1.0.0/packages/core/../../../secrets_leak", b"pwned")
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(repo_directory="packages/core")
+
+    async with _client(data) as client:
+        with pytest.raises(fetcher.UnsafeTarMemberError):
+            await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+
+@pytest.mark.asyncio
+async def test_scoped_extraction_ignores_out_of_scope_symlink():
+    """A symlink living in a sibling package (outside `repo_directory`) must be
+    silently ignored, not counted against this package's `skipped_links`."""
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/packages/core/index.js", b"x")
+        info = tarfile.TarInfo(name="r-v1.0.0/packages/other/link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "index.js"
+        tar.addfile(info)
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(repo_directory="packages/core")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.skipped_links == 0  # out of repo_directory scope, never even inspected
+
+
+@pytest.mark.asyncio
+async def test_github_monorepo_directory_missing_reports_skip_reason():
+    data = _build_tar_gz(lambda tar: _add_file(tar, "r-v1.0.0/packages/other/index.js", b"x"))
+    resolved = _github_resolved(repo_directory="packages/core")  # doesn't exist in this tarball
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is None
+    assert result.reason == "repo_directory_missing"
+
+
+# ---------------------------------------------------------------------------
+# GitHub symlink policy (PR A: fix/deps-fetch-coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_github_symlink_skipped_and_counted_not_rejected():
+    """A real repo carrying a legitimate symlink (zod's `.codex/skills`,
+    esbuild) must not reject the whole GitHub tarball — only an NPM_TARBALL
+    symlink means tampering (`npm pack` never emits one)."""
+
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/index.js", b"x")
+        info = tarfile.TarInfo(name="r-v1.0.0/link")
+        info.type = tarfile.SYMTYPE
+        info.linkname = "index.js"
+        tar.addfile(info)
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved()
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.skipped_links == 1
+    assert result.skipped_link_names == ("link",)
+    assert (result.path / "index.js").is_file()
+    assert not (result.path / "link").exists()
+
+
+@pytest.mark.asyncio
+async def test_github_hardlink_skipped_and_counted_not_rejected():
+    def build(tar):
+        _add_file(tar, "r-v1.0.0/real.js", b"x")
+        info = tarfile.TarInfo(name="r-v1.0.0/hard-link")
+        info.type = tarfile.LNKTYPE
+        info.linkname = "r-v1.0.0/real.js"
+        tar.addfile(info)
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved()
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.skipped_links == 1
+
+
+# ---------------------------------------------------------------------------
+# Path-too-long (PR A: fix/deps-fetch-coverage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_path_too_long_mapped_to_path_too_long_error(monkeypatch):
+    """A filename-too-long OSError during extraction (Windows MAX_PATH, POSIX
+    ENAMETOOLONG) must surface as `PathTooLongError`, not be misreported as a
+    corrupt tarball — the CI-observed Babel/Jest monorepo failure shape."""
+
+    def _raise_name_too_long(self, member, path, **kwargs):
+        raise OSError(errno.ENAMETOOLONG, "File name too long")
+
+    monkeypatch.setattr(tarfile.TarFile, "extract", _raise_name_too_long)
+
+    data = _normal_tarball_bytes()
+    resolved = _resolved(integrity=_integrity_for(data))
+
+    async with _client(data) as client:
+        with pytest.raises(fetcher.PathTooLongError):
+            await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)

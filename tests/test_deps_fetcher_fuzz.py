@@ -216,7 +216,10 @@ async def test_fuzzed_malformed_tarballs_never_escape_safety_net(tmp_path):
         raised: fetcher.FetchError | None = None
         try:
             async with _client(mutated) as client:
-                result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+                fetch_result = await fetcher.fetch_source(
+                    resolved, SourceKind.NPM_TARBALL, client=client
+                )
+                result = fetch_result.path
         except fetcher.FetchError as exc:
             raised = exc
             failures_by_type[type(exc).__name__] = failures_by_type.get(type(exc).__name__, 0) + 1

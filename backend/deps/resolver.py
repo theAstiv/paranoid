@@ -19,6 +19,14 @@ _NPM_REGISTRY = "https://registry.npmjs.org"
 _CODELOAD = "https://codeload.github.com"
 _TIMEOUT_S = 15.0
 
+# GitHub's own account/repo naming rules: an owner is 1-39 chars, alphanumeric
+# or hyphen, never starting with a hyphen; a repo name is 1-100 chars of
+# alphanumeric, dot, hyphen, underscore, and never "." or "..". Anything a
+# package.json `repository` field resolves to that doesn't fit this shape is
+# treated as GitHub-unavailable rather than fed into a codeload URL unescaped.
+_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+
 _GITHUB_SHORTHAND_RE = re.compile(r"^github:(?P<owner>[^/]+)/(?P<repo>[^#]+?)(?:#.*)?$")
 # Covers, with or without a leading "git+": https://, http://, git://, ssh:// (with
 # an optional user@ prefix, e.g. git+ssh://git@github.com/...), a bare "www."
@@ -31,6 +39,10 @@ _GIT_URL_RE = re.compile(
     r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/#]+?)(?:\.git)?(?:#.*)?$"
 )
 _OWNER_REPO_RE = re.compile(r"^(?P<owner>[^/\s]+)/(?P<repo>[^/\s#]+)$")
+
+
+def _valid_owner_repo(owner: str, repo: str) -> bool:
+    return bool(_OWNER_RE.match(owner)) and bool(_REPO_RE.match(repo)) and repo not in (".", "..")
 
 
 def _encode_package_name(name: str) -> str:
@@ -63,12 +75,20 @@ def _normalize_repository(
     for pattern in (_GIT_URL_RE, _GITHUB_SHORTHAND_RE):
         m = pattern.match(url)
         if m:
-            return m.group("owner"), m.group("repo"), directory
+            owner, repo = m.group("owner"), m.group("repo")
+            return (
+                (owner, repo, directory)
+                if _valid_owner_repo(owner, repo)
+                else (None, None, directory)
+            )
 
     # Bare "owner/repo" shorthand implies GitHub by npm convention.
     m = _OWNER_REPO_RE.match(url)
     if m and "://" not in url:
-        return m.group("owner"), m.group("repo"), directory
+        owner, repo = m.group("owner"), m.group("repo")
+        return (
+            (owner, repo, directory) if _valid_owner_repo(owner, repo) else (None, None, directory)
+        )
 
     return None, None, directory
 
@@ -82,7 +102,9 @@ def github_tarball_url(owner: str, repo: str, ref: str) -> str:
     fetched (matters for refs with special characters, e.g. "{name}@{version}"
     monorepo tags).
     """
-    return f"{_CODELOAD}/{owner}/{repo}/tar.gz/{quote(ref, safe='')}"
+    return (
+        f"{_CODELOAD}/{quote(owner, safe='')}/{quote(repo, safe='')}/tar.gz/{quote(ref, safe='')}"
+    )
 
 
 async def fetch_registry_doc(name: str, client: httpx.AsyncClient) -> dict:
