@@ -100,9 +100,10 @@ def test_scan_json_round_trip(runner, monkeypatch, tmp_path):
 
 def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch, tmp_path):
     """Fetch-time skips (Windows path-length limit, skipped symlinks) must be
-    visible in both the human-readable and JSON output, and a partial fetch
-    must make drift report the scan as incomplete rather than silently
-    comparing an incomplete tree as if it were clean."""
+    visible in both the human-readable and JSON output. A `partial_fetch`
+    profile still ran a real scan (only a `semgrep_*` status means the scan
+    itself didn't finish), so drift compares it rather than skipping — the
+    tarball's skipped symlink just isn't held against it as a drift signal."""
     resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
     npm_profile = _profile(categories=[CapabilityCategory.NETWORK])
     github_profile = _profile(categories=[CapabilityCategory.NETWORK])
@@ -119,7 +120,10 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
         (source_dir / "index.js").write_text("module.exports = {};")
         if kind == SourceKind.NPM_TARBALL:
             return FetchResult(
-                path=source_dir, skipped_long_paths=1, skipped_link_names=("vendor/dead-link",)
+                path=source_dir,
+                skipped_long_paths=1,
+                skipped_link_names=("vendor/dead-link",),
+                skipped_long_path_names=("deeply/nested/too-long.js",),
             )
         return FetchResult(path=source_dir)
 
@@ -136,7 +140,9 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
     assert text_result.exit_code == 0, text_result.output
     assert "partial: 1 file(s) skipped" in text_result.output
     assert "vendor/dead-link" in text_result.output
-    assert "One or both scans did not finish cleanly (scan_incomplete:npm)" in text_result.output
+    assert "deeply/nested/too-long.js" in text_result.output
+    assert "matched=1" in text_result.output
+    assert "no drift signal" in text_result.output
 
     json_result = runner.invoke(
         deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both", "--format", "json"]
@@ -146,6 +152,7 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
     assert data["npm"]["status"] == "partial_fetch"
     assert data["npm"]["skipped_long_paths"] == 1
     assert data["npm"]["skipped_link_names"] == ["vendor/dead-link"]
+    assert data["npm"]["skipped_long_path_names"] == ["deeply/nested/too-long.js"]
 
 
 def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
@@ -552,3 +559,39 @@ def test_diff_refuses_when_previous_scan_incomplete(runner, monkeypatch, tmp_pat
     result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1"])
     assert result.exit_code != 0
     assert "refusing to diff" in result.output.lower()
+
+
+def test_diff_accepts_partial_fetch_and_warns(runner, monkeypatch, tmp_path):
+    """A `partial_fetch` profile (unlike a `semgrep_*` one) still ran a real
+    scan, so `deps diff` computes the delta anyway — but warns that it may be
+    incomplete, rather than silently hiding the caveat."""
+    prev_resolved = _resolved(version="1.0.0")
+    curr_resolved = _resolved(version="1.0.1")
+    prev_profile = _profile(version="1.0.0")
+    prev_profile = prev_profile.model_copy(
+        update={"status": "partial_fetch", "skipped_long_paths": 1}
+    )
+    curr_profile = _profile(version="1.0.1", categories=[CapabilityCategory.NETWORK])
+
+    async def fake_resolve_npm(name, version, client):
+        return prev_resolved if version == "1.0.0" else curr_resolved
+
+    async def fake_fetch_source(r, kind, client):
+        return FetchResult(path=tmp_path / "npm" / r.version)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return prev_profile if version == "1.0.0" else curr_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1"])
+    assert result.exit_code == 0, result.output
+    assert "previous version scan was partial" in result.output.lower()
+
+    json_result = runner.invoke(
+        deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1", "--format", "json"]
+    )
+    assert json.loads(json_result.output)["partial_sides"] == ["previous"]

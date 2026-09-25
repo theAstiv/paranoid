@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 _SPEC_RE = re.compile(r"^(?P<name>@[^/@]+/[^/@]+|[^/@]+)@(?P<version>.+)$")
 _MANIFEST_CONCURRENCY = 4
+# Only a `semgrep_*` status means the scan itself didn't finish. A
+# "partial_fetch" profile (some files couldn't be extracted, e.g. Windows
+# path-length limits) still ran a real scan against what it did get.
+_SCANNABLE_STATUSES = ("ok", "partial_fetch")
 
 
 class DepsCLIError(click.ClickException):
@@ -115,6 +119,7 @@ async def _fetch_and_scan(
         updates: dict = {
             "skipped_long_paths": result.skipped_long_paths,
             "skipped_link_names": list(result.skipped_link_names),
+            "skipped_long_path_names": list(result.skipped_long_path_names),
         }
         if result.skipped_long_paths and profile.status == "ok":
             updates["status"] = "partial_fetch"
@@ -224,6 +229,10 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
         click.secho("    skipped symlinks/hardlinks:", fg="yellow")
         for name in profile.skipped_link_names:
             click.echo(f"      - {name}")
+    if profile.skipped_long_path_names:
+        click.secho("    skipped (path too long):", fg="yellow")
+        for name in profile.skipped_long_path_names:
+            click.echo(f"      - {name}")
 
 
 def _render_drift(drift: DriftReport | None) -> None:
@@ -245,17 +254,30 @@ def _render_drift(drift: DriftReport | None) -> None:
     click.echo(
         f"    matched={len(drift.matched)} sourcemap={len(drift.explained_by_sourcemap)} "
         f"build={len(drift.explained_by_build)} bundled={len(drift.bundled_dependency)} "
-        f"unexplained={len(drift.unexplained)}"
+        f"unexplained={len(drift.unexplained)} unverifiable={len(drift.unverifiable)}"
     )
     if drift.signal:
         click.secho(
             f"    SIGNAL: capabilities only in tarball: "
-            f"{', '.join(c.value for c in drift.unexplained_categories)}",
+            f"{', '.join(c.value for c in drift.signal_categories)}",
             fg="red",
             bold=True,
         )
+        for file, categories in sorted(drift.signal_files.items()):
+            click.echo(f"      - {file}: {', '.join(c.value for c in categories)}")
+        if drift.install_hooks_added:
+            click.echo(f"      - install hooks added: {', '.join(drift.install_hooks_added)}")
     else:
         click.echo("    no drift signal")
+    if drift.relocated:
+        click.secho("    informational: capability relocated within the repo:", fg="yellow")
+        for entry in drift.relocated:
+            click.echo(f"      - {entry['file']}: {', '.join(entry['categories'])}")
+    if drift.new_evidence_in_matched:
+        click.secho("    informational: new evidence on matched files:", fg="yellow")
+        for file, items in sorted(drift.new_evidence_in_matched.items()):
+            for item in items:
+                click.echo(f"      - {file} [{item['category']}] {item['rule_id']}")
 
 
 def _render_delta(delta: VersionDelta) -> None:
@@ -482,21 +504,32 @@ def diff(
             f"Could not fetch npm tarball source for {name} "
             f"{prev_resolved.version} / {curr_resolved.version}"
         )
-    if prev_profile.status != "ok" or curr_npm_profile.status != "ok":
-        # An incomplete scan's empty/partial category set would otherwise make
-        # every capability on the other side look "added" or "removed" —
-        # refuse to diff rather than report a delta that isn't real.
+    if (
+        prev_profile.status not in _SCANNABLE_STATUSES
+        or curr_npm_profile.status not in _SCANNABLE_STATUSES
+    ):
+        # An incomplete *scan* (semgrep_*) means an empty/partial category set
+        # that would otherwise make every capability on the other side look
+        # "added" or "removed" — refuse to diff. A partial_fetch (some files
+        # simply couldn't be extracted, e.g. Windows path limits) still ran a
+        # real scan, so it's allowed through, just noted below.
         raise DepsCLIError(
             f"Scan did not finish cleanly for {name} "
             f"(previous: {prev_profile.status}, current: {curr_npm_profile.status}) — refusing to diff."
         )
 
     delta = compute_delta(prev_resolved, curr_resolved, prev_profile, curr_npm_profile)
+    partial_sides = [
+        label
+        for label, profile in (("previous", prev_profile), ("current", curr_npm_profile))
+        if profile.status == "partial_fetch"
+    ]
 
     result = {
         "delta": delta.model_dump(mode="json"),
         "current_github_profile": _profile_dict(curr_github_profile),
         "drift": curr_drift.model_dump(mode="json") if curr_drift is not None else None,
+        "partial_sides": partial_sides,
     }
 
     if output_format.lower() == "json":
@@ -511,6 +544,12 @@ def diff(
 
     click.echo()
     click.secho(f"{name}", fg="green", bold=True)
+    if partial_sides:
+        click.secho(
+            f"  Warning: {', '.join(partial_sides)} version scan was partial "
+            "(some files couldn't be extracted) — delta may be incomplete.",
+            fg="yellow",
+        )
     _render_delta(delta)
     _render_drift(curr_drift)
     click.echo()
