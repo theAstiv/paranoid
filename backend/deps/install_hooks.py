@@ -5,6 +5,7 @@ source files, so this is pattern matching on the script text itself.
 """
 
 import json
+import posixpath
 import re
 from pathlib import Path
 
@@ -39,7 +40,7 @@ _RUN_SCRIPT_RE = re.compile(
 _PIPE_TO_SHELL_RE = re.compile(r"\b(curl|wget)\b[^|]*\|\s*(sh|bash|node)\b")
 _DOWNLOAD_RE = re.compile(r"\b(curl|wget)\b")
 _NODE_EVAL_RE = re.compile(r"\bnode\s+-e\b")
-_NODE_FILE_RE = re.compile(r"\bnode\s+(?!-e\b)([^\s&|;]+\.(?:c?js|mjs))\b")
+_NODE_FILE_RE = re.compile(r"\bnode\s+(?!-e\b)['\"]?([^\s&|;'\"]+\.(?:c?js|mjs))['\"]?")
 
 # Command separators: &&, ||, ;, |, a lone & (background), and newlines.
 # Two-character operators come first so `&&` isn't split as two `&`.
@@ -88,6 +89,52 @@ def _is_flagged(
         if is_flagged:
             return True, f"via script `{target_name}`: {reason}"
     return False, None
+
+
+def _collect_node_files(script: str, scripts: dict, seen: frozenset[str], files: set[str]) -> None:
+    """Walk `script` (and any `npm run <name>` it delegates to) collecting
+    every `node <file>` target, so a payload behind a chain of otherwise-
+    benign script names is still found."""
+    for match in _NODE_FILE_RE.finditer(script):
+        files.add(match.group(1))
+
+    for segment in (s.strip() for s in _COMMAND_SEPARATOR_RE.split(script)):
+        run = _RUN_SCRIPT_RE.match(segment) if segment else None
+        if run is None:
+            continue
+        target_name = run.group(1)
+        target = scripts.get(target_name)
+        if target_name in seen or not isinstance(target, str):
+            continue
+        _collect_node_files(target, scripts, seen | {target_name}, files)
+
+
+def find_install_time_files(package_json_path: Path) -> set[str]:
+    """Return package.json-relative file paths run via `node <file>` inside an
+    install lifecycle hook, directly or through an `npm run <script>` chain.
+
+    A hook script itself is already a capability (`find_install_hooks`), but
+    the *file it runs* deserves its own evidence marker: code that only ever
+    executes at install time is easy to miss if it also happens to sit under
+    a path classified TEST/EXAMPLE/BUILD.
+    """
+    try:
+        data = json.loads(package_json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+
+    scripts = data.get("scripts")
+    if not isinstance(scripts, dict):
+        scripts = {}
+
+    files: set[str] = set()
+    for key in _HOOK_SCRIPTS:
+        script = scripts.get(key)
+        if isinstance(script, str) and script.strip():
+            _collect_node_files(script, scripts, frozenset(), files)
+    # Normalize so `"./lib/setup.js"` and `"lib/setup.js"` compare equal to
+    # the root-relative paths `backend.deps.scanner` matches them against.
+    return {posixpath.normpath(f) for f in files}
 
 
 def find_install_hooks(package_json_path: Path) -> list[str]:

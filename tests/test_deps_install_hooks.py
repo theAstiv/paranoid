@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from backend.deps.install_hooks import find_install_hooks
+from backend.deps.install_hooks import find_install_hooks, find_install_time_files
 
 
 def _write_package_json(tmp_path, scripts: dict, *, binding_gyp: bool = False):
@@ -153,3 +153,37 @@ def test_npm_run_unknown_script_name_not_flagged(tmp_path):
     """`yarn install` names a yarn subcommand, not a script in this package."""
     package_json = _write_package_json(tmp_path, {"prepare": "yarn install"})
     assert find_install_hooks(package_json) == []
+
+
+def test_find_install_time_files_plain_path(tmp_path):
+    package_json = _write_package_json(tmp_path, {"postinstall": "node scripts/setup.js"})
+    assert find_install_time_files(package_json) == {"scripts/setup.js"}
+
+
+def test_find_install_time_files_normalizes_dot_slash_prefix(tmp_path):
+    """`node ./lib/setup.js` and `node lib/setup.js` must produce the same
+    root-relative path — scanner.py matches this set against evidence.file,
+    which never carries a "./" prefix."""
+    package_json = _write_package_json(tmp_path, {"postinstall": "node ./lib/setup.js"})
+    assert find_install_time_files(package_json) == {"lib/setup.js"}
+
+
+def test_find_install_time_files_strips_quotes(tmp_path):
+    package_json = _write_package_json(tmp_path, {"postinstall": 'node "scripts/setup.js"'})
+    assert find_install_time_files(package_json) == {"scripts/setup.js"}
+
+
+def test_find_install_time_files_follows_npm_run_chain(tmp_path):
+    package_json = _write_package_json(
+        tmp_path, {"prepare": "npm run setup", "setup": "node scripts/setup.js"}
+    )
+    assert find_install_time_files(package_json) == {"scripts/setup.js"}
+
+
+def test_find_install_time_files_empty_without_node_commands(tmp_path):
+    package_json = _write_package_json(tmp_path, {"postinstall": "husky install"})
+    assert find_install_time_files(package_json) == set()
+
+
+def test_find_install_time_files_missing_package_json_returns_empty(tmp_path):
+    assert find_install_time_files(tmp_path / "does-not-exist.json") == set()

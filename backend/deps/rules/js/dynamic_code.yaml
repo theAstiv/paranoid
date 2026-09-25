@@ -15,6 +15,19 @@ rules:
       category: dynamic_code
     pattern: eval(...)
 
+  - id: dynamic-code-nonliteral-require
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls `require()` with a non-literal argument — the module loaded is
+      determined at runtime, which static analysis (including this scanner)
+      cannot fully resolve.
+    metadata:
+      category: dynamic_code
+    patterns:
+      - pattern: require($X)
+      - pattern-not: require("...")
+
   - id: dynamic-code-vm-module
     languages: [js, ts]
     severity: WARNING

@@ -46,6 +46,20 @@ class CapabilityEvidence(BaseModel):
     snippet: str
     source_kind: SourceKind
     path_class: PathClass
+    # Set when `backend.deps.references` found a relative require()/import
+    # chain from a shipped entry point into a file path-classified TEST/
+    # EXAMPLE/BUILD — `path_class` above is then SHIPPED (the promoted
+    # value) and this field holds what `classify_path()` originally said.
+    reclassified_from: PathClass | None = None
+    # Where the promotion came from — another file's relative path (reachability),
+    # or "package.json (install hook)" when it's promoted because a lifecycle
+    # hook runs it directly. None when `reclassified_from` is None.
+    reclassified_via: str | None = None
+    # True when `backend.deps.install_hooks.find_install_time_files` found
+    # this file executed directly by a package.json lifecycle hook (e.g.
+    # `postinstall: node scripts/setup.js`) — code that runs on `npm install`
+    # regardless of whether anything ever imports it at runtime.
+    install_time: bool = False
 
 
 class CapabilityProfile(BaseModel):
@@ -71,8 +85,17 @@ class CapabilityProfile(BaseModel):
     skipped_link_names: list[str] = Field(default_factory=list)
 
     def category_set(self) -> set[CapabilityCategory]:
-        """Categories backed by shipped evidence — the basis for all comparisons."""
-        return {e.category for e in self.evidence if e.path_class == PathClass.SHIPPED}
+        """Categories backed by shipped evidence — the basis for all comparisons.
+
+        A flagged install hook is itself a capability (code that runs on
+        `npm install`), so it counts toward BUILD_INSTALL here even though it
+        has no corresponding `CapabilityEvidence` entry — `install_hooks` is
+        deterministic pattern matching over package.json, not a Semgrep rule.
+        """
+        categories = {e.category for e in self.evidence if e.path_class == PathClass.SHIPPED}
+        if self.install_hooks:
+            categories.add(CapabilityCategory.BUILD_INSTALL)
+        return categories
 
 
 class VersionDelta(BaseModel):
