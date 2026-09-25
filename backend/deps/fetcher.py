@@ -97,6 +97,7 @@ class FetchResult:
     skipped_links: int = 0
     skipped_long_paths: int = 0
     skipped_link_names: tuple[str, ...] = ()
+    skipped_long_path_names: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -142,6 +143,7 @@ def _write_marker(marker: Path, extract: "_ExtractResult") -> None:
                 "skipped_links": extract.skipped_links,
                 "skipped_long_paths": extract.skipped_long_paths,
                 "skipped_link_names": list(extract.skipped_link_names),
+                "skipped_long_path_names": list(extract.skipped_long_path_names),
             }
         ),
         encoding="utf-8",
@@ -161,7 +163,18 @@ def _read_marker(marker: Path, cache_dir: Path) -> "FetchResult":
         skipped_links=int(data.get("skipped_links", 0)),
         skipped_long_paths=int(data.get("skipped_long_paths", 0)),
         skipped_link_names=tuple(data.get("skipped_link_names", ())),
+        skipped_long_path_names=tuple(data.get("skipped_long_path_names", ())),
     )
+
+
+def _is_stale_marker(result: "FetchResult") -> bool:
+    """A marker written before `skipped_long_path_names` existed (pre-PR-C)
+    has a positive `skipped_long_paths` count but no names — `backend.deps.drift`
+    matches skipped paths by exact name, so a cache hit in that shape would
+    silently treat every one of those files as an ordinary unexplained file
+    instead of `unverifiable`, and could raise a false drift signal. Treated
+    as a cache miss so it's transparently refetched with the names recorded."""
+    return result.skipped_long_paths > 0 and not result.skipped_long_path_names
 
 
 def _parse_integrity(integrity: str) -> tuple[str, bytes]:
@@ -324,8 +337,8 @@ def _is_path_too_long(exc: OSError) -> bool:
 # LongPathsEnabled registry key set — which is the common case. Extracting
 # via the `\\?\` escape would let the write itself succeed, but the file
 # then becomes invisible to ordinary directory walks (`Path.rglob`, the
-# Semgrep scan, `content_root()`) on that same machine: a silent partial
-# scan is worse than a loud, counted skip. So this is checked proactively
+# Semgrep scan) on that same machine: a silent partial scan is worse than a
+# loud, counted skip. So this is checked proactively
 # before ever attempting the write, on Windows only — POSIX's much higher
 # path-length ceiling still relies on the reactive `_is_path_too_long` catch.
 # The *directory* creation limit is shorter than the file-path limit (248,
@@ -350,6 +363,13 @@ class _ExtractResult:
     skipped_links: int = 0
     skipped_long_paths: int = 0
     skipped_link_names: tuple[str, ...] = ()
+    # The final cache path (`rel_name`), not the longer staging path this
+    # check actually runs against (`extract_root`, under a temp directory
+    # later `shutil.move`d into place) — recorded by exact name so a
+    # consumer (backend.deps.drift) can match precisely instead of
+    # recomputing the length check against a different, shorter base path
+    # and reaching the wrong answer for names in the gap between the two.
+    skipped_long_path_names: tuple[str, ...] = ()
 
 
 def _safe_extract(
@@ -386,6 +406,7 @@ def _safe_extract(
     skipped_links = 0
     skipped_long_paths = 0
     skipped_link_names: list[str] = []
+    skipped_long_path_names: list[str] = []
     found = repo_directory is None
     scoped = _normalize_repo_directory(repo_directory) if repo_directory else None
     seen_npm_rel_names: set[str] = set()
@@ -438,6 +459,7 @@ def _safe_extract(
 
                 if _exceeds_windows_path_limits(target):
                     skipped_long_paths += 1
+                    skipped_long_path_names.append(rel_name)
                     continue
 
                 if member.isfile():
@@ -471,6 +493,7 @@ def _safe_extract(
         skipped_links=skipped_links,
         skipped_long_paths=skipped_long_paths,
         skipped_link_names=tuple(skipped_link_names),
+        skipped_long_path_names=tuple(skipped_long_path_names),
     )
 
 
@@ -501,13 +524,24 @@ async def fetch_source(
     cache_dir = cache_dir_for(kind, resolved.name, resolved.version)
     marker = cache_dir / ".complete"
     if marker.is_file():
-        return _read_marker(marker, cache_dir)
+        cached = _read_marker(marker, cache_dir)
+        if not _is_stale_marker(cached):
+            return cached
+        logger.info(
+            "Stale cache marker for %s %s@%s (skipped_long_paths without names, "
+            "predates skipped_long_path_names) — refetching",
+            kind.value,
+            resolved.name,
+            resolved.version,
+        )
 
     key = cache_key(kind, resolved.name, resolved.version)
     async with _locked(key):
         # Re-check after acquiring the lock: a concurrent fetch may have finished.
         if marker.is_file():
-            return _read_marker(marker, cache_dir)
+            cached = _read_marker(marker, cache_dir)
+            if not _is_stale_marker(cached):
+                return cached
 
         owns_client = client is None
         client = client or httpx.AsyncClient(timeout=_TIMEOUT_S)
@@ -585,6 +619,7 @@ async def fetch_source(
                 skipped_links=extract.skipped_links,
                 skipped_long_paths=extract.skipped_long_paths,
                 skipped_link_names=extract.skipped_link_names,
+                skipped_long_path_names=extract.skipped_long_path_names,
             )
         finally:
             await asyncio.to_thread(shutil.rmtree, tmp_dir, ignore_errors=True)

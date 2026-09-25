@@ -83,6 +83,13 @@ class CapabilityProfile(BaseModel):
     ] = "ok"
     skipped_long_paths: int = 0
     skipped_link_names: list[str] = Field(default_factory=list)
+    # Exact names of the files skipped for `skipped_long_paths`, from
+    # `FetchResult.skipped_long_path_names`. `backend.deps.drift` matches
+    # these by exact name rather than recomputing the length check itself —
+    # the fetch-time check runs against a longer temporary staging path than
+    # the final cache path drift sees, so recomputing it against the final
+    # path would miss names in the gap between the two.
+    skipped_long_path_names: list[str] = Field(default_factory=list)
 
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons.
@@ -122,10 +129,14 @@ class DriftReport(BaseModel):
     """Comparison of a package's npm-tarball source against its GitHub source.
 
     Every tarball-only file is classified into exactly one bucket below.
-    `signal` is true only when an `unexplained` file carries a capability
-    category absent from the GitHub scan (`unexplained_categories`) — the
-    one drift finding strong enough to surface as a flag rather than
-    information (see `backend.deps.drift`).
+    Provenance (matched/sourcemap/build/bundled) narrows which capability
+    *categories* a file is excused for — it never excuses all of them by
+    itself. `signal` is true when any file's non-excused ("novel") category
+    is entirely absent from the GitHub scan (`signal_files`, summarized in
+    `signal_categories`), or when the tarball's package.json declares a
+    lifecycle hook the GitHub package.json doesn't (`install_hooks_added`).
+    A novel category that merely exists *elsewhere* in the GitHub scan is
+    downgraded to informational (`relocated`) — see `backend.deps.drift`.
     """
 
     name: str
@@ -141,8 +152,30 @@ class DriftReport(BaseModel):
     explained_by_build: list[str] = Field(default_factory=list)
     bundled_dependency: list[str] = Field(default_factory=list)
     unexplained: list[str] = Field(default_factory=list)
+    # Tarball-only files that fall through every explained bucket, but whose
+    # exact path is one GitHub's `CapabilityProfile` recorded as skipped (a
+    # symlink, or a path exceeding the platform's length limit) — "GitHub
+    # doesn't have this" and "GitHub couldn't extract this" aren't the same
+    # thing, so these never produce a signal.
+    unverifiable: list[str] = Field(default_factory=list)
     signal: bool = False
-    unexplained_categories: list[CapabilityCategory] = Field(default_factory=list)
+    # {file: [novel categories absent from the GitHub scan entirely]} — the
+    # strong findings that make `signal` true.
+    signal_files: dict[str, list[CapabilityCategory]] = Field(default_factory=dict)
+    # Union of every category in `signal_files`, for a quick top-line summary.
+    signal_categories: list[CapabilityCategory] = Field(default_factory=list)
+    # Informational: a file's novel category that already exists somewhere
+    # else in the GitHub scan — not absent, so not a strong signal.
+    relocated: list[dict] = Field(default_factory=list)
+    # {file: [{category, rule_id, snippet}]} — evidence present on a *matched*
+    # tarball file but not on its GitHub counterpart, even when the category
+    # itself isn't novel (e.g. a second network call appended to a file that
+    # already made one). Informational.
+    new_evidence_in_matched: dict[str, list[dict]] = Field(default_factory=dict)
+    # Lifecycle hook names (preinstall/install/postinstall/prepare) the
+    # tarball's package.json declares (or changed) that the GitHub package.json
+    # doesn't — a strong signal on its own, folded into `signal_files["package.json"]`.
+    install_hooks_added: list[str] = Field(default_factory=list)
     # Set when status != "compared": a specific reason for the skip, e.g.
     # "github_unresolved", "repo_directory_missing", "path_too_long", or
     # "github_fetch_rejected:<ErrorType>" — so a "compared" rate can be

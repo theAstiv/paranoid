@@ -6,7 +6,6 @@ are skipped when the binary isn't installed. The failure-mode tests
 never depend on Semgrep being present.
 """
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -86,6 +85,27 @@ async def test_scan_source_dist_only_package_reports_capabilities():
     categories = profile.category_set()
     assert CapabilityCategory.NETWORK in categories
     assert CapabilityCategory.PROCESS in categories
+
+
+@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
+@pytest.mark.asyncio
+async def test_scan_source_single_subfolder_package_dir_is_not_collapsed(tmp_path):
+    """A package directory whose only content is one subdirectory (`src/`)
+    must have its evidence addressed by the real relative path `src/index.js`
+    — not collapsed to `index.js`. `scan_source` no longer calls any
+    `content_root()`-style defensive collapse (deleted in PR C, since real
+    `fetch_source()` output is already unwrapped); this pins that."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.js").write_text("require('child_process').exec('x');")
+
+    profile = await scanner.scan_source(
+        tmp_path, SourceKind.NPM_TARBALL, name="subfolder-pkg", version="1.0.0"
+    )
+
+    assert profile.status == "ok"
+    files = {e.file.replace("\\", "/") for e in profile.evidence}
+    assert "src/index.js" in files
+    assert "index.js" not in files
 
 
 @pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
@@ -214,25 +234,6 @@ async def test_view_loader_nonliteral_require_is_dynamic_code_not_build_install(
     assert profile.status == "ok"
     assert CapabilityCategory.DYNAMIC_CODE in profile.category_set()
     assert CapabilityCategory.BUILD_INSTALL not in profile.category_set()
-
-
-@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
-@pytest.mark.asyncio
-async def test_scan_source_finds_install_hooks_inside_wrapper_directory(tmp_path):
-    """A synthetic wrapper-nested layout (as a hand-built fixture, not real
-    `fetch_source()` output post-scoped-extraction) must still resolve
-    package.json via `content_root()`'s defensive collapse, so install-hook
-    detection isn't silently blind to any code path that still produces one."""
-    fetch_dir = tmp_path / "fetched"
-    wrapped = fetch_dir / "package"
-    shutil.copytree(FIXTURE_DIR, wrapped)
-    (fetch_dir / ".complete").touch()
-
-    profile = await scanner.scan_source(
-        fetch_dir, SourceKind.NPM_TARBALL, name="mini-package", version="1.0.0"
-    )
-
-    assert any("postinstall" in h for h in profile.install_hooks)
 
 
 @pytest.mark.asyncio

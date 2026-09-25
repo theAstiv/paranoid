@@ -9,6 +9,7 @@ import base64
 import errno
 import hashlib
 import io
+import json
 import os
 import tarfile
 
@@ -222,6 +223,56 @@ async def test_directory_without_marker_is_refetched():
     assert (result.path / ".complete").is_file()
     assert (result.path / "index.js").is_file()  # wrapper "package/" stripped during extraction
     assert not (result.path / "stale.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_stale_marker_without_skipped_long_path_names_is_refetched():
+    """A `.complete` marker written before `skipped_long_path_names` existed
+    (pre-PR-C) has `skipped_long_paths > 0` but no names recorded. Treated as
+    a cache miss and refetched — `backend.deps.drift` matches skipped paths
+    by exact name, so trusting a stale, name-less count back would silently
+    make every one of those files look like an ordinary unexplained file
+    instead of `unverifiable`, and could raise a false drift signal."""
+    data = _normal_tarball_bytes()
+    resolved = _resolved(integrity=_integrity_for(data))
+    cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "index.js").write_text("stale cached content, predates this fetch")
+    (cache_dir / ".complete").write_text(json.dumps({"skipped_long_paths": 1}))
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert result.path == cache_dir
+    assert result.skipped_long_paths == 0
+    assert result.skipped_long_path_names == ()
+    assert (cache_dir / "index.js").read_text() != "stale cached content, predates this fetch"
+
+
+@pytest.mark.asyncio
+async def test_marker_with_matching_names_is_a_normal_cache_hit():
+    """The counterpart to the staleness check: a marker that already carries
+    `skipped_long_path_names` (the post-PR-C shape) is a normal cache hit,
+    even with `skipped_long_paths > 0` — no unnecessary refetch."""
+    resolved = _resolved()
+    cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
+    cache_dir.mkdir(parents=True)
+    (cache_dir / ".complete").write_text(
+        json.dumps({"skipped_long_paths": 1, "skipped_long_path_names": ["deep/file.js"]})
+    )
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert calls == []
+    assert result.path == cache_dir
+    assert result.skipped_long_path_names == ("deep/file.js",)
 
 
 @pytest.mark.asyncio
@@ -685,6 +736,7 @@ async def test_windows_long_path_skipped_and_counted_not_silently_invisible():
     assert (result.path / "short.js").is_file()
     assert result.skipped_long_paths == 1
     assert not any(p.name == "deep.js" for p in result.path.rglob("*"))
+    assert result.skipped_long_path_names == (("a" * 300) + "/deep.js",)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows-specific path-length behavior")
@@ -722,12 +774,14 @@ async def test_skipped_long_paths_persists_across_cache_hit():
     async with _client(data) as client:
         first = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
     assert first.skipped_long_paths == 1
+    assert first.skipped_long_path_names == (("a" * 300) + "/deep.js",)
 
     async with _client(data) as client:
         second = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
 
     assert second.path == first.path
     assert second.skipped_long_paths == 1
+    assert second.skipped_long_path_names == first.skipped_long_path_names
 
 
 # ---------------------------------------------------------------------------
