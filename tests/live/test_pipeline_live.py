@@ -117,9 +117,24 @@ async def _run(provider, framework, *, max_iterations=1, has_ai_components=False
 
 
 def _complete_event(events: list[PipelineEvent]) -> PipelineEvent:
+    """Assert the run completed AND that it actually used the live provider.
+
+    A pipeline that falls back to `stopped_reason="provider_offline"` (auth
+    failure, model rejected, network down, ...) still "completes" — the rule
+    engine alone produces threats, seeded threats still appear, and the
+    runner still logs its start/iteration/complete lines. Every one of these
+    live tests would pass vacuously in that case, proving nothing about a
+    real LLM run, so this guard is centralized here rather than repeated (or
+    missed) per test.
+    """
     final = events[-1]
     assert final.step == PipelineStep.COMPLETE
     assert final.status == "completed"
+    assert final.data["stopped_reason"] != "provider_offline", (
+        "pipeline fell back to provider_offline — this run never actually "
+        "reached the LLM, so it proves nothing; check ANTHROPIC_API_KEY / "
+        "DEFAULT_MODEL"
+    )
     return final
 
 
@@ -143,6 +158,11 @@ async def test_seeded_inputs_survive_run_and_exports(anthropic_provider):
     assert (PipelineStep.EXTRACT_ASSETS, "started") not in step_statuses
     assert (PipelineStep.EXTRACT_FLOWS, "started") not in step_statuses
 
+    # Seeded threats are pre-loaded into the catalog before any provider call
+    # is made, so they'd "survive" even if the LLM were completely
+    # unreachable and the pipeline fell back to rule-engine-only mode —
+    # _complete_event() below fails loudly in that case rather than letting
+    # this test pass vacuously.
     final = _complete_event(events)
     threats: ThreatsList = final.data["threats"]
     seeded = [t for t in threats.threats if t.source == "seeded"]
@@ -190,13 +210,14 @@ async def test_maestro_seeded_iteration_one_receives_seeds(anthropic_provider, m
 
     monkeypatch.setattr(nodes_module, "generate_threats", _spy)
 
-    await _run(
+    events = await _run(
         anthropic_provider,
         Framework.STRIDE,
         max_iterations=1,
         has_ai_components=True,
         seeded_threats=_seeded_threats(),
     )
+    _complete_event(events)
 
     maestro_calls = [c for c in calls if c["framework"] == Framework.MAESTRO]
     assert maestro_calls, "MAESTRO's generate_threats was never called"
@@ -266,7 +287,8 @@ async def test_debug_logging_emits_lifecycle_lines(anthropic_provider, caplog, m
     assert Settings().log_level == "debug", "LOG_LEVEL env var was not picked up by Settings"
 
     caplog.set_level(logging.DEBUG)
-    await _run(anthropic_provider, Framework.STRIDE, max_iterations=2)
+    events = await _run(anthropic_provider, Framework.STRIDE, max_iterations=2)
+    _complete_event(events)
 
     messages = "\n".join(r.message for r in caplog.records)
     assert "Pipeline started" in messages
