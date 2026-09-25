@@ -1,12 +1,14 @@
 """Shared helper for navigating a fetched package's on-disk layout.
 
-`fetch_source()` (backend/deps/fetcher.py) never strips the tarball/tarfile's
-single top-level wrapper directory (npm's `package/`, GitHub's
-`{repo}-{ref}/`) from the directory it returns — and that directory also
-carries a sibling `.complete` marker file once the fetch finishes. Any
-"exactly one entry means a wrapper" check must ignore dotfiles, or it never
-collapses on a real fetched package (only ever in tests that don't create
-the marker).
+`fetch_source()` (backend/deps/fetcher.py) strips the tarball's wrapper
+directory (npm's `package/`, GitHub's `{repo}-{ref}/`, plus any
+`repo_directory` for a monorepo) during scoped extraction, so the directory
+it returns normally holds package.json etc. directly. `content_root()`
+exists as a defensive collapse for any layout built by hand (fixtures,
+tests) that still carries a single wrapper level, and is a no-op on a real
+fetch. Any "exactly one entry means a wrapper" check must ignore dotfiles,
+or it never collapses on a real fetched package (only ever in tests that
+don't create the `.complete` marker).
 """
 
 from pathlib import Path

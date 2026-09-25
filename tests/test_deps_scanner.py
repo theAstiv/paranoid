@@ -115,9 +115,10 @@ async def test_scan_source_includes_flagged_install_hook():
 @pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
 @pytest.mark.asyncio
 async def test_scan_source_finds_install_hooks_inside_wrapper_directory(tmp_path):
-    """fetch_source() never strips the tarball's single top-level wrapper
-    directory (npm's `package/`) — package.json lives inside it, not at the
-    scanned root, so install-hook detection must look there too."""
+    """A synthetic wrapper-nested layout (as a hand-built fixture, not real
+    `fetch_source()` output post-scoped-extraction) must still resolve
+    package.json via `content_root()`'s defensive collapse, so install-hook
+    detection isn't silently blind to any code path that still produces one."""
     fetch_dir = tmp_path / "fetched"
     wrapped = fetch_dir / "package"
     shutil.copytree(FIXTURE_DIR, wrapped)

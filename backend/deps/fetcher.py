@@ -10,12 +10,17 @@ never stalls other requests or SSE streams.
 import asyncio
 import base64
 import contextlib
+import errno
 import hashlib
+import itertools
+import json
 import logging
+import os
 import shutil
 import tarfile
 import tempfile
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiofiles
@@ -70,6 +75,31 @@ class CorruptTarballError(FetchError):
     """Tarball could not be parsed (truncated gzip, corrupt headers, etc.)."""
 
 
+class PathTooLongError(FetchError):
+    """A tar member's target path exceeded the OS path length limit (Windows
+    MAX_PATH == 260, POSIX ENAMETOOLONG) even after scoped extraction narrowed
+    the tree to the package's own subdirectory — a real large monorepo (e.g.
+    Babel, Jest), not a corrupt tarball. Reported distinctly so the caller
+    doesn't misreport it as `CorruptTarballError`."""
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    """Outcome of `fetch_source`. `path` is None exactly when `reason` is set,
+    and never raises for an unavailable-but-not-hostile source (GitHub not
+    resolved, a monorepo directory not found at this ref) — only a genuinely
+    hostile/corrupt/oversized tarball raises a `FetchError` subclass.
+    `skipped_long_paths` > 0 means the extraction is partial: those files
+    exist in the source but couldn't be written because their path would
+    exceed the platform's path-length limit."""
+
+    path: Path | None
+    skipped_links: int = 0
+    skipped_long_paths: int = 0
+    skipped_link_names: tuple[str, ...] = ()
+    reason: str | None = None
+
+
 @contextlib.asynccontextmanager
 async def _locked(key: str) -> AsyncIterator[None]:
     """Hold the per-`key` lock, creating it on first use and dropping it when
@@ -99,6 +129,39 @@ def cache_key(kind: SourceKind, name: str, version: str) -> str:
 
 def cache_dir_for(kind: SourceKind, name: str, version: str) -> Path:
     return Path(settings.deps_cache_dir) / kind.value / f"{_sanitize_name(name)}@{version}"
+
+
+def _write_marker(marker: Path, extract: "_ExtractResult") -> None:
+    """Record the fetch's skip counts/names in the `.complete` marker itself
+    — not just logged — so a cache hit (which never re-runs `_safe_extract`)
+    still reports a prior partial extraction instead of silently coming back
+    clean on every subsequent call."""
+    marker.write_text(
+        json.dumps(
+            {
+                "skipped_links": extract.skipped_links,
+                "skipped_long_paths": extract.skipped_long_paths,
+                "skipped_link_names": list(extract.skipped_link_names),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _read_marker(marker: Path, cache_dir: Path) -> "FetchResult":
+    """Best-effort read of a `.complete` marker's recorded skip metadata. A
+    marker from before this metadata existed (or any parse failure) falls
+    back to zero/empty — the same as a clean fetch — rather than raising."""
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    return FetchResult(
+        path=cache_dir,
+        skipped_links=int(data.get("skipped_links", 0)),
+        skipped_long_paths=int(data.get("skipped_long_paths", 0)),
+        skipped_link_names=tuple(data.get("skipped_link_names", ())),
+    )
 
 
 def _parse_integrity(integrity: str) -> tuple[str, bytes]:
@@ -174,41 +237,208 @@ async def _download_tarball(
             raise IntegrityError(f"Integrity check failed for {url}")
 
 
-def _reject_unsafe_member(member: tarfile.TarInfo, extract_root: Path) -> None:
-    """Raise UnsafeTarMemberError for anything that isn't a plain file or directory."""
+def _reject_unsafe_member(member: tarfile.TarInfo, kind: SourceKind) -> bool:
+    """Validate `member`'s type. Returns True when it should be silently
+    skipped rather than extracted — a symlink/hardlink in a
+    `SourceKind.GITHUB` tarball, since legitimate repos carry these (e.g.
+    zod's `.codex/skills`, esbuild) and codeload tarballs aren't
+    npm-registry-certified the way `npm pack` output is. `npm pack` never
+    emits a symlink, so one in an `NPM_TARBALL` source means tampering and
+    is always rejected outright.
+
+    Path containment is *not* checked here — only the member's actual
+    post-strip write target reflects where it's really extracted (see the
+    containment check next to `tar.extract` in `_safe_extract`); checking
+    the raw, prefix-included name against `extract_root` validates a path
+    that's never written.
+    """
     if member.issym() or member.islnk():
+        if kind == SourceKind.GITHUB:
+            return True
         raise UnsafeTarMemberError(f"Refusing to extract symlink/hardlink member: {member.name!r}")
     if member.isdev() or member.isfifo():
         raise UnsafeTarMemberError(f"Refusing to extract device/FIFO member: {member.name!r}")
     if not (member.isfile() or member.isdir()):
         raise UnsafeTarMemberError(f"Refusing to extract unsupported member type: {member.name!r}")
-
-    name = member.name
-    if name.startswith("/") or name.startswith("\\"):
-        raise UnsafeTarMemberError(f"Refusing absolute-path member: {name!r}")
-
-    target = extract_root / name
-    if not check_path_containment(target, extract_root):
-        raise UnsafeTarMemberError(f"Refusing path-traversal member: {name!r}")
+    if member.name.startswith("/") or member.name.startswith("\\"):
+        raise UnsafeTarMemberError(f"Refusing absolute-path member: {member.name!r}")
+    return False
 
 
-def _safe_extract(tar_path: Path, extract_root: Path) -> None:
-    """Extract `tar_path` into `extract_root`, rejecting hostile members before any write.
+def _normalize_repo_directory(repo_directory: str) -> str:
+    """Collapse `./`, doubled slashes, and leading/trailing slashes out of a
+    package.json `repository.directory` value (e.g. "./packages/core/") so
+    it actually matches the tarball's real member paths instead of silently
+    missing and being reported as `repo_directory_missing`."""
+    return "/".join(part for part in repo_directory.split("/") if part not in ("", "."))
+
+
+def _npm_rel_name(name: str) -> str:
+    """Strip the first path segment of `name`, independently per member —
+    matching what `npm install <tarball>` actually does: it strips one
+    leading path component from *each entry separately*, not a single
+    wrapper name assumed from the first entry seen. A crafted tarball can
+    carry entries under different top-level names (`package/index.js` and
+    `evil/backdoor.js`); real npm installs both (as `index.js` and
+    `backdoor.js`). Assuming one global wrapper — as this module used to —
+    would silently drop the second file from the scan while npm still
+    installs it. A bare top-level entry (no "/") strips to nothing and
+    npm installs it nowhere.
+    """
+    return name.partition("/")[2]
+
+
+def _github_rel_name(name: str, wrapper: str, scoped: str | None) -> str | None:
+    """Return `name`'s path relative to `wrapper` (and, for a monorepo, the
+    normalized `scoped` `repo_directory`), or None if it falls outside the
+    current `repo_directory` scope — a legitimate sibling package, silently
+    skipped, not hostile.
+
+    Raises `UnsafeTarMemberError` if `name` doesn't share the tarball's
+    established top-level wrapper at all: unlike an npm tarball, a GitHub
+    codeload archive always uses one consistent `{repo}-{ref}/` prefix for
+    every entry, so a divergent one is a hostile/corrupt shape rather than
+    something to quietly ignore.
+    """
+    if name != wrapper and not name.startswith(wrapper + "/"):
+        raise UnsafeTarMemberError(
+            f"GitHub tarball has an inconsistent top-level directory: {name!r} "
+            f"does not match the established wrapper {wrapper!r}"
+        )
+    within_wrapper = name[len(wrapper) + 1 :] if name != wrapper else ""
+    if scoped is None:
+        return within_wrapper
+    if within_wrapper == scoped:
+        return ""
+    if within_wrapper.startswith(scoped + "/"):
+        return within_wrapper[len(scoped) + 1 :]
+    return None
+
+
+def _is_path_too_long(exc: OSError) -> bool:
+    return getattr(exc, "winerror", None) == 206 or exc.errno == errno.ENAMETOOLONG
+
+
+# Windows' classic MAX_PATH (260, including the null terminator) still
+# applies to plain (non `\\?\`-prefixed) paths on any machine without the
+# LongPathsEnabled registry key set — which is the common case. Extracting
+# via the `\\?\` escape would let the write itself succeed, but the file
+# then becomes invisible to ordinary directory walks (`Path.rglob`, the
+# Semgrep scan, `content_root()`) on that same machine: a silent partial
+# scan is worse than a loud, counted skip. So this is checked proactively
+# before ever attempting the write, on Windows only — POSIX's much higher
+# path-length ceiling still relies on the reactive `_is_path_too_long` catch.
+# The *directory* creation limit is shorter than the file-path limit (248,
+# not 260 — historically MAX_PATH minus room for an 8.3 filename), so a
+# short filename inside a long directory chain can still fail even though
+# the full file path is under 260; both are checked.
+_WINDOWS_MAX_PATH = 260
+_WINDOWS_MAX_DIR_PATH = 248
+
+
+def _exceeds_windows_path_limits(target: Path) -> bool:
+    if os.name != "nt":
+        return False
+    if len(str(target)) >= _WINDOWS_MAX_PATH:
+        return True
+    return len(str(target.parent)) >= _WINDOWS_MAX_DIR_PATH
+
+
+@dataclass(frozen=True)
+class _ExtractResult:
+    found: bool
+    skipped_links: int = 0
+    skipped_long_paths: int = 0
+    skipped_link_names: tuple[str, ...] = ()
+
+
+def _safe_extract(
+    tar_path: Path, extract_root: Path, repo_directory: str | None, kind: SourceKind
+) -> _ExtractResult:
+    """Extract `tar_path`'s package subtree straight into `extract_root`.
+
+    For `SourceKind.NPM_TARBALL`, each member's first path segment is
+    stripped independently (matching `npm install`'s real behavior — see
+    `_npm_rel_name`); a collision between two members' stripped paths is
+    treated as tampering. For `SourceKind.GITHUB`, every member must share
+    one consistent top-level wrapper (established from the first member);
+    members outside a configured `repo_directory` are silently skipped as
+    legitimate sibling-package content, and the size/file caps count only
+    extracted members.
 
     Synchronous — always run through `asyncio.to_thread` by the caller. Uses
     tarfile's own "data" filter (PEP 706) as a backstop, plus explicit
-    member-by-member validation (absolute paths, traversal, symlinks, hardlinks,
-    device/FIFO nodes) and enforced size/file-count caps — checked before each
-    member is written, not after.
+    member-by-member validation (absolute paths, traversal, device/FIFO
+    nodes, and — source-dependent — symlinks/hardlinks; see
+    `_reject_unsafe_member`) checked before each member is written, not
+    after.
+
+    `found` is False when nothing matched the configured scope —
+    `repo_directory` doesn't exist at this ref (renamed, moved), or the
+    tarball is empty — so the caller can report the source as unavailable
+    rather than silently returning an empty or unscoped tree. When
+    `repo_directory` is None (the whole tarball is in scope), `found` starts
+    True: an empty package is still "found", just empty.
     """
     extract_root.mkdir(parents=True, exist_ok=True)
     file_count = 0
     extracted_bytes = 0
+    skipped_links = 0
+    skipped_long_paths = 0
+    skipped_link_names: list[str] = []
+    found = repo_directory is None
+    scoped = _normalize_repo_directory(repo_directory) if repo_directory else None
+    seen_npm_rel_names: set[str] = set()
 
     try:
         with tarfile.open(tar_path, mode="r:gz") as tar:
-            for member in tar:
-                _reject_unsafe_member(member, extract_root)
+            it = iter(tar)
+            try:
+                first = next(it)
+            except StopIteration:
+                # A genuinely empty tarball. Whole-package scope (no
+                # repo_directory) still "finds" it — an empty package is a
+                # valid (if unusual) result, not an unavailable source.
+                return _ExtractResult(found=repo_directory is None)
+
+            wrapper = first.name.split("/", 1)[0]
+            if kind == SourceKind.GITHUB and (not wrapper or wrapper.startswith(("/", "\\"))):
+                raise UnsafeTarMemberError(f"Refusing absolute/empty wrapper: {first.name!r}")
+
+            for member in itertools.chain([first], it):
+                name = member.name
+
+                if kind == SourceKind.GITHUB:
+                    rel_name = _github_rel_name(name, wrapper, scoped)
+                    if rel_name is None:
+                        continue  # sibling package outside repo_directory scope
+                else:
+                    rel_name = _npm_rel_name(name)
+
+                if not rel_name:
+                    continue  # the wrapper/scope directory entry itself
+                found = True
+
+                if kind == SourceKind.NPM_TARBALL:
+                    if rel_name in seen_npm_rel_names:
+                        raise UnsafeTarMemberError(
+                            f"Duplicate install path after stripping the leading "
+                            f"segment independently per npm's own convention: {rel_name!r}"
+                        )
+                    seen_npm_rel_names.add(rel_name)
+
+                if _reject_unsafe_member(member, kind):
+                    skipped_links += 1
+                    skipped_link_names.append(rel_name)
+                    continue
+
+                target = extract_root / rel_name
+                if not check_path_containment(target, extract_root):
+                    raise UnsafeTarMemberError(f"Refusing path-traversal member: {name!r}")
+
+                if _exceeds_windows_path_limits(target):
+                    skipped_long_paths += 1
+                    continue
 
                 if member.isfile():
                     file_count += 1
@@ -222,46 +452,39 @@ def _safe_extract(tar_path: Path, extract_root: Path) -> None:
                             f"Tarball extracted size exceeded {_MAX_EXTRACTED_BYTES} bytes"
                         )
 
+                member.name = rel_name
                 tar.extract(member, path=extract_root, filter="data")
     except tarfile.FilterError as exc:
         # tarfile's own "data" filter rejecting a member we didn't already
         # catch (e.g. a mode/ownership anomaly) is still an unsafe-member
         # finding, not a parse failure.
         raise UnsafeTarMemberError(f"Rejected by extraction filter: {exc}") from exc
-    except (tarfile.TarError, EOFError, OSError) as exc:
+    except OSError as exc:
+        if _is_path_too_long(exc):
+            raise PathTooLongError(f"Path too long extracting {tar_path}: {exc}") from exc
+        raise CorruptTarballError(f"Could not parse tarball {tar_path}: {exc}") from exc
+    except (tarfile.TarError, EOFError) as exc:
         raise CorruptTarballError(f"Could not parse tarball {tar_path}: {exc}") from exc
 
-
-def _scope_to_directory(extract_root: Path, repo_directory: str | None) -> Path | None:
-    """For GitHub monorepos, narrow to `repo_directory` inside the extracted tree.
-
-    GitHub tarballs extract under a single top-level `{repo}-{ref}/` directory;
-    that layer is transparently skipped when locating `repo_directory`. Returns
-    None (not the unscoped root) when the directory isn't found — e.g. it was
-    renamed or moved at this ref — so the caller never silently attributes an
-    entire monorepo's capabilities to one package.
-    """
-    if not repo_directory:
-        return extract_root
-
-    top_level = [p for p in extract_root.iterdir() if p.is_dir()]
-    base = top_level[0] if len(top_level) == 1 else extract_root
-    candidate = base / repo_directory
-    if not check_path_containment(candidate, extract_root):
-        raise UnsafeTarMemberError(f"repo_directory escapes extraction root: {repo_directory!r}")
-    return candidate if candidate.is_dir() else None
+    return _ExtractResult(
+        found=found,
+        skipped_links=skipped_links,
+        skipped_long_paths=skipped_long_paths,
+        skipped_link_names=tuple(skipped_link_names),
+    )
 
 
 async def fetch_source(
     resolved: ResolvedPackage,
     kind: SourceKind,
     client: httpx.AsyncClient | None = None,
-) -> Path | None:
+) -> FetchResult:
     """Fetch and safely extract `resolved`'s source for `kind`, using a per-version cache.
 
-    Returns the extraction directory, or None when the source is unavailable —
-    GitHub not resolved, or (for a monorepo) `repo_directory` not found at this
-    ref — never raises for either case. Raises a `FetchError` subclass for a
+    Returns a `FetchResult` with `path=None` and a `reason` when the source is
+    unavailable — GitHub not resolved (`"github_unresolved"`), or (for a
+    monorepo) `repo_directory` not found at this ref (`"repo_directory_missing"`)
+    — never raises for either case. Raises a `FetchError` subclass for a
     hostile/corrupt/oversized tarball; the caller sees a typed error and no
     partial cache directory is ever left behind. Source is immutable per
     version, so a directory carrying the `.complete` marker is never re-fetched.
@@ -273,18 +496,18 @@ async def fetch_source(
     is unaffected.
     """
     if kind == SourceKind.GITHUB and resolved.github_status != "resolved":
-        return None
+        return FetchResult(path=None, reason="github_unresolved")
 
     cache_dir = cache_dir_for(kind, resolved.name, resolved.version)
     marker = cache_dir / ".complete"
     if marker.is_file():
-        return cache_dir
+        return _read_marker(marker, cache_dir)
 
     key = cache_key(kind, resolved.name, resolved.version)
     async with _locked(key):
         # Re-check after acquiring the lock: a concurrent fetch may have finished.
         if marker.is_file():
-            return cache_dir
+            return _read_marker(marker, cache_dir)
 
         owns_client = client is None
         client = client or httpx.AsyncClient(timeout=_TIMEOUT_S)
@@ -316,31 +539,53 @@ async def fetch_source(
             await _download_tarball(url, tar_path, expected_integrity, client)
 
             extract_root = tmp_dir / "extracted"
-            await asyncio.to_thread(_safe_extract, tar_path, extract_root)
+            repo_directory = resolved.repo_directory if kind == SourceKind.GITHUB else None
+            extract = await asyncio.to_thread(
+                _safe_extract, tar_path, extract_root, repo_directory, kind
+            )
             tar_path.unlink(missing_ok=True)
 
-            if kind == SourceKind.GITHUB:
-                scoped_root = _scope_to_directory(extract_root, resolved.repo_directory)
-                if scoped_root is None:
-                    logger.warning(
-                        "repo_directory %r not found in %s/%s@%s — treating GitHub source as unavailable",
-                        resolved.repo_directory,
-                        resolved.repo_owner,
-                        resolved.repo_name,
-                        resolved.github_ref,
-                    )
-                    return None
-            else:
-                scoped_root = extract_root
+            if not extract.found:
+                logger.warning(
+                    "repo_directory %r not found in %s/%s@%s — treating GitHub source as unavailable",
+                    resolved.repo_directory,
+                    resolved.repo_owner,
+                    resolved.repo_name,
+                    resolved.github_ref,
+                )
+                return FetchResult(
+                    path=None, skipped_links=extract.skipped_links, reason="repo_directory_missing"
+                )
+
+            if extract.skipped_long_paths:
+                logger.warning(
+                    "%d file(s) skipped for %s %s@%s: path would exceed the Windows "
+                    "path-length limit — scan is partial",
+                    extract.skipped_long_paths,
+                    kind.value,
+                    resolved.name,
+                    resolved.version,
+                )
 
             if cache_dir.exists():
                 await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=True)
-            await asyncio.to_thread(shutil.move, str(scoped_root), str(cache_dir))
-            (cache_dir / ".complete").touch()
+            await asyncio.to_thread(shutil.move, str(extract_root), str(cache_dir))
+            await asyncio.to_thread(_write_marker, marker, extract)
             logger.info(
-                "Fetched %s %s@%s -> %s", kind.value, resolved.name, resolved.version, cache_dir
+                "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d)",
+                kind.value,
+                resolved.name,
+                resolved.version,
+                cache_dir,
+                extract.skipped_links,
+                extract.skipped_long_paths,
             )
-            return cache_dir
+            return FetchResult(
+                path=cache_dir,
+                skipped_links=extract.skipped_links,
+                skipped_long_paths=extract.skipped_long_paths,
+                skipped_link_names=extract.skipped_link_names,
+            )
         finally:
             await asyncio.to_thread(shutil.rmtree, tmp_dir, ignore_errors=True)
             if owns_client:
