@@ -105,7 +105,11 @@ class ThreatSource(BaseModel):
 
     category: Annotated[str, Field(description="The category of the threat source")]
     description: Annotated[str, Field(description="The description of the threat source")]
-    example: Annotated[str, Field(description="An example of the threat source")]
+    # Illustrative only — not read by any downstream node or the frontend
+    # today. Optional because some models (e.g. claude-sonnet-5) reliably
+    # omit it despite the schema instruction, which otherwise fails the
+    # whole extract_flows call over a field nothing actually consumes.
+    example: Annotated[str, Field(description="An example of the threat source")] = ""
 
 
 class FlowsList(BaseModel):

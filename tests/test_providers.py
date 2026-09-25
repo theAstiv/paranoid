@@ -118,6 +118,152 @@ async def test_anthropic_auth_error():
 
 
 @pytest.mark.asyncio
+async def test_anthropic_generate_structured_tolerates_raw_control_characters(
+    sample_asset_list,
+):
+    """Some models (e.g. claude-sonnet-5) emit a raw, unescaped literal newline
+    inside a JSON string value in longer free-text fields — this must still
+    parse rather than raising "Invalid control character"."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        raw_json = (
+            '{"assets": [{"type": "Asset", "name": "Database",'
+            ' "description": "line one\nline two"}]}'
+        )
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=raw_json)]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="test-key")
+        result = await provider.generate_structured(
+            prompt="List the assets",
+            response_model=AssetsList,
+        )
+
+        assert result.assets[0].description == "line one\nline two"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_temperature_deprecated_retries_without_it():
+    """Some model families (e.g. claude-sonnet-5) reject `temperature` outright
+    with a 400 rather than accepting/ignoring it — the call must retry once
+    without it and succeed, not surface the error."""
+    from anthropic import BadRequestError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        temperature_error = BadRequestError(
+            message="`temperature` is deprecated for this model.",
+            response=mock_response,
+            body={"error": {"message": "`temperature` is deprecated for this model."}},
+        )
+
+        mock_success = MagicMock()
+        mock_success.content = [MagicMock(text="ok without temperature")]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [temperature_error, mock_success]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="test-key")
+        result = await provider.generate(prompt="Hello")
+
+        assert result == "ok without temperature"
+        assert mock_client.messages.create.call_count == 2
+        first_call_kwargs = mock_client.messages.create.call_args_list[0].kwargs
+        second_call_kwargs = mock_client.messages.create.call_args_list[1].kwargs
+        assert "temperature" in first_call_kwargs
+        assert "temperature" not in second_call_kwargs
+
+        # The instance remembers this for later calls — no wasted round-trip.
+        mock_client.messages.create.side_effect = [mock_success]
+        await provider.generate(prompt="Hello again")
+        third_call_kwargs = mock_client.messages.create.call_args_list[-1].kwargs
+        assert "temperature" not in third_call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_other_bad_request_error_still_raises():
+    """A 400 unrelated to `temperature` must not be swallowed by the
+    temperature-fallback retry — it should surface as a ProviderError."""
+    from anthropic import BadRequestError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        other_error = BadRequestError(
+            message="max_tokens is too large",
+            response=mock_response,
+            body={"error": {"message": "max_tokens is too large"}},
+        )
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = other_error
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="test-key")
+
+        with pytest.raises(ProviderError):
+            await provider.generate(prompt="Hello")
+        assert mock_client.messages.create.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_skips_thinking_block_to_find_text():
+    """Extended-thinking-capable models (e.g. claude-sonnet-5) put a
+    ThinkingBlock ahead of the TextBlock in `response.content` — the actual
+    text must still be found, not just content[0]."""
+
+    class _ThinkingBlock:
+        type = "thinking"
+        thinking = "reasoning about the answer..."
+
+    class _TextBlock:
+        type = "text"
+        text = "the actual answer"
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_response = MagicMock()
+        mock_response.content = [_ThinkingBlock(), _TextBlock()]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="test-key")
+        result = await provider.generate(prompt="Hello")
+
+        assert result == "the actual answer"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_no_text_block_raises_provider_error():
+    """A response with no text block at all (e.g. thinking-only, or a future
+    block type this code doesn't know about) must fail closed with a typed
+    error, not an AttributeError deep inside JSON parsing."""
+
+    class _ThinkingBlock:
+        type = "thinking"
+        thinking = "..."
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_response = MagicMock()
+        mock_response.content = [_ThinkingBlock()]
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="test-key")
+
+        with pytest.raises(ProviderError):
+            await provider.generate(prompt="Hello")
+
+
+@pytest.mark.asyncio
 async def test_anthropic_rate_limit_error():
     """Test Anthropic rate limit error handling."""
     from anthropic import RateLimitError

@@ -117,6 +117,15 @@ class BedrockProvider:
         """Generate structured output via Bedrock Converse API with toolConfig.
 
         Auto-bumps max_tokens 2x on truncation, up to _MAX_AUTO_BUMP, max _MAX_RETRIES retries.
+
+        KNOWN GAP: `inferenceConfig` below always sends `temperature`, unconditionally.
+        The direct Anthropic provider (backend/providers/anthropic.py) had to add a
+        fallback for this because claude-sonnet-5 rejects `temperature` outright with
+        a 400 ("temperature is deprecated for this model") — the same rejection is
+        plausible here if Bedrock ever routes to a Claude 5 model via the Converse
+        API, but this hasn't been verified against real Bedrock credentials. If a
+        Bedrock+Claude-5 combination starts failing with a similar error, port the
+        `_create_message`-style retry-without-temperature fallback here.
         """
         try:
             if response_model not in _schema_cache:

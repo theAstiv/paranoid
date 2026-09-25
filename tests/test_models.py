@@ -94,6 +94,14 @@ def test_threat_source_creation():
     assert source.category == "External Attacker"
 
 
+def test_threat_source_example_is_optional():
+    """`example` is illustrative only (not consumed downstream) and some models
+    (e.g. claude-sonnet-5) reliably omit it despite the schema description —
+    it must not fail validation when missing."""
+    source = ThreatSource(category="External Attacker", description="Malicious actor")
+    assert source.example == ""
+
+
 def test_flows_list_creation():
     """Test creating a FlowsList."""
     flows = FlowsList(
