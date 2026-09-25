@@ -85,6 +85,25 @@ def test_repository_shapes_normalize(repository, expected_owner, expected_repo, 
     assert resolved.repo_directory == expected_directory
 
 
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "https://github.com/../react",  # owner "..", fails GitHub's own naming rule
+        "https://github.com/facebook/..",  # repo "..", would escape as a path segment
+        "a?x=1/react",  # owner carries characters GitHub never allows
+        "https://github.com/" + "a" * 40 + "/react",  # owner over GitHub's 39-char cap
+    ],
+)
+def test_invalid_owner_repo_resolves_to_none(repository):
+    """An owner/repo shape that doesn't fit GitHub's own naming rules must never
+    reach `github_tarball_url` — it's treated as GitHub-unavailable instead of
+    being fed into a codeload URL unescaped."""
+    doc = _registry_doc(repository=repository)
+    resolved = resolved_package_from_doc("pkg", "1.0.0", doc)
+    assert resolved.repo_owner is None
+    assert resolved.repo_name is None
+
+
 def test_non_github_repository_resolves_to_none():
     doc = _registry_doc(repository="https://gitlab.com/o/r.git")
     resolved = resolved_package_from_doc("pkg", "1.0.0", doc)
