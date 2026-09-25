@@ -4,7 +4,7 @@ import json
 import logging
 from typing import TypeVar
 
-from anthropic import Anthropic, APIError, AuthenticationError, RateLimitError
+from anthropic import Anthropic, APIError, AuthenticationError, BadRequestError, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
@@ -66,6 +66,57 @@ class AnthropicProvider:
             max_retries=max_retries,
             timeout=timeout,
         )
+        # Some model families (e.g. claude-sonnet-5) reject `temperature`
+        # outright with a 400 rather than accepting/ignoring it. Detected
+        # lazily on first call and cached per instance so later calls for
+        # the same model+process skip the doomed round-trip entirely.
+        self._temperature_unsupported = False
+
+    @staticmethod
+    def _is_temperature_deprecated_error(e: BadRequestError) -> bool:
+        message = str(e).lower()
+        return "temperature" in message and (
+            "deprecated" in message or "not supported" in message or "unsupported" in message
+        )
+
+    def _extract_text(self, response) -> str:
+        """Return the first text block's content.
+
+        Extended-thinking-capable models (e.g. claude-sonnet-5) put a
+        `ThinkingBlock` at `content[0]` ahead of the actual `TextBlock` —
+        indexing `content[0]` directly picks up the thinking trace instead
+        of the response and fails with `AttributeError: no attribute 'text'`
+        the moment thinking produces any content, so every text block is
+        scanned for the first one that actually has `.text`.
+        """
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if text is not None:
+                return text
+        raise ProviderError(
+            provider=self.name,
+            message=f"No text block in response.content (got: {[type(b).__name__ for b in response.content]})",
+        )
+
+    async def _create_message(self, temperature: float, **kwargs):
+        """Call `messages.create`, retrying once without `temperature` if this
+        model rejects it outright (some model families do, as a 400 rather
+        than accepting/silently ignoring it)."""
+        if not self._temperature_unsupported:
+            try:
+                return await run_sync_in_executor(
+                    self._client.messages.create, temperature=temperature, **kwargs
+                )
+            except BadRequestError as e:
+                if not self._is_temperature_deprecated_error(e):
+                    raise
+                self._temperature_unsupported = True
+                logger.warning(
+                    "Model %s rejects the `temperature` parameter — omitting it "
+                    "for the rest of this provider instance's calls",
+                    self._model,
+                )
+        return await run_sync_in_executor(self._client.messages.create, **kwargs)
 
     @property
     def name(self) -> str:
@@ -154,11 +205,10 @@ class AnthropicProvider:
             last_error: ProviderError | None = None
 
             for attempt in range(1 + _MAX_RETRIES):
-                response = await run_sync_in_executor(
-                    self._client.messages.create,
+                response = await self._create_message(
+                    temperature,
                     model=self._model,
                     max_tokens=budget,
-                    temperature=temperature,
                     system=system,
                     messages=[{"role": "user", "content": content}],
                 )
@@ -178,11 +228,17 @@ class AnthropicProvider:
                     continue
 
                 # ── Parse JSON ────────────────────────────────────────────
-                response_text = response.content[0].text
+                response_text = self._extract_text(response)
                 response_text = strip_markdown_fences(response_text)
 
                 try:
-                    data = json.loads(response_text)
+                    # strict=False allows raw control characters (literal
+                    # newlines, tabs, ...) inside JSON string values instead
+                    # of raising "Invalid control character" — claude-sonnet-5
+                    # emits these in longer free-text fields (e.g. gap_analysis)
+                    # without escaping them, even though the content itself is
+                    # otherwise valid.
+                    data = json.loads(response_text, strict=False)
                     return response_model.model_validate(data)
                 except json.JSONDecodeError as e:
                     err_str = str(e)
@@ -191,7 +247,7 @@ class AnthropicProvider:
                     # Try parsing just the valid prefix before bumping or failing.
                     if "Extra data" in err_str:
                         try:
-                            data = json.loads(response_text[: e.pos])
+                            data = json.loads(response_text[: e.pos], strict=False)
                             return response_model.model_validate(data)
                         except (json.JSONDecodeError, ValidationError):
                             pass
@@ -265,15 +321,14 @@ class AnthropicProvider:
         """Generate plain text output."""
         try:
             # Call Anthropic API in thread pool (sync SDK)
-            response = await run_sync_in_executor(
-                self._client.messages.create,
+            response = await self._create_message(
+                temperature,
                 model=self._model,
                 max_tokens=max_tokens or 4096,
-                temperature=temperature,
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            return response.content[0].text
+            return self._extract_text(response)
 
         except AuthenticationError as e:
             raise ProviderAuthError(
