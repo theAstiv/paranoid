@@ -98,6 +98,10 @@ class FetchResult:
     skipped_long_paths: int = 0
     skipped_link_names: tuple[str, ...] = ()
     skipped_long_path_names: tuple[str, ...] = ()
+    # GitHub only: set when the package wasn't declared (or wasn't found) at
+    # the wrapper root and `_resolve_package_directory` had to discover which
+    # subdirectory of the repo actually holds it (e.g. "npm/esbuild").
+    discovered_directory: str | None = None
     reason: str | None = None
 
 
@@ -132,7 +136,21 @@ def cache_dir_for(kind: SourceKind, name: str, version: str) -> Path:
     return Path(settings.deps_cache_dir) / kind.value / f"{_sanitize_name(name)}@{version}"
 
 
-def _write_marker(marker: Path, extract: "_ExtractResult") -> None:
+# Bumped whenever the `.complete` marker's JSON shape gains a field that
+# changes what a cache hit means (e.g. `discovered_directory`) — a marker
+# missing this key (any value below the current one, including a pre-existing
+# marker with no "schema_version" key at all, which reads as 0) is treated as
+# stale and transparently refetched, rather than requiring bespoke
+# per-field staleness detection every time the marker shape grows. A
+# genuinely fresh fetch always writes the current version, so this only ever
+# costs one extra fetch per pre-existing cache entry, the first time it's read
+# after an upgrade.
+_MARKER_SCHEMA_VERSION = 1
+
+
+def _write_marker(
+    marker: Path, extract: "_ExtractResult", discovered_directory: str | None = None
+) -> None:
     """Record the fetch's skip counts/names in the `.complete` marker itself
     — not just logged — so a cache hit (which never re-runs `_safe_extract`)
     still reports a prior partial extraction instead of silently coming back
@@ -140,41 +158,41 @@ def _write_marker(marker: Path, extract: "_ExtractResult") -> None:
     marker.write_text(
         json.dumps(
             {
+                "schema_version": _MARKER_SCHEMA_VERSION,
                 "skipped_links": extract.skipped_links,
                 "skipped_long_paths": extract.skipped_long_paths,
                 "skipped_link_names": list(extract.skipped_link_names),
                 "skipped_long_path_names": list(extract.skipped_long_path_names),
+                "discovered_directory": discovered_directory,
             }
         ),
         encoding="utf-8",
     )
 
 
-def _read_marker(marker: Path, cache_dir: Path) -> "FetchResult":
-    """Best-effort read of a `.complete` marker's recorded skip metadata. A
-    marker from before this metadata existed (or any parse failure) falls
-    back to zero/empty — the same as a clean fetch — rather than raising."""
+def _read_marker_data(marker: Path) -> dict:
+    """Best-effort read of a `.complete` marker's raw JSON. Empty (never
+    raises) on any parse failure or a marker predating this metadata."""
     try:
         data = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        data = {}
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_stale_marker(data: dict) -> bool:
+    return int(data.get("schema_version", 0)) < _MARKER_SCHEMA_VERSION
+
+
+def _fetch_result_from_marker(data: dict, cache_dir: Path) -> "FetchResult":
     return FetchResult(
         path=cache_dir,
         skipped_links=int(data.get("skipped_links", 0)),
         skipped_long_paths=int(data.get("skipped_long_paths", 0)),
         skipped_link_names=tuple(data.get("skipped_link_names", ())),
         skipped_long_path_names=tuple(data.get("skipped_long_path_names", ())),
+        discovered_directory=data.get("discovered_directory"),
     )
-
-
-def _is_stale_marker(result: "FetchResult") -> bool:
-    """A marker written before `skipped_long_path_names` existed (pre-PR-C)
-    has a positive `skipped_long_paths` count but no names — `backend.deps.drift`
-    matches skipped paths by exact name, so a cache hit in that shape would
-    silently treat every one of those files as an ordinary unexplained file
-    instead of `unverifiable`, and could raise a false drift signal. Treated
-    as a cache miss so it's transparently refetched with the names recorded."""
-    return result.skipped_long_paths > 0 and not result.skipped_long_path_names
 
 
 def _parse_integrity(integrity: str) -> tuple[str, bytes]:
@@ -326,6 +344,126 @@ def _github_rel_name(name: str, wrapper: str, scoped: str | None) -> str | None:
     if within_wrapper.startswith(scoped + "/"):
         return within_wrapper[len(scoped) + 1 :]
     return None
+
+
+_MAX_PACKAGE_JSON_BYTES = 1 * 1024 * 1024
+
+
+def _read_package_json_name(tar: tarfile.TarFile, member: tarfile.TarInfo) -> str | None:
+    """The `name` field of `member`'s JSON content, or None on any failure
+    (oversized, unreadable, malformed, not a dict, no string `name`) — never
+    raises, since this is speculative content-sniffing over untrusted input."""
+    if member.size > _MAX_PACKAGE_JSON_BYTES:
+        return None
+    f = tar.extractfile(member)
+    if f is None:
+        return None
+    try:
+        data = json.loads(f.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+        return None
+    name = data.get("name") if isinstance(data, dict) else None
+    return name if isinstance(name, str) else None
+
+
+def _root_package_json_name(tar_path: Path) -> str | None:
+    """The wrapper-root package.json's declared `name`, or None if there is
+    no such file or it's unreadable. A names-only pass (no extraction) until
+    the root package.json entry is found; only that one member's content is
+    then read, to check the common case cheaply before ever scanning the
+    whole tree."""
+    try:
+        with tarfile.open(tar_path, mode="r:gz") as tar:
+            it = iter(tar)
+            try:
+                first = next(it)
+            except StopIteration:
+                return None
+            wrapper = first.name.split("/", 1)[0]
+            target = f"{wrapper}/package.json"
+            for member in itertools.chain([first], it):
+                if member.name == target and member.isfile():
+                    return _read_package_json_name(tar, member)
+    except (tarfile.TarError, EOFError, OSError):
+        return None
+    return None
+
+
+def _discover_package_directory(tar_path: Path, npm_name: str) -> tuple[str | None, str | None]:
+    """Find which directory in a GitHub tree actually declares `npm_name`, for
+    a package whose registry metadata doesn't declare `repository.directory`
+    (or whose wrapper-root package.json doesn't match it) — e.g. esbuild,
+    whose npm package lives at `npm/esbuild/` in a Go-language monorepo with
+    no root package.json at all.
+
+    Reads (never writes to disk) every non-`node_modules` `package.json`
+    member's content, in one streaming pass over the tarball, and keeps
+    whichever directories declare exactly `npm_name`.
+
+    Returns `(directory, reason)`: `directory` is `""` for the wrapper root or
+    a repo-relative path for a subdirectory (e.g. "npm/esbuild"); `None` with
+    a `reason` (`"package_not_found_in_repo"` / `"package_ambiguous_in_repo"`)
+    if zero or more than one directory declares this name.
+    """
+    matched_dirs: set[str] = set()
+    try:
+        with tarfile.open(tar_path, mode="r:gz") as tar:
+            it = iter(tar)
+            try:
+                first = next(it)
+            except StopIteration:
+                return None, "package_not_found_in_repo"
+            wrapper = first.name.split("/", 1)[0]
+
+            for member in itertools.chain([first], it):
+                if not member.isfile():
+                    continue
+                name = member.name
+                if name != wrapper and not name.startswith(wrapper + "/"):
+                    continue
+                within = name[len(wrapper) + 1 :] if name != wrapper else ""
+                if not within or "node_modules/" in within:
+                    continue
+                if within != "package.json" and not within.endswith("/package.json"):
+                    continue
+                # Content is read inline, during this same forward pass — the
+                # "r:gz" mode is a non-seekable stream, so a member can only
+                # ever be extractfile()'d while it's the one just yielded.
+                if _read_package_json_name(tar, member) == npm_name:
+                    matched_dirs.add(within.rsplit("/", 1)[0] if "/" in within else "")
+    except (tarfile.TarError, EOFError, OSError):
+        return None, "package_not_found_in_repo"
+
+    if not matched_dirs:
+        return None, "package_not_found_in_repo"
+    if len(matched_dirs) > 1:
+        return None, "package_ambiguous_in_repo"
+    return next(iter(matched_dirs)), None
+
+
+def _resolve_package_directory(
+    tar_path: Path, npm_name: str, declared_directory: str | None
+) -> tuple[str | None, bool, str | None]:
+    """Resolve which directory of a GitHub tree actually holds `npm_name`.
+
+    Returns `(repo_directory, discovered, reason)`:
+    - `declared_directory` set (from the registry's `repository.directory`)
+      is trusted as-is: `(declared_directory, False, None)`.
+    - Else, the wrapper-root package.json is checked first (the common case);
+      a match needs no discovery: `(None, False, None)`, the whole tarball
+      stays in scope exactly as before.
+    - Else, every non-`node_modules` package.json in the tree is read to find
+      the unique directory declaring this name: `(directory, True, None)` on
+      a unique match, or `(None, False, reason)` for zero/multiple matches.
+    """
+    if declared_directory is not None:
+        return declared_directory, False, None
+    if _root_package_json_name(tar_path) == npm_name:
+        return None, False, None
+    directory, reason = _discover_package_directory(tar_path, npm_name)
+    if reason is not None:
+        return None, False, reason
+    return directory, True, None
 
 
 def _is_path_too_long(exc: OSError) -> bool:
@@ -524,24 +662,25 @@ async def fetch_source(
     cache_dir = cache_dir_for(kind, resolved.name, resolved.version)
     marker = cache_dir / ".complete"
     if marker.is_file():
-        cached = _read_marker(marker, cache_dir)
-        if not _is_stale_marker(cached):
-            return cached
+        marker_data = _read_marker_data(marker)
+        if not _is_stale_marker(marker_data):
+            return _fetch_result_from_marker(marker_data, cache_dir)
         logger.info(
-            "Stale cache marker for %s %s@%s (skipped_long_paths without names, "
-            "predates skipped_long_path_names) — refetching",
+            "Stale cache marker for %s %s@%s (schema_version=%s, current=%s) — refetching",
             kind.value,
             resolved.name,
             resolved.version,
+            marker_data.get("schema_version", 0),
+            _MARKER_SCHEMA_VERSION,
         )
 
     key = cache_key(kind, resolved.name, resolved.version)
     async with _locked(key):
         # Re-check after acquiring the lock: a concurrent fetch may have finished.
         if marker.is_file():
-            cached = _read_marker(marker, cache_dir)
-            if not _is_stale_marker(cached):
-                return cached
+            marker_data = _read_marker_data(marker)
+            if not _is_stale_marker(marker_data):
+                return _fetch_result_from_marker(marker_data, cache_dir)
 
         owns_client = client is None
         client = client or httpx.AsyncClient(timeout=_TIMEOUT_S)
@@ -572,8 +711,29 @@ async def fetch_source(
             tar_path = tmp_dir / "source.tar.gz"
             await _download_tarball(url, tar_path, expected_integrity, client)
 
+            discovered_directory: str | None = None
+            if kind == SourceKind.GITHUB:
+                repo_directory, discovered, reason = await asyncio.to_thread(
+                    _resolve_package_directory, tar_path, resolved.name, resolved.repo_directory
+                )
+                if reason is not None:
+                    tar_path.unlink(missing_ok=True)
+                    logger.warning(
+                        "Could not identify %s within %s/%s@%s (%s) — treating GitHub "
+                        "source as unavailable",
+                        resolved.name,
+                        resolved.repo_owner,
+                        resolved.repo_name,
+                        resolved.github_ref,
+                        reason,
+                    )
+                    return FetchResult(path=None, reason=reason)
+                if discovered:
+                    discovered_directory = repo_directory
+            else:
+                repo_directory = None
+
             extract_root = tmp_dir / "extracted"
-            repo_directory = resolved.repo_directory if kind == SourceKind.GITHUB else None
             extract = await asyncio.to_thread(
                 _safe_extract, tar_path, extract_root, repo_directory, kind
             )
@@ -604,15 +764,16 @@ async def fetch_source(
             if cache_dir.exists():
                 await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=True)
             await asyncio.to_thread(shutil.move, str(extract_root), str(cache_dir))
-            await asyncio.to_thread(_write_marker, marker, extract)
+            await asyncio.to_thread(_write_marker, marker, extract, discovered_directory)
             logger.info(
-                "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d)",
+                "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d%s)",
                 kind.value,
                 resolved.name,
                 resolved.version,
                 cache_dir,
                 extract.skipped_links,
                 extract.skipped_long_paths,
+                f", discovered_directory={discovered_directory!r}" if discovered_directory else "",
             )
             return FetchResult(
                 path=cache_dir,
@@ -620,6 +781,7 @@ async def fetch_source(
                 skipped_long_paths=extract.skipped_long_paths,
                 skipped_link_names=extract.skipped_link_names,
                 skipped_long_path_names=extract.skipped_long_path_names,
+                discovered_directory=discovered_directory,
             )
         finally:
             await asyncio.to_thread(shutil.rmtree, tmp_dir, ignore_errors=True)

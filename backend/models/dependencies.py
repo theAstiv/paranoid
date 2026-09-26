@@ -90,6 +90,12 @@ class CapabilityProfile(BaseModel):
     # the final cache path drift sees, so recomputing it against the final
     # path would miss names in the gap between the two.
     skipped_long_path_names: list[str] = Field(default_factory=list)
+    # Set (GitHub only) when this package wasn't found at the wrapper root of
+    # its repo and `backend.deps.fetcher` had to discover which subdirectory
+    # actually declares it — e.g. "npm/esbuild" for esbuild's Go-language
+    # monorepo. None when the whole tarball (or a registry-declared
+    # `repository.directory`) was already the right scope.
+    discovered_directory: str | None = None
 
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons.
