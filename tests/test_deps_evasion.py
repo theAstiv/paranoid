@@ -148,32 +148,38 @@ _DETECTION_ROWS: list[tuple[str, str, str | None]] = [
     (
         "variable-key-indirection",
         "const k = 'fetch';\nglobalThis[k]('http://example.com');\n",
-        "a bare-identifier computed key (`obj[k]`, no concatenation) is "
-        "indistinguishable from ordinary, common computed-property access — "
-        "flagging every such call would swamp real findings with noise on "
-        "normal code (config[key](), handlers[eventName](), ...). Only the "
-        "literal-plus-literal concatenation shape (deliberately built to "
-        "dodge a plain-string match, and not achievable by accident) is "
-        "targeted.",
+        (
+            "a bare-identifier computed key (`obj[k]`, no concatenation) is "
+            "indistinguishable from ordinary, common computed-property access — "
+            "flagging every such call would swamp real findings with noise on "
+            "normal code (config[key](), handlers[eventName](), ...). Only the "
+            "literal-plus-literal concatenation shape (deliberately built to "
+            "dodge a plain-string match, and not achievable by accident) is "
+            "targeted."
+        ),
     ),
     (
         "chained-computed-global-access",
         "const m = global['proc' + 'ess'].mainModule;\nm.require('child_process');\n",
-        "dynamic-code-computed-global-call only fires when the built "
-        "property is called directly (`$O[$A + $B](...)`) — it doesn't "
-        "follow a computed property into a further chain of accesses "
-        "before the eventual call. Handling every possible chain shape "
-        "(and knowing where the chain ends) is unbounded; the direct-call "
-        "shape covers the common obfuscation pattern.",
+        (
+            "dynamic-code-computed-global-call only fires when the built "
+            "property is called directly (`$O[$A + $B](...)`) — it doesn't "
+            "follow a computed property into a further chain of accesses "
+            "before the eventual call. Handling every possible chain shape "
+            "(and knowing where the chain ends) is unbounded; the direct-call "
+            "shape covers the common obfuscation pattern."
+        ),
     ),
     (
         "destructured-require-alias",
         "const { r: myRequire } = { r: require };\nmyRequire('child_process');\n",
-        "destructuring an object literal built specifically to alias "
-        "`require` under a different key (`{ r: require }`) is not matched "
-        "by dynamic-code-aliased-require, which only recognizes a direct "
-        "`$R = require` assignment/declaration. Listed here per the PR F "
-        "plan's 'if cheap' scope for this specific shape — not implemented.",
+        (
+            "destructuring an object literal built specifically to alias "
+            "`require` under a different key (`{ r: require }`) is not matched "
+            "by dynamic-code-aliased-require, which only recognizes a direct "
+            "`$R = require` assignment/declaration. Listed here per the PR F "
+            "plan's 'if cheap' scope for this specific shape — not implemented."
+        ),
     ),
 ]
 
@@ -190,48 +196,60 @@ _PRECISION_ROWS: list[tuple[str, str, str]] = [
             "  } catch (e) {}\n"
             "};\n"
         ),
-        "the get-intrinsic/es-abstract/has-property-descriptors "
-        "getEvalledConstructor shim — a real, live-benchmark false positive "
-        "this rule was narrowed to fix. A `Function` alias called with this "
-        "exact fixed template-string shape, purely to feature-detect a "
-        "working strict-mode Function constructor. Bundled by a large "
-        "fraction of the npm dependency graph.",
+        (
+            "the get-intrinsic/es-abstract/has-property-descriptors "
+            "getEvalledConstructor shim — a real, live-benchmark false positive "
+            "this rule was narrowed to fix. A `Function` alias called with this "
+            "exact fixed template-string shape, purely to feature-detect a "
+            "working strict-mode Function constructor. Bundled by a large "
+            "fraction of the npm dependency graph."
+        ),
     ),
     (
         "computed-global-ternary-event-listener",
         "window[(on ? 'add' : 'remove') + 'EventListener'](type, handler);\n",
-        "ordinary, common browser code (feature-toggled add/removeEvent"
-        "Listener). Constant-foldable to a string (both ternary branches "
-        "are literals), which is exactly why dynamic-code-computed-global-"
-        "call checks each operand's raw syntax for a real string literal "
-        "instead of relying on Semgrep's string-literal pattern or "
-        "metavariable-pattern, both of which treat a foldable ternary as "
-        "equivalent to a literal.",
+        (
+            "ordinary, common browser code (feature-toggled add/removeEvent"
+            "Listener). Constant-foldable to a string (both ternary branches "
+            "are literals), which is exactly why dynamic-code-computed-global-"
+            "call checks each operand's raw syntax for a real string literal "
+            "instead of relying on Semgrep's string-literal pattern or "
+            "metavariable-pattern, both of which treat a foldable ternary as "
+            "equivalent to a literal."
+        ),
     ),
     (
         "function-return-this-shim",
         "const globalObj = Function('return this')();\n",
-        "the single most common benign use of a bare Function(...) call — "
-        "lodash, core-js and many other packages use this exact shape to "
-        "reach the global object across environments.",
+        (
+            "the single most common benign use of a bare Function(...) call — "
+            "lodash, core-js and many other packages use this exact shape to "
+            "reach the global object across environments."
+        ),
     ),
     (
         "regenerator-runtime-shim",
         'Function("r", "regeneratorRuntime = r")(runtime);\n',
-        "regenerator-runtime's global-assignment shim, shipped in nearly "
-        "every Babel-transpiled bundle that uses async/generator functions "
-        "— a real, live-benchmark false positive this rule was narrowed to "
-        "fix.",
+        (
+            "regenerator-runtime's global-assignment shim, shipped in nearly "
+            "every Babel-transpiled bundle that uses async/generator functions "
+            "— a real, live-benchmark false positive this rule was narrowed to "
+            "fix."
+        ),
     ),
     (
         "function-bind-polyfill-shim",
-        'r = Function("binder", "return function (" + joiny(i, ",") '
-        '+ "){ return binder.apply(this,arguments); }");\n',
-        "the function-bind polyfill's arity-matching trampoline — a fixed "
-        "prefix/suffix template with only a generated, safe argument-name "
-        "list in the middle. Found live in qs's bundled dependency (a "
-        "real, live-benchmark false positive this rule was narrowed to "
-        "fix).",
+        (
+            'r = Function("binder", "return function (" + joiny(i, ",") '
+            '+ "){ return binder.apply(this,arguments); }");\n'
+        ),
+        (
+            "the function-bind polyfill's arity-matching trampoline — a fixed "
+            "prefix/suffix template with only a generated, safe argument-name "
+            "list in the middle. Found live in qs's bundled dependency (a "
+            "real, live-benchmark false positive this rule was narrowed to "
+            "fix)."
+        ),
     ),
 ]
 
