@@ -81,6 +81,12 @@ class BedrockProvider:
 
         self._model = model
         self._region = region
+        # Some model families reject `temperature` outright with a 400
+        # ValidationException rather than accepting/ignoring it (see the
+        # direct Anthropic provider's identical fallback). Detected lazily on
+        # first call and cached per instance so later calls skip the doomed
+        # round-trip entirely.
+        self._temperature_unsupported = False
 
         session = boto3.Session(profile_name=profile or None)
         # Omit region_name when empty so boto3's own resolution runs
@@ -105,6 +111,30 @@ class BedrockProvider:
     def model(self) -> str:
         return self._model
 
+    async def _converse(self, inference_config: dict[str, Any], **kwargs: Any) -> dict:
+        """Call `bedrock-runtime.converse`, retrying once without `temperature`
+        if this model rejects it outright (some model families do, as a
+        `ValidationException` rather than accepting/silently ignoring it —
+        mirrors the direct Anthropic provider's `_create_message` fallback)."""
+        if not self._temperature_unsupported:
+            try:
+                return await run_sync_in_executor(
+                    self._client.converse, inferenceConfig=inference_config, **kwargs
+                )
+            except Exception as e:
+                if not _is_temperature_deprecated_error(e):
+                    raise
+                self._temperature_unsupported = True
+                logger.warning(
+                    "Model %s rejects the `temperature` parameter — omitting it "
+                    "for the rest of this provider instance's calls",
+                    self._model,
+                )
+        fallback_config = {k: v for k, v in inference_config.items() if k != "temperature"}
+        return await run_sync_in_executor(
+            self._client.converse, inferenceConfig=fallback_config, **kwargs
+        )
+
     async def generate_structured(
         self,
         prompt: str,
@@ -117,15 +147,6 @@ class BedrockProvider:
         """Generate structured output via Bedrock Converse API with toolConfig.
 
         Auto-bumps max_tokens 2x on truncation, up to _MAX_AUTO_BUMP, max _MAX_RETRIES retries.
-
-        KNOWN GAP: `inferenceConfig` below always sends `temperature`, unconditionally.
-        The direct Anthropic provider (backend/providers/anthropic.py) had to add a
-        fallback for this because claude-sonnet-5 rejects `temperature` outright with
-        a 400 ("temperature is deprecated for this model") — the same rejection is
-        plausible here if Bedrock ever routes to a Claude 5 model via the Converse
-        API, but this hasn't been verified against real Bedrock credentials. If a
-        Bedrock+Claude-5 combination starts failing with a similar error, port the
-        `_create_message`-style retry-without-temperature fallback here.
         """
         try:
             if response_model not in _schema_cache:
@@ -152,12 +173,11 @@ class BedrockProvider:
             last_error: ProviderError | None = None
 
             for attempt in range(1 + _MAX_RETRIES):
-                response = await run_sync_in_executor(
-                    self._client.converse,
+                response = await self._converse(
+                    {"maxTokens": budget, "temperature": temperature},
                     modelId=self._model,
                     messages=[{"role": "user", "content": content_blocks}],
                     toolConfig=tool_config,
-                    inferenceConfig={"maxTokens": budget, "temperature": temperature},
                 )
 
                 stop_reason = response.get("stopReason", "")
@@ -220,14 +240,10 @@ class BedrockProvider:
     ) -> str:
         """Generate plain text via Bedrock Converse API (no toolConfig)."""
         try:
-            response = await run_sync_in_executor(
-                self._client.converse,
+            response = await self._converse(
+                {"maxTokens": max_tokens or 4096, "temperature": temperature},
                 modelId=self._model,
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
-                inferenceConfig={
-                    "maxTokens": max_tokens or 4096,
-                    "temperature": temperature,
-                },
             )
             output_content = response.get("output", {}).get("message", {}).get("content", [])
             text_block = next((b for b in output_content if "text" in b), None)
@@ -270,6 +286,23 @@ def _build_content_blocks(
 
     blocks.append({"text": prompt})
     return blocks
+
+
+def _is_temperature_deprecated_error(exc: Exception) -> bool:
+    """True when `exc` is a botocore `ClientError` (duck-typed via `.response`
+    so this module never needs an unconditional `botocore` import — boto3 is
+    an optional extra) whose Bedrock `ValidationException` complains about
+    the `temperature` parameter, mirroring the direct Anthropic provider's
+    `_is_temperature_deprecated_error`."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    if response.get("Error", {}).get("Code") != "ValidationException":
+        return False
+    message = str(exc).lower()
+    return "temperature" in message and (
+        "deprecated" in message or "not supported" in message or "unsupported" in message
+    )
 
 
 def _map_boto_error(provider_name: str, exc: Exception) -> ProviderError:

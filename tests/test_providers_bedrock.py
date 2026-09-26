@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from backend.providers.base import (
     ProviderAuthError,
+    ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     create_provider,
@@ -156,6 +157,113 @@ async def test_bedrock_auto_bump():
     assert call_count == 2
     assert max_tokens_seen[1] == 1024  # 512 * 2
     assert result.value == "ok"
+
+
+@pytest.mark.asyncio
+async def test_bedrock_generate_structured_retries_without_temperature():
+    """A ValidationException complaining about `temperature` retries once
+    without it, then the flag persists for later calls on the same instance
+    (skipping the doomed round-trip entirely)."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+
+    calls: list[dict] = []
+    # Built before entering the patched-sys.modules block below: `_make_client_error`
+    # does `import botocore.exceptions` internally, which needs the *real*
+    # `botocore` package attribute chain intact to resolve to the real
+    # `ClientError` class — not the mock that replaces `sys.modules["botocore"]`
+    # for the provider's own imports.
+    temperature_error = _make_client_error(
+        "ValidationException", "temperature is not supported for this model"
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "temperature" in kwargs["inferenceConfig"]:
+            raise temperature_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert "temperature" in calls[0]["inferenceConfig"]
+    assert "temperature" not in calls[1]["inferenceConfig"]
+
+    # Second call on the same instance: the flag is already set, so it skips
+    # straight to the no-temperature call — no repeated failing attempt.
+    result2 = await provider.generate_structured("test again", _SimpleModel)
+    assert result2.value == "ok"
+    assert len(calls) == 3
+    assert "temperature" not in calls[2]["inferenceConfig"]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_generate_retries_without_temperature():
+    """The plain-text generate() path gets the same retry-without-temperature
+    fallback as generate_structured()."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+
+    calls: list[dict] = []
+    temperature_error = _make_client_error("ValidationException", "temperature is deprecated")
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "temperature" in kwargs["inferenceConfig"]:
+            raise temperature_error
+        return _make_text_response("hello world")
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="amazon.nova-pro-v1:0")
+        result = await provider.generate("test prompt")
+
+    assert result == "hello world"
+    assert len(calls) == 2
+    assert "temperature" not in calls[1]["inferenceConfig"]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_non_temperature_validation_error_still_raises():
+    """A ValidationException unrelated to `temperature` is not swallowed by
+    the retry — it must surface as a real error, not a silent success."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.side_effect = _make_client_error("ValidationException", "invalid model id")
+
+    with patch.dict(
+        sys.modules,
+        {
+            "boto3": mock_boto3,
+            "botocore": MagicMock(),
+            "botocore.config": MagicMock(),
+            "botocore.exceptions": _bce,
+        },
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        with pytest.raises(ProviderError):
+            await provider.generate_structured("test", _SimpleModel)
+
+    assert mock_client.converse.call_count == 1
 
 
 # ---------------------------------------------------------------------------
