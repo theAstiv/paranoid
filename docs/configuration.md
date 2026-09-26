@@ -19,7 +19,9 @@ docker compose up --build
 | `ANTHROPIC_API_KEY` | — | Anthropic (Claude) API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama server URL |
-| `DEFAULT_PROVIDER` | `anthropic` | Active provider: `anthropic`, `openai`, `ollama` |
+| `AWS_REGION` | — | AWS region for the Bedrock provider; empty lets boto3 resolve it via env/profile/instance metadata |
+| `AWS_PROFILE` | — | AWS named profile for Bedrock; empty uses boto3's default credential chain |
+| `DEFAULT_PROVIDER` | `anthropic` | Active provider: `anthropic`, `openai`, `ollama`, `bedrock` |
 | `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model name |
 | `FAST_MODEL` | `claude-haiku-4-5-20251001` | Haiku-class model for extraction/enrichment steps (Anthropic only); set to same as `DEFAULT_MODEL` to disable fast routing |
 
@@ -30,6 +32,7 @@ docker compose up --build
 | Anthropic | `claude-sonnet-4-20250514` | Best balance of quality and speed |
 | OpenAI | `gpt-4o` | Required for vision (`--diagram`) support |
 | Ollama | `llama3.1:8b`, `qwen2.5:14b` | Need 32K+ context window |
+| Bedrock | Anthropic Claude models via Bedrock | Uses your existing AWS credential chain — no separate API key. Retries `converse()` without `temperature` on providers that reject it. |
 
 ---
 
@@ -97,6 +100,18 @@ docker compose up --build
 | `CONTEXT_LINK_BINARY` | auto | Explicit path to the `context-link` binary; if unset, Paranoid searches `./bin/context-link` then `PATH` |
 | `ADDITIONAL_GIT_HOSTS` | — | Extra git clone hosts beyond `github.com`, `gitlab.com`, `bitbucket.org`; comma-separated exact hostnames (no wildcards); e.g. `git.company.com,git.internal.net` |
 | `SEED_COLLECTIONS` | all 16 | Comma-separated subset of rule engine seed collections to load; unknown names raise a startup error; e.g. `stride,auth,cloud` |
+
+---
+
+## Dependency capability engine
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEMGREP_BINARY` | auto | Explicit path to the `semgrep` binary; if unset, Paranoid searches `PATH`. Semgrep is not a Python dependency of Paranoid — install it separately (`pip install semgrep` or `pipx install semgrep`) |
+| `DEPS_CACHE_DIR` | `./data/deps_cache` | Immutable per-version cache for fetched npm tarball / GitHub source trees |
+| `DEPS_MAX_TARBALL_MB` | `50` | Compressed-size cap enforced during download, before extraction |
+
+See [Dependency capability engine](../README.md#dependency-capability-engine) in the README for what `paranoid deps scan|diff|scan-manifest` report and their limits.
 
 ---
 
