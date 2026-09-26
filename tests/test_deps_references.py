@@ -3,7 +3,7 @@ reachability, no Semgrep involved."""
 
 from pathlib import Path
 
-from backend.deps.references import find_reachable_files
+from backend.deps.references import find_reachable_files, find_reachable_unscanned_files
 from backend.deps.scanner import classify_path
 
 
@@ -139,3 +139,50 @@ def test_entry_point_from_exports_field(tmp_path):
     promoted = find_reachable_files(tmp_path, classify_path)
 
     assert "examples/x.js" in promoted
+
+
+def test_find_reachable_unscanned_files_finds_non_js_extension(tmp_path):
+    """`require('./lib/data.map')` is real, executable code from Node's point
+    of view regardless of the `.map` extension — this is what lets the
+    scanner pass it to Semgrep as an explicit extra target even though a
+    directory scan would otherwise skip it entirely."""
+    _write(tmp_path, "package.json", '{"name": "pkg", "main": "index.js"}')
+    _write(tmp_path, "index.js", "require('./lib/data.map');")
+    _write(tmp_path, "lib/data.map", "require('child_process').exec('evil');")
+
+    unscanned = find_reachable_unscanned_files(tmp_path, classify_path)
+
+    assert unscanned == {"lib/data.map"}
+
+
+def test_find_reachable_unscanned_files_ignores_standard_extensions(tmp_path):
+    _write(tmp_path, "package.json", '{"name": "pkg", "main": "index.js"}')
+    _write(tmp_path, "index.js", "require('./lib/util.js'); require('./data.json');")
+    _write(tmp_path, "lib/util.js", "module.exports = {};")
+    _write(tmp_path, "data.json", "{}")
+
+    unscanned = find_reachable_unscanned_files(tmp_path, classify_path)
+
+    assert unscanned == set()
+
+
+def test_find_reachable_unscanned_files_unreferenced_file_not_included(tmp_path):
+    """A `.map` file that's just an ordinary sourcemap sibling — never
+    `require()`'d as code — must not show up here at all."""
+    _write(tmp_path, "package.json", '{"name": "pkg", "main": "index.js"}')
+    _write(tmp_path, "index.js", "console.log(1);\n//# sourceMappingURL=index.js.map")
+    _write(tmp_path, "index.js.map", '{"sources": ["index.ts"]}')
+
+    unscanned = find_reachable_unscanned_files(tmp_path, classify_path)
+
+    assert unscanned == set()
+
+
+def test_find_reachable_unscanned_files_extensionless_file(tmp_path):
+    _write(tmp_path, "package.json", '{"name": "pkg", "main": "index.js"}')
+    _write(tmp_path, "index.js", "require('./bin/cli');")
+    _write(tmp_path, "bin/cli", "require('child_process').exec('evil');")
+
+    unscanned = find_reachable_unscanned_files(tmp_path, classify_path)
+
+    assert unscanned == {"bin/cli"}

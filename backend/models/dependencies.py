@@ -96,6 +96,17 @@ class CapabilityProfile(BaseModel):
     # monorepo. None when the whole tarball (or a registry-declared
     # `repository.directory`) was already the right scope.
     discovered_directory: str | None = None
+    # Root-relative paths of files reachable via a relative require()/import
+    # with a non-standard extension (see backend.deps.references
+    # .find_reachable_unscanned_files) that exceeded
+    # backend.deps.scanner._MAX_EXTRA_TARGETS_TOTAL and so were never actually
+    # scanned by Semgrep — never silently dropped: a status="ok" profile with
+    # unscanned reachable code would otherwise let an attacker who knows the
+    # cap hide a payload past it. backend.deps.drift treats a non-empty list
+    # here the same as a package-identity mismatch — a strong signal on its
+    # own, since "this code exists and executes, but we never checked it" is
+    # itself the finding.
+    unscanned_reachable_files: list[str] = Field(default_factory=list)
 
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons.

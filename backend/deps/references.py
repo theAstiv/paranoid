@@ -97,6 +97,135 @@ def _resolve(root: Path, from_dir: Path, specifier: str) -> Path | None:
     return None
 
 
+def _reachable_closure(
+    root: Path,
+    classify: Callable[[str], PathClass],
+    install_time_files: frozenset[str],
+) -> tuple[set[Path], dict[str, str]]:
+    """Shared BFS for `find_reachable_files` and `find_reachable_unscanned_files`:
+    every file reachable, through relative require()/import specifiers, from a
+    declared package.json entry point, another SHIPPED file, or an
+    install-time hook target — plus which of those are a promotion (a
+    TEST/EXAMPLE/BUILD-classified file reached this way, `{rel: via}`).
+
+    Returns `(reached_via_specifier, promoted)`. `reached_via_specifier` holds
+    every file that was ever the resolved target of an actual require()/
+    import specifier or an install-time hook's direct target — *not* every
+    file in the initial SHIPPED-by-path seed list, most of which are simply
+    present in the tree, never targeted by anything. That distinction matters
+    for a target already SHIPPED by path (e.g. a `.map` sibling `require()`'d
+    directly): it would never be "promoted" (it's already SHIPPED), but it
+    still needs to be recorded as *actually reachable code*, which a plain
+    `visited` set can't tell apart from an unreferenced SHIPPED file sitting
+    in the same tree.
+    """
+    try:
+        root = root.resolve()
+        all_files = [
+            p
+            for p in root.rglob("*")
+            if p.is_file() and not _IGNORED_DIRS & set(p.relative_to(root).parts[:-1])
+        ]
+    except OSError:
+        return set(), {}
+
+    shipped = [
+        p for p in all_files if classify(p.relative_to(root).as_posix()) == PathClass.SHIPPED
+    ]
+
+    promoted: dict[str, str] = {}
+    queue: list[Path] = list(shipped)
+    visited: set[Path] = set(queue)
+    reached_via_specifier: set[Path] = set()
+
+    for rel in install_time_files:
+        try:
+            candidate = (root / rel).resolve()
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if not candidate.is_file():
+            continue
+        reached_via_specifier.add(candidate)
+        if candidate in visited:
+            continue
+        visited.add(candidate)
+        via_rel = candidate.relative_to(root).as_posix()
+        if classify(via_rel) != PathClass.SHIPPED:
+            promoted.setdefault(via_rel, "package.json (install hook)")
+        queue.append(candidate)
+
+    for spec in _entry_specifiers(root):
+        resolved = _resolve(root, root, spec)
+        if resolved is None:
+            continue
+        reached_via_specifier.add(resolved)
+        if resolved in visited:
+            continue
+        visited.add(resolved)
+        rel = resolved.relative_to(root).as_posix()
+        if classify(rel) != PathClass.SHIPPED:
+            promoted.setdefault(rel, "package.json")
+        queue.append(resolved)
+
+    idx = 0
+    while idx < len(queue):
+        current = queue[idx]
+        idx += 1
+        try:
+            text = current.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for spec in _extract_specifiers(text):
+            target = _resolve(root, current.parent, spec)
+            if target is None:
+                continue
+            reached_via_specifier.add(target)
+            if target in visited:
+                continue
+            visited.add(target)
+            rel = target.relative_to(root).as_posix()
+            if classify(rel) != PathClass.SHIPPED:
+                promoted.setdefault(rel, current.relative_to(root).as_posix())
+            queue.append(target)
+
+    return reached_via_specifier, promoted
+
+
+# Extensions Semgrep's JS/TS rules already cover, or that carry no executable
+# JS of their own (.json is data, .node is a native binary) — anything else
+# reachable via a relative require()/import is code Node will execute despite
+# Semgrep skipping it by default (e.g. `require('./lib/data.map')`, or an
+# extensionless file), so the scanner passes it as an explicit extra target.
+_SCANNED_EXTENSIONS = frozenset(
+    {".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".json", ".node"}
+)
+
+
+def find_reachable(
+    root: Path,
+    classify: Callable[[str], PathClass],
+    install_time_files: frozenset[str] = frozenset(),
+) -> tuple[dict[str, str], set[str]]:
+    """Return both `find_reachable_files`'s promoted dict and
+    `find_reachable_unscanned_files`'s unscanned-extension set from a single
+    `_reachable_closure` pass — `backend.deps.scanner` needs both on every
+    scan, and each independently walks and re-reads the whole tree, so
+    computing them separately doubles that work for no reason.
+    """
+    reached, promoted = _reachable_closure(root, classify, install_time_files)
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return promoted, set()
+    unscanned = {
+        p.relative_to(resolved_root).as_posix()
+        for p in reached
+        if p.suffix.lower() not in _SCANNED_EXTENSIONS
+    }
+    return promoted, unscanned
+
+
 def find_reachable_files(
     root: Path,
     classify: Callable[[str], PathClass],
@@ -115,67 +244,24 @@ def find_reachable_files(
     imported directly — `scanner` imports this module, so importing it back
     would create a cycle.
     """
-    try:
-        root = root.resolve()
-        all_files = [
-            p
-            for p in root.rglob("*")
-            if p.is_file() and not _IGNORED_DIRS & set(p.relative_to(root).parts[:-1])
-        ]
-    except OSError:
-        return {}
-
-    shipped = [
-        p for p in all_files if classify(p.relative_to(root).as_posix()) == PathClass.SHIPPED
-    ]
-
-    promoted: dict[str, str] = {}
-    queue: list[Path] = list(shipped)
-    visited: set[Path] = set(queue)
-
-    for rel in install_time_files:
-        try:
-            candidate = (root / rel).resolve()
-            candidate.relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if not candidate.is_file() or candidate in visited:
-            continue
-        visited.add(candidate)
-        via_rel = candidate.relative_to(root).as_posix()
-        if classify(via_rel) != PathClass.SHIPPED:
-            promoted.setdefault(via_rel, "package.json (install hook)")
-        queue.append(candidate)
-
-    for spec in _entry_specifiers(root):
-        resolved = _resolve(root, root, spec)
-        if resolved is None or resolved in visited:
-            continue
-        visited.add(resolved)
-        rel = resolved.relative_to(root).as_posix()
-        if classify(rel) != PathClass.SHIPPED:
-            promoted.setdefault(rel, "package.json")
-        queue.append(resolved)
-
-    idx = 0
-    while idx < len(queue):
-        current = queue[idx]
-        idx += 1
-        try:
-            text = current.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for spec in _extract_specifiers(text):
-            target = _resolve(root, current.parent, spec)
-            if target is None or target in visited:
-                continue
-            visited.add(target)
-            rel = target.relative_to(root).as_posix()
-            if classify(rel) != PathClass.SHIPPED:
-                promoted.setdefault(rel, current.relative_to(root).as_posix())
-            queue.append(target)
-
+    promoted, _ = find_reachable(root, classify, install_time_files)
     return promoted
+
+
+def find_reachable_unscanned_files(
+    root: Path,
+    classify: Callable[[str], PathClass],
+    install_time_files: frozenset[str] = frozenset(),
+) -> set[str]:
+    """Return the root-relative paths of every file reachable via a relative
+    require()/import whose extension Semgrep won't recognize by default (not
+    a standard JS/TS extension, and not `.json`/`.node`) — regardless of
+    `PathClass`. Node executes whatever a `require()` resolves to, extension
+    or not, so a payload hidden behind e.g. `require('./lib/data.map')` is
+    invisible to a scan that only ever targets `*.js`-shaped files.
+    """
+    _, unscanned = find_reachable(root, classify, install_time_files)
+    return unscanned
 
 
 def find_install_time_closure(root: Path, install_time_files: frozenset[str]) -> set[str]:
