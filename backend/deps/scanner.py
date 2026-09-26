@@ -334,6 +334,37 @@ def _build_evidence(
     )
 
 
+def _dedupe_evidence(items: list[CapabilityEvidence]) -> list[CapabilityEvidence]:
+    """Collapse matches that share (rule_id, file, line) into one item with
+    `count` set to how many raw matches it represents, keeping the first
+    match's snippet.
+
+    Deliberately keyed without the snippet: `_extract_snippet` centers its
+    window on each match's *column*, so on a real minified bundle line (often
+    thousands of characters) two genuinely repeated calls at different
+    columns get two different windows and two different snippet strings — a
+    snippet-inclusive key would then never collapse them, and the exact
+    inflation this function exists to fix (a single line calling `eval`
+    dozens of times) would still show up as dozens of evidence items. Line
+    granularity is coarse enough that two *different* rule matches on the
+    same line are rare in practice and, when they do happen, are still one
+    real finding for that rule on that line — the kept snippet just isn't
+    guaranteed to be the most representative one, which is what `count`
+    signals to a reader.
+    """
+    merged: dict[tuple[str, str, int], CapabilityEvidence] = {}
+    order: list[tuple[str, str, int]] = []
+    for item in items:
+        key = (item.rule_id, item.file, item.line)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = item
+            order.append(key)
+        else:
+            merged[key] = existing.model_copy(update={"count": existing.count + 1})
+    return [merged[key] for key in order]
+
+
 def _error_kind(error: dict) -> str:
     """Semgrep reports an error's `type` as either a bare string or
     `[kind, details...]`."""
@@ -468,7 +499,7 @@ async def scan_source(
         )
 
     line_cache: dict[Path, list[str]] = {}
-    evidence = []
+    raw_evidence = []
     for result in combined_results:
         item = _build_evidence(
             result,
@@ -479,7 +510,8 @@ async def scan_source(
             install_time_files=install_time_files,
         )
         if item is not None:
-            evidence.append(item)
+            raw_evidence.append(item)
+    evidence = _dedupe_evidence(raw_evidence)
 
     # Matches category_set()'s own BUILD_INSTALL-from-hooks rule so this
     # display field and category_set() never disagree in the CLI/JSON output.

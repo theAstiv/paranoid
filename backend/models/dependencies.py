@@ -60,6 +60,13 @@ class CapabilityEvidence(BaseModel):
     # `postinstall: node scripts/setup.js`) — code that runs on `npm install`
     # regardless of whether anything ever imports it at runtime.
     install_time: bool = False
+    # How many raw Semgrep matches this evidence item represents. A single
+    # minified line (a whole bundled file on one line is common) can produce
+    # dozens of identical (rule_id, file, line, snippet) matches at different
+    # columns — the scanner collapses those into one item with this count
+    # instead of one CapabilityEvidence per column, so the CLI and benchmark
+    # aren't inflated by formatting rather than by distinct capabilities.
+    count: int = 1
 
 
 class CapabilityProfile(BaseModel):
