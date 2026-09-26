@@ -118,6 +118,29 @@ def _collect_node_files(script: str, scripts: dict, seen: frozenset[str], files:
         _collect_node_files(target, scripts, seen | {target_name}, files)
 
 
+def hook_node_files_from_package_json(data: dict) -> set[str]:
+    """Return package.json-relative file paths run via `node <file>` inside an
+    install lifecycle hook, directly or through an `npm run <script>` chain —
+    operating on an already-parsed manifest dict (shared by
+    `find_install_time_files` below, which reads one from disk, and
+    `backend.deps.drift`, which already has the tarball's manifest in memory
+    and uses this to treat a hook's own target file as "declared by the
+    manifest" for the external-build excuse, even when it isn't also named by
+    main/bin/files/exports)."""
+    scripts = data.get("scripts")
+    if not isinstance(scripts, dict):
+        scripts = {}
+
+    files: set[str] = set()
+    for key in _HOOK_SCRIPTS:
+        script = scripts.get(key)
+        if isinstance(script, str) and script.strip():
+            _collect_node_files(script, scripts, frozenset(), files)
+    # Normalize so `"./lib/setup.js"` and `"lib/setup.js"` compare equal to
+    # the root-relative paths `backend.deps.scanner` matches them against.
+    return {posixpath.normpath(f) for f in files}
+
+
 def find_install_time_files(package_json_path: Path) -> set[str]:
     """Return package.json-relative file paths run via `node <file>` inside an
     install lifecycle hook, directly or through an `npm run <script>` chain.
@@ -131,19 +154,7 @@ def find_install_time_files(package_json_path: Path) -> set[str]:
         data = json.loads(package_json_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return set()
-
-    scripts = data.get("scripts")
-    if not isinstance(scripts, dict):
-        scripts = {}
-
-    files: set[str] = set()
-    for key in _HOOK_SCRIPTS:
-        script = scripts.get(key)
-        if isinstance(script, str) and script.strip():
-            _collect_node_files(script, scripts, frozenset(), files)
-    # Normalize so `"./lib/setup.js"` and `"lib/setup.js"` compare equal to
-    # the root-relative paths `backend.deps.scanner` matches them against.
-    return {posixpath.normpath(f) for f in files}
+    return hook_node_files_from_package_json(data)
 
 
 def find_install_hooks(package_json_path: Path) -> list[str]:

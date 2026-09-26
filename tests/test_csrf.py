@@ -48,13 +48,29 @@ async def test_csrf_rejects_evil_origin_on_patch(client):
 
 
 @pytest.mark.asyncio
-async def test_csrf_allows_matching_origin(client):
-    resp = await client.patch(
-        "/api/config/",
-        json={"default_iterations": 2},
-        headers={"Origin": "http://localhost:8000"},
-    )
-    assert resp.status_code == 200
+async def test_csrf_allows_matching_origin():
+    """A matching Origin passes through.
+
+    Built against an isolated app with an explicit allowlist rather than the
+    `client` fixture's real app: `settings.allowed_origins` is parsed once at
+    import time in `backend/main.py` and baked into that `CSRFMiddleware`
+    instance, so patching the setting later has no effect on it — this test
+    would silently pass or fail for the wrong reason (whatever the app's
+    current default happens to be) rather than testing the allowlist match
+    itself.
+    """
+    from fastapi import FastAPI
+
+    app2 = FastAPI()
+    app2.add_middleware(CSRFMiddleware, allowed_origins=["http://localhost:8000"])
+
+    @app2.patch("/echo")
+    async def echo():
+        return {"ok": True}
+
+    async with AsyncClient(transport=ASGITransport(app=app2), base_url="http://test") as c:
+        resp = await c.patch("/echo", headers={"Origin": "http://localhost:8000"})
+        assert resp.status_code == 200
 
 
 @pytest.mark.asyncio

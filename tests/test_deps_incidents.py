@@ -23,9 +23,15 @@ from backend.models.dependencies import ResolvedPackage
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
 
-pytestmark = pytest.mark.skipif(
-    scanner.resolve_semgrep_binary() is None, reason="semgrep binary not installed"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        scanner.resolve_semgrep_binary() is None, reason="semgrep binary not installed"
+    ),
+    # The global `timeout = 30` in pyproject.toml is tight for real-Semgrep
+    # end-to-end tests. On Windows, pytest-timeout's default "thread" method
+    # kills the whole run (not just the one test) when it fires.
+    pytest.mark.timeout(120),
+]
 
 
 def _fetched(tmp_path: Path, label: str, _unused_wrapper: str | None = None) -> tuple[Path, Path]:

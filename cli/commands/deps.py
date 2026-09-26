@@ -114,7 +114,12 @@ async def _fetch_and_scan(
     if result.path is None:
         return None, None, result.reason
     profile = await scan_source(result.path, kind, name=resolved.name, version=resolved.version)
-    if result.skipped_long_paths or result.skipped_link_names or result.discovered_directory:
+    if (
+        result.skipped_long_paths
+        or result.skipped_link_names
+        or result.discovered_directory
+        or result.external_build_markers
+    ):
         # Fetch-time skips (and a discovered package directory) are recorded
         # on the profile itself (not just logged) so they survive into the
         # JSON output and the capability grid. Downgrading status away from
@@ -128,6 +133,7 @@ async def _fetch_and_scan(
             "skipped_link_names": list(result.skipped_link_names),
             "skipped_long_path_names": list(result.skipped_long_path_names),
             "discovered_directory": result.discovered_directory,
+            "external_build_markers": list(result.external_build_markers),
         }
         if result.skipped_long_paths and profile.status == "ok":
             updates["status"] = "partial_fetch"
@@ -226,6 +232,11 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
             f"    GitHub package found at {profile.discovered_directory or '(repo root)'}/",
             fg="yellow",
         )
+    if profile.external_build_markers:
+        click.secho(
+            f"    repo build markers: {', '.join(profile.external_build_markers)}",
+            fg="yellow",
+        )
     categories = profile.category_set()
     if not categories:
         click.echo("    (no capabilities detected)")
@@ -282,7 +293,8 @@ def _render_drift(drift: DriftReport | None) -> None:
     click.echo(
         f"    matched={len(drift.matched)} sourcemap={len(drift.explained_by_sourcemap)} "
         f"build={len(drift.explained_by_build)} bundled={len(drift.bundled_dependency)} "
-        f"unexplained={len(drift.unexplained)} unverifiable={len(drift.unverifiable)}"
+        f"unexplained={len(drift.unexplained)} unverifiable={len(drift.unverifiable)} "
+        f"generated_unverifiable={len(drift.generated_unverifiable)}"
     )
     if drift.signal:
         if drift.tarball_declared_name_mismatch is not None:
@@ -332,6 +344,19 @@ def _render_drift(drift: DriftReport | None) -> None:
             "    informational: install hooks added (allowlisted commands only): ", fg="yellow"
         )
         click.echo(f"      - {', '.join(drift.install_hooks_added_benign)}")
+    if drift.generated_unverifiable:
+        click.secho(
+            "    informational: shipped code generated outside npm; "
+            "cannot be verified against source:",
+            fg="yellow",
+        )
+        for file in drift.generated_unverifiable[:_MAX_LISTED_UNSCANNED_FILES]:
+            categories = drift.generated_unverifiable_categories.get(file)
+            suffix = f": {', '.join(c.value for c in categories)}" if categories else ""
+            click.echo(f"      - {file}{suffix}")
+        remaining = len(drift.generated_unverifiable) - _MAX_LISTED_UNSCANNED_FILES
+        if remaining > 0:
+            click.echo(f"      ...and {remaining} more")
 
 
 def _render_delta(delta: VersionDelta) -> None:
