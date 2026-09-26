@@ -102,6 +102,11 @@ class FetchResult:
     # the wrapper root and `_resolve_package_directory` had to discover which
     # subdirectory of the repo actually holds it (e.g. "npm/esbuild").
     discovered_directory: str | None = None
+    # GitHub only: names of `_EXTERNAL_BUILD_MARKERS` found at the *repo root*
+    # (independent of any discovered package subdirectory — e.g. esbuild's
+    # Makefile/go.mod sit at the repo root while the npm package itself is
+    # scoped to npm/esbuild/). Empty when none are present, or for npm tarballs.
+    external_build_markers: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -145,11 +150,16 @@ def cache_dir_for(kind: SourceKind, name: str, version: str) -> Path:
 # genuinely fresh fetch always writes the current version, so this only ever
 # costs one extra fetch per pre-existing cache entry, the first time it's read
 # after an upgrade.
-_MARKER_SCHEMA_VERSION = 1
+#
+# Bumped to 2 for `external_build_markers`.
+_MARKER_SCHEMA_VERSION = 2
 
 
 def _write_marker(
-    marker: Path, extract: "_ExtractResult", discovered_directory: str | None = None
+    marker: Path,
+    extract: "_ExtractResult",
+    discovered_directory: str | None = None,
+    external_build_markers: frozenset[str] = frozenset(),
 ) -> None:
     """Record the fetch's skip counts/names in the `.complete` marker itself
     — not just logged — so a cache hit (which never re-runs `_safe_extract`)
@@ -164,6 +174,7 @@ def _write_marker(
                 "skipped_link_names": list(extract.skipped_link_names),
                 "skipped_long_path_names": list(extract.skipped_long_path_names),
                 "discovered_directory": discovered_directory,
+                "external_build_markers": sorted(external_build_markers),
             }
         ),
         encoding="utf-8",
@@ -192,6 +203,7 @@ def _fetch_result_from_marker(data: dict, cache_dir: Path) -> "FetchResult":
         skipped_link_names=tuple(data.get("skipped_link_names", ())),
         skipped_long_path_names=tuple(data.get("skipped_long_path_names", ())),
         discovered_directory=data.get("discovered_directory"),
+        external_build_markers=tuple(data.get("external_build_markers", ())),
     )
 
 
@@ -347,6 +359,59 @@ def _github_rel_name(name: str, wrapper: str, scoped: str | None) -> str | None:
 
 
 _MAX_PACKAGE_JSON_BYTES = 1 * 1024 * 1024
+
+# Repo-root markers of a non-npm build toolchain (Go, Rust, Bazel, Gradle, a
+# plain Makefile, ...). Presence alone excuses nothing — see
+# backend.deps.drift._is_generated_unverifiable, which also requires the file
+# to be declared by the tarball's own manifest. Checked only at depth 1 inside
+# the tarball's wrapper directory (the repo root), never inside the
+# discovered package subdirectory — esbuild's Makefile/go.mod live at the Go
+# monorepo's root while its npm package is scoped to npm/esbuild/.
+_EXTERNAL_BUILD_MARKERS = frozenset(
+    {
+        "Makefile",
+        "makefile",
+        "go.mod",
+        "Cargo.toml",
+        "build.rs",
+        "BUILD",
+        "BUILD.bazel",
+        "WORKSPACE",
+        "build.gradle",
+        "build.gradle.kts",
+    }
+)
+
+
+def _detect_external_build_markers(tar_path: Path) -> frozenset[str]:
+    """Names-only pass (no extraction) for `_EXTERNAL_BUILD_MARKERS` present at
+    the tarball's wrapper root. Never raises — any parse failure is reported
+    as "no markers found", the same as a genuinely marker-less repo, since
+    this is a permissive signal (it can only narrow an excuse, never grant
+    one on its own)."""
+    found: set[str] = set()
+    try:
+        with tarfile.open(tar_path, mode="r:gz") as tar:
+            it = iter(tar)
+            try:
+                first = next(it)
+            except StopIteration:
+                return frozenset()
+            wrapper = first.name.split("/", 1)[0]
+            for member in itertools.chain([first], it):
+                if not member.isfile():
+                    continue
+                name = member.name
+                if not name.startswith(wrapper + "/"):
+                    continue
+                within = name[len(wrapper) + 1 :]
+                if "/" in within:
+                    continue
+                if within in _EXTERNAL_BUILD_MARKERS:
+                    found.add(within)
+    except (tarfile.TarError, EOFError, OSError):
+        return frozenset()
+    return frozenset(found)
 
 
 def _read_package_json_name(tar: tarfile.TarFile, member: tarfile.TarInfo) -> str | None:
@@ -712,7 +777,11 @@ async def fetch_source(
             await _download_tarball(url, tar_path, expected_integrity, client)
 
             discovered_directory: str | None = None
+            external_build_markers: frozenset[str] = frozenset()
             if kind == SourceKind.GITHUB:
+                external_build_markers = await asyncio.to_thread(
+                    _detect_external_build_markers, tar_path
+                )
                 repo_directory, discovered, reason = await asyncio.to_thread(
                     _resolve_package_directory, tar_path, resolved.name, resolved.repo_directory
                 )
@@ -764,9 +833,11 @@ async def fetch_source(
             if cache_dir.exists():
                 await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=True)
             await asyncio.to_thread(shutil.move, str(extract_root), str(cache_dir))
-            await asyncio.to_thread(_write_marker, marker, extract, discovered_directory)
+            await asyncio.to_thread(
+                _write_marker, marker, extract, discovered_directory, external_build_markers
+            )
             logger.info(
-                "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d%s)",
+                "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d%s%s)",
                 kind.value,
                 resolved.name,
                 resolved.version,
@@ -774,6 +845,9 @@ async def fetch_source(
                 extract.skipped_links,
                 extract.skipped_long_paths,
                 f", discovered_directory={discovered_directory!r}" if discovered_directory else "",
+                f", external_build_markers={sorted(external_build_markers)}"
+                if external_build_markers
+                else "",
             )
             return FetchResult(
                 path=cache_dir,
@@ -782,6 +856,7 @@ async def fetch_source(
                 skipped_link_names=extract.skipped_link_names,
                 skipped_long_path_names=extract.skipped_long_path_names,
                 discovered_directory=discovered_directory,
+                external_build_markers=tuple(sorted(external_build_markers)),
             )
         finally:
             await asyncio.to_thread(shutil.rmtree, tmp_dir, ignore_errors=True)

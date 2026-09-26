@@ -284,6 +284,78 @@ async def test_github_discovered_directory_persists_across_cache_hit():
 
 
 @pytest.mark.asyncio
+async def test_github_external_build_markers_detected_at_repo_root():
+    """esbuild shape plus its real Makefile/go.mod at the repo root — detected
+    independently of the discovered package subdirectory (npm/esbuild/ has
+    neither file itself)."""
+
+    def build(tar):
+        _add_file(tar, "esbuild-v0.28.2/main.go", b"package main")
+        _add_file(tar, "esbuild-v0.28.2/Makefile", b"build:\n\tgo build")
+        _add_file(tar, "esbuild-v0.28.2/go.mod", b"module esbuild")
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/package.json", b'{"name": "esbuild"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="esbuild")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert set(result.external_build_markers) == {"Makefile", "go.mod"}
+
+
+@pytest.mark.asyncio
+async def test_github_no_build_marker_at_root_is_empty():
+    data = _build_tar_gz(lambda tar: _add_file(tar, "pkg-v1.0.0/package.json", b'{"name": "pkg"}'))
+    resolved = _github_resolved(name="pkg")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.external_build_markers == ()
+
+
+@pytest.mark.asyncio
+async def test_github_build_marker_inside_subdirectory_not_detected_at_root():
+    """A marker file nested inside a subdirectory (not the repo root) must not
+    count — only depth-1 entries under the tarball's wrapper directory."""
+
+    def build(tar):
+        _add_file(tar, "pkg-v1.0.0/package.json", b'{"name": "pkg"}')
+        _add_file(tar, "pkg-v1.0.0/vendor/thirdparty/Makefile", b"build:\n\techo hi")
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="pkg")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.external_build_markers == ()
+
+
+@pytest.mark.asyncio
+async def test_github_external_build_markers_persists_across_cache_hit():
+    def build(tar):
+        _add_file(tar, "esbuild-v0.28.2/Makefile", b"build:\n\tgo build")
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/package.json", b'{"name": "esbuild"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="esbuild")
+
+    async with _client(data) as client:
+        first = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+    assert first.external_build_markers == ("Makefile",)
+
+    async with _client(data) as client:
+        second = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert second.external_build_markers == ("Makefile",)
+
+
+@pytest.mark.asyncio
 async def test_github_monorepo_directory_missing_returns_none_not_whole_repo():
     """A renamed/moved repo_directory must never fall back to the whole monorepo.
 

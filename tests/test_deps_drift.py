@@ -13,7 +13,7 @@ before #91).
 
 import json
 
-from backend.deps.drift import compare_sources
+from backend.deps.drift import _declared_manifest_paths, compare_sources
 from backend.models.dependencies import CapabilityEvidence, CapabilityProfile
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
@@ -956,3 +956,36 @@ def test_package_name_match_still_compares_normally(tmp_path):
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.status == "compared"
     assert report.matched == ["index.js", "package.json"]
+
+
+def test_declared_manifest_paths_matches_main_bin_exports():
+    """`_declared_manifest_paths` collects exact (leading-`./`-stripped) file
+    paths from `main` (string), `bin` (string or dict), and every `exports`
+    leaf — the specific-file counterpart to `_declared_build_dirs`'s
+    top-level directories, used to decide whether a generated file is
+    plausibly declared by the tarball's own manifest."""
+    package_json = {
+        "name": "pkg",
+        "main": "./lib/main.js",
+        "bin": {"esbuild": "bin/esbuild", "esbuild-other": "./bin/other"},
+        "exports": {
+            ".": {"import": "./dist/index.mjs", "require": "./dist/index.cjs"},
+            "./extra": "./dist/extra.js",
+        },
+    }
+    assert _declared_manifest_paths(package_json) == {
+        "lib/main.js",
+        "bin/esbuild",
+        "bin/other",
+        "dist/index.mjs",
+        "dist/index.cjs",
+        "dist/extra.js",
+    }
+
+
+def test_declared_manifest_paths_single_string_bin():
+    assert _declared_manifest_paths({"bin": "bin/cli.js"}) == {"bin/cli.js"}
+
+
+def test_declared_manifest_paths_empty_manifest_is_empty_set():
+    assert _declared_manifest_paths({}) == set()
