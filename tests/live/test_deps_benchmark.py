@@ -11,8 +11,8 @@ version): the benchmark is meant to reflect the real, current state of these
 packages' capabilities, and pinning would just go stale. A dated snapshot is
 still written to `data/benchmarks/` so a run's numbers are always on record.
 
-Three gates are what "the dependency engine is done" is measured against
-(Week 2 plan, Session 5):
+Four gates are what "the dependency engine is done" is measured against
+(Week 2 plan, Session 5 + the PR D hardening follow-up):
 
   - Failure-A gate: every pure-utility package shows zero shipped
     process/network/dynamic_code evidence.
@@ -22,10 +22,27 @@ Three gates are what "the dependency engine is done" is measured against
   - Drift precision gate: across the whole benchmark, at most 2 packages may
     show a drift `signal` (capabilities_only_in_tarball). Each one that does
     is expected to be triaged by hand, not treated as ground truth.
+    `generated_unverifiable` files (see backend/deps/drift.py) never
+    contribute to this — they need no separate exclusion here.
+  - Drift coverage gate: of every package whose GitHub source actually
+    resolved, at least 85% must reach `drift.status == "compared"` — the
+    fixes in #91-#94 (scoped extraction, package discovery, the identity
+    gate) exist specifically to make comparison possible, not just to avoid
+    a wrong-tree false positive. Every package that didn't compare lists its
+    `skip_reason` in the gate detail and the artifact's skip-reason
+    histogram, so a coverage shortfall is diagnosable rather than an opaque
+    percentage.
 
-GitHub resolution rate (overall, and by which ref candidate matched) is
-reported in the artifact but not gated — see the Week 2 plan's Session 0
-reality check for why: it's expected to vary a lot by package.
+The artifact also reports (informational, not gated): GitHub resolution rate
+by ref-candidate strategy, per-package `discovered_directory` /
+`external_build_markers` / partial-fetch / unverifiable / relocated / weak
+counts (both sides), and an external-build triage table for every
+strong-signal package (does it have a repo-root build marker, and is the
+signalling file declared by the *GitHub* repo's own manifest — never the
+tarball's, which is attacker-controlled) — the "measure first" step the
+hardening plan calls for before deciding whether the deferred repo-wide
+second Semgrep pass (never built in this PR) is actually worth building
+later.
 """
 
 import asyncio
@@ -38,7 +55,10 @@ import httpx
 import pytest
 
 from backend.deps import scanner
-from backend.models.enums import CapabilityCategory
+from backend.deps.drift import _declared_manifest_paths, _load_package_json
+from backend.deps.fetcher import cache_dir_for
+from backend.deps.install_hooks import hook_node_files_from_package_json
+from backend.models.enums import CapabilityCategory, SourceKind
 from cli.commands.deps import _scan_one
 
 
@@ -111,6 +131,11 @@ _RISKY_FOR_FAILURE_A = frozenset(
 )
 
 _DRIFT_SIGNAL_MAX = 2
+# Of every package whose GitHub source resolved, this fraction must actually
+# reach drift.status == "compared" — #91-#94 exist specifically to make
+# comparison possible (scoped extraction, package discovery, the identity
+# gate), not just to avoid a wrong-tree false positive.
+_MIN_DRIFT_COVERAGE = 0.85
 # Below this success rate the run is treated as environment flakiness
 # (offline, npm registry outage) rather than a real finding.
 _MIN_SUCCESS_RATE = 0.7
@@ -169,6 +194,107 @@ def _ref_strategy(entry: dict) -> str:
     return "git_head"
 
 
+def _promoted_count(profile) -> int:
+    """Files reclassified SHIPPED via reachability/install-time promotion
+    (`CapabilityEvidence.reclassified_from`) — informational, from PR B."""
+    if profile is None:
+        return 0
+    return sum(1 for e in profile.evidence if e.reclassified_from is not None)
+
+
+def _package_row(entry: dict) -> dict:
+    """Flatten one `_scan_all` entry into the JSON-safe extended fields (#91-#94)
+    the benchmark never surfaced before PR D — every field here already
+    existed on `CapabilityProfile`/`DriftReport`, just unreported."""
+    npm_profile = entry["npm_profile"]
+    github_profile = entry["github_profile"]
+    drift = entry["drift"]
+
+    row = {
+        "ok": True,
+        "version": entry["version"],
+        "github_status": entry["github_status"],
+        "github_ref": entry["github_ref"],
+        "npm_categories": sorted(
+            c.value for c in (npm_profile.category_set() if npm_profile else [])
+        ),
+        "npm_status": npm_profile.status if npm_profile else None,
+        "npm_partial_fetch": npm_profile.status == "partial_fetch" if npm_profile else False,
+        "npm_skipped_long_paths": npm_profile.skipped_long_paths if npm_profile else 0,
+        "npm_skipped_link_names_count": len(npm_profile.skipped_link_names) if npm_profile else 0,
+        "npm_promoted_count": _promoted_count(npm_profile),
+        "github_discovered_directory": github_profile.discovered_directory
+        if github_profile
+        else None,
+        "github_external_build_markers": list(github_profile.external_build_markers)
+        if github_profile
+        else [],
+        "github_partial_fetch": github_profile.status == "partial_fetch"
+        if github_profile
+        else False,
+        "github_skipped_long_paths": github_profile.skipped_long_paths if github_profile else 0,
+        "github_skipped_link_names_count": len(github_profile.skipped_link_names)
+        if github_profile
+        else 0,
+        "github_promoted_count": _promoted_count(github_profile),
+        "drift_signal": drift.signal if drift else None,
+        "drift_status": drift.status if drift else None,
+        "drift_skip_reason": drift.skip_reason if drift else None,
+        "drift_signal_categories": sorted(c.value for c in drift.signal_categories)
+        if drift
+        else [],
+        "drift_unverifiable_count": len(drift.unverifiable) if drift else 0,
+        "drift_generated_unverifiable_count": len(drift.generated_unverifiable) if drift else 0,
+        "drift_relocated_count": len(drift.relocated) if drift else 0,
+        "drift_new_evidence_in_matched_count": len(drift.new_evidence_in_matched) if drift else 0,
+        "drift_install_hooks_added": list(drift.install_hooks_added) if drift else [],
+        "drift_install_hooks_added_benign": list(drift.install_hooks_added_benign) if drift else [],
+    }
+    return row
+
+
+def _declared_on_github(rel_path: str, name: str, version: str) -> bool:
+    """Whether `rel_path` is an *exact* path declared by the GitHub repo's
+    own manifest (main/bin/exports, or a lifecycle-hook target) — reusing
+    `backend.deps.drift`'s own check so the triage table answers exactly the
+    question `_is_generated_unverifiable` asks (deliberately exact-path-only,
+    no declared-directory excuse — see that function's docstring), against
+    the same cached GitHub source `_scan_one` already fetched."""
+    github_dir = cache_dir_for(SourceKind.GITHUB, name, version)
+    package_json = _load_package_json(github_dir)
+    declared = _declared_manifest_paths(package_json) | hook_node_files_from_package_json(
+        package_json
+    )
+    return rel_path in declared
+
+
+def _external_build_triage(name: str, entry: dict, row: dict) -> dict | None:
+    """For a strong-signal package, note whether the GitHub side has a
+    repo-root build marker and whether each signalling file is declared by
+    the *GitHub* repo's own manifest — the "measure first" data point the
+    hardening plan calls for before deciding whether the deferred repo-wide
+    second Semgrep pass is worth building. A file already excused into
+    `generated_unverifiable` never reaches `signal_files`, so every row here
+    is a case that PR D's per-file excuse did *not* catch — either correctly
+    (no marker, or a GitHub-undeclared file — e.g. an attacker's own
+    self-declared payload, which must never be excused) or a gap worth a
+    follow-up look."""
+    drift = entry["drift"]
+    if drift is None or not drift.signal:
+        return None
+    markers = row["github_external_build_markers"]
+    version = row["version"]
+    return {
+        "package": name,
+        "signal_files": sorted(drift.signal_files),
+        "has_external_build_marker": bool(markers),
+        "external_build_markers": markers,
+        "declared_on_github": {
+            f: _declared_on_github(f, name, version) for f in sorted(drift.signal_files)
+        },
+    }
+
+
 def _write_artifact(results: dict[str, dict], gate_report: dict) -> Path:
     _BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -179,21 +305,20 @@ def _write_artifact(results: dict[str, dict], gate_report: dict) -> Path:
         if not entry.get("ok"):
             json_safe[name] = entry
             continue
-        json_safe[name] = {
-            "ok": True,
-            "version": entry["version"],
-            "github_status": entry["github_status"],
-            "github_ref": entry["github_ref"],
-            "npm_categories": sorted(
-                c.value
-                for c in (entry["npm_profile"].category_set() if entry["npm_profile"] else [])
-            ),
-            "npm_status": entry["npm_profile"].status if entry["npm_profile"] else None,
-            "drift_signal": entry["drift"].signal if entry["drift"] else None,
-            "drift_status": entry["drift"].status if entry["drift"] else None,
-        }
+        json_safe[name] = _package_row(entry)
+
+    triage = [
+        row
+        for name, entry in sorted(results.items())
+        if entry.get("ok") and (row := _external_build_triage(name, entry, json_safe[name]))
+    ]
+
     json_path.write_text(
-        json.dumps({"results": json_safe, "gates": gate_report}, indent=2), encoding="utf-8"
+        json.dumps(
+            {"results": json_safe, "gates": gate_report, "external_build_triage": triage},
+            indent=2,
+        ),
+        encoding="utf-8",
     )
 
     md_path = _BENCHMARK_DIR / f"deps-{stamp}.md"
@@ -212,18 +337,44 @@ def _write_artifact(results: dict[str, dict], gate_report: dict) -> Path:
     for strategy, count in gate_report["resolution"]["by_strategy"].items():
         lines.append(f"  - {strategy}: {count}")
     lines.append("")
+    lines.append("## Drift coverage")
+    coverage = gate_report["coverage"]
+    lines.append(f"compared: {coverage['compared']}/{coverage['github_resolved']}")
+    if coverage["skip_reason_histogram"]:
+        lines.append("skip-reason histogram:")
+        for reason, count in sorted(coverage["skip_reason_histogram"].items()):
+            lines.append(f"  - {reason}: {count}")
+    lines.append("")
+    if triage:
+        lines.append("## External-build triage (strong-signal packages)")
+        lines.append("| package | signal file | declared on GitHub? | build marker? | markers |")
+        lines.append("|---|---|---|---|---|")
+        for row in triage:
+            for f in row["signal_files"]:
+                lines.append(
+                    f"| {row['package']} | {f} | {row['declared_on_github'][f]} | "
+                    f"{row['has_external_build_marker']} | "
+                    f"{', '.join(row['external_build_markers'])} |"
+                )
+        lines.append("")
     lines.append("## Per-package")
-    lines.append("| package | version | npm categories | github status | drift |")
-    lines.append("|---|---|---|---|---|")
+    lines.append(
+        "| package | version | npm categories | github status | drift | "
+        "unverifiable | generated_unverifiable | discovered dir | build markers |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for name in sorted(results):
         entry = json_safe[name]
         if not entry.get("ok"):
-            lines.append(f"| {name} | - | ERROR: {entry['error']} | - | - |")
+            lines.append(f"| {name} | - | ERROR: {entry['error']} | - | - | - | - | - | - |")
             continue
         cats = ", ".join(entry["npm_categories"]) or "(none)"
         drift = "signal" if entry["drift_signal"] else (entry["drift_status"] or "-")
         lines.append(
-            f"| {name} | {entry['version']} | {cats} | {entry['github_status']} | {drift} |"
+            f"| {name} | {entry['version']} | {cats} | {entry['github_status']} | {drift} | "
+            f"{entry['drift_unverifiable_count']} | {entry['drift_generated_unverifiable_count']} | "
+            f"{entry['github_discovered_directory'] or '-'} | "
+            f"{', '.join(entry['github_external_build_markers']) or '-'} |"
         )
     md_path.write_text("\n".join(lines), encoding="utf-8")
     return json_path
@@ -268,14 +419,44 @@ async def test_benchmark_scan_gates():
             recall_misses.append(f"{name}: expected {expected.value}, got nothing")
 
     # --- Drift precision gate ---
+    # generated_unverifiable files (backend/deps/drift.py) never set `signal`,
+    # so no separate exclusion is needed here to keep this gate honest.
     drift_signals = [
         name
         for name, e in succeeded.items()
         if e["drift"] is not None and e["drift"].status == "compared" and e["drift"].signal
     ]
 
+    # --- Drift coverage gate ---
+    # Of every package whose GitHub source actually resolved, most should
+    # reach a real comparison — #91-#94 exist specifically to make that
+    # possible. A package that resolved but never compared lists its
+    # skip_reason, so a shortfall is diagnosable rather than one opaque
+    # percentage.
+    github_resolved_entries = {
+        name: e for name, e in succeeded.items() if e["github_status"] == "resolved"
+    }
+    compared_entries = {
+        name: e
+        for name, e in github_resolved_entries.items()
+        if e["drift"] is not None and e["drift"].status == "compared"
+    }
+    skip_reason_histogram: dict[str, int] = {}
+    coverage_misses: list[str] = []
+    for name, e in github_resolved_entries.items():
+        if name in compared_entries:
+            continue
+        reason = e["drift"].skip_reason if e["drift"] is not None else "drift_not_attempted"
+        reason = reason or "(unspecified)"
+        skip_reason_histogram[reason] = skip_reason_histogram.get(reason, 0) + 1
+        coverage_misses.append(f"{name}: {reason}")
+
+    coverage_rate = (
+        len(compared_entries) / len(github_resolved_entries) if github_resolved_entries else 1.0
+    )
+
     # --- Resolution-rate reporting (informational) ---
-    resolved_count = sum(1 for e in succeeded.values() if e["github_status"] == "resolved")
+    resolved_count = len(github_resolved_entries)
     by_strategy: dict[str, int] = {}
     for entry in succeeded.values():
         strategy = _ref_strategy(entry)
@@ -297,11 +478,23 @@ async def test_benchmark_scan_gates():
                 "passed": len(drift_signals) <= _DRIFT_SIGNAL_MAX,
                 "detail": f"{len(drift_signals)} signal(s): {drift_signals}",
             },
+            "drift_coverage": {
+                "passed": coverage_rate >= _MIN_DRIFT_COVERAGE,
+                "detail": (
+                    f"{len(compared_entries)}/{len(github_resolved_entries)} compared "
+                    f"({coverage_rate:.0%}); misses: {coverage_misses}"
+                ),
+            },
         },
         "resolution": {
             "resolved": resolved_count,
             "total": len(succeeded),
             "by_strategy": by_strategy,
+        },
+        "coverage": {
+            "compared": len(compared_entries),
+            "github_resolved": len(github_resolved_entries),
+            "skip_reason_histogram": skip_reason_histogram,
         },
     }
 
@@ -315,6 +508,11 @@ async def test_benchmark_scan_gates():
     assert len(drift_signals) <= _DRIFT_SIGNAL_MAX, (
         f"Drift precision gate: {len(drift_signals)} packages showed a drift signal "
         f"(max {_DRIFT_SIGNAL_MAX}): {drift_signals} (see {artifact_path})"
+    )
+    assert coverage_rate >= _MIN_DRIFT_COVERAGE, (
+        f"Drift coverage gate: only {len(compared_entries)}/{len(github_resolved_entries)} "
+        f"resolved packages compared ({coverage_rate:.0%}, need >= {_MIN_DRIFT_COVERAGE:.0%}): "
+        f"{coverage_misses} (see {artifact_path})"
     )
 
 
