@@ -38,6 +38,24 @@ npm run build --prefix frontend
 
 See [TESTING.md](TESTING.md) for details on the test suite and CI jobs.
 
+**Windows notes for the dependency capability engine** (`backend/deps/`):
+
+- Run Semgrep rule-fixture tests via `pytest tests/test_deps_rules.py -v`, not
+  a one-shot `semgrep --test` — concurrent Semgrep invocations racing on the
+  same `settings.yml` is a real failure mode on this platform, and the
+  pytest wrapper avoids it.
+- Enable the `LongPathsEnabled` registry key
+  (`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem`) and point
+  `DEPS_CACHE_DIR` at a short path (e.g. `C:\deps-cache`) before scanning
+  real monorepos (Babel, Jest) — otherwise their extracted trees trip the
+  classic 260-character `MAX_PATH` limit even after scoped extraction
+  narrows it to one package's subdirectory.
+- The live benchmark (`pytest -m live tests/live/test_deps_benchmark.py -v`)
+  hits the real npm registry and `codeload.github.com` for ~40 packages and
+  runs real Semgrep — it's excluded from the default test run
+  (`-m "not live"` in `pyproject.toml`) and can take several minutes.
+  Requires the Semgrep binary; skips automatically if it isn't installed.
+
 ---
 
 ## Branch and PR workflow
