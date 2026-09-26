@@ -242,7 +242,7 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
         click.echo("    (no capabilities detected)")
     else:
         for category in sorted(categories, key=lambda c: c.value):
-            count = sum(1 for e in profile.evidence if e.category == category)
+            count = sum(e.count for e in profile.evidence if e.category == category)
             # BUILD_INSTALL can come purely from a flagged install hook, with
             # no matching Semgrep evidence at all (see category_set()).
             if count == 0 and category == CapabilityCategory.BUILD_INSTALL:

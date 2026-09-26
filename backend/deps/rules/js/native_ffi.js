@@ -30,3 +30,15 @@ new Library('libc', { system: ['int', ['string']] });
 const notFfi = require('some-other-lib');
 // ok: native-ffi-ffi-napi-library
 new notFfi.Library('libc', {});
+
+// ruleid: native-ffi-process-binding
+process.binding('fs');
+
+// ruleid: native-ffi-process-binding
+process._linkedBinding('fs');
+
+// ruleid: native-ffi-process-binding
+process.dlopen(module, './addon.node');
+
+// ok: native-ffi-process-binding
+myProcess.binding('fs');

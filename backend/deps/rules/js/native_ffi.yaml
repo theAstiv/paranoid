@@ -50,3 +50,18 @@ rules:
       - metavariable-regex:
           metavariable: $MOD
           regex: ^["']ffi-napi["']$
+
+  - id: native-ffi-process-binding
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Uses a low-level, officially-unsupported Node internal
+      (`process.binding`/`process._linkedBinding`/`process.dlopen`) to reach
+      native code directly, bypassing the public native-addon APIs.
+    metadata:
+      category: native_ffi
+    patterns:
+      - pattern-either:
+          - pattern: process.binding(...)
+          - pattern: process._linkedBinding(...)
+          - pattern: process.dlopen(...)

@@ -76,8 +76,14 @@ _BENCHMARK_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "bench
 # Packages with no runtime dependencies and no legitimate reason to touch the
 # network, spawn a process, or eval/require dynamic code — the Failure-A
 # gate's negative-control set.
+#
+# lodash is deliberately NOT in this set: `_.template()` is a real,
+# documented feature that compiles a (potentially caller-supplied) template
+# string into a function via a bare `Function(...)` call
+# (dynamic-code-aliased-function correctly detects it once that shape is
+# tracked at all, not just `new Function(...)`) — a genuine capability, not
+# an evasion pattern or a false positive to exclude in the rule itself.
 _PURE_UTILITIES = [
-    "lodash",
     "ramda",
     "dayjs",
     "date-fns",
@@ -139,6 +145,22 @@ _MIN_DRIFT_COVERAGE = 0.85
 # Below this success rate the run is treated as environment flakiness
 # (offline, npm registry outage) rather than a real finding.
 _MIN_SUCCESS_RATE = 0.7
+# A package that fails only on a transient network error (after retries) is
+# "unavailable" this run, not a scan finding — it's excluded from the other
+# gates rather than counted against them. But too many unavailable packages
+# means the run's data isn't trustworthy at all, so a distinct threshold
+# fails the run outright instead of silently shrinking the sample.
+_MAX_UNAVAILABLE_RATE = 0.10
+_TRANSIENT_RETRIES = 3
+_TRANSIENT_BACKOFF_S = 2.0
+_TRANSIENT_EXC_TYPES = (
+    httpx.ConnectTimeout,
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+)
 
 
 async def _resolve_latest_version(name: str, client: httpx.AsyncClient) -> str:
@@ -155,24 +177,51 @@ async def _scan_all(packages: list[str]) -> dict[str, dict]:
     semaphore = asyncio.Semaphore(_CONCURRENCY)
     results: dict[str, dict] = {}
 
+    async def _attempt(name: str, client: httpx.AsyncClient) -> dict:
+        version = await _resolve_latest_version(name, client)
+        resolved, npm_profile, github_profile, drift = await _scan_one(
+            name, version, "both", client
+        )
+        return {
+            "ok": True,
+            "unavailable": False,
+            "version": resolved.version,
+            "github_status": resolved.github_status,
+            "github_ref": resolved.github_ref,
+            "npm_profile": npm_profile,
+            "github_profile": github_profile,
+            "drift": drift,
+        }
+
     async def _one(name: str, client: httpx.AsyncClient) -> None:
         async with semaphore:
-            try:
-                version = await _resolve_latest_version(name, client)
-                resolved, npm_profile, github_profile, drift = await _scan_one(
-                    name, version, "both", client
-                )
-                results[name] = {
-                    "ok": True,
-                    "version": resolved.version,
-                    "github_status": resolved.github_status,
-                    "github_ref": resolved.github_ref,
-                    "npm_profile": npm_profile,
-                    "github_profile": github_profile,
-                    "drift": drift,
-                }
-            except Exception as e:
-                results[name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            last_error: Exception | None = None
+            for attempt in range(_TRANSIENT_RETRIES):
+                try:
+                    results[name] = await _attempt(name, client)
+                    return
+                except _TRANSIENT_EXC_TYPES as e:
+                    last_error = e
+                    if attempt < _TRANSIENT_RETRIES - 1:
+                        await asyncio.sleep(_TRANSIENT_BACKOFF_S * (attempt + 1))
+                    continue
+                except Exception as e:
+                    # Non-transient failure: not retried, not "unavailable" —
+                    # a real finding worth surfacing (e.g. a corrupt tarball,
+                    # a bug in the scan pipeline).
+                    results[name] = {
+                        "ok": False,
+                        "unavailable": False,
+                        "error": f"{type(e).__name__}: {e}",
+                    }
+                    return
+            # Exhausted retries on a transient network error only.
+            results[name] = {
+                "ok": False,
+                "unavailable": True,
+                "error": f"{type(last_error).__name__}: {last_error} "
+                f"(after {_TRANSIENT_RETRIES} attempts)",
+            }
 
     async with httpx.AsyncClient() as client:
         await asyncio.gather(*(_one(n, client) for n in packages))
@@ -384,12 +433,26 @@ def _write_artifact(results: dict[str, dict], gate_report: dict) -> Path:
 async def test_benchmark_scan_gates():
     results = await _scan_all(_ALL_PACKAGES)
 
+    unavailable = {n: e for n, e in results.items() if e.get("unavailable")}
+    unavailable_rate = len(unavailable) / len(results) if results else 0.0
+    assert unavailable_rate <= _MAX_UNAVAILABLE_RATE, (
+        f"{len(unavailable)}/{len(results)} packages ({unavailable_rate:.0%}) were "
+        f"unavailable after {_TRANSIENT_RETRIES} retries each — the network is too "
+        f"unreliable for this run's results to mean anything: "
+        f"{sorted(unavailable)}"
+    )
+
+    # Packages that stayed unavailable after retries are excluded from the
+    # sample the other gates measure over — they were never really scanned,
+    # so they shouldn't count as either a pass or a failure of any gate.
     succeeded = {n: e for n, e in results.items() if e.get("ok")}
-    success_rate = len(succeeded) / len(results)
+    gateable_total = len(results) - len(unavailable)
+    success_rate = len(succeeded) / gateable_total if gateable_total else 1.0
     if success_rate < _MIN_SUCCESS_RATE:
         pytest.skip(
-            f"Only {len(succeeded)}/{len(results)} packages resolved/scanned "
-            f"successfully — treating as environment/network flakiness, not a finding."
+            f"Only {len(succeeded)}/{gateable_total} non-network-flaky packages "
+            f"resolved/scanned successfully — treating as environment flakiness, "
+            f"not a finding."
         )
 
     # --- Failure-A gate: pure utilities carry no risky shipped evidence ---
@@ -465,7 +528,18 @@ async def test_benchmark_scan_gates():
     gate_report = {
         "succeeded": len(succeeded),
         "total": len(results),
+        "unavailable": len(unavailable),
+        "unavailable_rate": unavailable_rate,
+        "unavailable_packages": sorted(unavailable),
         "gates": {
+            "network_availability": {
+                "passed": unavailable_rate <= _MAX_UNAVAILABLE_RATE,
+                "detail": (
+                    f"{len(unavailable)}/{len(results)} unavailable after "
+                    f"{_TRANSIENT_RETRIES} retries ({unavailable_rate:.0%}, max "
+                    f"{_MAX_UNAVAILABLE_RATE:.0%}): {sorted(unavailable)}"
+                ),
+            },
             "failure_a": {
                 "passed": not failure_a_violations,
                 "detail": "; ".join(failure_a_violations) or "no risky evidence in pure utilities",
