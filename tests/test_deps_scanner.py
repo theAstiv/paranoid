@@ -240,16 +240,32 @@ def test_dedupe_evidence_collapses_identical_matches():
 
 
 def test_dedupe_evidence_keeps_distinct_matches_separate():
+    """Distinct (rule_id, file, line) triples never collapse — but two
+    matches on the *same* line collapse even with different snippets, since
+    the key deliberately excludes the snippet (see `_dedupe_evidence`'s
+    docstring: a real minified line produces a different centered snippet
+    window per match column, so keying on the snippet would defeat the
+    dedup this function exists for)."""
     items = [
-        _evidence(snippet="eval(x)"),
-        _evidence(snippet="eval(y)"),
         _evidence(line=2),
         _evidence(rule_id="r2"),
         _evidence(file="other.js"),
     ]
     deduped = scanner._dedupe_evidence(items)
-    assert len(deduped) == 5
+    assert len(deduped) == 3
     assert all(e.count == 1 for e in deduped)
+
+
+def test_dedupe_evidence_collapses_same_line_despite_different_snippets():
+    """Two distinct calls on the same minified line get different
+    column-centered snippet windows (see test_extract_snippet_windows_
+    minified_line) — they must still collapse to one entry with count=2,
+    not stay separate just because their snippet text differs."""
+    items = [_evidence(snippet="eval(x)"), _evidence(snippet="eval(y)")]
+    deduped = scanner._dedupe_evidence(items)
+    assert len(deduped) == 1
+    assert deduped[0].count == 2
+    assert deduped[0].snippet == "eval(x)"  # first occurrence's snippet is kept
 
 
 def test_dedupe_evidence_preserves_first_occurrence_order():
@@ -289,8 +305,16 @@ async def test_scan_source_dedupes_repeated_minified_evidence(tmp_path):
     inflate the CLI/benchmark counts without representing a distinct
     capability."""
     (tmp_path / "package.json").write_text('{"name": "minified-pkg", "version": "1.0.0"}')
+    # Repeated enough times that the line is well over _SNIPPET_MAX_LEN
+    # (200 chars) — each match then gets a genuinely different
+    # column-centered snippet window (see test_extract_snippet_windows_
+    # minified_line), which is exactly the real-bundle case the dedupe key
+    # was changed to (rule_id, file, line) — without snippet — to handle.
+    # An 80-char line (10 repeats) would make every window the whole line,
+    # masking a regression back to a snippet-inclusive key.
     repeated_call = "eval(x);"
-    (tmp_path / "index.js").write_text(repeated_call * 10)
+    assert len(repeated_call) * 30 > scanner._SNIPPET_MAX_LEN
+    (tmp_path / "index.js").write_text(repeated_call * 30)
 
     profile = await scanner.scan_source(
         tmp_path, SourceKind.NPM_TARBALL, name="minified-pkg", version="1.0.0"
@@ -299,7 +323,7 @@ async def test_scan_source_dedupes_repeated_minified_evidence(tmp_path):
     assert profile.status == "ok"
     eval_evidence = [e for e in profile.evidence if e.rule_id.endswith("dynamic-code-eval")]
     assert len(eval_evidence) == 1
-    assert eval_evidence[0].count == 10
+    assert eval_evidence[0].count == 30
 
 
 @pytest.mark.asyncio

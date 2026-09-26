@@ -335,21 +335,27 @@ def _build_evidence(
 
 
 def _dedupe_evidence(items: list[CapabilityEvidence]) -> list[CapabilityEvidence]:
-    """Collapse matches that share (rule_id, file, line, snippet) into one
-    item with `count` set to how many raw matches it represents.
+    """Collapse matches that share (rule_id, file, line) into one item with
+    `count` set to how many raw matches it represents, keeping the first
+    match's snippet.
 
-    A single minified bundle line commonly produces many matches for the
-    same rule at the same line but different columns — `_extract_snippet`
-    windows around the match column, so distinct calls on the same line
-    typically produce distinct snippets and stay separate, while truly
-    repeated matches (e.g. the same call appearing verbatim many times, or a
-    match whose window happens to coincide) collapse to one entry. Order is
-    preserved by first occurrence so output stays deterministic.
+    Deliberately keyed without the snippet: `_extract_snippet` centers its
+    window on each match's *column*, so on a real minified bundle line (often
+    thousands of characters) two genuinely repeated calls at different
+    columns get two different windows and two different snippet strings — a
+    snippet-inclusive key would then never collapse them, and the exact
+    inflation this function exists to fix (a single line calling `eval`
+    dozens of times) would still show up as dozens of evidence items. Line
+    granularity is coarse enough that two *different* rule matches on the
+    same line are rare in practice and, when they do happen, are still one
+    real finding for that rule on that line — the kept snippet just isn't
+    guaranteed to be the most representative one, which is what `count`
+    signals to a reader.
     """
-    merged: dict[tuple[str, str, int, str], CapabilityEvidence] = {}
-    order: list[tuple[str, str, int, str]] = []
+    merged: dict[tuple[str, str, int], CapabilityEvidence] = {}
+    order: list[tuple[str, str, int]] = []
     for item in items:
-        key = (item.rule_id, item.file, item.line, item.snippet)
+        key = (item.rule_id, item.file, item.line)
         existing = merged.get(key)
         if existing is None:
             merged[key] = item

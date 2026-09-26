@@ -76,8 +76,14 @@ _BENCHMARK_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "bench
 # Packages with no runtime dependencies and no legitimate reason to touch the
 # network, spawn a process, or eval/require dynamic code — the Failure-A
 # gate's negative-control set.
+#
+# lodash is deliberately NOT in this set: `_.template()` is a real,
+# documented feature that compiles a (potentially caller-supplied) template
+# string into a function via a bare `Function(...)` call
+# (dynamic-code-aliased-function correctly detects it once that shape is
+# tracked at all, not just `new Function(...)`) — a genuine capability, not
+# an evasion pattern or a false positive to exclude in the rule itself.
 _PURE_UTILITIES = [
-    "lodash",
     "ramda",
     "dayjs",
     "date-fns",

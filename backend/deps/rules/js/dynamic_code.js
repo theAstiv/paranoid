@@ -29,15 +29,33 @@ require(4);
 // ok: dynamic-code-nonliteral-require
 require(46);
 
-// Bundler-emitted CommonJS module wrapper: `require` here is the bundle's
-// own local loader, shadowing the real one.
+// Bundler-emitted CommonJS module wrapper (`require` here is the bundle's
+// own local loader, shadowing the real one) — the numeric-id exclusion
+// above already excludes require(4) regardless of the wrapper, with no
+// separate wrapper-shape exclusion. A non-numeric require() from inside
+// the same wrapper must still fire: an unconditional pattern-not-inside on
+// any function whose parameters shadow `require` would itself be a bypass
+// ((function (require) { require(name); })(require) smuggles the real
+// require() in under a parameter literally named `require`).
 function moduleWrapper(require, module, exports) {
   // ok: dynamic-code-nonliteral-require
   var x = require(4);
+  // ruleid: dynamic-code-nonliteral-require
+  var y = require(name);
 }
+
+// ruleid: dynamic-code-nonliteral-require
+(function (require) { require(name); })(require);
 
 // ruleid: dynamic-code-concatenated-require
 require('child_' + 'process');
+
+// Three-part concatenation: the left side ('chi' + 'ld_') is itself a
+// concatenation, not a plain literal — pins that Semgrep's own constant
+// folding still lets the "..." wildcard match it (a nested fold), so this
+// isn't a one-step bypass of the both-literal-only pattern above.
+// ruleid: dynamic-code-concatenated-require
+require('chi' + 'ld_' + 'process');
 
 // ok: dynamic-code-concatenated-require
 require('lodash');
@@ -64,7 +82,9 @@ aliasedFn('return process.env')();
 
 // Real-world benign shim (get-intrinsic/es-abstract/has-property-descriptors
 // et al.): feature-detects a working `Function` constructor with a fixed
-// template string, guarded by try/catch — not attacker-influenced code.
+// template string. Excluded by its exact argument shape, not by "wrapped in
+// try/catch" — see the bypass case directly below for why that distinction
+// matters.
 var $Function = Function;
 // ok: dynamic-code-aliased-function
 var getEvalledConstructor = function (expressionSyntax) {
@@ -73,14 +93,53 @@ var getEvalledConstructor = function (expressionSyntax) {
   } catch (e) {}
 };
 
+// Regression: an earlier version of this rule excluded any aliased-Function
+// call wrapped in try/catch (to match the shim above), which is itself a
+// bypass — wrapping a real payload call in the same try/catch silences it.
+const $F2 = Function;
+try {
+  // ruleid: dynamic-code-aliased-function
+  $F2(payload)();
+} catch (e) {}
+
+// ruleid: dynamic-code-aliased-function
+Function('return process.env')();
+
+// ok: dynamic-code-aliased-function
+Function('return this')();
+
+// ok: dynamic-code-aliased-function
+Function('return this;')();
+
+// regenerator-runtime's global-assignment shim, bundled by nearly every
+// Babel-transpiled package using async/generator functions.
+// ok: dynamic-code-aliased-function
+Function("r", "regeneratorRuntime = r")(runtime);
+
+// The function-bind polyfill's arity-matching trampoline (verbatim shape,
+// found live in qs's bundled dependency).
+// ok: dynamic-code-aliased-function
+r = Function("binder", "return function (" + joiny(i, ",") + "){ return binder.apply(this,arguments); }");
+
 // ruleid: dynamic-code-computed-global-call
 globalThis['fe' + 'tch']('http://example.com');
 
 // ruleid: dynamic-code-computed-global-call
 module['req' + 'uire']('child_process');
 
+// Three-part concatenation: pins the same nested-fold behavior as the
+// require() case above, for this rule's own pattern.
+// ruleid: dynamic-code-computed-global-call
+globalThis['f' + 'et' + 'ch']('http://example.com');
+
 // ok: dynamic-code-computed-global-call
 globalThis['fetch']('http://example.com');
+
+// Ordinary browser code: toggling add/removeEventListener by a boolean.
+// Constant-foldable to a string (both ternary branches are literals) but
+// not a literal-plus-literal concatenation — must not fire.
+// ok: dynamic-code-computed-global-call
+window[(on ? 'add' : 'remove') + 'EventListener'](type, handler);
 
 // ruleid: dynamic-code-vm-module
 require('vm').runInNewContext(code);
