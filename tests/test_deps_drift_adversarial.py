@@ -83,7 +83,7 @@ def test_case_1_fake_map_to_undeclared_node_modules_is_strong_signal(tmp_path):
     )
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "index.js").write_text("module.exports = {};")
-    (github_dir / "package.json").write_text(json.dumps({"dependencies": {}}))
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "dependencies": {}}))
 
     tarball_profile = _profile([_evidence("evil.js", CapabilityCategory.PROCESS)])
     report = compare_sources("pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, _profile())
@@ -96,6 +96,7 @@ def test_case_2_fake_map_to_unrelated_real_file_is_strong_signal(tmp_path):
     (tarball_dir / "evil.js").write_text("require('child_process').exec('evil')")
     (tarball_dir / "evil.js.map").write_text(json.dumps({"sources": ["totally-unrelated.ts"]}))
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("evil.js", CapabilityCategory.PROCESS)])
@@ -110,6 +111,7 @@ def test_case_3_payload_appended_to_matched_file_novel_category_is_strong_signal
         "module.exports = {}; require('child_process').exec('x');"
     )
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("index.js", CapabilityCategory.PROCESS)])
@@ -121,8 +123,10 @@ def test_case_3_payload_appended_to_matched_file_novel_category_is_strong_signal
 
 def test_case_4_payload_appended_to_matched_file_category_already_elsewhere_is_weak(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (tarball_dir / "index.js").write_text("require('child_process').exec('a');")
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
     (github_dir / "build.js").write_text("require('child_process').exec('elsewhere');")
 
@@ -131,7 +135,7 @@ def test_case_4_payload_appended_to_matched_file_category_already_elsewhere_is_w
     report = compare_sources(
         "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
     )
-    assert report.matched == ["index.js"]
+    assert set(report.matched) == {"index.js", "package.json"}
     assert report.signal is False
     assert report.relocated == [{"file": "index.js", "categories": [CapabilityCategory.PROCESS]}]
 
@@ -141,11 +145,13 @@ def test_case_5_novel_capability_in_declared_build_dir_is_strong_signal(tmp_path
     (tarball_dir / "dist").mkdir()
     (tarball_dir / "dist" / "evil.js").write_text("require('child_process').exec('evil')")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"main": "dist/index.js", "scripts": {"build": "tsc"}})
+        json.dumps({"name": "pkg", "main": "dist/index.js", "scripts": {"build": "tsc"}})
     )
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "src.ts").write_text("export {};")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {"build": "tsc"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"build": "tsc"}})
+    )
 
     tarball_profile = _profile([_evidence("dist/evil.js", CapabilityCategory.PROCESS)])
     report = compare_sources("pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, _profile())
@@ -157,10 +163,10 @@ def test_case_5_novel_capability_in_declared_build_dir_is_strong_signal(tmp_path
 def test_case_6_tarball_only_postinstall_is_strong_signal(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"scripts": {"postinstall": "node scripts/setup.js"}})
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "node scripts/setup.js"}})
     )
     github_dir = _fetched_dir(tmp_path, "github")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {}}))
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "scripts": {}}))
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.install_hooks_added == ["postinstall"]
@@ -183,9 +189,10 @@ def test_case_8_legit_ts_build_with_valid_maps_has_no_signal(tmp_path):
         "require('fs').readFileSync('x');\n//# sourceMappingURL=index.js.map"
     )
     (tarball_dir / "dist" / "index.js.map").write_text(json.dumps({"sources": ["../src/index.ts"]}))
-    (tarball_dir / "package.json").write_text(json.dumps({"main": "dist/index.js"}))
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg", "main": "dist/index.js"}))
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "src").mkdir()
     (github_dir / "src" / "index.ts").write_text(
         "export function f() { return require('fs').readFileSync('x'); }"
@@ -207,12 +214,14 @@ def test_case_9_legit_bundle_with_declared_dependency_has_no_signal(tmp_path):
     (tarball_dir / "bundle.js.map").write_text(
         json.dumps({"sources": ["../node_modules/left-pad/index.js", "../src/index.js"]})
     )
-    (tarball_dir / "package.json").write_text(json.dumps({"main": "bundle.js"}))
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg", "main": "bundle.js"}))
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "src").mkdir()
     (github_dir / "src" / "index.js").write_text("module.exports = require('left-pad');")
-    (github_dir / "package.json").write_text(json.dumps({"dependencies": {"left-pad": "^1.0.0"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "dependencies": {"left-pad": "^1.0.0"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.bundled_dependency == ["bundle.js"]

@@ -90,6 +90,23 @@ class CapabilityProfile(BaseModel):
     # the final cache path drift sees, so recomputing it against the final
     # path would miss names in the gap between the two.
     skipped_long_path_names: list[str] = Field(default_factory=list)
+    # Set (GitHub only) when this package wasn't found at the wrapper root of
+    # its repo and `backend.deps.fetcher` had to discover which subdirectory
+    # actually declares it — e.g. "npm/esbuild" for esbuild's Go-language
+    # monorepo. None when the whole tarball (or a registry-declared
+    # `repository.directory`) was already the right scope.
+    discovered_directory: str | None = None
+    # Root-relative paths of files reachable via a relative require()/import
+    # with a non-standard extension (see backend.deps.references
+    # .find_reachable_unscanned_files) that exceeded
+    # backend.deps.scanner._MAX_EXTRA_TARGETS_TOTAL and so were never actually
+    # scanned by Semgrep — never silently dropped: a status="ok" profile with
+    # unscanned reachable code would otherwise let an attacker who knows the
+    # cap hide a payload past it. backend.deps.drift treats a non-empty list
+    # here the same as a package-identity mismatch — a strong signal on its
+    # own, since "this code exists and executes, but we never checked it" is
+    # itself the finding.
+    unscanned_reachable_files: list[str] = Field(default_factory=list)
 
     def category_set(self) -> set[CapabilityCategory]:
         """Categories backed by shipped evidence — the basis for all comparisons.
@@ -156,7 +173,9 @@ class DriftReport(BaseModel):
     # exact path is one GitHub's `CapabilityProfile` recorded as skipped (a
     # symlink, or a path exceeding the platform's length limit) — "GitHub
     # doesn't have this" and "GitHub couldn't extract this" aren't the same
-    # thing, so these never produce a signal.
+    # thing. Excused against the package-wide GitHub category set (like a
+    # declared build directory), so a capability new to the *whole* package
+    # still signals — just never blamed on this one unverifiable file alone.
     unverifiable: list[str] = Field(default_factory=list)
     signal: bool = False
     # {file: [novel categories absent from the GitHub scan entirely]} — the
@@ -174,8 +193,30 @@ class DriftReport(BaseModel):
     new_evidence_in_matched: dict[str, list[dict]] = Field(default_factory=dict)
     # Lifecycle hook names (preinstall/install/postinstall/prepare) the
     # tarball's package.json declares (or changed) that the GitHub package.json
-    # doesn't — a strong signal on its own, folded into `signal_files["package.json"]`.
+    # doesn't, where the hook itself is flagged (not on the benign allowlist —
+    # see backend.deps.install_hooks.is_hook_flagged) — a strong signal on its
+    # own, folded into `signal_files["package.json"]`.
     install_hooks_added: list[str] = Field(default_factory=list)
+    # The same, but for an added/changed hook made entirely of allowlisted
+    # commands (e.g. a tarball-only "prepare": "husky install") — informational
+    # only, since flagging every such package would swamp precision.
+    install_hooks_added_benign: list[str] = Field(default_factory=list)
+    # Set when the tarball's own package.json `name` disagrees with the
+    # trusted npm-registry name this comparison was resolved for (holds the
+    # tarball's own value, or "" when the tarball has no readable `name` at
+    # all — every published npm package is required to declare one) —
+    # "manifest confusion": the registry never checks that a published
+    # tarball's package.json name matches what it was published under. A
+    # strong signal on its own; the comparison still runs against the
+    # (independently verified) GitHub side.
+    tarball_declared_name_mismatch: str | None = None
+    # Copied from the tarball's `CapabilityProfile.unscanned_reachable_files`
+    # — reachable non-standard-extension code that exceeded the scan's target
+    # cap and was never actually checked by Semgrep. A strong signal on its
+    # own, graded the same as a package-identity mismatch: unscanned reachable
+    # code in an attacker-controlled tarball is itself the finding, not
+    # something to wave through as `status="ok"`.
+    unscanned_reachable_files: list[str] = Field(default_factory=list)
     # Set when status != "compared": a specific reason for the skip, e.g.
     # "github_unresolved", "repo_directory_missing", "path_too_long", or
     # "github_fetch_rejected:<ErrorType>" — so a "compared" rate can be

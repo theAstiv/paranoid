@@ -252,7 +252,7 @@ async def test_scan_source_semgrep_unavailable(monkeypatch):
 async def test_scan_source_timeout(monkeypatch):
     monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
 
-    async def _raise_timeout(binary, target):
+    async def _raise_timeout(binary, target, extra_targets=()):
         raise TimeoutError
 
     monkeypatch.setattr(scanner, "_run_semgrep", _raise_timeout)
@@ -268,7 +268,7 @@ async def test_scan_source_timeout(monkeypatch):
 async def test_scan_source_crash(monkeypatch):
     monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
 
-    async def _raise_oserror(binary, target):
+    async def _raise_oserror(binary, target, extra_targets=()):
         raise OSError("semgrep binary vanished")
 
     monkeypatch.setattr(scanner, "_run_semgrep", _raise_oserror)
@@ -284,7 +284,7 @@ async def test_scan_source_crash(monkeypatch):
 async def test_scan_source_bad_json(monkeypatch):
     monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
 
-    async def _return_garbage(binary, target):
+    async def _return_garbage(binary, target, extra_targets=()):
         return 0, "not valid json {{{", ""
 
     monkeypatch.setattr(scanner, "_run_semgrep", _return_garbage)
@@ -313,7 +313,7 @@ async def test_scan_source_unknown_rule_category_skipped(monkeypatch):
         ]
     }
 
-    async def _return_fake(binary, target):
+    async def _return_fake(binary, target, extra_targets=()):
         import json
 
         return 0, json.dumps(fake_output), ""
@@ -332,7 +332,7 @@ async def test_scan_source_nonzero_returncode_is_error(monkeypatch):
     """A non-zero Semgrep exit code must not be reported as a clean 'ok' scan."""
     monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
 
-    async def _return_fake(binary, target):
+    async def _return_fake(binary, target, extra_targets=()):
         import json
 
         return 2, json.dumps({"results": [], "errors": []}), "fatal: bad config"
@@ -357,7 +357,7 @@ async def test_scan_source_fatal_error_in_output_is_error(monkeypatch):
         "errors": [{"level": "error", "type": ["RuleParseError"], "message": "bad rule"}],
     }
 
-    async def _return_fake(binary, target):
+    async def _return_fake(binary, target, extra_targets=()):
         import json
 
         return 0, json.dumps(fake_output), ""
@@ -393,7 +393,7 @@ async def test_scan_source_warn_only_error_stays_ok(monkeypatch):
         "errors": [{"level": "warn", "type": ["PartialParsing"], "message": "one bad file"}],
     }
 
-    async def _return_fake(binary, target):
+    async def _return_fake(binary, target, extra_targets=()):
         import json
 
         return 0, json.dumps(fake_output), ""
@@ -408,8 +408,156 @@ async def test_scan_source_warn_only_error_stays_ok(monkeypatch):
     assert len(profile.evidence) == 1
 
 
+@pytest.mark.asyncio
+async def test_run_semgrep_scan_single_call_for_few_extra_targets(tmp_path, monkeypatch):
+    """The common case: few enough extra targets to fit in one command line
+    stays a single semgrep invocation."""
+    calls = []
+
+    async def _fake_run(binary, target, extra_targets=()):
+        calls.append(("dir", target, extra_targets))
+        return 0, '{"results": [], "errors": []}', ""
+
+    monkeypatch.setattr(scanner, "_run_semgrep", _fake_run)
+
+    extra = tuple(tmp_path / f"f{i}.dat" for i in range(5))
+    runs = await scanner._run_semgrep_scan("semgrep", tmp_path, extra)
+
+    assert len(runs) == 1
+    assert len(calls) == 1
+    assert calls[0][2] == extra
+
+
+@pytest.mark.asyncio
+async def test_run_semgrep_scan_batches_many_extra_targets(tmp_path, monkeypatch):
+    """More extra targets than fit under the argv-length budget are split
+    across several invocations — the first covers the directory target plus
+    the first batch, later ones scan only their batch of explicit files (no
+    directory target), so a package shipping hundreds of non-JS-extension
+    reachable files (or an attacker publishing one on purpose) can't blow the
+    Windows argv length limit and silently turn the scan into semgrep_error."""
+    dir_calls = []
+    extra_only_calls = []
+
+    async def _fake_run(binary, target, extra_targets=()):
+        dir_calls.append((target, extra_targets))
+        return 0, '{"results": [], "errors": []}', ""
+
+    async def _fake_run_extra_only(binary, targets):
+        extra_only_calls.append(targets)
+        return 0, '{"results": [], "errors": []}', ""
+
+    monkeypatch.setattr(scanner, "_run_semgrep", _fake_run)
+    monkeypatch.setattr(scanner, "_run_semgrep_extra_only", _fake_run_extra_only)
+    monkeypatch.setattr(scanner, "_MAX_EXTRA_TARGETS_ARGV_CHARS", 30)
+
+    # Each path string is 5 chars ("f0.dat".."f6.dat" -> len 6 with the +1
+    # separator counted by the batcher = 7; budget 30 fits 4 per batch.
+    extra = tuple(Path(f"f{i}.dat") for i in range(7))
+    runs = await scanner._run_semgrep_scan("semgrep", tmp_path, extra)
+
+    assert len(runs) == len(dir_calls) + len(extra_only_calls)
+    assert len(dir_calls) == 1
+    all_batches = [dir_calls[0][1], *extra_only_calls]
+    # Every extra target appears exactly once, across however many batches.
+    assert sorted(p for batch in all_batches for p in batch) == sorted(extra)
+    # And the budget was actually respected in every batch.
+    for batch in all_batches:
+        assert sum(len(str(p)) + 1 for p in batch) <= 30
+
+
+def test_batch_by_argv_length_respects_budget(tmp_path):
+    paths = tuple(Path(f"path-{i}") for i in range(10))
+    batches = scanner._batch_by_argv_length(paths, budget=20)
+
+    assert sorted(p for batch in batches for p in batch) == sorted(paths)
+    for batch in batches:
+        assert sum(len(str(p)) + 1 for p in batch) <= 20
+
+
+def test_batch_by_argv_length_confirmed_bug_long_paths_overflow_a_count_based_cap(tmp_path):
+    """The confirmed bug this length-based batcher fixes: a fixed per-batch
+    *count* (the pre-fix design used 200) doesn't bound argv length at all
+    when paths are long — 200 paths at ~250 chars each is already ~50,000
+    characters, well past Windows' ~32K argv limit. A length-based budget
+    must split a long-path batch into more, smaller pieces even though the
+    old design would have called this "one batch"."""
+    long_paths = tuple(Path("C:/cache/" + ("x" * 240) + f"/f{i}.js") for i in range(200))
+    total_naive_length = sum(len(str(p)) + 1 for p in long_paths)
+    assert total_naive_length > 32_000  # the exact scenario that used to overflow
+
+    batches = scanner._batch_by_argv_length(
+        long_paths, budget=scanner._MAX_EXTRA_TARGETS_ARGV_CHARS
+    )
+
+    assert len(batches) > 1
+    for batch in batches:
+        assert sum(len(str(p)) + 1 for p in batch) <= scanner._MAX_EXTRA_TARGETS_ARGV_CHARS
+    assert sorted(p for batch in batches for p in batch) == sorted(long_paths)
+
+
+@pytest.mark.asyncio
+async def test_scan_source_caps_total_extra_targets_and_records_dropped(tmp_path, monkeypatch):
+    """A package with more reachable non-standard-extension files than
+    `_MAX_EXTRA_TARGETS_TOTAL` must never silently drop the excess — a
+    `status="ok"` profile with unscanned reachable code would let an attacker
+    who knows the cap hide a payload just past it (e.g. harmless files up to
+    the cap, then the real payload one file later). The excess is instead
+    recorded on `CapabilityProfile.unscanned_reachable_files`, which
+    `backend.deps.drift` treats as its own strong signal."""
+    monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
+    (tmp_path / "package.json").write_text('{"name": "pkg"}')
+
+    unscanned = {f"f{i}.dat" for i in range(10)}
+    monkeypatch.setattr(scanner, "find_reachable", lambda *a, **k: ({}, unscanned))
+    monkeypatch.setattr(scanner, "_MAX_EXTRA_TARGETS_TOTAL", 6)
+
+    seen_targets = []
+
+    async def _fake_run_semgrep_scan(binary, target, extra_targets):
+        seen_targets.extend(extra_targets)
+        return [(0, '{"results": [], "errors": []}', "")]
+
+    monkeypatch.setattr(scanner, "_run_semgrep_scan", _fake_run_semgrep_scan)
+
+    profile = await scanner.scan_source(
+        tmp_path, SourceKind.NPM_TARBALL, name="pkg", version="1.0.0"
+    )
+
+    assert profile.status == "ok"
+    scanned_names = {p.name for p in seen_targets}
+    dropped_names = set(profile.unscanned_reachable_files)
+    assert len(scanned_names) == 6
+    assert len(dropped_names) == 4
+    assert scanned_names.isdisjoint(dropped_names)
+    assert scanned_names | dropped_names == unscanned
+
+
+@pytest.mark.asyncio
+async def test_scan_source_merges_results_across_batches(tmp_path, monkeypatch):
+    """`scan_source` must treat several batched invocations as one scan:
+    results and errors from every batch are combined, and a nonzero
+    returncode in *any* batch still marks the whole scan incomplete."""
+    monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
+    (tmp_path / "package.json").write_text('{"name": "pkg"}')
+
+    async def _fake_run_semgrep_scan(binary, target, extra_targets):
+        return [
+            (0, '{"results": [{"check_id": "r1"}], "errors": []}', ""),
+            (1, '{"results": [{"check_id": "r2"}], "errors": [{"level": "error"}]}', ""),
+        ]
+
+    monkeypatch.setattr(scanner, "_run_semgrep_scan", _fake_run_semgrep_scan)
+
+    profile = await scanner.scan_source(
+        tmp_path, SourceKind.NPM_TARBALL, name="pkg", version="1.0.0"
+    )
+
+    assert profile.status == "semgrep_error"
+
+
 def _fake_run_returning(output: dict):
-    async def _run(binary, target):
+    async def _run(binary, target, extra_targets=()):
         import json
 
         return 0, json.dumps(output), ""

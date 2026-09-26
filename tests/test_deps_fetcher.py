@@ -124,7 +124,12 @@ async def test_fetch_with_no_integrity_at_all_rejected():
 @pytest.mark.asyncio
 async def test_github_fetch_uses_shared_url_builder():
     """The fetch URL must be built by resolver.github_tarball_url, matching the probe."""
-    data = _build_tar_gz(lambda tar: _add_file(tar, "r-abc123/index.js", b"x"))
+
+    def build(tar):
+        _add_file(tar, "r-abc123/index.js", b"x")
+        _add_file(tar, "r-abc123/package.json", b'{"name": "pkg"}')
+
+    data = _build_tar_gz(build)
     resolved = _github_resolved()
     requested = []
 
@@ -149,6 +154,133 @@ async def test_github_monorepo_directory_found():
 
     assert result.path is not None
     assert (result.path / "index.js").is_file()
+
+
+@pytest.mark.asyncio
+async def test_github_package_discovered_in_subdirectory():
+    """The esbuild shape: no `repository.directory` declared, and the
+    wrapper-root has no package.json at all (a Go-language monorepo) — the
+    npm package actually lives at `npm/esbuild/`. Discovery must find it by
+    reading every non-`node_modules` package.json's declared name."""
+
+    def build(tar):
+        _add_file(tar, "esbuild-v0.28.2/main.go", b"package main")
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/package.json", b'{"name": "esbuild"}')
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/lib/main.js", b"module.exports = {};")
+        _add_file(
+            tar,
+            "esbuild-v0.28.2/npm/esbuild/node_modules/dep/package.json",
+            b'{"name": "esbuild"}',
+        )
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="esbuild")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.discovered_directory == "npm/esbuild"
+    assert (result.path / "package.json").is_file()
+    assert (result.path / "lib" / "main.js").is_file()
+    assert not (result.path / "main.go").exists()
+
+
+@pytest.mark.asyncio
+async def test_github_package_discovery_not_found():
+    def build(tar):
+        _add_file(tar, "repo-v1.0.0/main.go", b"package main")
+        _add_file(tar, "repo-v1.0.0/other/package.json", b'{"name": "not-the-right-package"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="pkg")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is None
+    assert result.reason == "package_not_found_in_repo"
+
+
+@pytest.mark.asyncio
+async def test_github_package_discovery_ambiguous():
+    def build(tar):
+        _add_file(tar, "repo-v1.0.0/a/package.json", b'{"name": "pkg"}')
+        _add_file(tar, "repo-v1.0.0/b/package.json", b'{"name": "pkg"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="pkg")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is None
+    assert result.reason == "package_ambiguous_in_repo"
+
+
+@pytest.mark.asyncio
+async def test_github_declared_repo_directory_skips_discovery_even_if_root_matches():
+    """A registry-declared `repository.directory` is trusted as-is — no
+    discovery pass, even when the wrapper root also happens to have a
+    (differently-named) package.json."""
+
+    def build(tar):
+        _add_file(tar, "repo-v1.0.0/package.json", b'{"name": "monorepo-root"}')
+        _add_file(tar, "repo-v1.0.0/packages/core/package.json", b'{"name": "pkg"}')
+        _add_file(tar, "repo-v1.0.0/packages/core/index.js", b"x")
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="pkg", repo_directory="packages/core")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.discovered_directory is None
+    assert (result.path / "index.js").is_file()
+
+
+@pytest.mark.asyncio
+async def test_github_root_package_json_match_skips_full_discovery_scan():
+    """The common case: the wrapper-root package.json already declares the
+    right name, so no discovery is needed and `discovered_directory` stays
+    unset — even though a same-named decoy exists elsewhere (proving the
+    root-first check actually short-circuits rather than always scanning)."""
+
+    def build(tar):
+        _add_file(tar, "repo-v1.0.0/package.json", b'{"name": "pkg"}')
+        _add_file(tar, "repo-v1.0.0/index.js", b"x")
+        _add_file(tar, "repo-v1.0.0/examples/demo/package.json", b'{"name": "pkg"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="pkg")
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.discovered_directory is None
+    assert (result.path / "index.js").is_file()
+
+
+@pytest.mark.asyncio
+async def test_github_discovered_directory_persists_across_cache_hit():
+    def build(tar):
+        _add_file(tar, "esbuild-v0.28.2/main.go", b"package main")
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/package.json", b'{"name": "esbuild"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="esbuild")
+
+    async with _client(data) as client:
+        first = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+    assert first.discovered_directory == "npm/esbuild"
+
+    async with _client(data) as client:
+        second = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert second.path == first.path
+    assert second.discovered_directory == "npm/esbuild"
 
 
 @pytest.mark.asyncio
@@ -193,7 +325,9 @@ async def test_cache_hit_skips_network():
     resolved = _resolved()
     cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
     cache_dir.mkdir(parents=True)
-    (cache_dir / ".complete").touch()
+    (cache_dir / ".complete").write_text(
+        json.dumps({"schema_version": fetcher._MARKER_SCHEMA_VERSION})
+    )
 
     calls = []
 
@@ -228,11 +362,12 @@ async def test_directory_without_marker_is_refetched():
 @pytest.mark.asyncio
 async def test_stale_marker_without_skipped_long_path_names_is_refetched():
     """A `.complete` marker written before `skipped_long_path_names` existed
-    (pre-PR-C) has `skipped_long_paths > 0` but no names recorded. Treated as
-    a cache miss and refetched — `backend.deps.drift` matches skipped paths
-    by exact name, so trusting a stale, name-less count back would silently
-    make every one of those files look like an ordinary unexplained file
-    instead of `unverifiable`, and could raise a false drift signal."""
+    (pre-PR-C) has no `schema_version` key at all, which reads back as 0 —
+    below the current schema version — so it's treated as a cache miss and
+    refetched. `backend.deps.drift` matches skipped paths by exact name, so
+    trusting a stale, name-less count back would silently make every one of
+    those files look like an ordinary unexplained file instead of
+    `unverifiable`, and could raise a false drift signal."""
     data = _normal_tarball_bytes()
     resolved = _resolved(integrity=_integrity_for(data))
     cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
@@ -250,15 +385,21 @@ async def test_stale_marker_without_skipped_long_path_names_is_refetched():
 
 
 @pytest.mark.asyncio
-async def test_marker_with_matching_names_is_a_normal_cache_hit():
-    """The counterpart to the staleness check: a marker that already carries
-    `skipped_long_path_names` (the post-PR-C shape) is a normal cache hit,
-    even with `skipped_long_paths > 0` — no unnecessary refetch."""
+async def test_marker_with_current_schema_version_is_a_normal_cache_hit():
+    """The counterpart to the staleness check: a marker already written at
+    the current schema version is a normal cache hit, even with
+    `skipped_long_paths > 0` — no unnecessary refetch."""
     resolved = _resolved()
     cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
     cache_dir.mkdir(parents=True)
     (cache_dir / ".complete").write_text(
-        json.dumps({"skipped_long_paths": 1, "skipped_long_path_names": ["deep/file.js"]})
+        json.dumps(
+            {
+                "schema_version": fetcher._MARKER_SCHEMA_VERSION,
+                "skipped_long_paths": 1,
+                "skipped_long_path_names": ["deep/file.js"],
+            }
+        )
     )
 
     calls = []
@@ -273,6 +414,40 @@ async def test_marker_with_matching_names_is_a_normal_cache_hit():
     assert calls == []
     assert result.path == cache_dir
     assert result.skipped_long_path_names == ("deep/file.js",)
+
+
+@pytest.mark.asyncio
+async def test_pre_c2_github_marker_without_discovered_directory_is_stale():
+    """The exact bug a live review found: a GitHub `.complete` marker written
+    before package discovery existed (PR C2) has no `schema_version` and no
+    `discovered_directory` key, but otherwise "looks complete" under the old
+    per-field staleness check (it already has `skipped_long_path_names`).
+    Trusting it back would keep comparing against whatever directory the
+    pre-discovery fetch happened to land on (e.g. a monorepo's repo root)
+    forever, even after upgrading to a version that fixes this. The
+    schema-version check catches it generically instead of needing a new
+    bespoke staleness rule for every field this marker gains."""
+
+    def build(tar):
+        _add_file(tar, "esbuild-v0.28.2/main.go", b"package main")
+        _add_file(tar, "esbuild-v0.28.2/npm/esbuild/package.json", b'{"name": "esbuild"}')
+
+    data = _build_tar_gz(build)
+    resolved = _github_resolved(name="esbuild")
+    cache_dir = fetcher.cache_dir_for(SourceKind.GITHUB, resolved.name, resolved.version)
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "main.go").write_text("stale pre-discovery repo-root tree")
+    (cache_dir / ".complete").write_text(
+        json.dumps({"skipped_long_paths": 0, "skipped_long_path_names": []})
+    )
+
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(resolved, SourceKind.GITHUB, client=client)
+
+    assert result.path is not None
+    assert result.discovered_directory == "npm/esbuild"
+    assert (result.path / "package.json").is_file()
+    assert not (result.path / "main.go").exists()
 
 
 @pytest.mark.asyncio
@@ -682,6 +857,7 @@ async def test_github_inconsistent_wrapper_rejected():
 
     def build(tar):
         _add_file(tar, "r-v1.0.0/index.js", b"x")
+        _add_file(tar, "r-v1.0.0/package.json", b'{"name": "pkg"}')
         _add_file(tar, "other-repo-abc/sneaky.js", b"x")
 
     data = _build_tar_gz(build)
@@ -908,6 +1084,7 @@ async def test_github_symlink_skipped_and_counted_not_rejected():
 
     def build(tar):
         _add_file(tar, "r-v1.0.0/index.js", b"x")
+        _add_file(tar, "r-v1.0.0/package.json", b'{"name": "pkg"}')
         info = tarfile.TarInfo(name="r-v1.0.0/link")
         info.type = tarfile.SYMTYPE
         info.linkname = "index.js"
@@ -930,6 +1107,7 @@ async def test_github_symlink_skipped_and_counted_not_rejected():
 async def test_github_hardlink_skipped_and_counted_not_rejected():
     def build(tar):
         _add_file(tar, "r-v1.0.0/real.js", b"x")
+        _add_file(tar, "r-v1.0.0/package.json", b'{"name": "pkg"}')
         info = tarfile.TarInfo(name="r-v1.0.0/hard-link")
         info.type = tarfile.LNKTYPE
         info.linkname = "r-v1.0.0/real.js"

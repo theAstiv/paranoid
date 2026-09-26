@@ -72,6 +72,7 @@ def test_scan_json_round_trip(runner, monkeypatch, tmp_path):
         source_dir = tmp_path / kind.value
         source_dir.mkdir(parents=True, exist_ok=True)
         (source_dir / "index.js").write_text("module.exports = {};")
+        (source_dir / "package.json").write_text('{"name": "pkg"}')
         return FetchResult(path=source_dir)
 
     async def fake_scan_source(path, kind, *, name, version):
@@ -118,6 +119,7 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
         source_dir = tmp_path / kind.value
         source_dir.mkdir(parents=True, exist_ok=True)
         (source_dir / "index.js").write_text("module.exports = {};")
+        (source_dir / "package.json").write_text('{"name": "pkg"}')
         if kind == SourceKind.NPM_TARBALL:
             return FetchResult(
                 path=source_dir,
@@ -141,7 +143,7 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
     assert "partial: 1 file(s) skipped" in text_result.output
     assert "vendor/dead-link" in text_result.output
     assert "deeply/nested/too-long.js" in text_result.output
-    assert "matched=1" in text_result.output
+    assert "matched=2" in text_result.output
     assert "no drift signal" in text_result.output
 
     json_result = runner.invoke(
@@ -185,6 +187,164 @@ def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
     assert result.exit_code == 0, result.output
     assert "GitHub source unavailable (github_unresolved) — drift skipped." in result.output
     assert "(not scanned)" in result.output  # GitHub capability grid has nothing to show
+
+
+def test_scan_renders_tarball_name_mismatch_signal(runner, monkeypatch, tmp_path):
+    """When the only strong finding is `tarball_declared_name_mismatch`,
+    `_render_drift` must explain it — not print an empty "capabilities only
+    in tarball: " line with nothing after the colon."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    profile = _profile()
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        source_dir = tmp_path / kind.value
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "index.js").write_text("module.exports = {};")
+        declared_name = "totally-different-name" if kind == SourceKind.NPM_TARBALL else "pkg"
+        (source_dir / "package.json").write_text(json.dumps({"name": declared_name}))
+        return FetchResult(path=source_dir)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert result.exit_code == 0, result.output
+    assert (
+        "tarball package.json declares name 'totally-different-name', published as 'pkg'"
+        in result.output
+    )
+
+
+def test_scan_renders_missing_tarball_name_without_extra_quotes(runner, monkeypatch, tmp_path):
+    """A tarball with no readable `name` at all renders as the literal
+    "(no name declared)" — not `'(no name declared)'` with an extra pair of
+    quotes from blindly `!r`-formatting the empty-string sentinel."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    profile = _profile()
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        source_dir = tmp_path / kind.value
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "index.js").write_text("module.exports = {};")
+        if kind == SourceKind.NPM_TARBALL:
+            (source_dir / "package.json").write_text(json.dumps({"version": "1.0.0"}))
+        else:
+            (source_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+        return FetchResult(path=source_dir)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert result.exit_code == 0, result.output
+    assert "declares name (no name declared), published as 'pkg'" in result.output
+    assert "'(no name declared)'" not in result.output
+
+
+def test_scan_renders_unscanned_reachable_files_signal(runner, monkeypatch, tmp_path):
+    """Files that exceeded the scan's target cap must render as their own
+    SIGNAL, both in the capability grid and the drift section."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    npm_profile = _profile()
+    npm_profile = npm_profile.model_copy(update={"unscanned_reachable_files": ["zz.map"]})
+    github_profile = _profile()
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        source_dir = tmp_path / kind.value
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "index.js").write_text("module.exports = {};")
+        (source_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+        return FetchResult(path=source_dir)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert result.exit_code == 0, result.output
+    assert "unscanned (exceeded scan target cap):" in result.output
+    assert "1 reachable file(s) exceeded the scan's target cap" in result.output
+    assert "- zz.map" in result.output
+
+
+def test_scan_truncates_long_unscanned_reachable_files_list(runner, monkeypatch, tmp_path):
+    """A package with more unscanned files than fit on screen shows only the
+    first `_MAX_LISTED_UNSCANNED_FILES` plus a count for the rest — the full
+    list still round-trips through JSON output untruncated."""
+    resolved = _resolved(github_status="resolved", github_ref="v1.0.0")
+    many_files = [f"f{i}.dat" for i in range(30)]
+    npm_profile = _profile().model_copy(update={"unscanned_reachable_files": many_files})
+    github_profile = _profile()
+
+    async def fake_resolve_npm(name, version, client):
+        return resolved
+
+    async def fake_resolve_github_ref(r, client):
+        return resolved
+
+    async def fake_fetch_source(r, kind, client):
+        source_dir = tmp_path / kind.value
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "index.js").write_text("module.exports = {};")
+        (source_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+        return FetchResult(path=source_dir)
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
+
+    monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    text_result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
+    assert text_result.exit_code == 0, text_result.output
+    assert "f0.dat" in text_result.output
+    assert "f19.dat" in text_result.output
+    assert "f20.dat" not in text_result.output
+    assert "...and 10 more" in text_result.output
+
+    json_result = runner.invoke(
+        deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both", "--format", "json"]
+    )
+    data = json.loads(json_result.output)
+    assert len(data["npm"]["unscanned_reachable_files"]) == 30
 
 
 def test_scan_incomplete_drift_reports_which_side(runner, monkeypatch, tmp_path):

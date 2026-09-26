@@ -126,6 +126,14 @@ def compute_delta(
     flags = supply_chain_flags(delta)
     if _has_new_install_time_risky_capability(curr_profile, set(delta.categories_added)):
         flags.append("install_time_capability")
+    if curr_profile.unscanned_reachable_files and not prev_profile.unscanned_reachable_files:
+        # Reachable non-standard-extension code that exceeded the scan's
+        # target cap (backend.deps.scanner._MAX_EXTRA_TARGETS_TOTAL) is its
+        # own strong signal in backend.deps.drift, but `deps diff` doesn't
+        # always run drift (--source npm, the default, skips it) — this is
+        # the version-to-version counterpart, so a package that only crosses
+        # the cap in a new release doesn't slip through silently.
+        flags.append("unscanned_reachable_files_added")
     return delta.model_copy(update={"flags": flags})
 
 

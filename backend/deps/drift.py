@@ -22,6 +22,7 @@ import posixpath
 import re
 from pathlib import Path
 
+from backend.deps.install_hooks import is_hook_flagged
 from backend.models.dependencies import CapabilityProfile, DriftReport
 from backend.models.enums import CapabilityCategory, PathClass
 
@@ -382,6 +383,53 @@ def compare_sources(
     # malicious package.json and have it self-certify.
     tarball_package_json = _load_package_json(tarball_dir)
     github_package_json = _load_package_json(github_dir)
+
+    # Identity gate: even after fetch-time package discovery, comparing a
+    # tarball against the wrong directory of a monorepo (or the wrong repo
+    # entirely) would blame every one of that tree's files/hooks on drift.
+    # Belt-and-braces on top of discovery, not a replacement for it.
+    #
+    # Checked against `name` — the trusted npm-registry name this comparison
+    # was resolved for — never against the tarball's own package.json: the
+    # attacker controls the published tarball, and the registry never
+    # verifies that a tarball's package.json `name` matches the name it was
+    # published under ("manifest confusion"). Comparing tarball-vs-tarball
+    # would let an attacker rename their own package.json to dodge the gate
+    # entirely and compare against nothing.
+    #
+    # A GitHub side with no readable `name` at all (e.g. a monorepo whose
+    # repo root has no package.json, like esbuild's Go-language root) can't
+    # be verified either, so it's treated the same as a mismatch — comparing
+    # anyway on the assumption that fetch-time discovery already scoped
+    # correctly would defeat the point of a *second*, independent check.
+    github_name = github_package_json.get("name")
+    if not isinstance(github_name, str) or github_name != name:
+        return DriftReport(
+            name=name,
+            version=version,
+            status="skipped_github_unavailable",
+            skip_reason="github_package_mismatch",
+        )
+
+    # The tarball's *own* declared name disagreeing with the trusted registry
+    # name it was published under is itself suspicious — surfaced as a signal
+    # rather than silently accepted, but the comparison still proceeds (the
+    # GitHub side is already verified above), so a real capability finding on
+    # top of it is never hidden behind an early return. A missing/non-string
+    # `name` counts too (represented as "", rendered as "(no name declared)"):
+    # every package published to npm is required to declare one, so a tarball
+    # without one is already a malformed-or-tampered manifest, not a reason
+    # to skip the check.
+    tarball_name = tarball_package_json.get("name")
+    tarball_name_str = tarball_name if isinstance(tarball_name, str) else ""
+    tarball_name_mismatch = tarball_name_str if tarball_name_str != name else None
+
+    # Reachable non-standard-extension code the scan couldn't get through to
+    # (see CapabilityProfile.unscanned_reachable_files) is itself a finding —
+    # "this code exists and executes, but was never checked" can't be waved
+    # through just because the profile's own status still says "ok".
+    unscanned_reachable_files = list(tarball_profile.unscanned_reachable_files)
+
     build_dirs = _declared_build_dirs(tarball_package_json)
     has_build_script = _has_build_script(github_package_json)
     declared_deps = _declared_dependencies(github_package_json)
@@ -428,10 +476,15 @@ def compare_sources(
             relocated.append({"file": rel_path, "categories": sorted(weak, key=lambda c: c.value)})
 
     for rel_path in sorted(tarball_files):
-        # Source maps are metadata *about* a shipped file, not shipped code in
-        # their own right — they're consulted (via _classify_sourcemap) to
-        # explain their sibling, not classified separately.
-        if rel_path.endswith(".map"):
+        # Source maps are ordinarily metadata *about* a shipped file, not
+        # shipped code in their own right — consulted (via _classify_sourcemap)
+        # to explain their sibling, not classified separately. But Node
+        # executes whatever a require() resolves to regardless of extension
+        # (e.g. `require('./lib/data.map')`), so a `.map` file the scanner
+        # actually found evidence in (reachable, scanned as an explicit extra
+        # target — see backend.deps.references.find_reachable_unscanned_files)
+        # is real code and must not be waved through unclassified.
+        if rel_path.endswith(".map") and rel_path not in tarball_evidence_by_file:
             continue
 
         if rel_path in github_files:
@@ -481,18 +534,33 @@ def compare_sources(
 
         if rel_path in github_unverifiable_paths:
             unverifiable.append(rel_path)
+            # Can't be checked against its own (missing) GitHub counterpart,
+            # but a category absent from the *whole* GitHub scan is still
+            # worth flagging — the same package-wide excuse a declared build
+            # directory gets, not a free pass.
+            _record(rel_path, github_categories)
         else:
             unexplained.append(rel_path)
             _record(rel_path, set())
 
     # Lifecycle hooks the tarball's package.json declares that the GitHub
     # repo's package.json doesn't (added, or changed) — the ua-parser-js
-    # shape, caught without needing a previous published version.
+    # shape, caught without needing a previous published version. Only a
+    # hook that is itself flagged (not on the benign allowlist — husky, tsc,
+    # bundler builds, ...) is a strong signal; an added hook made entirely of
+    # allowlisted commands (e.g. a tarball-only `"prepare": "husky install"`)
+    # is informational only, or every such package would falsely signal.
+    tarball_scripts = tarball_package_json.get("scripts")
+    tarball_scripts = tarball_scripts if isinstance(tarball_scripts, dict) else {}
     tarball_hooks = _hook_scripts(tarball_package_json)
     github_hooks = _hook_scripts(github_package_json)
-    install_hooks_added = sorted(
+    changed_hooks = sorted(
         key for key, value in tarball_hooks.items() if github_hooks.get(key) != value
     )
+    install_hooks_added = [
+        key for key in changed_hooks if is_hook_flagged(tarball_hooks[key], tarball_scripts)
+    ]
+    install_hooks_added_benign = [key for key in changed_hooks if key not in install_hooks_added]
     if install_hooks_added:
         signal_files["package.json"] = sorted(
             set(signal_files.get("package.json", [])) | {CapabilityCategory.BUILD_INSTALL},
@@ -514,10 +582,17 @@ def compare_sources(
         bundled_dependency=bundled_dependency,
         unexplained=unexplained,
         unverifiable=unverifiable,
-        signal=bool(signal_files),
+        signal=(
+            bool(signal_files)
+            or tarball_name_mismatch is not None
+            or bool(unscanned_reachable_files)
+        ),
         signal_files=signal_files,
         signal_categories=signal_categories,
         relocated=relocated,
         new_evidence_in_matched=new_evidence_in_matched,
         install_hooks_added=install_hooks_added,
+        install_hooks_added_benign=install_hooks_added_benign,
+        tarball_declared_name_mismatch=tarball_name_mismatch,
+        unscanned_reachable_files=unscanned_reachable_files,
     )
