@@ -20,6 +20,11 @@ DIST_ONLY_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "deps" / "dist-only
 
 _semgrep_missing = scanner.resolve_semgrep_binary() is None
 
+# The global `timeout = 30` in pyproject.toml is tight for the real-Semgrep
+# tests below. On Windows, pytest-timeout's default "thread" method kills the
+# whole run (not just the one test) when it fires.
+pytestmark = pytest.mark.timeout(120)
+
 
 def test_classify_path_shipped():
     assert scanner.classify_path("index.js") == PathClass.SHIPPED
