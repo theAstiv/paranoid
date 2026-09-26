@@ -291,3 +291,23 @@ def test_flag_dormant_package_requires_threshold():
 def test_no_flags_for_benign_refactor():
     delta = _delta()
     assert supply_chain_flags(delta) == []
+
+
+def test_compute_delta_flags_unscanned_reachable_files_added():
+    """A version that newly crosses the scan's target cap for reachable
+    non-standard-extension files must be flagged even when `deps diff`
+    doesn't run drift at all (--source npm, the default) — drift's own
+    signal for this only fires when both sources are compared."""
+    prev = _profile()
+    curr = _profile().model_copy(update={"unscanned_reachable_files": ["zz.map"]})
+
+    delta = compute_delta(_pkg("1.0.0"), _pkg("1.0.1"), prev, curr)
+    assert "unscanned_reachable_files_added" in delta.flags
+
+
+def test_compute_delta_no_flag_when_unscanned_reachable_files_unchanged():
+    prev = _profile().model_copy(update={"unscanned_reachable_files": ["zz.map"]})
+    curr = _profile().model_copy(update={"unscanned_reachable_files": ["zz.map"]})
+
+    delta = compute_delta(_pkg("1.0.0"), _pkg("1.0.1"), prev, curr)
+    assert "unscanned_reachable_files_added" not in delta.flags

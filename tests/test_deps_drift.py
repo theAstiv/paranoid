@@ -61,6 +61,7 @@ def test_github_unavailable_skips_comparison(tmp_path):
 def test_scan_incomplete_skips_comparison(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     report = compare_sources(
         "pkg", "1.0.0", tarball_dir, _profile(status="semgrep_timeout"), github_dir, _profile()
     )
@@ -71,6 +72,7 @@ def test_scan_incomplete_skips_comparison(tmp_path):
 def test_scan_incomplete_on_github_side_also_skips(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     report = compare_sources(
         "pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile(status="semgrep_error")
     )
@@ -84,6 +86,7 @@ def test_partial_fetch_status_still_compares(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "index.js").write_text("module.exports = 1;\n")
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = 1;\n")
 
     report = compare_sources(
@@ -98,6 +101,7 @@ def test_matched_file(tmp_path):
     (tarball_dir / "index.js").write_text("module.exports = 1;\n")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = 1;\n")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -112,6 +116,7 @@ def test_marker_file_is_not_classified_as_matched(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "index.js").write_text("module.exports = 1;\n")
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = 1;\n")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -127,6 +132,7 @@ def test_explained_by_sourcemap(tmp_path):
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.ts").write_text("console.log('source')")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -144,6 +150,7 @@ def test_explained_by_sourcemap_standard_tsc_outdir_layout(tmp_path):
     (tarball_dir / "dist" / "index.js.map").write_text(json.dumps({"sources": ["../src/index.ts"]}))
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "src").mkdir()
     (github_dir / "src" / "index.ts").write_text("console.log('source')")
 
@@ -160,6 +167,7 @@ def test_explained_by_inline_sourcemap_comment(tmp_path):
     (tarball_dir / "index.js.map").write_text(json.dumps({"sources": ["index.ts"]}))
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.ts").write_text("console.log('source')")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -172,6 +180,7 @@ def test_inline_sourcemap_data_uri_is_not_resolved(tmp_path):
         b"console.log('x')\n//# sourceMappingURL=data:application/json;base64,eyJ9\n"
     )
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "other.ts").write_text("console.log('x')")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -187,7 +196,9 @@ def test_bundled_dependency_via_sourcemap_declared_in_github_package_json(tmp_pa
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "index.js").write_text("// unrelated")
-    (github_dir / "package.json").write_text(json.dumps({"dependencies": {"left-pad": "^1.0.0"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "dependencies": {"left-pad": "^1.0.0"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.bundled_dependency == ["bundle.js"]
@@ -206,7 +217,7 @@ def test_bundled_dependency_via_sourcemap_undeclared_package_is_invalid_map(tmp_
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "index.js").write_text("// unrelated")
-    (github_dir / "package.json").write_text(json.dumps({"dependencies": {}}))
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "dependencies": {}}))
 
     tarball_profile = _profile([_evidence("bundle.js", CapabilityCategory.PROCESS)])
     report = compare_sources("pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, _profile())
@@ -232,7 +243,7 @@ def test_bundled_dependency_excuse_is_bounded_to_the_packages_own_categories(tmp
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "index.js").write_text("module.exports = {};")
     (github_dir / "package.json").write_text(
-        json.dumps({"devDependencies": {"typescript": "^5.0.0"}})
+        json.dumps({"name": "pkg", "devDependencies": {"typescript": "^5.0.0"}})
     )
 
     tarball_profile = _profile([_evidence("evil.js", CapabilityCategory.PROCESS)])
@@ -251,6 +262,7 @@ def test_bundled_dependency_excuses_a_category_the_package_already_has(tmp_path)
     package's own GitHub source already shows elsewhere — we don't scan the
     vendor, but we don't need to when the capability isn't actually novel."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (tarball_dir / "vendor.js").write_text("require('child_process').exec('build step')")
     (tarball_dir / "vendor.js.map").write_text(
         json.dumps({"sources": ["../node_modules/some-lib/index.js"]})
@@ -258,7 +270,9 @@ def test_bundled_dependency_excuses_a_category_the_package_already_has(tmp_path)
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "build.js").write_text("require('child_process').exec('build step')")
-    (github_dir / "package.json").write_text(json.dumps({"dependencies": {"some-lib": "^1.0.0"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "dependencies": {"some-lib": "^1.0.0"}})
+    )
 
     tarball_profile = _profile([_evidence("vendor.js", CapabilityCategory.PROCESS)])
     github_profile = _profile([_evidence("build.js", CapabilityCategory.PROCESS)])
@@ -278,6 +292,7 @@ def test_sourcemap_pointing_at_unrelated_real_file_is_invalid_map(tmp_path):
     (tarball_dir / "payload.js.map").write_text(json.dumps({"sources": ["unrelated.ts"]}))
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
     # No unrelated.ts on the GitHub side at all -> the map is invalid.
 
@@ -293,6 +308,7 @@ def test_explained_by_build_dts(tmp_path):
     (tarball_dir / "index.d.ts").write_text("export {};")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.ts").write_text("export {};")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -305,6 +321,7 @@ def test_explained_by_build_ts_compiled_pair(tmp_path):
     (tarball_dir / "index.js").write_text("//compiled")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.ts").write_text("//source")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -316,12 +333,14 @@ def test_explained_by_build_declared_dist_dir_with_build_script(tmp_path):
     (tarball_dir / "dist").mkdir()
     (tarball_dir / "dist" / "index.js").write_text("//compiled bundle, no ts pair")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"main": "dist/index.js", "scripts": {"build": "tsc"}})
+        json.dumps({"name": "pkg", "main": "dist/index.js", "scripts": {"build": "tsc"}})
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "src.js").write_text("// unrelated, no dist here")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {"build": "tsc"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"build": "tsc"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert "dist/index.js" in report.explained_by_build
@@ -336,12 +355,21 @@ def test_explained_by_build_leading_dot_slash_main_and_bare_files_entry(tmp_path
     (tarball_dir / "dist").mkdir()
     (tarball_dir / "dist" / "index.js").write_text("//compiled bundle, no ts pair, no map")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"main": "./dist/index.js", "files": ["dist"], "scripts": {"build": "tsc"}})
+        json.dumps(
+            {
+                "name": "pkg",
+                "main": "./dist/index.js",
+                "files": ["dist"],
+                "scripts": {"build": "tsc"},
+            }
+        )
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "src.ts").write_text("// unrelated, no dist here")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {"build": "tsc"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"build": "tsc"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert "dist/index.js" in report.explained_by_build
@@ -363,7 +391,9 @@ def test_explained_by_build_via_exports_field(tmp_path):
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "src.ts").write_text("// unrelated, no dist here")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {"prepare": "tsc"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"prepare": "tsc"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert "dist/index.mjs" in report.explained_by_build
@@ -378,10 +408,17 @@ def test_build_dir_not_declared_stays_unexplained(tmp_path):
     (tarball_dir / "lib").mkdir()
     (tarball_dir / "lib" / "evil.js").write_text("require('child_process').exec('x')")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"main": "index.js", "scripts": {"build": "webpack --config docs.config.js"}})
+        json.dumps(
+            {
+                "name": "pkg",
+                "main": "index.js",
+                "scripts": {"build": "webpack --config docs.config.js"},
+            }
+        )
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -394,9 +431,10 @@ def test_unexplained_without_build_script(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "dist").mkdir()
     (tarball_dir / "dist" / "index.js").write_text("//mystery file")
-    (tarball_dir / "package.json").write_text(json.dumps({"main": "dist/index.js"}))
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg", "main": "dist/index.js"}))
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "readme.md").write_text("nothing relevant")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -408,6 +446,7 @@ def test_signal_true_for_unexplained_file_with_novel_category(tmp_path):
     (tarball_dir / "payload.js").write_text("require('child_process').exec('evil')")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("payload.js", CapabilityCategory.PROCESS)])
@@ -427,9 +466,11 @@ def test_signal_false_when_category_also_present_on_github(tmp_path):
     category is already present in the GitHub-scanned source elsewhere — no
     strong signal, but it's reported as informational (relocated)."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (tarball_dir / "generated.js").write_text("require('child_process').exec('build step')")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "build.js").write_text("require('child_process').exec('build step')")
 
     tarball_profile = _profile([_evidence("generated.js", CapabilityCategory.PROCESS)])
@@ -448,9 +489,11 @@ def test_signal_false_when_category_also_present_on_github(tmp_path):
 
 def test_signal_false_when_unexplained_file_has_no_evidence(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (tarball_dir / "notes.txt").write_text("just some notes, no capability")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -465,6 +508,7 @@ def test_node_modules_excluded_from_both_trees(tmp_path):
     (tarball_dir / "index.js").write_text("module.exports = {};")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
@@ -484,6 +528,7 @@ def test_single_subfolder_package_dir_is_not_collapsed(tmp_path):
     (tarball_dir / "src" / "index.js").write_text("module.exports = {};")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "src").mkdir()
     (github_dir / "src" / "index.js").write_text("module.exports = {};")
 
@@ -500,10 +545,11 @@ def test_build_script_read_from_github_not_tarball(tmp_path):
     (tarball_dir / "dist").mkdir()
     (tarball_dir / "dist" / "index.js").write_text("//compiled, no ts pair")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"main": "dist/index.js", "scripts": {"build": "tsc"}})
+        json.dumps({"name": "pkg", "main": "dist/index.js", "scripts": {"build": "tsc"}})
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "readme.md").write_text("n/a")
     # No package.json / build script in the actual repo.
 
@@ -520,12 +566,16 @@ def test_root_level_file_not_explained_by_bare_files_entry(tmp_path):
     (tarball_dir / "index.js").write_text("module.exports = {};")
     (tarball_dir / "payload.js").write_text("require('child_process').exec('evil')")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"files": ["index.js", "payload.js"], "scripts": {"build": "tsc"}})
+        json.dumps(
+            {"name": "pkg", "files": ["index.js", "payload.js"], "scripts": {"build": "tsc"}}
+        )
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "index.js").write_text("module.exports = {};")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {"build": "tsc"}}))
+    (github_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"build": "tsc"}})
+    )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert "payload.js" in report.unexplained
@@ -543,6 +593,7 @@ def test_matched_file_with_novel_category_is_strong_signal(tmp_path):
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("index.js", CapabilityCategory.PROCESS)])
@@ -559,9 +610,11 @@ def test_matched_file_new_evidence_same_category_is_weak_and_informational(tmp_p
     (evidence-level, so the new line is visible even though the category
     itself isn't novel)."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (tarball_dir / "index.js").write_text("require('child_process').exec('a'); exec('b');")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("require('child_process').exec('a');")
     (github_dir / "build.js").write_text("require('child_process').exec('elsewhere');")
 
@@ -587,20 +640,23 @@ def test_matched_file_new_evidence_same_category_is_weak_and_informational(tmp_p
     report = compare_sources(
         "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
     )
-    assert report.matched == ["index.js"]
+    assert set(report.matched) == {"index.js", "package.json"}
     assert report.signal is False
     assert "index.js" in report.new_evidence_in_matched
 
 
 def test_unverifiable_bucket_for_github_skipped_symlink(tmp_path):
     """A tarball-only file whose exact path is one GitHub couldn't extract
-    (recorded as a skipped symlink) must never be treated as a drift
-    signal — GitHub not having scanned it isn't the same as GitHub's real
-    source not having it."""
+    (recorded as a skipped symlink) is `unverifiable`, not `unexplained` —
+    GitHub not having *scanned* it isn't the same as GitHub's real source not
+    having it. But it's still excused only against the package-wide GitHub
+    category set (like a declared build directory), not given a free pass:
+    a category absent from the whole GitHub scan still signals."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "vendored.js").write_text("require('child_process').exec('evil')")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("vendored.js", CapabilityCategory.PROCESS)])
@@ -610,6 +666,30 @@ def test_unverifiable_bucket_for_github_skipped_symlink(tmp_path):
     )
     assert report.unverifiable == ["vendored.js"]
     assert "vendored.js" not in report.unexplained
+    assert report.signal is True
+    assert report.signal_files == {"vendored.js": [CapabilityCategory.PROCESS]}
+
+
+def test_unverifiable_file_excused_for_category_present_elsewhere_in_github(tmp_path):
+    """The other side of the package-wide excuse: an unverifiable file's
+    category that the GitHub scan already shows *somewhere* is excused, same
+    as it would be inside a declared build directory."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (tarball_dir / "vendored.js").write_text("require('child_process').exec('evil')")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "build.js").write_text("require('child_process').exec('build step')")
+
+    tarball_profile = _profile([_evidence("vendored.js", CapabilityCategory.PROCESS)])
+    github_profile = _profile(
+        [_evidence("build.js", CapabilityCategory.PROCESS)], skipped_link_names=["vendored.js"]
+    )
+    report = compare_sources(
+        "pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, github_profile
+    )
+    assert report.unverifiable == ["vendored.js"]
     assert report.signal is False
 
 
@@ -622,11 +702,13 @@ def test_unverifiable_bucket_for_a_named_skipped_long_path(tmp_path):
     segment) that is later moved into place, so a name-based match is the
     only way to get the right answer for a path in the gap between the two
     lengths; recomputing the check against the shorter final path here would
-    wrongly call it verifiable."""
+    wrongly call it verifiable. It's excused package-wide, not given a free
+    pass, so a category the GitHub scan never shows anywhere still signals."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "payload.js").write_text("require('child_process').exec('evil')")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("payload.js", CapabilityCategory.PROCESS)])
@@ -638,7 +720,8 @@ def test_unverifiable_bucket_for_a_named_skipped_long_path(tmp_path):
     )
     assert report.unverifiable == ["payload.js"]
     assert report.unexplained == []
-    assert report.signal is False
+    assert report.signal is True
+    assert report.signal_files == {"payload.js": [CapabilityCategory.PROCESS]}
 
 
 def test_short_unexplained_path_is_not_downgraded_by_an_unrelated_long_path_skip(tmp_path):
@@ -651,6 +734,7 @@ def test_short_unexplained_path_is_not_downgraded_by_an_unrelated_long_path_skip
     (tarball_dir / "payload.js").write_text("require('child_process').exec('evil')")
 
     github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
     (github_dir / "index.js").write_text("module.exports = {};")
 
     tarball_profile = _profile([_evidence("payload.js", CapabilityCategory.PROCESS)])
@@ -673,7 +757,7 @@ def test_install_hook_added_in_tarball_is_strong_signal(tmp_path):
     without needing a previous published version to diff against."""
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"scripts": {"postinstall": "node scripts/setup.js"}})
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "node scripts/setup.js"}})
     )
     (tarball_dir / "scripts").mkdir()
     (tarball_dir / "scripts" / "setup.js").write_text(
@@ -681,7 +765,7 @@ def test_install_hook_added_in_tarball_is_strong_signal(tmp_path):
     )
 
     github_dir = _fetched_dir(tmp_path, "github")
-    (github_dir / "package.json").write_text(json.dumps({"scripts": {}}))
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "scripts": {}}))
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.install_hooks_added == ["postinstall"]
@@ -692,13 +776,183 @@ def test_install_hook_added_in_tarball_is_strong_signal(tmp_path):
 def test_install_hook_unchanged_is_not_flagged(tmp_path):
     tarball_dir = _fetched_dir(tmp_path, "tarball")
     (tarball_dir / "package.json").write_text(
-        json.dumps({"scripts": {"postinstall": "husky install"}})
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "husky install"}})
     )
     github_dir = _fetched_dir(tmp_path, "github")
     (github_dir / "package.json").write_text(
-        json.dumps({"scripts": {"postinstall": "husky install"}})
+        json.dumps({"name": "pkg", "scripts": {"postinstall": "husky install"}})
     )
 
     report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
     assert report.install_hooks_added == []
     assert report.signal is False
+
+
+def test_added_benign_hook_is_informational_not_strong_signal(tmp_path):
+    """A hook the GitHub package.json doesn't have, but that's made entirely
+    of allowlisted commands (husky, tsc, bundler builds, ...), must not be a
+    strong signal on its own — flagging every such package would drown out
+    real findings. It's still reported, just as `install_hooks_added_benign`."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "pkg", "scripts": {"prepare": "husky install"}})
+    )
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg", "scripts": {}}))
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.install_hooks_added == []
+    assert report.install_hooks_added_benign == ["prepare"]
+    assert report.signal is False
+
+
+def test_package_name_mismatch_skips_comparison(tmp_path):
+    """Belt-and-braces on top of fetch-time package discovery: comparing a
+    tarball against the wrong tree (a different package.json `name`) would
+    blame every one of that tree's files and hooks on drift. Even if
+    discovery already scoped extraction correctly, this is a last check
+    before trusting the comparison at all."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "esbuild", "scripts": {"postinstall": "node install.js"}})
+    )
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    github_dir_name = "monorepo-root"
+    (github_dir / "package.json").write_text(json.dumps({"name": github_dir_name}))
+    (github_dir / "main.go").write_text("package main")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "skipped_github_unavailable"
+    assert report.skip_reason == "github_package_mismatch"
+    assert report.signal is False
+    assert report.matched == []
+    assert report.install_hooks_added == []
+
+
+def test_tarball_manifest_confusion_cannot_switch_off_drift(tmp_path):
+    """The identity gate must be checked against the *trusted* resolved name
+    (`compare_sources`'s own `name` argument), never against the tarball's
+    own package.json — the tarball is the attacker's file, and the npm
+    registry never verifies that a published tarball's package.json `name`
+    matches the name it was published under ("manifest confusion"). Renaming
+    the tarball's own package.json must not be a way to dodge a real finding:
+    the GitHub side still matches the trusted name, so the comparison must
+    run, and the tarball's own mismatched name is itself flagged."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "totally-different-name", "scripts": {"postinstall": "node evil.js"}})
+    )
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "index.js").write_text("module.exports = {};")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "compared"
+    assert report.signal is True
+    assert report.tarball_declared_name_mismatch == "totally-different-name"
+    assert report.install_hooks_added == ["postinstall"]
+
+
+def test_tarball_name_mismatch_alone_forces_signal(tmp_path):
+    """Isolates `tarball_declared_name_mismatch`'s own contribution to
+    `signal` — no capability or hook finding at all, just the tarball's own
+    package.json disagreeing with the trusted name."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "not-pkg"}))
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "index.js").write_text("module.exports = {};")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "compared"
+    assert report.signal is True
+    assert report.tarball_declared_name_mismatch == "not-pkg"
+    assert report.signal_files == {}
+    assert report.install_hooks_added == []
+
+
+def test_tarball_missing_name_field_also_flagged(tmp_path):
+    """Every package published to npm is required to declare a `name` — a
+    tarball with no readable `name` at all is itself a malformed-or-tampered
+    manifest, not a reason to skip the check. Represented as `""`, distinct
+    from `None` (no mismatch)."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"version": "1.0.0"}))
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "index.js").write_text("module.exports = {};")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "compared"
+    assert report.signal is True
+    assert report.tarball_declared_name_mismatch == ""
+
+
+def test_unscanned_reachable_files_force_signal(tmp_path):
+    """Reachable non-standard-extension code that exceeded the scan's target
+    cap (`CapabilityProfile.unscanned_reachable_files`, from `backend.deps
+    .scanner`) is a strong signal on its own — "this code exists and
+    executes, but was never checked" can't be waved through just because the
+    profile's own status still says "ok". Confirmed bypass this closes: an
+    attacker ships 2000 harmless reachable files to push the real payload
+    past the cap, where it would otherwise land with no categories and no
+    signal at all."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "index.js").write_text("module.exports = {};")
+
+    tarball_profile = _profile(unscanned_reachable_files=["zz.map"])
+    report = compare_sources("pkg", "1.0.0", tarball_dir, tarball_profile, github_dir, _profile())
+    assert report.status == "compared"
+    assert report.signal is True
+    assert report.unscanned_reachable_files == ["zz.map"]
+
+
+def test_github_side_with_no_readable_name_skips_comparison(tmp_path):
+    """The other half of the esbuild bypass: a GitHub tree whose root has no
+    package.json at all (a Go-language monorepo, before discovery narrows the
+    scope) can't be verified as the right package either — it must be
+    skipped, not silently compared against on the assumption that fetch-time
+    discovery already got it right. A second, independent check is only
+    useful if it doesn't just trust the thing it's meant to be checking."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(
+        json.dumps({"name": "esbuild", "scripts": {"postinstall": "node evil.js"}})
+    )
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "main.go").write_text("package main")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "skipped_github_unavailable"
+    assert report.skip_reason == "github_package_mismatch"
+    assert report.signal is False
+
+
+def test_package_name_match_still_compares_normally(tmp_path):
+    """The identity gate must not false-positive on an ordinary matching
+    package — same `name` on both sides compares exactly as before."""
+    tarball_dir = _fetched_dir(tmp_path, "tarball")
+    (tarball_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (tarball_dir / "index.js").write_text("module.exports = {};")
+
+    github_dir = _fetched_dir(tmp_path, "github")
+    (github_dir / "package.json").write_text(json.dumps({"name": "pkg"}))
+    (github_dir / "index.js").write_text("module.exports = {};")
+
+    report = compare_sources("pkg", "1.0.0", tarball_dir, _profile(), github_dir, _profile())
+    assert report.status == "compared"
+    assert report.matched == ["index.js", "package.json"]

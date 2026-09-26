@@ -91,6 +91,15 @@ def _is_flagged(
     return False, None
 
 
+def is_hook_flagged(script: str, scripts: dict) -> bool:
+    """Public entry point to the same benign-allowlist check `find_install_hooks`
+    runs, for callers that need a yes/no on one hook script rather than the
+    full `"{hook}: {command} — {reason}"` list — e.g. `backend.deps.drift`
+    grading whether a hook *added* in the tarball is a strong signal or an
+    allowlisted-benign one."""
+    return _is_flagged(script, scripts)[0]
+
+
 def _collect_node_files(script: str, scripts: dict, seen: frozenset[str], files: set[str]) -> None:
     """Walk `script` (and any `npm run <name>` it delegates to) collecting
     every `node <file>` target, so a payload behind a chain of otherwise-
