@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 _SPEC_RE = re.compile(r"^(?P<name>@[^/@]+/[^/@]+|[^/@]+)@(?P<version>.+)$")
 _MANIFEST_CONCURRENCY = 4
+# A package that crosses backend.deps.scanner._MAX_EXTRA_TARGETS_TOTAL could
+# have thousands of unscanned file names to list; the console output stays
+# readable by showing only the first few, with a count for the rest. JSON
+# output (below) is never truncated.
+_MAX_LISTED_UNSCANNED_FILES = 20
 # Only a `semgrep_*` status means the scan itself didn't finish. A
 # "partial_fetch" profile (some files couldn't be extracted, e.g. Windows
 # path-length limits) still ran a real scan against what it did get.
@@ -109,17 +114,20 @@ async def _fetch_and_scan(
     if result.path is None:
         return None, None, result.reason
     profile = await scan_source(result.path, kind, name=resolved.name, version=resolved.version)
-    if result.skipped_long_paths or result.skipped_link_names:
-        # Fetch-time skips are recorded on the profile itself (not just
-        # logged) so they survive into the JSON output and the capability
-        # grid — and, when the scan otherwise finished cleanly, downgrading
-        # status away from "ok" makes drift.compare_sources treat this the
-        # same as an incomplete scan without drift.py needing to know about
-        # fetch-time skips at all.
+    if result.skipped_long_paths or result.skipped_link_names or result.discovered_directory:
+        # Fetch-time skips (and a discovered package directory) are recorded
+        # on the profile itself (not just logged) so they survive into the
+        # JSON output and the capability grid. Downgrading status away from
+        # "ok" to "partial_fetch" flags the scan as incomplete without
+        # drift.py needing to know about fetch-time skips itself — but
+        # drift.compare_sources still runs on a partial_fetch profile (only a
+        # semgrep_* status skips it entirely); the affected paths land in its
+        # `unverifiable` bucket instead of disabling the comparison outright.
         updates: dict = {
             "skipped_long_paths": result.skipped_long_paths,
             "skipped_link_names": list(result.skipped_link_names),
             "skipped_long_path_names": list(result.skipped_long_path_names),
+            "discovered_directory": result.discovered_directory,
         }
         if result.skipped_long_paths and profile.status == "ok":
             updates["status"] = "partial_fetch"
@@ -187,6 +195,18 @@ def _profile_dict(profile: CapabilityProfile | None) -> dict | None:
     return profile.model_dump(mode="json") if profile is not None else None
 
 
+def _echo_file_list(files: list[str], *, indent: str = "      - ") -> None:
+    """Print `files`, one per line, truncated to `_MAX_LISTED_UNSCANNED_FILES`
+    with a summary count for the rest — a package that crosses the scan's
+    target cap could otherwise dump thousands of lines to the console. JSON
+    output (built separately from the untruncated model) is unaffected."""
+    for name in files[:_MAX_LISTED_UNSCANNED_FILES]:
+        click.echo(f"{indent}{name}")
+    remaining = len(files) - _MAX_LISTED_UNSCANNED_FILES
+    if remaining > 0:
+        click.echo(f"{indent}...and {remaining} more")
+
+
 def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> None:
     click.secho(f"  {label}:", fg="cyan", bold=True)
     if profile is None:
@@ -199,6 +219,11 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
         click.secho(
             f"    partial: {profile.skipped_long_paths} file(s) skipped "
             "(path exceeds Windows path-length limits)",
+            fg="yellow",
+        )
+    if profile.discovered_directory is not None:
+        click.secho(
+            f"    GitHub package found at {profile.discovered_directory or '(repo root)'}/",
             fg="yellow",
         )
     categories = profile.category_set()
@@ -233,6 +258,9 @@ def _render_capability_grid(label: str, profile: CapabilityProfile | None) -> No
         click.secho("    skipped (path too long):", fg="yellow")
         for name in profile.skipped_long_path_names:
             click.echo(f"      - {name}")
+    if profile.unscanned_reachable_files:
+        click.secho("    unscanned (exceeded scan target cap):", fg="red", bold=True)
+        _echo_file_list(profile.unscanned_reachable_files)
 
 
 def _render_drift(drift: DriftReport | None) -> None:
@@ -257,12 +285,33 @@ def _render_drift(drift: DriftReport | None) -> None:
         f"unexplained={len(drift.unexplained)} unverifiable={len(drift.unverifiable)}"
     )
     if drift.signal:
-        click.secho(
-            f"    SIGNAL: capabilities only in tarball: "
-            f"{', '.join(c.value for c in drift.signal_categories)}",
-            fg="red",
-            bold=True,
-        )
+        if drift.tarball_declared_name_mismatch is not None:
+            declared = (
+                f"{drift.tarball_declared_name_mismatch!r}"
+                if drift.tarball_declared_name_mismatch
+                else "(no name declared)"
+            )
+            click.secho(
+                f"    SIGNAL: tarball package.json declares name {declared}, "
+                f"published as {drift.name!r}",
+                fg="red",
+                bold=True,
+            )
+        if drift.unscanned_reachable_files:
+            click.secho(
+                f"    SIGNAL: {len(drift.unscanned_reachable_files)} reachable file(s) "
+                "exceeded the scan's target cap and were never checked:",
+                fg="red",
+                bold=True,
+            )
+            _echo_file_list(drift.unscanned_reachable_files)
+        if drift.signal_categories:
+            click.secho(
+                f"    SIGNAL: capabilities only in tarball: "
+                f"{', '.join(c.value for c in drift.signal_categories)}",
+                fg="red",
+                bold=True,
+            )
         for file, categories in sorted(drift.signal_files.items()):
             click.echo(f"      - {file}: {', '.join(c.value for c in categories)}")
         if drift.install_hooks_added:
@@ -278,6 +327,11 @@ def _render_drift(drift: DriftReport | None) -> None:
         for file, items in sorted(drift.new_evidence_in_matched.items()):
             for item in items:
                 click.echo(f"      - {file} [{item['category']}] {item['rule_id']}")
+    if drift.install_hooks_added_benign:
+        click.secho(
+            "    informational: install hooks added (allowlisted commands only): ", fg="yellow"
+        )
+        click.echo(f"      - {', '.join(drift.install_hooks_added_benign)}")
 
 
 def _render_delta(delta: VersionDelta) -> None:
