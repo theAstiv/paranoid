@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from backend.deps import scanner
-from backend.models.dependencies import CapabilityProfile
+from backend.models.dependencies import CapabilityEvidence, CapabilityProfile
 from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
 
@@ -220,6 +220,45 @@ def test_extract_snippet_out_of_range_line_returns_empty():
     assert scanner._extract_snippet(["only line"], {"line": 5}, {"line": 5}) == ""
 
 
+def _evidence(rule_id="r1", file="index.js", line=1, snippet="eval(x)", category=None):
+    return CapabilityEvidence(
+        category=category or CapabilityCategory.DYNAMIC_CODE,
+        rule_id=rule_id,
+        file=file,
+        line=line,
+        snippet=snippet,
+        source_kind=SourceKind.NPM_TARBALL,
+        path_class=PathClass.SHIPPED,
+    )
+
+
+def test_dedupe_evidence_collapses_identical_matches():
+    items = [_evidence(), _evidence(), _evidence()]
+    deduped = scanner._dedupe_evidence(items)
+    assert len(deduped) == 1
+    assert deduped[0].count == 3
+
+
+def test_dedupe_evidence_keeps_distinct_matches_separate():
+    items = [
+        _evidence(snippet="eval(x)"),
+        _evidence(snippet="eval(y)"),
+        _evidence(line=2),
+        _evidence(rule_id="r2"),
+        _evidence(file="other.js"),
+    ]
+    deduped = scanner._dedupe_evidence(items)
+    assert len(deduped) == 5
+    assert all(e.count == 1 for e in deduped)
+
+
+def test_dedupe_evidence_preserves_first_occurrence_order():
+    items = [_evidence(line=3), _evidence(line=1), _evidence(line=3), _evidence(line=2)]
+    deduped = scanner._dedupe_evidence(items)
+    assert [e.line for e in deduped] == [3, 1, 2]
+    assert [e.count for e in deduped] == [2, 1, 1]
+
+
 @pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
 @pytest.mark.asyncio
 async def test_view_loader_nonliteral_require_is_dynamic_code_not_build_install(tmp_path):
@@ -239,6 +278,28 @@ async def test_view_loader_nonliteral_require_is_dynamic_code_not_build_install(
     assert profile.status == "ok"
     assert CapabilityCategory.DYNAMIC_CODE in profile.category_set()
     assert CapabilityCategory.BUILD_INSTALL not in profile.category_set()
+
+
+@pytest.mark.skipif(_semgrep_missing, reason="semgrep binary not installed")
+@pytest.mark.asyncio
+async def test_scan_source_dedupes_repeated_minified_evidence(tmp_path):
+    """A single minified bundle line calling `eval` many times must not
+    produce one CapabilityEvidence per call — real bundles repeat the same
+    dangerous call dozens of times on one line, and each would otherwise
+    inflate the CLI/benchmark counts without representing a distinct
+    capability."""
+    (tmp_path / "package.json").write_text('{"name": "minified-pkg", "version": "1.0.0"}')
+    repeated_call = "eval(x);"
+    (tmp_path / "index.js").write_text(repeated_call * 10)
+
+    profile = await scanner.scan_source(
+        tmp_path, SourceKind.NPM_TARBALL, name="minified-pkg", version="1.0.0"
+    )
+
+    assert profile.status == "ok"
+    eval_evidence = [e for e in profile.evidence if e.rule_id.endswith("dynamic-code-eval")]
+    assert len(eval_evidence) == 1
+    assert eval_evidence[0].count == 10
 
 
 @pytest.mark.asyncio

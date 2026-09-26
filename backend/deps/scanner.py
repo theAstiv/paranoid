@@ -334,6 +334,31 @@ def _build_evidence(
     )
 
 
+def _dedupe_evidence(items: list[CapabilityEvidence]) -> list[CapabilityEvidence]:
+    """Collapse matches that share (rule_id, file, line, snippet) into one
+    item with `count` set to how many raw matches it represents.
+
+    A single minified bundle line commonly produces many matches for the
+    same rule at the same line but different columns — `_extract_snippet`
+    windows around the match column, so distinct calls on the same line
+    typically produce distinct snippets and stay separate, while truly
+    repeated matches (e.g. the same call appearing verbatim many times, or a
+    match whose window happens to coincide) collapse to one entry. Order is
+    preserved by first occurrence so output stays deterministic.
+    """
+    merged: dict[tuple[str, str, int, str], CapabilityEvidence] = {}
+    order: list[tuple[str, str, int, str]] = []
+    for item in items:
+        key = (item.rule_id, item.file, item.line, item.snippet)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = item
+            order.append(key)
+        else:
+            merged[key] = existing.model_copy(update={"count": existing.count + 1})
+    return [merged[key] for key in order]
+
+
 def _error_kind(error: dict) -> str:
     """Semgrep reports an error's `type` as either a bare string or
     `[kind, details...]`."""
@@ -468,7 +493,7 @@ async def scan_source(
         )
 
     line_cache: dict[Path, list[str]] = {}
-    evidence = []
+    raw_evidence = []
     for result in combined_results:
         item = _build_evidence(
             result,
@@ -479,7 +504,8 @@ async def scan_source(
             install_time_files=install_time_files,
         )
         if item is not None:
-            evidence.append(item)
+            raw_evidence.append(item)
+    evidence = _dedupe_evidence(raw_evidence)
 
     # Matches category_set()'s own BUILD_INSTALL-from-hooks rule so this
     # display field and category_set() never disagree in the CLI/JSON output.

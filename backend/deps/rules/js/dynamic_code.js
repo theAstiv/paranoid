@@ -22,6 +22,66 @@ require('lodash');
 // ok: dynamic-code-nonliteral-require
 require("./local-helper");
 
+// Browserify/webpack bundle shape: numeric module ids are never real
+// Node require() calls.
+// ok: dynamic-code-nonliteral-require
+require(4);
+// ok: dynamic-code-nonliteral-require
+require(46);
+
+// Bundler-emitted CommonJS module wrapper: `require` here is the bundle's
+// own local loader, shadowing the real one.
+function moduleWrapper(require, module, exports) {
+  // ok: dynamic-code-nonliteral-require
+  var x = require(4);
+}
+
+// ruleid: dynamic-code-concatenated-require
+require('child_' + 'process');
+
+// ok: dynamic-code-concatenated-require
+require('lodash');
+
+const aliasedRequire = require;
+// ruleid: dynamic-code-aliased-require
+aliasedRequire('child_process');
+
+// ruleid: dynamic-code-aliased-require
+(0, require)('child_process');
+
+// ok: dynamic-code-aliased-require
+require('lodash');
+
+const aliasedFn = Function;
+// ruleid: dynamic-code-aliased-function
+aliasedFn('return process.env')();
+
+// ruleid: dynamic-code-aliased-function
+(0, Function)('return process.env')();
+
+// ruleid: dynamic-code-aliased-function
+(function(){}).constructor('return process.env')();
+
+// Real-world benign shim (get-intrinsic/es-abstract/has-property-descriptors
+// et al.): feature-detects a working `Function` constructor with a fixed
+// template string, guarded by try/catch — not attacker-influenced code.
+var $Function = Function;
+// ok: dynamic-code-aliased-function
+var getEvalledConstructor = function (expressionSyntax) {
+  try {
+    return $Function('"use strict"; return (' + expressionSyntax + ').constructor;')();
+  } catch (e) {}
+};
+
+// ruleid: dynamic-code-computed-global-call
+globalThis['fe' + 'tch']('http://example.com');
+
+// ruleid: dynamic-code-computed-global-call
+module['req' + 'uire']('child_process');
+
+// ok: dynamic-code-computed-global-call
+globalThis['fetch']('http://example.com');
+
 // ruleid: dynamic-code-vm-module
 require('vm').runInNewContext(code);
 

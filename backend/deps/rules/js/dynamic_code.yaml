@@ -27,6 +27,124 @@ rules:
     patterns:
       - pattern: require($X)
       - pattern-not: require("...")
+      # Bundler output (browserify/webpack) rewrites every require() call to
+      # take the target's *numeric* module id within the bundle — a real
+      # Node `require()` never takes a number. Excluding it is what fixes
+      # the qs.js-shaped false positive (dist/qs.js is a browserify bundle).
+      - pattern-not:
+          patterns:
+            - pattern: require($N)
+            - metavariable-regex:
+                metavariable: $N
+                regex: ^-?[0-9]+$
+      # A require() called from inside a function whose own parameter list
+      # shadows the name `require` (the CommonJS module-wrapper shape that
+      # browserify/webpack emit: `function(require, module, exports) {...}`,
+      # or any parameter order) is the bundler's *own* local loader, not
+      # Node's real one — bundlers resolve it entirely at build time.
+      - pattern-not-inside: |
+          function(..., require, ...) { ... }
+
+  - id: dynamic-code-concatenated-require
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls `require()` with a string built by concatenation (e.g.
+      `require('child_' + 'process')`) — a deliberate attempt to keep the
+      target out of a plain string-literal match.
+    metadata:
+      category: dynamic_code
+    # `dynamic-code-nonliteral-require`'s own `pattern-not: require("...")`
+    # doesn't save this case: Semgrep's constant propagation folds
+    # 'child_' + 'process' to the literal value "child_process" for the
+    # purposes of that exclusion, so the concatenated call is silently
+    # swallowed by the *other* rule instead of flagged by it — this rule
+    # matches the concatenation shape directly instead of trying to exclude
+    # a plain-literal shape from a broader pattern, which is what breaks
+    # under the same folding (see dynamic-code-computed-global-call).
+    # Template-literal interpolation is deliberately NOT covered here: when
+    # every interpolated part is itself a literal (`` `node:${'fs'}` ``), the
+    # whole expression folds away to a plain literal and no longer matches
+    # any require() pattern; when a part is a real variable, the call is
+    # already caught by dynamic-code-nonliteral-require.
+    pattern: require($A + $B)
+
+  - id: dynamic-code-aliased-require
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls `require` through an alias or an evaluated reference
+      (`const r = require; r(...)`, `(0, require)(...)`) rather than calling
+      it by name — the same evasion shape used to dodge naive `require(...)`
+      scanners.
+    metadata:
+      category: dynamic_code
+    patterns:
+      - pattern-either:
+          - pattern: (0, require)(...)
+          - patterns:
+              - pattern-inside: |
+                  $R = require;
+                  ...
+              - pattern: $R(...)
+              - pattern-not: require(...)
+
+  - id: dynamic-code-aliased-function
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Constructs a function from a string via an aliased or indirect
+      reference to `Function` (`(0, Function)(...)`, `const f = Function`,
+      `.constructor(...)`) rather than calling `new Function(...)` directly.
+    metadata:
+      category: dynamic_code
+    patterns:
+      - pattern-either:
+          - pattern: (0, Function)(...)
+          - patterns:
+              - pattern-inside: |
+                  $F = Function;
+                  ...
+              - pattern: $F(...)
+              # Excludes a very common, benign feature-detection shim seen
+              # across the npm ecosystem (get-intrinsic, es-abstract,
+              # has-property-descriptors, ...): `$Function = Function;
+              # try { return $Function('"use strict"; return (' + x +
+              # ').constructor;')() } catch (e) {}` — checking whether the
+              # runtime's Function constructor works in strict mode, with
+              # a fixed template string, not attacker-influenced code. Real
+              # evasion doesn't need this specific defensive wrapping; the
+              # unwrapped `(0, Function)(...)` and `.constructor("...")`
+              # branches above still catch the more direct forms.
+              - pattern-not-inside: |
+                  try { ... } catch ($E) { ... }
+          - pattern: $X.constructor("...")
+
+  - id: dynamic-code-computed-global-call
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Calls a property on `module`, `global`, `globalThis`, `window`, `self`
+      or `process` whose name is built by concatenation or template
+      interpolation — e.g. `globalThis['fe' + 'tch'](...)` — a common way to
+      call a sensitive global (`fetch`, `require`, `eval`) while dodging a
+      plain-name match.
+    metadata:
+      category: dynamic_code
+    # Deliberately matched by the concatenation/template-interpolation
+    # *shape* rather than "not a plain string literal": Semgrep's constant
+    # propagation folds `'fe' + 'tch'` to the value "fetch" for the purposes
+    # of a plain `pattern-not: $O["..."](...)` exclusion (and for
+    # metavariable-regex/metavariable-pattern on the same capture), which
+    # would silently swallow every concatenated case along with the
+    # legitimate plain-literal one it was meant to exclude.
+    patterns:
+      - pattern-either:
+          - pattern: $O[$A + $B](...)
+          - pattern: $O[`...${$X}...`](...)
+      - metavariable-regex:
+          metavariable: $O
+          regex: ^(module|global|globalThis|window|self|process)$
 
   - id: dynamic-code-vm-module
     languages: [js, ts]
