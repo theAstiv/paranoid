@@ -10,9 +10,13 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import posixpath
 import re
 import shutil
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 from backend.config import settings
@@ -125,19 +129,56 @@ def _semgrep_base_args(binary: str, *, scan_unknown_extensions: bool) -> list[st
     return args
 
 
+async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill `proc` and any children it spawned (real Semgrep spawns
+    `semgrep-core`). Plain `proc.kill()` only signals the direct child, which
+    leaves grandchildren running — real Semgrep spawns `semgrep-core` as a
+    subprocess, so a bare `.kill()` on cancellation would orphan it."""
+    if sys.platform == "win32":
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill",
+            "/T",
+            "/F",
+            "/PID",
+            str(proc.pid),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(killer.wait(), timeout=5.0)
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+
+
 async def _exec_semgrep(args: list[str]) -> tuple[int, str, str]:
+    # start_new_session/CREATE_NEW_PROCESS_GROUP put semgrep (and the
+    # semgrep-core grandchild it spawns) in their own process group, so
+    # _kill_process_tree can kill the whole tree instead of just the direct
+    # child.
+    kwargs: dict = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if sys.platform == "win32"
+        else {"start_new_session": True}
+    )
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        **kwargs,
     )
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=_SCAN_TIMEOUT_S)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except (TimeoutError, asyncio.CancelledError):
+        # TimeoutError is our own per-scan budget; CancelledError means the
+        # outer pipeline timeout/cancellation (runner's asyncio.wait_for,
+        # task cancellation) cut us off — both must still reap the process
+        # tree before propagating, or Semgrep leaks. CancelledError is
+        # re-raised, never converted to a status: cancellation must keep
+        # propagating up, unlike our own timeout below.
+        await _kill_process_tree(proc)
         raise
     return (
         proc.returncode or 0,

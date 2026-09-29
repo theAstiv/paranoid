@@ -6,6 +6,11 @@ are skipped when the binary isn't installed. The failure-mode tests
 never depend on Semgrep being present.
 """
 
+import asyncio
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -352,6 +357,70 @@ async def test_scan_source_timeout(monkeypatch):
     )
 
     assert profile.status == "semgrep_timeout"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Cross-platform liveness check — no psutil dependency in this repo."""
+    if sys.platform == "win32":
+        out = subprocess.run(  # noqa: S603
+            ["tasklist", "/FI", f"PID eq {pid}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return str(pid) in out.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@pytest.mark.asyncio
+async def test_exec_semgrep_kills_process_tree_on_cancellation(tmp_path):
+    """R2: cancelling the pipeline (e.g. the runner's outer asyncio.wait_for
+    on ANALYZE_DEPENDENCIES, or any task cancellation) must not orphan the
+    Semgrep subprocess or its children — real Semgrep spawns semgrep-core as
+    a grandchild, so killing only the direct child would leak it."""
+    pidfile = tmp_path / "pids.json"
+    fake_binary = tmp_path / "fake_semgrep.py"
+    fake_binary.write_text(
+        "import json, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "with open(sys.argv[1], 'w') as f:\n"
+        "    json.dump({'self': __import__('os').getpid(), 'child': child.pid}, f)\n"
+        "time.sleep(120)\n"
+    )
+
+    task = asyncio.create_task(
+        scanner._exec_semgrep([sys.executable, str(fake_binary), str(pidfile)])
+    )
+
+    for _ in range(100):
+        if pidfile.exists() and pidfile.read_text():
+            break
+        await asyncio.sleep(0.1)
+    else:
+        pytest.fail("fake semgrep never reported its pids")
+
+    pids = json.loads(pidfile.read_text())
+    assert _pid_alive(pids["self"])
+    assert _pid_alive(pids["child"])
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Give the OS a moment to actually reap the killed processes.
+    for _ in range(50):
+        if not _pid_alive(pids["self"]) and not _pid_alive(pids["child"]):
+            break
+        await asyncio.sleep(0.1)
+
+    assert not _pid_alive(pids["self"]), "semgrep process leaked after cancellation"
+    assert not _pid_alive(pids["child"]), "semgrep-core grandchild leaked after cancellation"
 
 
 @pytest.mark.asyncio

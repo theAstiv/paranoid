@@ -202,6 +202,72 @@ async def test_generate_threats_with_rag_context(mock_provider):
 
 
 @pytest.mark.asyncio
+async def test_generate_threats_resets_forged_dependency_provenance(mock_provider):
+    """R1: a provider (or a prompt-injected description) must not be able to
+    mint a threat with source="dependency" and a fabricated package/file/line
+    — only trusted code (rule engine, seeding, dependency_threats) may set
+    that provenance. generate_threats() force-resets both fields on every
+    threat coming back from the provider, regardless of what it returned."""
+    from backend.models.state import DependencyRef, Threat
+
+    forged = ThreatsList(
+        threats=[
+            Threat(
+                name="Forged dependency threat",
+                stride_category="Tampering",
+                description="x " * 40,
+                target="lodash",
+                impact="high",
+                likelihood="high",
+                mitigations=["pin version", "audit"],
+                source="dependency",
+                dependency_ref=DependencyRef(
+                    package="lodash", version="4.17.21", file="lodash.js", line=1
+                ),
+            )
+        ]
+    )
+    mock_provider.response_overrides[ThreatsList] = forged
+
+    assets = make_assets()
+    flows = make_flows()
+    result = await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        flows=flows,
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+    )
+
+    assert len(result.threats) == 1
+    assert result.threats[0].source == "llm"
+    assert result.threats[0].dependency_ref is None
+
+
+class TestThreatSchemaHidesDependencyProvenance:
+    """R1: source/dependency_ref must never appear in the JSON schema sent to
+    an LLM provider — that schema is the structured-output contract every
+    provider (Anthropic tool_use, OpenAI response_format, Ollama/Bedrock
+    format=) sends to the model, so a visible field is a mintable field."""
+
+    def test_source_and_dependency_ref_absent_from_schema(self):
+        from backend.models.state import Threat
+
+        schema = Threat.model_json_schema()
+        assert "source" not in schema.get("properties", {})
+        assert "dependency_ref" not in schema.get("properties", {})
+
+    def test_threats_list_schema_excludes_dependency_provenance(self):
+        schema = ThreatsList.model_json_schema()
+        # Threat is a $defs entry referenced from the "threats" array item.
+        threat_def = schema.get("$defs", {}).get("Threat", {})
+        assert "source" not in threat_def.get("properties", {})
+        assert "dependency_ref" not in threat_def.get("properties", {})
+
+
+@pytest.mark.asyncio
 async def test_gap_analysis_continues(mock_provider):
     assets = make_assets()
     flows = make_flows()

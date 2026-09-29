@@ -186,6 +186,16 @@ async def generate_threats(
         shared_context=shared_context,
     )
 
+    # Defense in depth: source/dependency_ref are hidden from the schema sent
+    # to providers (SkipJsonSchema on Threat), but a provider that ignores
+    # schema constraints — or a fake/test provider — could still return them.
+    # Only trusted code (rule engine, seeding, dependency_threats) is allowed
+    # to set dependency provenance, so every threat coming back from an LLM
+    # call is force-reset here regardless of what the provider sent.
+    for threat in response.threats:
+        threat.source = "llm"
+        threat.dependency_ref = None
+
     return response
 
 
