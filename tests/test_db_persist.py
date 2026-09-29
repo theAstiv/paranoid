@@ -367,3 +367,150 @@ async def test_persist_returns_none_on_db_failure(test_db):
     )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Dependency provenance persistence (Week 3)
+# ---------------------------------------------------------------------------
+
+
+def _make_dependency_threats() -> ThreatsList:
+    from backend.models.state import DependencyRef
+
+    return ThreatsList(
+        threats=[
+            Threat(
+                name="Dynamic code loading in evil-pkg@1.0.0",
+                stride_category=StrideCategory.TAMPERING,
+                description=(
+                    "evil-pkg@1.0.0 loads or evaluates code modules it does not statically "
+                    "declare, which can be used to load a payload at runtime that static "
+                    "analysis of the package won't see."
+                ),
+                target="evil-pkg@1.0.0",
+                impact="Medium",
+                likelihood="Medium",
+                mitigations=["Pin the exact version", "Review the capability diff"],
+                source="dependency",
+                dependency_ref=DependencyRef(
+                    package="evil-pkg",
+                    version="1.0.0",
+                    file="index.js",
+                    line=12,
+                    rule_id="dynamic_code",
+                ),
+            ),
+        ]
+    )
+
+
+def _make_dependency_context():
+    from backend.models.dependencies import (
+        CapabilityProfile,
+        DependencyContext,
+        PackageAnalysis,
+        PackageRef,
+        ResolvedPackage,
+    )
+    from backend.models.enums import SourceKind
+
+    profile = CapabilityProfile(
+        name="evil-pkg", version="1.0.0", source_kind=SourceKind.NPM_TARBALL, status="ok"
+    )
+    pa = PackageAnalysis(
+        ref=PackageRef(name="evil-pkg", version="1.0.0"),
+        resolved=ResolvedPackage(
+            name="evil-pkg", version="1.0.0", tarball_url="https://x", integrity="sha512-x"
+        ),
+        npm_profile=profile,
+    )
+    return DependencyContext(packages=[pa], source_mode="npm")
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_threat_dependency_ref(test_db):
+    """A threat's dependency_ref round-trips through persistence as JSON."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_dependency_threats(),
+    )
+
+    threats = await crud.list_threats(model_id)
+    assert len(threats) == 1
+    threat = threats[0]
+    assert threat["source"] == "dependency"
+    assert threat["dependency_ref"] == {
+        "package": "evil-pkg",
+        "version": "1.0.0",
+        "file": "index.js",
+        "line": 12,
+        "rule_id": "dynamic_code",
+    }
+
+
+@pytest.mark.asyncio
+async def test_persist_llm_threat_has_no_dependency_ref(test_db):
+    """An ordinary LLM threat's dependency_ref stays None/absent."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+    )
+
+    threats = await crud.list_threats(model_id)
+    assert all(not t.get("dependency_ref") for t in threats)
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_dependency_scans(test_db):
+    """dependency_context packages are persisted to dependency_scans."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+        dependency_context=_make_dependency_context(),
+    )
+
+    scans = await crud.list_dependency_scans(model_id)
+    assert len(scans) == 1
+    assert scans[0]["package"] == "evil-pkg"
+    assert scans[0]["version"] == "1.0.0"
+    assert scans[0]["source_mode"] == "npm"
+    assert scans[0]["analysis"]["resolved"]["name"] == "evil-pkg"
+
+
+@pytest.mark.asyncio
+async def test_persist_no_dependency_context_saves_no_scans(test_db):
+    """When dependency_context is None, dependency_scans stays empty."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+    )
+
+    assert await crud.list_dependency_scans(model_id) == []

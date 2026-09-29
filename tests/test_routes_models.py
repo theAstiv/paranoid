@@ -768,3 +768,88 @@ async def test_patch_trust_boundary_from_wrong_model_returns_404(client, saved_m
         json={"purpose": "Hijacked"},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# _persist_pipeline_event — COMPLETE step dependency persistence (Week 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_threat_dependency_ref(saved_model, test_db):
+    """A COMPLETE event's dependency-sourced threat persists dependency_ref."""
+    from backend.models.state import DependencyRef, StrideCategory, Threat, ThreatsList
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    threat = Threat(
+        name="Dynamic code loading in evil-pkg@1.0.0",
+        stride_category=StrideCategory.TAMPERING,
+        description="x" * 60,
+        target="evil-pkg@1.0.0",
+        impact="Medium",
+        likelihood="Medium",
+        mitigations=["Pin the version", "Review the diff"],
+        source="dependency",
+        dependency_ref=DependencyRef(
+            package="evil-pkg", version="1.0.0", file="index.js", line=12, rule_id="dynamic_code"
+        ),
+    )
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": ThreatsList(threats=[threat])},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    threats = await crud.list_threats(saved_model["id"])
+    assert len(threats) == 1
+    assert threats[0]["dependency_ref"] == {
+        "package": "evil-pkg",
+        "version": "1.0.0",
+        "file": "index.js",
+        "line": 12,
+        "rule_id": "dynamic_code",
+    }
+
+
+@pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_dependency_scans(saved_model, test_db):
+    """A COMPLETE event's dependency_context persists to dependency_scans."""
+    from backend.models.dependencies import (
+        CapabilityProfile,
+        DependencyContext,
+        PackageAnalysis,
+        PackageRef,
+        ResolvedPackage,
+    )
+    from backend.models.enums import SourceKind
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    profile = CapabilityProfile(
+        name="evil-pkg", version="1.0.0", source_kind=SourceKind.NPM_TARBALL, status="ok"
+    )
+    pa = PackageAnalysis(
+        ref=PackageRef(name="evil-pkg", version="1.0.0"),
+        resolved=ResolvedPackage(
+            name="evil-pkg", version="1.0.0", tarball_url="https://x", integrity="sha512-x"
+        ),
+        npm_profile=profile,
+    )
+    context = DependencyContext(packages=[pa], source_mode="npm")
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": None, "dependency_context": context},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    scans = await crud.list_dependency_scans(saved_model["id"])
+    assert len(scans) == 1
+    assert scans[0]["package"] == "evil-pkg"
+    assert scans[0]["source_mode"] == "npm"
