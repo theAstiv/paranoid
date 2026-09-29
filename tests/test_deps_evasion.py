@@ -171,6 +171,21 @@ _DETECTION_ROWS: list[tuple[str, str, str | None]] = [
         ),
     ),
     (
+        "reflect-apply-require",
+        # Previously an accepted miss from the 2026-09-26 robustness check
+        # (see the Week 3 plan's H1 follow-up): calling `require`/`Function`
+        # indirectly via Reflect.apply/Reflect.construct, mirroring the
+        # `(0, require)(...)` comma-operator evasion but through Reflect
+        # instead. Now caught by dynamic-code-reflect-indirection.
+        "Reflect.apply(require, null, ['child_process']);\n",
+        None,
+    ),
+    (
+        "reflect-construct-function",
+        "Reflect.construct(Function, ['return process.env']);\n",
+        None,
+    ),
+    (
         "destructured-require-alias",
         "const { r: myRequire } = { r: require };\nmyRequire('child_process');\n",
         (

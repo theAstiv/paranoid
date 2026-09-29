@@ -141,6 +141,18 @@ globalThis['fetch']('http://example.com');
 // ok: dynamic-code-computed-global-call
 window[(on ? 'add' : 'remove') + 'EventListener'](type, handler);
 
+// ruleid: dynamic-code-reflect-indirection
+Reflect.apply(require, null, ['child_process']);
+
+// ruleid: dynamic-code-reflect-indirection
+Reflect.construct(Function, ['return process.env']);
+
+// ok: dynamic-code-reflect-indirection
+Reflect.apply(myFunc, null, [1, 2]);
+
+// ok: dynamic-code-reflect-indirection
+Reflect.construct(MyClass, [1, 2]);
+
 // ruleid: dynamic-code-vm-module
 require('vm').runInNewContext(code);
 
