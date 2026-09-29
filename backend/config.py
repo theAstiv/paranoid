@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     # Dependency capability engine (npm/JS+TS). See backend/deps/.
     deps_cache_dir: str = "./data/deps_cache"
     deps_max_tarball_mb: int = Field(default=50, gt=0)
+    # Wall-clock budget for the pipeline's ANALYZE_DEPENDENCIES step (resolving,
+    # fetching, and scanning every direct dependency). Exceeding it degrades
+    # exactly like any other dependency-analysis failure: a warning event,
+    # dependency_context=None, and the pipeline continues without it.
+    deps_analysis_timeout_seconds: int = Field(default=180, gt=0)
     # Empty = auto-detect via PATH (shutil.which("semgrep")); set SEMGREP_BINARY
     # to override, same pattern as CONTEXT_LINK_BINARY.
     semgrep_binary: str = ""
