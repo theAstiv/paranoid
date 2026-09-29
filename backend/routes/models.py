@@ -69,8 +69,9 @@ def _decode_json_field(value: str | None) -> dict | None:
 router = APIRouter(prefix="/models", tags=["models"])
 
 _MAX_DIAGRAM_BYTES = 5 * 1024 * 1024  # 5 MB
-_MAX_MANIFEST_BYTES = 1024 * 1024  # 1 MB
-_MAX_LOCKFILE_BYTES = 1024 * 1024  # 1 MB
+_MAX_MANIFEST_BYTES = 1024 * 1024  # 1 MB — package.json itself is never large
+_MAX_LOCKFILE_BYTES = 20 * 1024 * 1024  # 20 MB — real package-lock.json files
+# from large monorepos routinely exceed 1 MB
 _VALID_DEPS_SOURCE_MODES = frozenset({"npm", "both"})
 
 
@@ -111,20 +112,34 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
     )
 
 
-def _parse_dependency_json(text: str, field_name: str, max_bytes: int) -> dict:
-    """Parse a Form-submitted JSON field (package.json / package-lock.json
-    content) into a dict, raising 422 on anything that isn't a well-formed,
-    size-bounded JSON object. Used only for user-submitted manifests — a
-    code-source auto-detected manifest degrades silently instead (see
+async def _parse_dependency_json_upload(
+    upload: UploadFile, field_name: str, max_bytes: int
+) -> dict:
+    """Read and parse an uploaded package.json / package-lock.json file into
+    a dict, raising 422 on anything that isn't a well-formed, size-bounded
+    JSON object. Used only for user-submitted manifests — a code-source
+    auto-detected manifest degrades silently instead (see
     `_detect_manifest_from_code_source`), since a malformed file in someone
-    else's repo shouldn't fail the whole run."""
-    raw_bytes = text.encode("utf-8")
-    if len(raw_bytes) > max_bytes:
+    else's repo shouldn't fail the whole run.
+
+    Accepted as a file upload (multipart File, not a plain Form field)
+    deliberately: Starlette's multipart parser caps plain non-file form
+    fields at 1 MB (its own 400, raised before this function ever runs) —
+    a limit real package-lock.json files from large monorepos routinely
+    exceed. File parts aren't subject to that per-field text cap, so this
+    function enforces its own size limit instead, consistently as a 422.
+    """
+    raw = await upload.read()
+    if len(raw) > max_bytes:
         raise HTTPException(
             status_code=422,
             detail=f"'{field_name}' exceeds the {max_bytes // (1024 * 1024)} MB limit "
-            f"({len(raw_bytes)} bytes)",
+            f"({len(raw)} bytes)",
         )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422, detail=f"'{field_name}' must be UTF-8 text")
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
@@ -507,8 +522,8 @@ async def run_pipeline(
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
     code_source_id: Annotated[str, Form()] = "",
-    dependency_manifest: Annotated[str, Form()] = "",
-    dependency_lockfile: Annotated[str, Form()] = "",
+    dependency_manifest: Annotated[UploadFile | None, File()] = None,
+    dependency_lockfile: Annotated[UploadFile | None, File()] = None,
     deps_source_mode: Annotated[str, Form()] = "npm",
     use_code_source_manifest: Annotated[bool, Form()] = False,
     _rate: None = Depends(pipeline_rate_limit),
@@ -521,9 +536,12 @@ async def run_pipeline(
     - has_ai_components: bool, enables MAESTRO alongside STRIDE
     - diagram: optional PNG/JPG/Mermaid file upload
     - code_source_id: optional ID of a ready code source for code context
-    - dependency_manifest: optional package.json content (JSON text, <= 1 MB,
-      <= 50 resolvable direct dependencies)
-    - dependency_lockfile: optional package-lock.json content (JSON text, <= 1 MB;
+    - dependency_manifest: optional package.json file upload (<= 1 MB,
+      <= 50 resolvable direct dependencies). A file upload, not a plain form
+      field: Starlette caps plain multipart text fields at 1 MB with its own
+      400 before our validation ever runs, and real package-lock.json files
+      routinely need more room than that (see dependency_lockfile).
+    - dependency_lockfile: optional package-lock.json file upload (<= 20 MB;
       requires dependency_manifest)
     - deps_source_mode: "npm" (fast, default) or "both" (adds GitHub drift)
     - use_code_source_manifest: opt-in — when true, no dependency_manifest was
@@ -573,10 +591,13 @@ async def run_pipeline(
     # Dependency manifest — explicit upload, or (opt-in) auto-detected from the
     # code source's own clone. DEPS_ANALYSIS_ENABLED is a hard kill switch:
     # when false, neither path is used and ANALYZE_DEPENDENCIES never runs.
+    has_manifest_upload = dependency_manifest is not None and bool(dependency_manifest.filename)
+    has_lockfile_upload = dependency_lockfile is not None and bool(dependency_lockfile.filename)
+
     dependency_manifest_dict: dict | None = None
     dependency_lockfile_dict: dict | None = None
     if not settings.deps_analysis_enabled:
-        if dependency_manifest.strip():
+        if has_manifest_upload:
             raise HTTPException(
                 status_code=422,
                 detail="Dependency analysis is disabled on this instance (DEPS_ANALYSIS_ENABLED=false).",
@@ -587,16 +608,16 @@ async def run_pipeline(
                 status_code=422,
                 detail=f"'deps_source_mode' must be one of {sorted(_VALID_DEPS_SOURCE_MODES)}",
             )
-        if dependency_manifest.strip():
-            dependency_manifest_dict = _parse_dependency_json(
+        if has_manifest_upload:
+            dependency_manifest_dict = await _parse_dependency_json_upload(
                 dependency_manifest, "dependency_manifest", _MAX_MANIFEST_BYTES
             )
-            if dependency_lockfile.strip():
-                dependency_lockfile_dict = _parse_dependency_json(
+            if has_lockfile_upload:
+                dependency_lockfile_dict = await _parse_dependency_json_upload(
                     dependency_lockfile, "dependency_lockfile", _MAX_LOCKFILE_BYTES
                 )
             _validate_direct_dependency_count(dependency_manifest_dict, dependency_lockfile_dict)
-        elif dependency_lockfile.strip():
+        elif has_lockfile_upload:
             raise HTTPException(
                 status_code=422,
                 detail="'dependency_lockfile' requires 'dependency_manifest'",

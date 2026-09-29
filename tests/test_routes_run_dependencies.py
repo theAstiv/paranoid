@@ -60,6 +60,19 @@ _MINIMAL_FORM = {"assumptions": "[]", "has_ai_components": "false"}
 _VALID_MANIFEST = json.dumps({"dependencies": {"lodash": "^4.17.21"}})
 
 
+def _dep_files(manifest: str | None = None, lockfile: str | None = None) -> dict:
+    """dependency_manifest/dependency_lockfile are file uploads (not plain
+    Form fields) — see backend/routes/models.py's docstring for why: a
+    plain multipart text field is capped at 1 MB by Starlette itself, with
+    its own 400 raised before our code (and its 422s) ever runs."""
+    files = {}
+    if manifest is not None:
+        files["dependency_manifest"] = ("package.json", manifest, "application/json")
+    if lockfile is not None:
+        files["dependency_lockfile"] = ("package-lock.json", lockfile, "application/json")
+    return files
+
+
 def _noop_runner_factory():
     captured: dict = {}
 
@@ -87,7 +100,8 @@ def _patched():
 async def test_run_invalid_manifest_json_returns_422(client, model_id):
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_manifest": "not json"},
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest="not json"),
     )
     assert resp.status_code == 422
     assert "dependency_manifest" in resp.json()["detail"]
@@ -97,7 +111,8 @@ async def test_run_invalid_manifest_json_returns_422(client, model_id):
 async def test_run_manifest_not_a_json_object_returns_422(client, model_id):
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_manifest": "[1, 2, 3]"},
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest="[1, 2, 3]"),
     )
     assert resp.status_code == 422
     assert "JSON object" in resp.json()["detail"]
@@ -109,7 +124,8 @@ async def test_run_oversized_manifest_returns_422(client, model_id):
     huge = huge[:-1] + (",_pad_" + "x" * (1024 * 1024)) + "}"
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_manifest": huge},
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest=huge),
     )
     assert resp.status_code == 422
     assert "exceeds" in resp.json()["detail"]
@@ -120,7 +136,8 @@ async def test_run_too_many_direct_dependencies_returns_422(client, model_id):
     manifest = json.dumps({"dependencies": {f"pkg-{i}": "1.0.0" for i in range(51)}})
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_manifest": manifest},
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest=manifest),
     )
     assert resp.status_code == 422
     assert "51 direct dependencies" in resp.json()["detail"]
@@ -131,7 +148,8 @@ async def test_run_too_many_direct_dependencies_returns_422(client, model_id):
 async def test_run_lockfile_without_manifest_returns_422(client, model_id):
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_lockfile": json.dumps({"lockfileVersion": 3})},
+        data=_MINIMAL_FORM,
+        files=_dep_files(lockfile=json.dumps({"lockfileVersion": 3})),
     )
     assert resp.status_code == 422
     assert "requires" in resp.json()["detail"]
@@ -160,7 +178,8 @@ async def test_run_dependency_count_uses_resolvable_targets_not_raw_entries(clie
     ):
         resp = await client.post(
             f"/api/models/{model_id}/run",
-            data={**_MINIMAL_FORM, "dependency_manifest": manifest},
+            data=_MINIMAL_FORM,
+            files=_dep_files(manifest=manifest),
         )
     # 50 resolvable + 1 unresolvable git spec = still at the 50 cap, not over it.
     assert resp.status_code == 200
@@ -171,11 +190,8 @@ async def test_run_dependency_count_uses_resolvable_targets_not_raw_entries(clie
 async def test_run_invalid_lockfile_json_returns_422(client, model_id):
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={
-            **_MINIMAL_FORM,
-            "dependency_manifest": _VALID_MANIFEST,
-            "dependency_lockfile": "not json",
-        },
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest=_VALID_MANIFEST, lockfile="not json"),
     )
     assert resp.status_code == 422
     assert "dependency_lockfile" in resp.json()["detail"]
@@ -185,11 +201,8 @@ async def test_run_invalid_lockfile_json_returns_422(client, model_id):
 async def test_run_invalid_deps_source_mode_returns_422(client, model_id):
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={
-            **_MINIMAL_FORM,
-            "dependency_manifest": _VALID_MANIFEST,
-            "deps_source_mode": "github",
-        },
+        data={**_MINIMAL_FORM, "deps_source_mode": "github"},
+        files=_dep_files(manifest=_VALID_MANIFEST),
     )
     assert resp.status_code == 422
     assert "deps_source_mode" in resp.json()["detail"]
@@ -205,7 +218,8 @@ async def test_run_manifest_rejected_when_deps_analysis_disabled(client, model_i
     monkeypatch.setattr(settings, "deps_analysis_enabled", False)
     resp = await client.post(
         f"/api/models/{model_id}/run",
-        data={**_MINIMAL_FORM, "dependency_manifest": _VALID_MANIFEST},
+        data=_MINIMAL_FORM,
+        files=_dep_files(manifest=_VALID_MANIFEST),
     )
     assert resp.status_code == 422
     assert "disabled" in resp.json()["detail"].lower()
@@ -290,11 +304,8 @@ async def test_run_passes_parsed_manifest_to_pipeline(client, model_id):
     ):
         resp = await client.post(
             f"/api/models/{model_id}/run",
-            data={
-                **_MINIMAL_FORM,
-                "dependency_manifest": _VALID_MANIFEST,
-                "deps_source_mode": "both",
-            },
+            data={**_MINIMAL_FORM, "deps_source_mode": "both"},
+            files=_dep_files(manifest=_VALID_MANIFEST),
         )
 
     assert resp.status_code == 200
@@ -353,8 +364,8 @@ async def test_run_explicit_manifest_takes_priority_over_auto_detect(
                 **_MINIMAL_FORM,
                 "code_source_id": ready_source_id,
                 "use_code_source_manifest": "true",
-                "dependency_manifest": _VALID_MANIFEST,
             },
+            files=_dep_files(manifest=_VALID_MANIFEST),
         )
 
     assert resp.status_code == 200
@@ -503,7 +514,8 @@ async def test_run_with_manifest_rejects_viewer_role(client, model_id):
         ):
             resp = await client.post(
                 f"/api/models/{model_id}/run",
-                data={**_MINIMAL_FORM, "dependency_manifest": _VALID_MANIFEST},
+                data=_MINIMAL_FORM,
+                files=_dep_files(manifest=_VALID_MANIFEST),
             )
         assert resp.status_code == 403
     finally:
