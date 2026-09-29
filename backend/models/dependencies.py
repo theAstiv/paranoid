@@ -257,3 +257,39 @@ class DriftReport(BaseModel):
     # "github_fetch_rejected:<ErrorType>" — so a "compared" rate can be
     # computed without every skip collapsing into one opaque status string.
     skip_reason: str | None = None
+
+
+class PackageAnalysis(BaseModel):
+    """Everything known about one `name@version` after `backend.deps.analyze`.
+
+    Bundles what `_scan_one` in the CLI previously returned as a bare tuple —
+    resolution metadata plus whichever source profile(s) were requested and
+    the drift comparison between them, when both were fetched. `ref` is
+    always set (even on a hard failure, where `resolved` stays None and
+    `error` carries the reason) so a failed package still identifies itself.
+    """
+
+    ref: PackageRef
+    resolved: ResolvedPackage | None = None
+    npm_profile: CapabilityProfile | None = None
+    github_profile: CapabilityProfile | None = None
+    drift: DriftReport | None = None
+    error: str | None = None  # set instead of the fields above on a hard failure
+
+
+class DependencyContext(BaseModel):
+    """Result of analyzing a manifest's direct dependencies for the pipeline.
+
+    Feeds two consumers: `backend.deps.threats.dependency_threats()` (the
+    deterministic, source="dependency" threat catalog) and
+    `backend.pipeline.nodes.helpers.format_dependency_context()` (a bounded
+    summary block for LLM prompt context — the LLM never sets dependency
+    provenance itself, it only reasons over this summary).
+    """
+
+    packages: list[PackageAnalysis] = Field(default_factory=list)
+    # {package_name: reason} for direct dependencies that had no resolvable
+    # pinned version (see `backend.deps.analyze.pin_from_range`) or were
+    # dropped for exceeding the manifest size cap.
+    skipped: dict[str, str] = Field(default_factory=dict)
+    source_mode: Literal["npm", "github", "both"] = "npm"

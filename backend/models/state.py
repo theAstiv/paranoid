@@ -122,6 +122,16 @@ class FlowsList(BaseModel):
     threat_sources: Annotated[list[ThreatSource], Field(description="The list of threat actors")]
 
 
+class DependencyRef(BaseModel):
+    """Provenance for a threat derived from the dependency capability engine."""
+
+    package: str
+    version: str
+    file: str | None = None
+    line: int | None = None
+    rule_id: str | None = None
+
+
 class Threat(BaseModel):
     """Model representing an identified security threat."""
 
@@ -154,6 +164,9 @@ class Threat(BaseModel):
     ]
 
     source: str = Field(default="llm")
+    # Provenance when source == "dependency" — which package/file/rule this
+    # threat came from. None for llm/rule_engine/seeded threats.
+    dependency_ref: DependencyRef | None = None
 
 
 class ThreatsList(BaseModel):
