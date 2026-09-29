@@ -11,6 +11,10 @@ from pathlib import Path
 import click
 
 from backend.config import Settings
+from backend.deps.analyze import (
+    DEFAULT_MAX_DIRECT_DEPENDENCIES,
+    count_resolvable_direct_dependencies,
+)
 from backend.export.sarif import export_sarif
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
@@ -368,6 +372,25 @@ async def _extract_code_context(
     default=None,
     help="Path to a JSON file containing known threats to seed into the catalog before the iteration loop.",
 )
+@click.option(
+    "--manifest",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a package.json manifest for dependency capability analysis.",
+)
+@click.option(
+    "--lockfile",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Path to a package-lock.json to pin dependency versions (used with --manifest).",
+)
+@click.option(
+    "--deps-source",
+    "deps_source_mode",
+    type=click.Choice(["npm", "both"], case_sensitive=False),
+    default="npm",
+    help="Dependency analysis source: npm (fast, default) or both (adds GitHub drift).",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -388,6 +411,9 @@ def run(
     seeded_assets: Path | None,
     seeded_flows: Path | None,
     seeded_threats: Path | None,
+    manifest: Path | None,
+    lockfile: Path | None,
+    deps_source_mode: str,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -628,6 +654,53 @@ def run(
                     f"Invalid ThreatsList JSON: {e}", param_hint="'--seeded-threats'"
                 )
 
+        # Parse --manifest / --lockfile (plain package.json / package-lock.json
+        # content, not a Paranoid model, so json.loads rather than model_validate_json).
+        manifest_data: dict | None = None
+        dependency_manifest_path: str | None = None
+        if manifest:
+            try:
+                manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+                if not isinstance(manifest_data, dict):
+                    raise ValueError(f"expected a JSON object, got {type(manifest_data).__name__}")
+                if not quiet:
+                    click.secho(f"  Dependency manifest: {manifest.name}", fg="cyan")
+                # Forward slashes: SARIF URIs are resolved as web paths by
+                # viewers like GitHub, and --manifest is a Windows-native
+                # Path on this platform (backslashes).
+                dependency_manifest_path = str(manifest).replace("\\", "/")
+            except Exception as e:
+                raise click.BadParameter(f"Invalid package.json: {e}", param_hint="'--manifest'")
+
+        lockfile_data: dict | None = None
+        if lockfile:
+            if not manifest:
+                raise click.BadParameter(
+                    "--lockfile requires --manifest", param_hint="'--lockfile'"
+                )
+            try:
+                lockfile_data = json.loads(lockfile.read_text(encoding="utf-8"))
+                if not isinstance(lockfile_data, dict):
+                    raise ValueError(f"expected a JSON object, got {type(lockfile_data).__name__}")
+            except Exception as e:
+                raise click.BadParameter(
+                    f"Invalid package-lock.json: {e}", param_hint="'--lockfile'"
+                )
+
+        if manifest_data is not None:
+            # Explicit user input (unlike a code-source auto-detect, which
+            # doesn't exist on this CLI path) — fail fast with a clear error
+            # instead of letting analyze_manifest() silently truncate to
+            # DEFAULT_MAX_DIRECT_DEPENDENCIES, mirroring the API's identical
+            # check for an uploaded dependency_manifest.
+            resolvable = count_resolvable_direct_dependencies(manifest_data, lockfile_data)
+            if resolvable > DEFAULT_MAX_DIRECT_DEPENDENCIES:
+                raise click.BadParameter(
+                    f"resolves {resolvable} direct dependencies; "
+                    f"the limit is {DEFAULT_MAX_DIRECT_DEPENDENCIES}.",
+                    param_hint="'--manifest'",
+                )
+
         # Validate --seed-collections names before entering async context.
         # Settings.validate_seed_collections only runs for the env-var path; the
         # CLI path bypasses it, so we check here and fail fast with a clear message.
@@ -669,6 +742,10 @@ def run(
                 seeded_assets=seeded_assets_data,
                 seeded_flows=seeded_flows_data,
                 seeded_threats=seeded_threats_data,
+                dependency_manifest=manifest_data,
+                dependency_lockfile=lockfile_data,
+                dependency_source_mode=deps_source_mode,
+                dependency_manifest_path=dependency_manifest_path,
             )
         )
 
@@ -719,6 +796,10 @@ async def _run_pipeline_async(
     seeded_assets: AssetsList | None = None,
     seeded_flows: FlowsList | None = None,
     seeded_threats: ThreatsList | None = None,
+    dependency_manifest: dict | None = None,
+    dependency_lockfile: dict | None = None,
+    dependency_source_mode: str = "npm",
+    dependency_manifest_path: str | None = None,
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -771,6 +852,10 @@ async def _run_pipeline_async(
             seeded_assets=seeded_assets,
             seeded_flows=seeded_flows,
             seeded_threats=seeded_threats,
+            dependency_manifest=dependency_manifest,
+            dependency_lockfile=dependency_lockfile,
+            dependency_source_mode=dependency_source_mode,
+            dependency_manifest_path=dependency_manifest_path,
         )
 
 
@@ -797,6 +882,10 @@ async def _run_pipeline_inside_provider(
     seeded_assets: AssetsList | None = None,
     seeded_flows: FlowsList | None = None,
     seeded_threats: ThreatsList | None = None,
+    dependency_manifest: dict | None = None,
+    dependency_lockfile: dict | None = None,
+    dependency_source_mode: str = "npm",
+    dependency_manifest_path: str | None = None,
 ) -> None:
     # Pre-flight gap analysis (description + assumptions) — always runs;
     # --strict enforces blocking on error-severity gaps in either section.
@@ -894,6 +983,9 @@ async def _run_pipeline_inside_provider(
             seeded_assets=seeded_assets,
             seeded_flows=seeded_flows,
             seeded_threats=seeded_threats,
+            dependency_manifest=dependency_manifest,
+            dependency_lockfile=dependency_lockfile,
+            dependency_source_mode=dependency_source_mode,
         ):
             # Render event (unless quiet mode)
             if renderer:
@@ -1036,11 +1128,15 @@ async def _run_pipeline_inside_provider(
     if output_path:
         try:
             if output_format == "sarif":
+                sarif_kwargs: dict = {}
+                if dependency_manifest_path:
+                    sarif_kwargs["dependency_manifest_path"] = dependency_manifest_path
                 sarif_data = export_sarif(
                     threats=json_writer.threats if json_writer.threats else ThreatsList(threats=[]),
                     model_id=model_id,
                     framework=framework.value,
                     source_file=str(input_file),
+                    **sarif_kwargs,
                 )
                 # Append description-completeness findings from gap analysis
                 if gap_result.gaps:
