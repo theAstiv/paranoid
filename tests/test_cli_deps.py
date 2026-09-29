@@ -6,6 +6,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
+import backend.deps.analyze as deps_analyze
 import cli.commands.deps as deps_cli
 from backend.deps.fetcher import FetchResult
 from backend.models.dependencies import CapabilityEvidence, CapabilityProfile, ResolvedPackage
@@ -79,9 +80,10 @@ def test_scan_json_round_trip(runner, monkeypatch, tmp_path):
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--format", "json"])
@@ -133,9 +135,10 @@ def test_scan_partial_fetch_shown_and_marks_scan_incomplete(runner, monkeypatch,
         return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     text_result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -178,9 +181,10 @@ def test_scan_source_both_github_unavailable_warns_and_stays_npm_only(
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -214,9 +218,10 @@ def test_scan_renders_tarball_name_mismatch_signal(runner, monkeypatch, tmp_path
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -254,9 +259,10 @@ def test_scan_renders_missing_tarball_name_without_extra_quotes(runner, monkeypa
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -290,9 +296,10 @@ def test_scan_renders_unscanned_reachable_files_signal(runner, monkeypatch, tmp_
         return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -328,9 +335,10 @@ def test_scan_truncates_long_unscanned_reachable_files_list(runner, monkeypatch,
         return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     text_result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -371,9 +379,10 @@ def test_scan_incomplete_drift_reports_which_side(runner, monkeypatch, tmp_path)
         return npm_profile if kind == SourceKind.NPM_TARBALL else github_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -408,9 +417,10 @@ def test_scan_github_hostile_tarball_degrades_instead_of_aborting_whole_scan(
         return npm_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "resolve_github_ref", fake_resolve_github_ref)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_github_ref", fake_resolve_github_ref)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "both"])
@@ -437,8 +447,9 @@ def test_scan_npm_hostile_tarball_still_raises(runner, monkeypatch, tmp_path):
         raise deps_cli.FetchError("Refusing path-traversal member: '../../etc/passwd'")
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "npm"])
     assert result.exit_code == 1
@@ -459,8 +470,9 @@ def test_scan_warns_when_semgrep_missing(runner, monkeypatch, tmp_path):
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: None)
 
     result = runner.invoke(deps_cli.deps, ["scan", "pkg@1.0.0", "--source", "npm"])
@@ -484,8 +496,9 @@ def test_diff_two_explicit_versions(runner, monkeypatch, tmp_path):
         return prev_profile if version == "1.0.0" else curr_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1", "--format", "json"])
@@ -519,8 +532,9 @@ def test_diff_defaults_previous_version_from_registry(runner, monkeypatch, tmp_p
         deps_cli, "previous_version", lambda doc, before: "1.0.0" if before == "1.0.1" else None
     )
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.1", "--format", "json"])
@@ -563,8 +577,9 @@ def test_scan_manifest_v3_lockfile(runner, monkeypatch, tmp_path):
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest), "--format", "json"])
@@ -595,8 +610,9 @@ def test_scan_manifest_v1_lockfile(runner, monkeypatch, tmp_path):
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest), "--format", "json"])
@@ -623,8 +639,9 @@ def test_scan_manifest_falls_back_to_range_pin_without_lockfile(runner, monkeypa
         return profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest), "--format", "json"])
@@ -661,7 +678,7 @@ def test_scan_manifest_no_dependencies_errors(runner, tmp_path):
     ],
 )
 def test_pin_from_range(range_str, expected):
-    assert deps_cli._pin_from_range(range_str) == expected
+    assert deps_analyze.pin_from_range(range_str) == expected
 
 
 def test_scan_manifest_isolates_one_dependency_failure(runner, monkeypatch, tmp_path):
@@ -684,8 +701,9 @@ def test_scan_manifest_isolates_one_dependency_failure(runner, monkeypatch, tmp_
         return good_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest), "--format", "json"])
@@ -693,6 +711,35 @@ def test_scan_manifest_isolates_one_dependency_failure(runner, monkeypatch, tmp_
     data = json.loads(result.output)
     assert data["scanned"]["good"]["version"] == "1.0.0"
     assert "OSError" in data["scanned"]["bad"]["error"]
+
+
+def test_scan_manifest_has_no_direct_dependency_cap(runner, monkeypatch, tmp_path):
+    """scan-manifest has always swept every direct dependency unconditionally
+    - the pipeline's ANALYZE_DEPENDENCIES step gained a 50-package default cap
+    (backend.deps.analyze.DEFAULT_MAX_DIRECT_DEPENDENCIES), but that must not
+    leak into this CLI command, which passes max_direct_dependencies=None."""
+    manifest = tmp_path / "package.json"
+    manifest.write_text(json.dumps({"dependencies": {f"pkg{i}": "1.0.0" for i in range(60)}}))
+
+    async def fake_resolve_npm(name, version, client):
+        return _resolved(name=name, version=version)
+
+    async def fake_fetch_source(r, kind, client):
+        return FetchResult(path=tmp_path / "npm")
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return _profile(name=name, version=version)
+
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert len(data["scanned"]) == 60
+    assert data["skipped"] == []
 
 
 def test_diff_refuses_when_previous_scan_incomplete(runner, monkeypatch, tmp_path):
@@ -712,8 +759,9 @@ def test_diff_refuses_when_previous_scan_incomplete(runner, monkeypatch, tmp_pat
         return prev_profile if version == "1.0.0" else curr_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1"])
@@ -743,8 +791,9 @@ def test_diff_accepts_partial_fetch_and_warns(runner, monkeypatch, tmp_path):
         return prev_profile if version == "1.0.0" else curr_profile
 
     monkeypatch.setattr(deps_cli, "resolve_npm", fake_resolve_npm)
-    monkeypatch.setattr(deps_cli, "fetch_source", fake_fetch_source)
-    monkeypatch.setattr(deps_cli, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
     monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
 
     result = runner.invoke(deps_cli.deps, ["diff", "pkg", "1.0.0", "1.0.1"])

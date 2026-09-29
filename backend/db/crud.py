@@ -261,11 +261,13 @@ async def create_threat(
     iteration_number: int = 1,
     source: str = "llm",
     confidence: float | None = None,
+    dependency_ref: dict[str, Any] | None = None,
 ) -> str:
     """Create a new threat."""
     threat_id = generate_id()
     now = now_iso()
     mitigations_json = json.dumps(mitigations)
+    dependency_ref_json = json.dumps(dependency_ref) if dependency_ref is not None else None
 
     conn = await db.get()
     await conn.execute(
@@ -276,8 +278,8 @@ async def create_threat(
             dread_damage, dread_reproducibility, dread_exploitability,
             dread_affected_users, dread_discoverability, dread_score,
             mitigations, status, iteration_number, source, confidence,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            dependency_ref, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             threat_id,
@@ -300,6 +302,7 @@ async def create_threat(
             iteration_number,
             source,
             confidence,
+            dependency_ref_json,
             now,
             now,
         ),
@@ -318,6 +321,8 @@ async def get_threat(threat_id: str) -> dict[str, Any] | None:
         if row:
             threat = dict(row)
             threat["mitigations"] = json.loads(threat["mitigations"])
+            if threat.get("dependency_ref"):
+                threat["dependency_ref"] = json.loads(threat["dependency_ref"])
             return threat
         return None
 
@@ -339,6 +344,8 @@ async def list_threats(model_id: str, status: str | None = None) -> list[dict[st
         for row in rows:
             threat = dict(row)
             threat["mitigations"] = json.loads(threat["mitigations"])
+            if threat.get("dependency_ref"):
+                threat["dependency_ref"] = json.loads(threat["dependency_ref"])
             threats.append(threat)
         return threats
 
@@ -599,6 +606,49 @@ async def delete_threat(threat_id: str) -> None:
     await conn.commit()
 
     logger.info(f"Deleted threat {threat_id}")
+
+
+async def create_dependency_scan(
+    model_id: str,
+    package: str,
+    version: str,
+    source_mode: str,
+    analysis: dict[str, Any],
+) -> str:
+    """Persist one package's raw dependency capability analysis for a model."""
+    scan_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO dependency_scans (
+            id, model_id, package, version, source_mode, analysis,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (scan_id, model_id, package, version, source_mode, json.dumps(analysis), now, now),
+    )
+    await conn.commit()
+
+    logger.info(f"Created dependency scan {scan_id} for model {model_id} ({package}@{version})")
+    return scan_id
+
+
+async def list_dependency_scans(model_id: str) -> list[dict[str, Any]]:
+    """List dependency scans for a model, most recently created first."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM dependency_scans WHERE model_id = ? ORDER BY created_at DESC",
+        (model_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        scans = []
+        for row in rows:
+            scan = dict(row)
+            scan["analysis"] = json.loads(scan["analysis"])
+            scans.append(scan)
+        return scans
 
 
 async def get_asset(asset_id: str) -> dict[str, Any] | None:
@@ -937,6 +987,7 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     """
     conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
+    await conn.execute("DELETE FROM dependency_scans WHERE model_id = ?", (model_id,))
     if preserve_user_edits:
         await conn.execute("DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,))
         await conn.execute("DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,))

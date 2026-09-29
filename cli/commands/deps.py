@@ -15,20 +15,14 @@ from pathlib import Path
 import click
 import httpx
 
+from backend.deps import analyze
 from backend.deps.delta import compute_delta
-from backend.deps.drift import compare_sources
-from backend.deps.fetcher import FetchError, fetch_source
-from backend.deps.resolver import (
-    fetch_registry_doc,
-    previous_version,
-    resolve_github_ref,
-    resolve_npm,
-)
-from backend.deps.scanner import resolve_semgrep_binary, scan_source
+from backend.deps.fetcher import FetchError
+from backend.deps.resolver import fetch_registry_doc, previous_version, resolve_npm
+from backend.deps.scanner import resolve_semgrep_binary
 from backend.models.dependencies import (
     CapabilityProfile,
     DriftReport,
-    ResolvedPackage,
     VersionDelta,
 )
 from backend.models.enums import CapabilityCategory, SourceKind
@@ -37,7 +31,6 @@ from backend.models.enums import CapabilityCategory, SourceKind
 logger = logging.getLogger(__name__)
 
 _SPEC_RE = re.compile(r"^(?P<name>@[^/@]+/[^/@]+|[^/@]+)@(?P<version>.+)$")
-_MANIFEST_CONCURRENCY = 4
 # A package that crosses backend.deps.scanner._MAX_EXTRA_TARGETS_TOTAL could
 # have thousands of unscanned file names to list; the console output stays
 # readable by showing only the first few, with a count for the rest. JSON
@@ -68,133 +61,6 @@ def parse_package_spec(spec: str) -> tuple[str, str]:
             f"or '@babel/core@7.24.0')"
         )
     return m.group("name"), m.group("version")
-
-
-async def _resolve_one(
-    name: str, version: str, want_github: bool, client: httpx.AsyncClient
-) -> ResolvedPackage:
-    resolved = await resolve_npm(name, version, client)
-    if want_github:
-        resolved = await resolve_github_ref(resolved, client)
-    return resolved
-
-
-async def _fetch_and_scan(
-    resolved: ResolvedPackage, kind: SourceKind, client: httpx.AsyncClient
-) -> tuple[Path | None, CapabilityProfile | None, str | None]:
-    """Fetch + scan one source.
-
-    Returns (path, profile, skip_reason) — `skip_reason` is set exactly when
-    `path` is None, so the caller can label *why* a source wasn't compared
-    instead of collapsing every skip into one opaque status.
-
-    For GitHub only, a hostile/corrupt tarball degrades this source to
-    "unavailable" rather than raising — the same outcome as GitHub not
-    resolving — so a real repo tripping the safety net on one file (e.g. a
-    legitimate symlink) never discards results already obtained from the npm
-    side in `_scan_one`. The npm tarball is the primary, integrity-checked
-    source: a hostile/tampered *npm* tarball (integrity mismatch, path
-    traversal, symlink member) is exactly the kind of finding this command
-    exists to surface, so it still raises — silently reporting it as
-    "(not scanned)" would hide a flagged dependency behind an ordinary miss.
-    """
-    if kind == SourceKind.GITHUB:
-        try:
-            result = await fetch_source(resolved, kind, client)
-        except FetchError as e:
-            logger.warning(
-                "GitHub fetch rejected for %s@%s: %s — treating GitHub source as unavailable",
-                resolved.name,
-                resolved.version,
-                e,
-            )
-            return None, None, f"github_fetch_rejected:{type(e).__name__}"
-    else:
-        result = await fetch_source(resolved, kind, client)
-    if result.path is None:
-        return None, None, result.reason
-    profile = await scan_source(result.path, kind, name=resolved.name, version=resolved.version)
-    if (
-        result.skipped_long_paths
-        or result.skipped_link_names
-        or result.discovered_directory
-        or result.external_build_markers
-    ):
-        # Fetch-time skips (and a discovered package directory) are recorded
-        # on the profile itself (not just logged) so they survive into the
-        # JSON output and the capability grid. Downgrading status away from
-        # "ok" to "partial_fetch" flags the scan as incomplete without
-        # drift.py needing to know about fetch-time skips itself — but
-        # drift.compare_sources still runs on a partial_fetch profile (only a
-        # semgrep_* status skips it entirely); the affected paths land in its
-        # `unverifiable` bucket instead of disabling the comparison outright.
-        updates: dict = {
-            "skipped_long_paths": result.skipped_long_paths,
-            "skipped_link_names": list(result.skipped_link_names),
-            "skipped_long_path_names": list(result.skipped_long_path_names),
-            "discovered_directory": result.discovered_directory,
-            "external_build_markers": list(result.external_build_markers),
-        }
-        if result.skipped_long_paths and profile.status == "ok":
-            updates["status"] = "partial_fetch"
-        profile = profile.model_copy(update=updates)
-    return result.path, profile, None
-
-
-async def _scan_one(
-    name: str, version: str, source: str, client: httpx.AsyncClient
-) -> tuple[ResolvedPackage, CapabilityProfile | None, CapabilityProfile | None, DriftReport | None]:
-    """Resolve + fetch + scan one `name@version` for the requested source(s).
-
-    Returns (resolved, npm_profile, github_profile, drift) — `drift` is only
-    computed when both sources were requested (`source == "both"`); it is
-    None (not attempted) rather than a status otherwise.
-    """
-    want_npm = source in ("npm", "both")
-    want_github = source in ("github", "both")
-
-    resolved = await _resolve_one(name, version, want_github, client)
-
-    tarball_path = tarball_profile = tarball_skip_reason = None
-    if want_npm:
-        tarball_path, tarball_profile, tarball_skip_reason = await _fetch_and_scan(
-            resolved, SourceKind.NPM_TARBALL, client
-        )
-
-    github_path = github_profile = github_skip_reason = None
-    if want_github:
-        github_path, github_profile, github_skip_reason = await _fetch_and_scan(
-            resolved, SourceKind.GITHUB, client
-        )
-
-    drift = None
-    if want_npm and want_github:
-        if tarball_path is None or tarball_profile is None:
-            # compare_sources requires a resolved tarball dir/profile — this is
-            # the npm side failing to fetch, not GitHub, so it gets its own label.
-            drift = DriftReport(
-                name=name,
-                version=version,
-                status="skipped_npm_unavailable",
-                skip_reason=tarball_skip_reason,
-            )
-        else:
-            drift = compare_sources(
-                name, version, tarball_path, tarball_profile, github_path, github_profile
-            )
-            if drift.status == "skipped_github_unavailable" and github_skip_reason:
-                drift = drift.model_copy(update={"skip_reason": github_skip_reason})
-            elif drift.status == "skipped_scan_incomplete":
-                incomplete_sides = [
-                    side
-                    for side, profile in (("npm", tarball_profile), ("github", github_profile))
-                    if profile is not None and profile.status != "ok"
-                ]
-                drift = drift.model_copy(
-                    update={"skip_reason": f"scan_incomplete:{','.join(incomplete_sides)}"}
-                )
-
-    return resolved, tarball_profile, github_profile, drift
 
 
 def _profile_dict(profile: CapabilityProfile | None) -> dict | None:
@@ -446,12 +312,19 @@ def scan(spec: str, source: str, output_format: str, output: Path | None) -> Non
 
     async def _run():
         async with httpx.AsyncClient() as client:
-            return await _scan_one(name, version, source.lower(), client)
+            return await analyze.analyze_package(name, version, source.lower(), client)
 
     try:
-        resolved, npm_profile, github_profile, drift = asyncio.run(_run())
+        analysis = asyncio.run(_run())
     except (httpx.HTTPError, FetchError, ValueError) as e:
         raise DepsCLIError(f"{type(e).__name__}: {e}")
+
+    resolved, npm_profile, github_profile, drift = (
+        analysis.resolved,
+        analysis.npm_profile,
+        analysis.github_profile,
+        analysis.drift,
+    )
 
     result = {
         "name": resolved.name,
@@ -550,20 +423,20 @@ def diff(
                     raise ValueError(f"No published version before {v2} found for {name}")
 
             prev_resolved = await resolve_npm(name, prev_version, client)
-            _, prev_tarball_profile, _ = await _fetch_and_scan(
+            _, prev_tarball_profile, _ = await analyze.fetch_and_scan_one(
                 prev_resolved, SourceKind.NPM_TARBALL, client
             )
 
-            curr_resolved, curr_npm_profile, curr_github_profile, curr_drift = await _scan_one(
+            curr_analysis = await analyze.analyze_package(
                 name, v2, "both" if want_github_for_current else "npm", client
             )
             return (
                 prev_resolved,
                 prev_tarball_profile,
-                curr_resolved,
-                curr_npm_profile,
-                curr_github_profile,
-                curr_drift,
+                curr_analysis.resolved,
+                curr_analysis.npm_profile,
+                curr_analysis.github_profile,
+                curr_analysis.drift,
             )
 
     try:
@@ -639,54 +512,6 @@ def diff(
         click.echo(f"Wrote {output}")
 
 
-def _parse_lockfile_versions(lock_path: Path) -> dict[str, str]:
-    """Extract {name: pinned_version} from a v1, v2, or v3 package-lock.json."""
-    try:
-        data = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-
-    versions: dict[str, str] = {}
-    packages = data.get("packages")
-    if isinstance(packages, dict):
-        # v2/v3: keyed by "node_modules/<name>" (top-level only — nested paths
-        # like "node_modules/a/node_modules/b" are transitive deps of another
-        # package, not a direct dependency of this manifest).
-        for key, info in packages.items():
-            if not key.startswith("node_modules/"):
-                continue
-            rel = key[len("node_modules/") :]
-            if "node_modules/" in rel:
-                continue
-            if isinstance(info, dict) and isinstance(info.get("version"), str):
-                versions[rel] = info["version"]
-        return versions
-
-    dependencies = data.get("dependencies")
-    if isinstance(dependencies, dict):
-        # v1
-        for dep_name, info in dependencies.items():
-            if isinstance(info, dict) and isinstance(info.get("version"), str):
-                versions[dep_name] = info["version"]
-    return versions
-
-
-_EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
-
-
-def _pin_from_range(range_str: str) -> str | None:
-    """Best-effort literal version from a semver range, when there's no lockfile.
-
-    Only strips a leading ^ or ~ — anything else (a range with a space, an
-    'x'/'*' wildcard, a git/file/url spec, an OR range) is not a single
-    pinnable version, so it's left for the caller to skip.
-    """
-    stripped = range_str.strip().lstrip("^~")
-    return stripped if _EXACT_VERSION_RE.match(stripped) else None
-
-
 @deps.command("scan-manifest")
 @click.argument("manifest", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
@@ -723,56 +548,41 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         raise DepsCLIError(f"Could not parse {manifest}: {e}")
 
-    direct: dict[str, str] = {}
-    for section in ("dependencies", "devDependencies"):
-        entries = manifest_data.get(section)
-        if isinstance(entries, dict):
-            direct.update({k: v for k, v in entries.items() if isinstance(v, str)})
-
-    if not direct:
+    if not analyze.direct_dependencies_from_manifest(manifest_data):
         raise DepsCLIError(f"No dependencies found in {manifest}")
 
-    lockfile_versions = _parse_lockfile_versions(manifest.parent / "package-lock.json")
-
-    targets: dict[str, str] = {}
-    skipped: list[str] = []
-    for pkg_name, range_str in direct.items():
-        pinned = lockfile_versions.get(pkg_name) or _pin_from_range(range_str)
-        if pinned is None:
-            skipped.append(pkg_name)
-        else:
-            targets[pkg_name] = pinned
+    lockfile_path = manifest.parent / "package-lock.json"
+    lockfile_data = None
+    if lockfile_path.exists():
+        try:
+            lockfile_data = json.loads(lockfile_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            lockfile_data = None
 
     _warn_if_semgrep_missing()
 
-    async def _run():
-        semaphore = asyncio.Semaphore(_MANIFEST_CONCURRENCY)
-        results: dict[str, dict] = {}
+    # No cap: `scan-manifest` has always swept every direct dependency
+    # unconditionally. The 50-package default only applies to the pipeline's
+    # automated ANALYZE_DEPENDENCIES step, not this explicit CLI invocation.
+    context = asyncio.run(
+        analyze.analyze_manifest(
+            manifest_data, lockfile_data, source_mode=source.lower(), max_direct_dependencies=None
+        )
+    )
 
-        async def _one(pkg_name: str, pkg_version: str, client: httpx.AsyncClient) -> None:
-            async with semaphore:
-                try:
-                    resolved, npm_profile, github_profile, drift = await _scan_one(
-                        pkg_name, pkg_version, source.lower(), client
-                    )
-                    results[pkg_name] = {
-                        "version": resolved.version,
-                        "npm": _profile_dict(npm_profile),
-                        "github": _profile_dict(github_profile),
-                        "drift": drift.model_dump(mode="json") if drift is not None else None,
-                        "error": None,
-                    }
-                except Exception as e:
-                    # One dependency's failure (network, a hostile tarball, a
-                    # filesystem error moving the cache, ...) must never abort
-                    # the whole manifest sweep.
-                    results[pkg_name] = {"error": f"{type(e).__name__}: {e}"}
-
-        async with httpx.AsyncClient() as client:
-            await asyncio.gather(*(_one(n, v, client) for n, v in targets.items()))
-        return results
-
-    results = asyncio.run(_run())
+    results: dict[str, dict] = {}
+    for pa in context.packages:
+        if pa.error:
+            results[pa.ref.name] = {"error": pa.error}
+            continue
+        results[pa.ref.name] = {
+            "version": pa.resolved.version,
+            "npm": _profile_dict(pa.npm_profile),
+            "github": _profile_dict(pa.github_profile),
+            "drift": pa.drift.model_dump(mode="json") if pa.drift is not None else None,
+            "error": None,
+        }
+    skipped = sorted(context.skipped)
 
     output_data = {"scanned": results, "skipped": skipped}
     if output_format.lower() == "json":

@@ -382,3 +382,55 @@ def test_discover_returns_sorted_files():
     assert len(files) >= 2, "At least 0001 and 0002 should exist"
     assert files[0].name.startswith("0001_")
     assert files[1].name.startswith("0002_")
+
+
+# ---------------------------------------------------------------------------
+# 0005 — dependency_ref column + dependency_scans table
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_0005_adds_dependency_ref_column_and_scans_table(tmp_path):
+    """0005 adds threats.dependency_ref and creates dependency_scans."""
+    conn = await _make_conn(tmp_path)
+    try:
+        await run_migrations(conn)
+
+        async with conn.execute("PRAGMA table_info(threats)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        assert "dependency_ref" in columns
+
+        assert await _table_exists(conn, "dependency_scans")
+
+        async with conn.execute("PRAGMA table_info(dependency_scans)") as cur:
+            scan_columns = {row[1] for row in await cur.fetchall()}
+        assert scan_columns == {
+            "id",
+            "model_id",
+            "package",
+            "version",
+            "source_mode",
+            "analysis",
+            "created_at",
+            "updated_at",
+        }
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_0005_is_idempotent_on_v2_db(tmp_path):
+    """0005 applies cleanly to a pre-existing DB that already has a threats table
+    without dependency_ref (the ALTER TABLE / CREATE TABLE IF NOT EXISTS path)."""
+    conn = await _make_v2_db(tmp_path)
+    try:
+        await run_migrations(conn)
+        async with conn.execute("PRAGMA table_info(threats)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        assert "dependency_ref" in columns
+        assert await _table_exists(conn, "dependency_scans")
+
+        # Running again must not raise (ALTER TABLE re-add / CREATE TABLE re-create).
+        await run_migrations(conn)
+    finally:
+        await conn.close()

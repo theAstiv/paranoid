@@ -43,6 +43,7 @@ You are an expert in ML/AI security and threat modeling. Your role is to careful
         model registries (MLflow, W&B), feature stores, training data loaders, vector databases,
         embedding generation, and GPU/TPU resource allocation. Look for model serialization formats
         (pickle, torch.save, ONNX, SavedModel) as these determine model integrity attack surface.
+      * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Identify ML/AI-specific assets, such as:
    - **Models**: Trained model weights, model architectures, model cards
@@ -93,6 +94,7 @@ You are an expert in ML/AI security and threat modeling. Your goal is to generat
      model serving endpoints without rate limiting (model extraction), prompt templates with
      user-controlled variables (prompt injection), eval()/exec() on model outputs (code injection),
      and gradient computation exposed to API callers (adversarial example generation).
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. MAESTRO threat modeling framework:
 
@@ -282,6 +284,7 @@ You are an expert in ML/AI security. Validate the comprehensiveness of an ML/AI 
      paths without integrity validation, training pipelines accepting external data without
      sanitization, inference endpoints missing authentication, feature stores with overly broad
      access, or model outputs used in downstream decisions without confidence thresholds?
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. MAESTRO framework assessment:
 
@@ -375,6 +378,7 @@ You are an expert in ML/AI security. Enrich an existing ML/AI threat catalog by 
      model serving endpoints without rate limiting (model extraction), prompt templates with
      user-controlled variables (prompt injection), eval()/exec() on model outputs (code injection),
      and gradient computation exposed to API callers (adversarial example generation).
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. MAESTRO framework: {maestro_cats}
 

@@ -17,6 +17,9 @@ from typing import Literal
 
 from backend.config import settings
 from backend.dedup import deduplicate_threats
+from backend.deps.analyze import analyze_manifest
+from backend.deps.threats import dependency_threats, merge_dependency_threats
+from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
@@ -57,6 +60,7 @@ def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2
 class PipelineStep(str, Enum):
     """Pipeline step identifiers for SSE events."""
 
+    ANALYZE_DEPENDENCIES = "analyze_dependencies"
     SUMMARIZE = "summarize"
     SUMMARIZE_CODE = "summarize_code"
     EXTRACT_ASSETS = "extract_assets"
@@ -172,6 +176,10 @@ class PipelineRunner:
         seeded_assets: AssetsList | None = None,
         seeded_flows: FlowsList | None = None,
         seeded_threats: ThreatsList | None = None,
+        dependency_context: DependencyContext | None = None,
+        dependency_manifest: dict | None = None,
+        dependency_lockfile: dict | None = None,
+        dependency_source_mode: str = "npm",
     ) -> AsyncGenerator[PipelineEvent, None]:
         """Run the complete threat modeling pipeline with SSE events.
 
@@ -192,6 +200,14 @@ class PipelineRunner:
             seeded_threats: Known threats to seed the catalog before the iteration loop.
                 Each threat is tagged with _source="seeded". The iteration loop deduplicates
                 new LLM threats against these, so overlapping threats are not duplicated.
+            dependency_context: Pre-analyzed dependency capabilities. When provided,
+                the ANALYZE_DEPENDENCIES step is skipped and this is used as-is.
+            dependency_manifest: Parsed package.json to analyze when
+                dependency_context isn't already provided.
+            dependency_lockfile: Parsed package-lock.json (optional) used to pin
+                dependency_manifest versions.
+            dependency_source_mode: "npm" | "github" | "both" — which source(s)
+                to fetch and scan each direct dependency with.
 
         Yields:
             PipelineEvent for each step and iteration
@@ -231,6 +247,73 @@ class PipelineRunner:
         code_summary = None
         shared_ctx: str | None = None
         consecutive_zero = 0
+
+        # Step 0: Analyze Dependencies. No LLM involved, so it runs before the
+        # provider-dependent steps and outside their ProviderError handling.
+        # A pre-analyzed context is used as-is; a raw manifest is analyzed here.
+        # Any failure (network, a hostile tarball, a malformed manifest, or
+        # exceeding deps_analysis_timeout_seconds) degrades exactly like an
+        # unavailable MCP code source: a warning event, dependency_context=None,
+        # and the pipeline continues without it.
+        #
+        # Skipped entirely when stop_after="extraction": that path returns
+        # before build_shared_context/the rule/dependency-threat passes ever
+        # run, so the analysis result would just be discarded unused.
+        if (
+            dependency_context is None
+            and dependency_manifest is not None
+            and stop_after != "extraction"
+        ):
+            yield PipelineEvent(
+                step=PipelineStep.ANALYZE_DEPENDENCIES,
+                status="started",
+                message="Analyzing dependency capabilities...",
+            )
+            try:
+                dependency_context = await asyncio.wait_for(
+                    analyze_manifest(
+                        dependency_manifest,
+                        dependency_lockfile,
+                        source_mode=dependency_source_mode,
+                    ),
+                    timeout=settings.deps_analysis_timeout_seconds,
+                )
+                yield PipelineEvent(
+                    step=PipelineStep.ANALYZE_DEPENDENCIES,
+                    status="completed",
+                    message=(
+                        f"Analyzed {len(dependency_context.packages)} direct dependencies, "
+                        f"{len(dependency_context.skipped)} skipped"
+                    ),
+                    data={
+                        "package_count": len(dependency_context.packages),
+                        "skipped_count": len(dependency_context.skipped),
+                    },
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Dependency analysis exceeded %ds timeout",
+                    settings.deps_analysis_timeout_seconds,
+                )
+                dependency_context = None
+                yield PipelineEvent(
+                    step=PipelineStep.ANALYZE_DEPENDENCIES,
+                    status="info",
+                    message=(
+                        f"Dependency analysis timed out after "
+                        f"{settings.deps_analysis_timeout_seconds}s — continuing without it"
+                    ),
+                    data={"error": "timeout"},
+                )
+            except Exception as e:
+                logger.warning("Dependency analysis failed: %s", e)
+                dependency_context = None
+                yield PipelineEvent(
+                    step=PipelineStep.ANALYZE_DEPENDENCIES,
+                    status="info",
+                    message=f"Dependency analysis unavailable ({e}) — continuing without it",
+                    data={"error": str(e)},
+                )
 
         try:
             # Steps 1-3: Summarize, Extract Assets, Extract Flows.
@@ -412,6 +495,7 @@ class PipelineRunner:
                     code_summary=code_summary,
                     diagram_data=diagram_data,
                     framework=framework,
+                    dependency_context=dependency_context,
                 )
 
             except ProviderError as e:
@@ -956,6 +1040,30 @@ class PipelineRunner:
                     data={"rule_engine_matched": 0, "new_threats_added": 0},
                 )
 
+            # Dependency threats pass: deterministic threats derived from the
+            # dependency capability analysis (source="dependency"), merged the
+            # same way as rule-engine matches. Runs regardless of LLM success —
+            # dependency findings are table-derived, not LLM output.
+            if dependency_context is not None and dependency_context.packages:
+                dep_threats = dependency_threats(dependency_context, framework)
+                if dep_threats.threats:
+                    pre_merge_count = len(cumulative_threats.threats)
+                    cumulative_threats = merge_dependency_threats(dep_threats, cumulative_threats)
+                    added = len(cumulative_threats.threats) - pre_merge_count
+                    yield PipelineEvent(
+                        step=PipelineStep.ANALYZE_DEPENDENCIES,
+                        status="completed",
+                        message=(
+                            f"Dependency threats: {len(dep_threats.threats)} findings, "
+                            f"{added} new threats added after dedup"
+                        ),
+                        data={
+                            "dependency_threats_matched": len(dep_threats.threats),
+                            "new_threats_added": added,
+                            "total_threats": len(cumulative_threats.threats),
+                        },
+                    )
+
             # Step 5: Complete
             total_duration = (datetime.now() - self.start_time).total_seconds()
 
@@ -971,6 +1079,7 @@ class PipelineRunner:
                     "threats": cumulative_threats,
                     "gaps": gaps,
                     "code_summary": code_summary,
+                    "dependency_context": dependency_context,
                 },
             )
             logger.info(
@@ -1075,6 +1184,10 @@ async def run_pipeline_for_model(
     fast_provider: LLMProvider | None = None,
     temperature: float | None = None,
     seed_collections: list[str] | None = None,
+    dependency_context: DependencyContext | None = None,
+    dependency_manifest: dict | None = None,
+    dependency_lockfile: dict | None = None,
+    dependency_source_mode: str = "npm",
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -1100,6 +1213,11 @@ async def run_pipeline_for_model(
             ``settings.default_temperature`` when not set.
         seed_collections: Seed collection names to restrict rule engine loading.
             None (default) uses settings.seed_collections, which defaults to all.
+        dependency_context: Pre-analyzed dependency capabilities, used as-is.
+        dependency_manifest: Parsed package.json to analyze when
+            dependency_context isn't already provided.
+        dependency_lockfile: Parsed package-lock.json (optional).
+        dependency_source_mode: "npm" | "github" | "both" for dependency analysis.
 
     Yields:
         PipelineEvent for progress tracking
@@ -1142,5 +1260,9 @@ async def run_pipeline_for_model(
         seeded_assets=seeded_assets,
         seeded_flows=seeded_flows,
         seeded_threats=seeded_threats,
+        dependency_context=dependency_context,
+        dependency_manifest=dependency_manifest,
+        dependency_lockfile=dependency_lockfile,
+        dependency_source_mode=dependency_source_mode,
     ):
         yield event

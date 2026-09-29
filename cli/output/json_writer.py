@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.runner import PipelineEvent, PipelineStep
@@ -56,6 +57,7 @@ class JSONWriter:
         self.assets: AssetsList | None = None
         self.flows: FlowsList | None = None
         self.threats: ThreatsList | None = None
+        self.dependency_context: DependencyContext | None = None
 
         # Track execution metadata
         self.iterations_completed = 0
@@ -112,6 +114,8 @@ class JSONWriter:
                 gaps = event.data.get("gaps")
                 if isinstance(gaps, list):
                     self.gap_summaries = [str(g) for g in gaps]
+                if "dependency_context" in event.data:
+                    self.dependency_context = event.data["dependency_context"]
 
     def export_simple(self, output_path: Path) -> None:
         """Export simple JSON format (lightweight, no events or full models).

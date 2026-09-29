@@ -6,7 +6,8 @@ formatting, and structured input parsing used across all pipeline nodes.
 
 import re
 
-from backend.models.enums import DiagramFormat, Framework
+from backend.models.dependencies import DependencyContext
+from backend.models.enums import CapabilityCategory, DiagramFormat, Framework
 from backend.models.extended import (
     CodeContext,
     CodeSummary,
@@ -19,6 +20,20 @@ from backend.models.extended import (
 from backend.models.state import AssetsList, FlowsList
 from backend.pipeline import input_parser
 from backend.rules.engine import extract_keywords
+
+
+# Categories notable enough to call out per-package in the dependency context
+# block — everything else collapses into a count line so the block stays
+# bounded regardless of manifest size.
+_DEPENDENCY_RISKY_CATEGORIES = {
+    CapabilityCategory.PROCESS,
+    CapabilityCategory.NETWORK,
+    CapabilityCategory.DYNAMIC_CODE,
+    CapabilityCategory.NATIVE_FFI,
+    CapabilityCategory.BUILD_INSTALL,
+}
+_MAX_DEPENDENCY_CONTEXT_CHARS = 3000
+_MAX_NOTABLE_DEPENDENCY_PACKAGES = 15
 
 
 # (pattern, canonical_label) pairs for detecting existing security controls in
@@ -189,6 +204,81 @@ def format_code_summary(code_summary: CodeSummary) -> str:
     return "\n\n".join(sections)
 
 
+def format_dependency_context(context: DependencyContext) -> str:
+    """Format a DependencyContext as a bounded markdown summary for prompts.
+
+    Packages with a notable finding (a risky capability category, a drift
+    signal, or generated/unverifiable code) are listed individually, up to
+    `_MAX_NOTABLE_DEPENDENCY_PACKAGES`; everything else collapses into a
+    count line so the block stays bounded (~3KB) regardless of manifest size.
+    This is read-only context for the LLM — dependency threat provenance is
+    always set deterministically by `backend.deps.threats.dependency_threats`,
+    never inferred by the model from this summary.
+
+    Args:
+        context: Result of `backend.deps.analyze.analyze_manifest`
+
+    Returns:
+        Markdown summary, or "" when there's nothing to report
+    """
+    notable: list[tuple[str, set, bool, bool]] = []
+    unremarkable_count = 0
+
+    for pa in context.packages:
+        if pa.error or pa.resolved is None:
+            unremarkable_count += 1
+            continue
+        profile = pa.npm_profile or pa.github_profile
+        categories = profile.category_set() if profile else set()
+        risky = categories & _DEPENDENCY_RISKY_CATEGORIES
+        has_drift_signal = bool(pa.drift and pa.drift.signal)
+        has_generated_unverifiable = bool(pa.drift and pa.drift.generated_unverifiable)
+
+        if risky or has_drift_signal or has_generated_unverifiable:
+            target = f"{pa.resolved.name}@{pa.resolved.version}"
+            notable.append((target, risky, has_drift_signal, has_generated_unverifiable))
+        else:
+            unremarkable_count += 1
+
+    if not notable and not unremarkable_count and not context.skipped:
+        return ""
+
+    lines: list[str] = []
+    for target, risky, has_drift_signal, has_generated_unverifiable in notable[
+        :_MAX_NOTABLE_DEPENDENCY_PACKAGES
+    ]:
+        details = []
+        if risky:
+            details.append("capabilities: " + ", ".join(sorted(c.value for c in risky)))
+        if has_drift_signal:
+            details.append("drift signal (published artifact differs from declared source)")
+        if has_generated_unverifiable:
+            details.append("generated/unverifiable code present")
+        lines.append(f"- {target}: {'; '.join(details)}")
+
+    remaining_notable = len(notable) - _MAX_NOTABLE_DEPENDENCY_PACKAGES
+    if remaining_notable > 0:
+        lines.append(f"...and {remaining_notable} more package(s) with notable findings")
+
+    if unremarkable_count:
+        plural = "y" if unremarkable_count == 1 else "ies"
+        lines.append(
+            f"{unremarkable_count} other direct dependenc{plural} scanned, nothing notable"
+        )
+
+    if context.skipped:
+        plural = "y" if len(context.skipped) == 1 else "ies"
+        lines.append(
+            f"{len(context.skipped)} dependenc{plural} not analyzed "
+            "(no resolvable version or over the scan cap)"
+        )
+
+    text = "\n".join(lines)
+    if len(text) > _MAX_DEPENDENCY_CONTEXT_CHARS:
+        text = text[:_MAX_DEPENDENCY_CONTEXT_CHARS].rsplit("\n", 1)[0] + "\n...(truncated)"
+    return text
+
+
 def parse_structured_input(
     description: str,
     framework: Framework,
@@ -285,13 +375,14 @@ def build_shared_context(
     code_summary: CodeSummary | None,
     diagram_data: DiagramData | None,
     framework: Framework,
+    dependency_context: DependencyContext | None = None,
 ) -> str:
     """Assemble the stable prompt context shared across all iteration calls.
 
     Produces an XML-tagged block containing diagram, description, assumptions,
-    detected_technologies, existing_controls, assets, flows, and code_summary —
-    everything that is stable from the moment extract_flows completes until the
-    pipeline run ends.
+    detected_technologies, existing_controls, assets, flows, code_summary, and
+    dependency_capabilities — everything that is stable from the moment
+    extract_flows completes until the pipeline run ends.
 
     When passed as shared_context to provider.generate_structured(), the Anthropic
     provider marks this block with cache_control: ephemeral so it is served from
@@ -307,6 +398,8 @@ def build_shared_context(
         code_summary: Optional condensed code summary (stable after summarize_code)
         diagram_data: Optional diagram data (PNG/JPG/Mermaid)
         framework: STRIDE or MAESTRO (needed for structured input parsing)
+        dependency_context: Optional dependency capability analysis (stable
+            after the ANALYZE_DEPENDENCIES step)
 
     Returns:
         Concatenated XML-tagged string ready for use as a cacheable prefix
@@ -366,5 +459,10 @@ def build_shared_context(
 
     if code_summary:
         parts.append(build_xml_tag("code_summary", format_code_summary(code_summary)))
+
+    if dependency_context:
+        formatted = format_dependency_context(dependency_context)
+        if formatted:
+            parts.append(build_xml_tag("dependency_capabilities", formatted))
 
     return "".join(parts)

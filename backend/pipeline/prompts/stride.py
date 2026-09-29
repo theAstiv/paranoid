@@ -46,6 +46,7 @@ You are an expert in all security domains and threat modeling. Your role is to c
       * <code_summary>: Security-focused analysis of the system's source code (if available).
         Use this to identify assets visible in the code — databases, queues, external API clients,
         auth providers, secret stores, configuration files — even if not mentioned in the description.
+      * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Identify the most critical assets within the system, such as sensitive data, databases, communication channels, or APIs. These are components that need protection.
 
@@ -79,6 +80,7 @@ You are an expert in all security domains and threat modeling. Your goal is to s
      Use this to trace data flows through the code — HTTP request/response paths, database
      read/write operations, message queue publish/subscribe, external API calls, file I/O —
      to identify flows the description may omit.
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Data Flow Analysis:
 
@@ -218,6 +220,7 @@ You are an expert in all security domains and threat modeling. Your goal is to v
      HTTP endpoints without authentication, database queries without parameterization, external
      API calls without TLS verification, or dependencies with known vulnerabilities not covered
      by existing threats?
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Assessment framework and criteria:
 
@@ -351,6 +354,7 @@ You are an expert in all security domains and threat modeling. Your goal is to e
      CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
      error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
      observed in the code.
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Threat Similarity and Deduplication Guidelines (CRITICAL):
    **Before adding new threats, review existing threats to avoid duplication:**
@@ -439,6 +443,7 @@ You are an expert in all security domains and threat modeling. Your goal is to g
      CVEs, authentication token handling, data serialization methods (JSON vs pickle vs protobuf),
      error handling that leaks stack traces, input validation gaps, and CORS/CSP configurations
      observed in the code.
+   * <dependency_capabilities>: Deterministic dependency capability analysis (if available), summarizing what each direct npm dependency's shipped code can do (network, filesystem, process, dynamic code, native FFI, ...) and any drift between its published artifact and declared source. Cross-reference this against the architecture to reason about supply-chain exposure - never invent dependency findings beyond what this block states.
 
 2. Threat modeling framework and scope:
    * Use the **STRIDE model** as your framework: {stride_cats}.

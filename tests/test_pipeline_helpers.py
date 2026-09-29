@@ -5,11 +5,20 @@ Verifies extraction from representative descriptions and that the resulting
 the shared context produced by build_shared_context().
 """
 
-from backend.models.enums import Framework
+from backend.models.dependencies import (
+    CapabilityEvidence,
+    CapabilityProfile,
+    DependencyContext,
+    PackageAnalysis,
+    PackageRef,
+    ResolvedPackage,
+)
+from backend.models.enums import CapabilityCategory, Framework, PathClass, SourceKind
 from backend.pipeline.nodes.helpers import (
     build_shared_context,
     extract_controls,
     extract_technologies,
+    format_dependency_context,
 )
 from tests.fixtures.pipeline import make_assets, make_flows
 
@@ -202,3 +211,117 @@ class TestBuildSharedContextEnrichment:
         tech_pos = ctx.find("<detected_technologies>")
         if tech_pos != -1:
             assert desc_pos < tech_pos
+
+
+# ---------------------------------------------------------------------------
+# format_dependency_context / <dependency_capabilities> tag injection
+# ---------------------------------------------------------------------------
+
+
+def _notable_package(name="evil-pkg", version="1.0.0") -> PackageAnalysis:
+    profile = CapabilityProfile(
+        name=name,
+        version=version,
+        source_kind=SourceKind.NPM_TARBALL,
+        evidence=[
+            CapabilityEvidence(
+                category=CapabilityCategory.DYNAMIC_CODE,
+                rule_id="r",
+                file="index.js",
+                line=1,
+                snippet="eval(x)",
+                source_kind=SourceKind.NPM_TARBALL,
+                path_class=PathClass.SHIPPED,
+            )
+        ],
+        capability_vector=[CapabilityCategory.DYNAMIC_CODE],
+        status="ok",
+    )
+    return PackageAnalysis(
+        ref=PackageRef(name=name, version=version),
+        resolved=ResolvedPackage(
+            name=name, version=version, tarball_url="https://x", integrity="sha512-x"
+        ),
+        npm_profile=profile,
+    )
+
+
+def _unremarkable_package(name="lodash", version="4.17.21") -> PackageAnalysis:
+    profile = CapabilityProfile(
+        name=name, version=version, source_kind=SourceKind.NPM_TARBALL, status="ok"
+    )
+    return PackageAnalysis(
+        ref=PackageRef(name=name, version=version),
+        resolved=ResolvedPackage(
+            name=name, version=version, tarball_url="https://x", integrity="sha512-x"
+        ),
+        npm_profile=profile,
+    )
+
+
+class TestFormatDependencyContext:
+    def test_empty_context_returns_empty_string(self):
+        assert format_dependency_context(DependencyContext(packages=[])) == ""
+
+    def test_notable_package_listed_with_its_capabilities(self):
+        ctx = DependencyContext(packages=[_notable_package()])
+        text = format_dependency_context(ctx)
+        assert "evil-pkg@1.0.0" in text
+        assert "dynamic_code" in text
+
+    def test_unremarkable_packages_collapse_to_count_line(self):
+        ctx = DependencyContext(packages=[_unremarkable_package(), _unremarkable_package("chalk")])
+        text = format_dependency_context(ctx)
+        assert "lodash" not in text
+        assert "2 other direct dependencies scanned" in text
+
+    def test_skipped_packages_reported(self):
+        ctx = DependencyContext(
+            packages=[_notable_package()], skipped={"weird-pkg": "unresolvable_version_range"}
+        )
+        text = format_dependency_context(ctx)
+        assert "1 dependency not analyzed" in text
+
+
+class TestBuildSharedContextDependencyTag:
+    def test_dependency_capabilities_tag_present_with_notable_findings(self):
+        ctx = build_shared_context(
+            description="A service",
+            architecture_diagram=None,
+            assumptions=None,
+            assets=make_assets(),
+            flows=make_flows(),
+            code_summary=None,
+            diagram_data=None,
+            framework=Framework.STRIDE,
+            dependency_context=DependencyContext(packages=[_notable_package()]),
+        )
+        assert "<dependency_capabilities>" in ctx
+        assert "evil-pkg@1.0.0" in ctx
+
+    def test_no_dependency_tag_when_context_is_none(self):
+        ctx = build_shared_context(
+            description="A service",
+            architecture_diagram=None,
+            assumptions=None,
+            assets=make_assets(),
+            flows=make_flows(),
+            code_summary=None,
+            diagram_data=None,
+            framework=Framework.STRIDE,
+        )
+        assert "<dependency_capabilities>" not in ctx
+
+    def test_no_dependency_tag_when_context_has_no_notable_packages(self):
+        ctx = build_shared_context(
+            description="A service",
+            architecture_diagram=None,
+            assumptions=None,
+            assets=make_assets(),
+            flows=make_flows(),
+            code_summary=None,
+            diagram_data=None,
+            framework=Framework.STRIDE,
+            dependency_context=DependencyContext(packages=[]),
+        )
+        assert "<dependency_capabilities>" not in ctx

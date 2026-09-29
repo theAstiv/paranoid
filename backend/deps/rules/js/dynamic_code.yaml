@@ -206,6 +206,22 @@ rules:
           metavariable: $B
           regex: ^(["']).*\1$
 
+  - id: dynamic-code-reflect-indirection
+    languages: [js, ts]
+    severity: WARNING
+    message: >-
+      Invokes `require` or `Function` indirectly via `Reflect.apply`/
+      `Reflect.construct` — the same call-through-a-builtin evasion shape as
+      `(0, require)(...)`/`(0, Function)(...)`, using `Reflect` instead of
+      the comma operator to avoid a plain `require(...)`/`new Function(...)`
+      text match.
+    metadata:
+      category: dynamic_code
+    patterns:
+      - pattern-either:
+          - pattern: Reflect.apply(require, $THIS, $ARGS)
+          - pattern: Reflect.construct(Function, $ARGS)
+
   - id: dynamic-code-vm-module
     languages: [js, ts]
     severity: WARNING

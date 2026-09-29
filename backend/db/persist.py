@@ -15,6 +15,7 @@ import logging
 from backend.db.crud import (
     create_asset,
     create_attack_tree,
+    create_dependency_scan,
     create_flow,
     create_test_case,
     create_threat,
@@ -26,6 +27,7 @@ from backend.db.crud import (
     update_threat_model,
     update_threat_model_status,
 )
+from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
@@ -48,12 +50,13 @@ async def persist_pipeline_result(
     attack_trees: dict[str, AttackTree] | None = None,
     test_suites: dict[str, TestSuite] | None = None,
     gap_summaries: list[str] | None = None,
+    dependency_context: DependencyContext | None = None,
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
     Writes in dependency order: threat_model → assets → flows →
-    trust_boundaries → threat_sources → threats → attack_trees → test_cases.
-    Sets model status to "completed" on success.
+    trust_boundaries → threat_sources → threats → attack_trees → test_cases →
+    dependency_scans. Sets model status to "completed" on success.
 
     Non-fatal: any exception is caught and logged — the caller always
     receives either a model_id string or None on failure.
@@ -70,6 +73,7 @@ async def persist_pipeline_result(
         threats: Final merged threat list, or None
         attack_trees: Map of synthetic threat index → AttackTree (from --enrich), or None
         test_suites: Map of synthetic threat index → TestSuite (from --enrich), or None
+        dependency_context: Dependency capability analysis, or None
 
     Returns:
         model_id string on success, None on failure
@@ -88,6 +92,7 @@ async def persist_pipeline_result(
             attack_trees=attack_trees,
             test_suites=test_suites,
             gap_summaries=gap_summaries,
+            dependency_context=dependency_context,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -109,6 +114,7 @@ async def _persist(
     attack_trees: dict[str, AttackTree] | None = None,
     test_suites: dict[str, TestSuite] | None = None,
     gap_summaries: list[str] | None = None,
+    dependency_context: DependencyContext | None = None,
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -206,10 +212,26 @@ async def _persist(
                 dread_discoverability=dread_discoverability,
                 source=threat.source,
                 confidence=confidence,
+                dependency_ref=(
+                    threat.dependency_ref.model_dump() if threat.dependency_ref else None
+                ),
             )
             threat_db_ids.append(threat_db_id)
 
         logger.debug(f"Persisted {len(threats.threats)} threats")
+
+    if dependency_context:
+        for pa in dependency_context.packages:
+            if pa.error or pa.resolved is None:
+                continue
+            await create_dependency_scan(
+                model_id=model_id,
+                package=pa.resolved.name,
+                version=pa.resolved.version,
+                source_mode=dependency_context.source_mode,
+                analysis=pa.model_dump(mode="json"),
+            )
+        logger.debug(f"Persisted {len(dependency_context.packages)} dependency scans")
 
     if attack_trees and threat_db_ids:
         saved = 0

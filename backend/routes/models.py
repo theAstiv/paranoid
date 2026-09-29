@@ -354,12 +354,33 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dread_discoverability=dread.discoverability if dread else None,
                         source=threat.source,
                         confidence=confidence,
+                        dependency_ref=(
+                            threat.dependency_ref.model_dump() if threat.dependency_ref else None
+                        ),
                     )
                 except Exception:
                     logger.warning(
                         "Failed to persist threat '%s'",
                         getattr(threat, "name", "unknown"),
                         exc_info=True,
+                    )
+
+        dependency_context = event.data.get("dependency_context")
+        if dependency_context and hasattr(dependency_context, "packages"):
+            for pa in dependency_context.packages:
+                if pa.error or pa.resolved is None:
+                    continue
+                try:
+                    await crud.create_dependency_scan(
+                        model_id=model_id,
+                        package=pa.resolved.name,
+                        version=pa.resolved.version,
+                        source_mode=dependency_context.source_mode,
+                        analysis=pa.model_dump(mode="json"),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to persist dependency scan for '%s'", pa.ref.name, exc_info=True
                     )
 
         gap_list = event.data.get("gaps")
