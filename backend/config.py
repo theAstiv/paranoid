@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     additional_git_hosts: str = ""
 
     # Dependency capability engine (npm/JS+TS). See backend/deps/.
+    # Kill switch for the whole feature: false rejects a manifest passed to
+    # POST /{model_id}/run with 422 and skips code-source auto-detect,
+    # without needing a redeploy to disable server-side dependency analysis.
+    deps_analysis_enabled: bool = True
     deps_cache_dir: str = "./data/deps_cache"
     deps_max_tarball_mb: int = Field(default=50, gt=0)
     # Wall-clock budget for the pipeline's ANALYZE_DEPENDENCIES step (resolving,

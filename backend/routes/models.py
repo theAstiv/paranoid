@@ -14,6 +14,10 @@ from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects
 from backend.db.gap_utils import decode_gap_summaries
+from backend.deps.analyze import (
+    DEFAULT_MAX_DIRECT_DEPENDENCIES,
+    count_resolvable_direct_dependencies,
+)
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
 from backend.models.api import (
@@ -65,6 +69,9 @@ def _decode_json_field(value: str | None) -> dict | None:
 router = APIRouter(prefix="/models", tags=["models"])
 
 _MAX_DIAGRAM_BYTES = 5 * 1024 * 1024  # 5 MB
+_MAX_MANIFEST_BYTES = 1024 * 1024  # 1 MB
+_MAX_LOCKFILE_BYTES = 1024 * 1024  # 1 MB
+_VALID_DEPS_SOURCE_MODES = frozenset({"npm", "both"})
 
 
 async def _build_diagram_data(upload: UploadFile) -> DiagramData:
@@ -102,6 +109,87 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
         media_type=media_type,
         size_bytes=len(raw),
     )
+
+
+def _parse_dependency_json(text: str, field_name: str, max_bytes: int) -> dict:
+    """Parse a Form-submitted JSON field (package.json / package-lock.json
+    content) into a dict, raising 422 on anything that isn't a well-formed,
+    size-bounded JSON object. Used only for user-submitted manifests — a
+    code-source auto-detected manifest degrades silently instead (see
+    `_detect_manifest_from_code_source`), since a malformed file in someone
+    else's repo shouldn't fail the whole run."""
+    raw_bytes = text.encode("utf-8")
+    if len(raw_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{field_name}' exceeds the {max_bytes // (1024 * 1024)} MB limit "
+            f"({len(raw_bytes)} bytes)",
+        )
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail=f"'{field_name}' must be valid JSON")
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{field_name}' must be a JSON object, not {type(parsed).__name__}",
+        )
+    return parsed
+
+
+def _validate_direct_dependency_count(manifest: dict, lockfile: dict | None) -> None:
+    """Fail fast with a clear 422 instead of letting analyze_manifest() silently
+    truncate to DEFAULT_MAX_DIRECT_DEPENDENCIES — a truncated scan run without
+    warning would under-report dependency threats without the user knowing."""
+    count = count_resolvable_direct_dependencies(manifest, lockfile)
+    if count > DEFAULT_MAX_DIRECT_DEPENDENCIES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"'dependency_manifest' resolves {count} direct dependencies; "
+                f"the limit is {DEFAULT_MAX_DIRECT_DEPENDENCIES}."
+            ),
+        )
+
+
+async def _detect_manifest_from_code_source(code_source_id: str) -> tuple[dict | None, dict | None]:
+    """Offer the code source's own root package.json (+ lockfile) as the
+    dependency manifest when the user didn't upload one explicitly. Reuses
+    the existing clone — nothing new is fetched. Degrades to (None, None) on
+    any read/parse failure (missing file, malformed JSON, oversized file):
+    this is best-effort convenience, not a user-submitted input, so it must
+    never fail the run the way an explicit bad upload does."""
+    manifest_path = clone_dir_for(code_source_id) / "package.json"
+    if not manifest_path.is_file():
+        return None, None
+    try:
+        if manifest_path.stat().st_size > _MAX_MANIFEST_BYTES:
+            return None, None
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            return None, None
+    except (OSError, ValueError):
+        return None, None
+
+    lockfile: dict | None = None
+    lockfile_path = clone_dir_for(code_source_id) / "package-lock.json"
+    try:
+        if lockfile_path.is_file() and lockfile_path.stat().st_size <= _MAX_LOCKFILE_BYTES:
+            candidate = json.loads(lockfile_path.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict):
+                lockfile = candidate
+    except (OSError, ValueError):
+        lockfile = None
+
+    # Same "never fail the run" contract as above: an auto-detected manifest
+    # over the direct-dependency cap doesn't get the explicit-upload 422
+    # (_validate_direct_dependency_count) — it's dropped, same as a missing
+    # or malformed file, rather than silently truncated deep inside
+    # analyze_manifest() with no signal at all that it happened.
+    if count_resolvable_direct_dependencies(manifest, lockfile) > DEFAULT_MAX_DIRECT_DEPENDENCIES:
+        return None, None
+
+    return manifest, lockfile
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +507,10 @@ async def run_pipeline(
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
     code_source_id: Annotated[str, Form()] = "",
+    dependency_manifest: Annotated[str, Form()] = "",
+    dependency_lockfile: Annotated[str, Form()] = "",
+    deps_source_mode: Annotated[str, Form()] = "npm",
+    use_code_source_manifest: Annotated[bool, Form()] = False,
     _rate: None = Depends(pipeline_rate_limit),
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> StreamingResponse:
@@ -429,6 +521,17 @@ async def run_pipeline(
     - has_ai_components: bool, enables MAESTRO alongside STRIDE
     - diagram: optional PNG/JPG/Mermaid file upload
     - code_source_id: optional ID of a ready code source for code context
+    - dependency_manifest: optional package.json content (JSON text, <= 1 MB,
+      <= 50 resolvable direct dependencies)
+    - dependency_lockfile: optional package-lock.json content (JSON text, <= 1 MB;
+      requires dependency_manifest)
+    - deps_source_mode: "npm" (fast, default) or "both" (adds GitHub drift)
+    - use_code_source_manifest: opt-in — when true, no dependency_manifest was
+      uploaded, and code_source_id is a ready source, its root package.json
+      (+ lockfile) is auto-detected from the existing clone and analyzed.
+      Off by default: dependency analysis does registry/codeload fetches and
+      a Semgrep scan (up to deps_analysis_timeout_seconds), so it must not
+      silently turn on for every code-source run.
     """
     code_source_id = code_source_id.strip() or ""
 
@@ -466,6 +569,43 @@ async def run_pipeline(
                     "Wait for status 'ready'."
                 ),
             )
+
+    # Dependency manifest — explicit upload, or (opt-in) auto-detected from the
+    # code source's own clone. DEPS_ANALYSIS_ENABLED is a hard kill switch:
+    # when false, neither path is used and ANALYZE_DEPENDENCIES never runs.
+    dependency_manifest_dict: dict | None = None
+    dependency_lockfile_dict: dict | None = None
+    if not settings.deps_analysis_enabled:
+        if dependency_manifest.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Dependency analysis is disabled on this instance (DEPS_ANALYSIS_ENABLED=false).",
+            )
+    else:
+        if deps_source_mode not in _VALID_DEPS_SOURCE_MODES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'deps_source_mode' must be one of {sorted(_VALID_DEPS_SOURCE_MODES)}",
+            )
+        if dependency_manifest.strip():
+            dependency_manifest_dict = _parse_dependency_json(
+                dependency_manifest, "dependency_manifest", _MAX_MANIFEST_BYTES
+            )
+            if dependency_lockfile.strip():
+                dependency_lockfile_dict = _parse_dependency_json(
+                    dependency_lockfile, "dependency_lockfile", _MAX_LOCKFILE_BYTES
+                )
+            _validate_direct_dependency_count(dependency_manifest_dict, dependency_lockfile_dict)
+        elif dependency_lockfile.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="'dependency_lockfile' requires 'dependency_manifest'",
+            )
+        elif use_code_source_manifest and source_row is not None:
+            (
+                dependency_manifest_dict,
+                dependency_lockfile_dict,
+            ) = await _detect_manifest_from_code_source(code_source_id)
 
     provider = build_provider_from_record(record)
     fast_provider = build_fast_provider(record)
@@ -542,6 +682,9 @@ async def run_pipeline(
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,
                     temperature=temperature,
+                    dependency_manifest=dependency_manifest_dict,
+                    dependency_lockfile=dependency_lockfile_dict,
+                    dependency_source_mode=deps_source_mode,
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
@@ -633,6 +776,25 @@ async def get_model_stats(model_id: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     stats = await crud.get_pipeline_stats(model_id)
     return JSONResponse(content=stats)
+
+
+@router.get("/{model_id}/dependencies")
+async def list_model_dependencies(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
+    """List persisted dependency capability scans for a model, most recent first.
+
+    Gated at viewer (unlike the other GET sub-resource routes above, which
+    predate per-route RBAC): this endpoint exposes package names, versions,
+    and raw scanner evidence, which is more sensitive than a threat's own
+    text, so it doesn't copy the existing gap.
+    """
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    scans = await crud.list_dependency_scans(model_id)
+    return JSONResponse(content=scans)
 
 
 # ---------------------------------------------------------------------------
