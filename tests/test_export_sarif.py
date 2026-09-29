@@ -98,3 +98,129 @@ def test_sarif_locations(sarif_output):
             assert "physicalLocation" in location
             artifact = location["physicalLocation"]["artifactLocation"]
             assert artifact["uri"] == "examples/stride-example.md"
+
+
+def test_sarif_dependency_threat_gets_npm_logical_location_and_manifest_physical_location():
+    """A dependency-sourced threat gets a package-scoped logical location
+    ("npm:pkg@version") and a physical location on the consumer's own
+    package.json — NOT dependency_ref.file, which is a path inside the
+    dependency's own tree and would resolve to the wrong file (or nothing)
+    when GitHub renders the SARIF against the consumer's repo. The
+    dependency's own file:line still appears in the message text and in
+    properties.dependencyRef for anyone reading the raw SARIF."""
+    from backend.models.state import DependencyRef, Threat
+
+    threat = Threat(
+        name="Install-time code execution",
+        stride_category="Elevation of Privilege",
+        description="x " * 40,
+        target="lodash",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        source="dependency",
+        dependency_ref=DependencyRef(
+            package="lodash",
+            version="4.17.21",
+            file="lib/index.js",
+            line=42,
+            rule_id="dynamic_code",
+        ),
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]),
+        model_id="dep-test",
+        framework="STRIDE",
+        source_file="examples/stride-example.md",
+    )
+
+    result = output["runs"][0]["results"][0]
+    locations = result["locations"]
+
+    logical = next(loc for loc in locations if "logicalLocations" in loc)
+    assert logical["logicalLocations"][0]["name"] == "npm:lodash@4.17.21"
+
+    physical = next(loc for loc in locations if "physicalLocation" in loc)
+    assert physical["physicalLocation"]["artifactLocation"]["uri"] == "package.json"
+    assert physical["physicalLocation"]["region"]["startLine"] == 1
+
+    # The dependency's own internal path must never be used as a SARIF
+    # physical location — it doesn't exist in the consumer's repo tree.
+    assert not any(
+        loc.get("physicalLocation", {}).get("artifactLocation", {}).get("uri") == "lib/index.js"
+        for loc in locations
+    )
+    # Nor the generic input-file location — package.json replaces it for
+    # dependency threats.
+    assert not any(
+        loc.get("physicalLocation", {}).get("artifactLocation", {}).get("uri")
+        == "examples/stride-example.md"
+        for loc in locations
+    )
+
+    assert "lib/index.js:42" in result["message"]["text"]
+    assert result["properties"]["dependencyRef"] == {
+        "package": "lodash",
+        "version": "4.17.21",
+        "file": "lib/index.js",
+        "line": 42,
+        "ruleId": "dynamic_code",
+    }
+
+
+def test_sarif_dependency_threat_without_file_still_gets_manifest_location():
+    from backend.models.state import DependencyRef, Threat
+
+    threat = Threat(
+        name="Drift finding",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="ua-parser-js",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        source="dependency",
+        dependency_ref=DependencyRef(
+            package="ua-parser-js", version="0.7.29", file=None, line=None
+        ),
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]), model_id="dep-test-2", framework="STRIDE"
+    )
+
+    result = output["runs"][0]["results"][0]
+    locations = result["locations"]
+    assert len(locations) == 2
+    assert locations[0]["logicalLocations"][0]["name"] == "npm:ua-parser-js@0.7.29"
+    assert locations[1]["physicalLocation"]["artifactLocation"]["uri"] == "package.json"
+    assert "Found in" not in result["message"]["text"]
+
+
+def test_sarif_dependency_threat_uses_caller_supplied_manifest_path():
+    """A caller that knows the manifest's real path (e.g. the CLI's --manifest
+    flag for a monorepo package) can override the "package.json" default so
+    the physical location resolves to the right file."""
+    from backend.models.state import DependencyRef, Threat
+
+    threat = Threat(
+        name="Install-time code execution",
+        stride_category="Elevation of Privilege",
+        description="x " * 40,
+        target="lodash",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        source="dependency",
+        dependency_ref=DependencyRef(package="lodash", version="4.17.21", file=None, line=None),
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]),
+        model_id="dep-test-3",
+        framework="STRIDE",
+        dependency_manifest_path="apps/web/package.json",
+    )
+
+    physical = next(
+        loc for loc in output["runs"][0]["results"][0]["locations"] if "physicalLocation" in loc
+    )
+    assert physical["physicalLocation"]["artifactLocation"]["uri"] == "apps/web/package.json"
