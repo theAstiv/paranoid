@@ -15,7 +15,7 @@ from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif
 from backend.models.api import ExportFormat
-from backend.models.state import Threat, ThreatsList
+from backend.models.state import DependencyRef, Threat, ThreatsList
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,15 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
     built = []
     for row in stride_rows:
         try:
-            built.append(Threat.model_construct(**row))
+            # crud.list_threats() decodes dependency_ref from its stored JSON
+            # into a plain dict — model_construct() skips validation entirely,
+            # so it would stay a dict instead of becoming a DependencyRef, and
+            # sarif.py's `dependency_ref.package` attribute access would crash
+            # with AttributeError on any model that has dependency threats.
+            fields = dict(row)
+            if fields.get("dependency_ref") is not None:
+                fields["dependency_ref"] = DependencyRef.model_validate(fields["dependency_ref"])
+            built.append(Threat.model_construct(**fields))
         except Exception as exc:
             logger.warning("Skipping threat '%s' during SARIF build: %s", row.get("name"), exc)
 

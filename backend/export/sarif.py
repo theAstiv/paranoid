@@ -15,6 +15,7 @@ def export_sarif(
     model_id: str,
     framework: str,
     source_file: str | None = None,
+    dependency_manifest_path: str = "package.json",
 ) -> dict[str, Any]:
     """Export threats to SARIF 2.1.0 format for GitHub Security integration.
 
@@ -23,6 +24,12 @@ def export_sarif(
         model_id: Unique identifier for this threat model run
         framework: Framework used (STRIDE or MAESTRO)
         source_file: Optional path to the input file analyzed
+        dependency_manifest_path: Repo-relative path to the package.json a
+            dependency-sourced threat's physical location points at (see
+            _build_locations). Defaults to "package.json" (repo root) — pass
+            the real path (e.g. "apps/web/package.json") when the caller
+            knows it, such as the CLI's --manifest flag, so results resolve
+            correctly for a package that isn't at the repo root.
 
     Returns:
         SARIF 2.1.0 compliant dict ready for JSON serialization
@@ -31,7 +38,7 @@ def export_sarif(
     rules = _generate_rules(threats, framework)
 
     # Convert threats to SARIF results
-    results = _generate_results(threats, source_file)
+    results = _generate_results(threats, source_file, dependency_manifest_path)
 
     # Build SARIF document
     sarif = {
@@ -113,7 +120,9 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
     return rules
 
 
-def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dict[str, Any]]:
+def _generate_results(
+    threats: ThreatsList, source_file: str | None, dependency_manifest_path: str = "package.json"
+) -> list[dict[str, Any]]:
     """Convert threats to SARIF results.
 
     Each threat becomes a SARIF result with severity, location, and fixes.
@@ -137,14 +146,26 @@ def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dic
         # Map DREAD severity to SARIF level
         level = _severity_to_level(threat)
 
+        message_text = threat.description
+        dependency_ref = getattr(threat, "dependency_ref", None)
+        if dependency_ref is not None and dependency_ref.file:
+            # The physical location points at the consumer's package.json
+            # (see _build_locations) since dependency_ref.file is a path
+            # inside the *dependency's* own tree — surface it here as text
+            # since it can't be a resolvable SARIF location in this repo.
+            where = dependency_ref.file
+            if dependency_ref.line:
+                where += f":{dependency_ref.line}"
+            message_text = f"{message_text}\n\nFound in {dependency_ref.package}@{dependency_ref.version} at {where}."
+
         # Build result
         result = {
             "ruleId": rule_id,
             "level": level,
             "message": {
-                "text": threat.description,
+                "text": message_text,
             },
-            "locations": _build_locations(threat, source_file),
+            "locations": _build_locations(threat, source_file, dependency_manifest_path),
             "partialFingerprints": {
                 "threatName": threat.name,
                 "target": threat.target,
@@ -157,6 +178,16 @@ def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dic
                 "source": threat.source,
             },
         }
+
+        dependency_ref = getattr(threat, "dependency_ref", None)
+        if dependency_ref is not None:
+            result["properties"]["dependencyRef"] = {
+                "package": dependency_ref.package,
+                "version": dependency_ref.version,
+                "file": dependency_ref.file,
+                "line": dependency_ref.line,
+                "ruleId": dependency_ref.rule_id,
+            }
 
         # Add DREAD score if available
         if hasattr(threat, "dread") and threat.dread:
@@ -178,12 +209,49 @@ def _generate_results(threats: ThreatsList, source_file: str | None) -> list[dic
     return results
 
 
-def _build_locations(threat: Any, source_file: str | None) -> list[dict[str, Any]]:
+def _build_locations(
+    threat: Any, source_file: str | None, dependency_manifest_path: str = "package.json"
+) -> list[dict[str, Any]]:
     """Build SARIF location array.
 
     For threat models without code context, we create a logical location
-    pointing to the threatened component.
+    pointing to the threatened component. Dependency-sourced threats
+    (threat.dependency_ref set) get a package-scoped logical location
+    ("npm:pkg@version") plus a physical location on the consumer's own
+    manifest (dependency_manifest_path) — deliberately NOT dependency_ref.file
+    /line, which is a path inside the *dependency's* own source tree (e.g.
+    "lib/index.js", or even literally "package.json" for an install-hook
+    finding — the dependency's own manifest, not the user's). A SARIF viewer
+    such as GitHub resolves a physicalLocation's uri against the consumer's
+    repo, where that path either doesn't exist or coincidentally names an
+    unrelated file — the consumer's own manifest is the one path that's
+    always valid there and is genuinely where the dependency is declared.
+    Defaults to the repo root ("package.json") when the caller doesn't know
+    the manifest's real path (e.g. web uploads, which are pasted content with
+    no filesystem path); the CLI's --manifest flag passes the real one, which
+    matters for a monorepo package (e.g. "apps/web/package.json"). The
+    dependency's own file:line survives in properties.dependencyRef and the
+    result message for anyone reading the raw SARIF.
     """
+    dependency_ref = getattr(threat, "dependency_ref", None)
+    if dependency_ref is not None:
+        return [
+            {
+                "logicalLocations": [
+                    {
+                        "name": f"npm:{dependency_ref.package}@{dependency_ref.version}",
+                        "kind": "module",
+                    }
+                ]
+            },
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": dependency_manifest_path},
+                    "region": {"startLine": 1, "startColumn": 1},
+                }
+            },
+        ]
+
     locations = []
 
     if source_file:

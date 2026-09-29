@@ -110,6 +110,8 @@ docker compose up --build
 | `SEMGREP_BINARY` | auto | Explicit path to the `semgrep` binary; if unset, Paranoid searches `PATH`. Semgrep is not a Python dependency of Paranoid — install it separately (`pip install semgrep` or `pipx install semgrep`) |
 | `DEPS_CACHE_DIR` | `./data/deps_cache` | Immutable per-version cache for fetched npm tarball / GitHub source trees |
 | `DEPS_MAX_TARBALL_MB` | `50` | Compressed-size cap enforced during download, before extraction |
+| `DEPS_ANALYSIS_TIMEOUT_SECONDS` | `180` | Wall-clock budget for the pipeline's dependency-analysis step; exceeding it degrades to a warning and the pipeline continues without it |
+| `DEPS_ANALYSIS_ENABLED` | `true` | Kill switch for server-side dependency analysis via `POST /api/models/{id}/run` (manifest upload and code-source auto-detect). `false` rejects an uploaded manifest with 422 and skips auto-detect, without a redeploy. Does not affect the `paranoid deps`/`paranoid run --manifest` CLI |
 
 See [Dependency capability engine](../README.md#dependency-capability-engine) in the README for what `paranoid deps scan|diff|scan-manifest` report and their limits.
 

@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from backend.models.enums import AssetType, StrideCategory
 
@@ -163,10 +164,18 @@ class Threat(BaseModel):
         ),
     ]
 
-    source: str = Field(default="llm")
+    # SkipJsonSchema hides both fields from the schema sent to providers
+    # (Anthropic tool_use, OpenAI response_format, Ollama/Bedrock format=) —
+    # all four call Threat.model_json_schema() or an equivalent that respects
+    # it. Without this an LLM (or a prompt-injected description) could set
+    # source="dependency" and forge a dependency_ref with a fabricated
+    # package/file/line. Only trusted code (rule engine, seeding, the
+    # dependency-capability engine) sets these; generate_threats() also
+    # force-resets both fields on every provider response as a second layer.
+    source: SkipJsonSchema[str] = Field(default="llm")
     # Provenance when source == "dependency" — which package/file/rule this
     # threat came from. None for llm/rule_engine/seeded threats.
-    dependency_ref: DependencyRef | None = None
+    dependency_ref: SkipJsonSchema[DependencyRef | None] = None
 
 
 class ThreatsList(BaseModel):

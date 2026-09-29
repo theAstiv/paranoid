@@ -78,6 +78,23 @@ COPY seeds/   ./seeds/
 COPY cli/     ./cli/
 RUN pip install --no-cache-dir -e .
 
+# Semgrep powers the dependency capability scanner (backend/deps/scanner.py).
+# Not a pyproject.toml dependency (see SEMGREP_BINARY in config.py) so it can
+# be swapped or omitted outside Docker; here it's installed unconditionally
+# so server-side dependency analysis (POST /{model_id}/run with a manifest)
+# works out of the box. Installed pinned, into its own venv rather than
+# alongside `-e .` in the app's environment: semgrep pins a lot of shared
+# transitive deps (click, jsonschema, requests, opentelemetry, ...) that a
+# plain `pip install semgrep` after `-e .` could silently bump or downgrade
+# for the app itself. SEMGREP_BINARY then points resolve_semgrep_binary() at
+# it directly — no PATH search needed. Image-size impact is not yet measured
+# locally (no Linux Docker daemon in dev — see .claude/rules/ci-checklist.md);
+# if it's too large, this becomes an optional `paranoid:full` build variant.
+ARG SEMGREP_VERSION=1.178.0
+RUN python3 -m venv /opt/semgrep-venv && \
+    /opt/semgrep-venv/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}"
+ENV SEMGREP_BINARY=/opt/semgrep-venv/bin/semgrep
+
 # ── Built artifacts ───────────────────────────────────────────────────────────
 COPY --from=frontend-builder     /app/frontend/dist ./frontend/dist
 COPY --from=context-link-fetcher /usr/local/bin/context-link ./bin/context-link

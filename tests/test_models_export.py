@@ -146,6 +146,42 @@ async def test_sarif_export_stride_threats(test_db, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_sarif_export_with_persisted_dependency_threat(test_db, tmp_path: Path) -> None:
+    """A threat with a persisted dependency_ref must not crash `paranoid models
+    export --format sarif`. crud.list_threats() decodes dependency_ref from
+    its stored JSON into a plain dict; export used to pass that dict straight
+    into Threat.model_construct() unconverted, and sarif.py's
+    dependency_ref.package attribute access then raised AttributeError."""
+    model_id = await _make_stride_model("Dependency Model")
+    await crud.create_threat(
+        model_id=model_id,
+        name="Install-time code execution",
+        description="A malicious postinstall script executes arbitrary code during npm install.",
+        target="lodash",
+        impact="Critical",
+        likelihood="Low",
+        mitigations=["Pin exact versions"],
+        stride_category="Elevation of Privilege",
+        source="dependency",
+        dependency_ref={
+            "package": "lodash",
+            "version": "4.17.21",
+            "file": "lib/index.js",
+            "line": 42,
+            "rule_id": "dynamic_code",
+        },
+    )
+
+    out = tmp_path / "deps.sarif"
+    await _export_model_async(model_id=model_id, output_format="sarif", output=out)
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    results = sarif["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["dependencyRef"]["package"] == "lodash"
+
+
+@pytest.mark.asyncio
 async def test_sarif_export_maestro_only_model(test_db, tmp_path: Path, capsys) -> None:
     """MAESTRO-only model: SARIF skips all threats and writes a valid empty SARIF."""
     model_id = await _make_maestro_model()

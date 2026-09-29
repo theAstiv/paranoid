@@ -157,6 +157,53 @@ async def test_export_sarif_valid_structure(client, model_with_threats):
 
 
 @pytest.mark.asyncio
+async def test_export_sarif_with_persisted_dependency_threat(client, test_db):
+    """A threat with a persisted dependency_ref must not crash SARIF export.
+
+    crud.list_threats() decodes dependency_ref from its stored JSON into a
+    plain dict; _build_threats_list() previously passed that dict straight
+    into Threat.model_construct() unconverted, and sarif.py's
+    dependency_ref.package attribute access then raised AttributeError —
+    a 500 on GET /api/export/{id}?format=sarif for any model that had run
+    with a manifest. Route-level so it exercises the real DB round trip."""
+    model_id = await crud.create_threat_model(
+        title="Node Service",
+        description="A Node.js service with npm dependencies for threat modeling",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+    )
+    await crud.create_threat(
+        model_id=model_id,
+        name="Install-time code execution",
+        description=(
+            "A malicious postinstall script in a transitive dependency executes "
+            "arbitrary code during npm install, compromising the build environment"
+        ),
+        target="lodash",
+        impact="Critical",
+        likelihood="Low",
+        mitigations=["Pin exact versions", "npm ci --ignore-scripts"],
+        stride_category="Elevation of Privilege",
+        source="dependency",
+        dependency_ref={
+            "package": "lodash",
+            "version": "4.17.21",
+            "file": "lib/index.js",
+            "line": 42,
+            "rule_id": "dynamic_code",
+        },
+    )
+
+    resp = await client.get(f"/api/export/{model_id}?format=sarif")
+    assert resp.status_code == 200
+    data = json.loads(resp.content)
+    results = data["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["dependencyRef"]["package"] == "lodash"
+
+
+@pytest.mark.asyncio
 async def test_export_sarif_maestro_only_produces_empty_runs(client, test_db):
     """MAESTRO-only threats produce a valid but empty SARIF result."""
     model_id = await crud.create_threat_model(
