@@ -218,6 +218,29 @@ def direct_dependencies_from_manifest(manifest_data: dict[str, Any]) -> dict[str
     return direct
 
 
+def count_resolvable_direct_dependencies(
+    manifest_data: dict[str, Any], lockfile_data: dict[str, Any] | None
+) -> int:
+    """How many direct dependencies analyze_manifest() will actually attempt
+    to analyze — i.e. the same `targets` computation it does internally
+    (pinned by the lockfile, or by a caret/tilde range), before its own
+    max_direct_dependencies cap. Shared by every caller that pre-validates a
+    manifest against DEFAULT_MAX_DIRECT_DEPENDENCIES before calling
+    analyze_manifest() (the API route and the CLI's --manifest flag), so a
+    naive count of every "dependencies" entry doesn't disagree with what the
+    analyzer will actually do: a git/file/url spec or an unresolvable range
+    (e.g. "^1 || ^2") is declared but never becomes a target, while a
+    lockfile (when present) can pin a range the manifest alone couldn't.
+    """
+    direct = direct_dependencies_from_manifest(manifest_data)
+    lockfile_versions = parse_lockfile_versions(lockfile_data) if lockfile_data else {}
+    return sum(
+        1
+        for pkg_name, range_str in direct.items()
+        if lockfile_versions.get(pkg_name) or pin_from_range(range_str)
+    )
+
+
 async def analyze_manifest(
     manifest_data: dict[str, Any],
     lockfile_data: dict[str, Any] | None,
