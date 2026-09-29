@@ -55,11 +55,11 @@ import httpx
 import pytest
 
 from backend.deps import scanner
+from backend.deps.analyze import analyze_package
 from backend.deps.drift import _declared_manifest_paths, _load_package_json
 from backend.deps.fetcher import cache_dir_for
 from backend.deps.install_hooks import hook_node_files_from_package_json
 from backend.models.enums import CapabilityCategory, SourceKind
-from cli.commands.deps import _scan_one
 
 
 pytestmark = [
@@ -179,18 +179,17 @@ async def _scan_all(packages: list[str]) -> dict[str, dict]:
 
     async def _attempt(name: str, client: httpx.AsyncClient) -> dict:
         version = await _resolve_latest_version(name, client)
-        resolved, npm_profile, github_profile, drift = await _scan_one(
-            name, version, "both", client
-        )
+        analysis = await analyze_package(name, version, "both", client)
+        resolved = analysis.resolved
         return {
             "ok": True,
             "unavailable": False,
             "version": resolved.version,
             "github_status": resolved.github_status,
             "github_ref": resolved.github_ref,
-            "npm_profile": npm_profile,
-            "github_profile": github_profile,
-            "drift": drift,
+            "npm_profile": analysis.npm_profile,
+            "github_profile": analysis.github_profile,
+            "drift": analysis.drift,
         }
 
     async def _one(name: str, client: httpx.AsyncClient) -> None:
@@ -308,7 +307,7 @@ def _declared_on_github(rel_path: str, name: str, version: str) -> bool:
     `backend.deps.drift`'s own check so the triage table answers exactly the
     question `_is_generated_unverifiable` asks (deliberately exact-path-only,
     no declared-directory excuse — see that function's docstring), against
-    the same cached GitHub source `_scan_one` already fetched."""
+    the same cached GitHub source `analyze_package` already fetched."""
     github_dir = cache_dir_for(SourceKind.GITHUB, name, version)
     package_json = _load_package_json(github_dir)
     declared = _declared_manifest_paths(package_json) | hook_node_files_from_package_json(
