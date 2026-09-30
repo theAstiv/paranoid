@@ -222,16 +222,32 @@ async def _persist(
 
     if dependency_context:
         for pa in dependency_context.packages:
-            if pa.error or pa.resolved is None:
-                continue
+            package = pa.resolved.name if pa.resolved else pa.ref.name
+            version = pa.resolved.version if pa.resolved else pa.ref.version
             await create_dependency_scan(
                 model_id=model_id,
-                package=pa.resolved.name,
-                version=pa.resolved.version,
+                package=package,
+                version=version,
                 source_mode=dependency_context.source_mode,
                 analysis=pa.model_dump(mode="json"),
             )
-        logger.debug(f"Persisted {len(dependency_context.packages)} dependency scans")
+        # Dependencies dropped before analysis ever ran (no resolvable pinned
+        # version, or the manifest-size cap) — surfaced the same way as a
+        # resolution failure so the UI shows every declared dependency, not
+        # just the ones that made it far enough to produce a PackageAnalysis.
+        for name, reason in dependency_context.skipped.items():
+            await create_dependency_scan(
+                model_id=model_id,
+                package=name,
+                version="",
+                source_mode=dependency_context.source_mode,
+                analysis={"ref": {"name": name, "version": ""}, "error": reason},
+            )
+        logger.debug(
+            "Persisted %d dependency scans (%d skipped)",
+            len(dependency_context.packages),
+            len(dependency_context.skipped),
+        )
 
     if attack_trees and threat_db_ids:
         saved = 0

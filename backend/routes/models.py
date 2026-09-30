@@ -479,13 +479,13 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
         dependency_context = event.data.get("dependency_context")
         if dependency_context and hasattr(dependency_context, "packages"):
             for pa in dependency_context.packages:
-                if pa.error or pa.resolved is None:
-                    continue
+                package = pa.resolved.name if pa.resolved else pa.ref.name
+                version = pa.resolved.version if pa.resolved else pa.ref.version
                 try:
                     await crud.create_dependency_scan(
                         model_id=model_id,
-                        package=pa.resolved.name,
-                        version=pa.resolved.version,
+                        package=package,
+                        version=version,
                         source_mode=dependency_context.source_mode,
                         analysis=pa.model_dump(mode="json"),
                     )
@@ -493,6 +493,22 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                     logger.warning(
                         "Failed to persist dependency scan for '%s'", pa.ref.name, exc_info=True
                     )
+            # Dependencies dropped before analysis ever ran (no resolvable
+            # pinned version, or the manifest-size cap) — surfaced the same
+            # way as a resolution failure so the UI shows every declared
+            # dependency, not just the ones that made it far enough to
+            # produce a PackageAnalysis.
+            for name, reason in dependency_context.skipped.items():
+                try:
+                    await crud.create_dependency_scan(
+                        model_id=model_id,
+                        package=name,
+                        version="",
+                        source_mode=dependency_context.source_mode,
+                        analysis={"ref": {"name": name, "version": ""}, "error": reason},
+                    )
+                except Exception:
+                    logger.warning("Failed to persist skipped dependency '%s'", name, exc_info=True)
 
         gap_list = event.data.get("gaps")
         if gap_list:
