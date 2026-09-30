@@ -6,7 +6,7 @@ Produces clean Markdown suitable for PRs, Confluence, Notion, and security revie
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.export._common import MERMAID_DIAGRAM_PREFIXES
+from backend.export._common import MERMAID_DIAGRAM_PREFIXES, dependency_findings_rows
 
 
 def export_markdown(
@@ -24,6 +24,7 @@ def export_markdown(
     attack_trees: dict[str, dict[str, Any]] | None = None,
     test_suites: dict[str, dict[str, Any]] | None = None,
     gap_summaries: list[str] | None = None,
+    dependency_scans: list[dict[str, Any]] | None = None,
 ) -> str:
     """Export threats to Markdown format.
 
@@ -43,6 +44,8 @@ def export_markdown(
         trust_boundaries: Optional list of trust boundary dicts from the DB.
         attack_trees: Optional mapping of threat_id -> AttackTree.model_dump().
         test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
+        dependency_scans: Optional list of dependency_scans DB rows (see
+                          backend.db.crud.list_dependency_scans).
 
     Returns:
         Markdown string ready to write to a .md file.
@@ -132,6 +135,33 @@ def export_markdown(
             tgt = (tb.get("target_entity") or "—").replace("|", "\\|")
             purpose = (tb.get("purpose") or "—").replace("|", "\\|")
             lines.append(f"| {src} | {tgt} | {purpose} |")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # Dependency Findings
+    if dependency_scans:
+        lines.append("## Dependency Findings")
+        lines.append("")
+        lines.append("| Package | Capabilities | Flags |")
+        lines.append("|---------|--------------|-------|")
+        for pkg, categories, flags in dependency_findings_rows(dependency_scans):
+            # `pkg` may come from an unvalidated package.json key (see
+            # dependency_display_name) — a less trusted source than the LLM
+            # or user-entered text everywhere else in this file (it can come
+            # from a third-party repo cloned through auto-detect). Escaping
+            # "|" alone only protects the table structure; wrapping in a code
+            # span additionally stops the cell rendering as a live image,
+            # `<img>`, or link (GFM applies `\|` escapes before parsing code
+            # spans, so both together survive as literal text). A literal
+            # backslash must be neutralised *first* — a package name ending
+            # in "\" would otherwise turn a later "|" escape into "\\|",
+            # which cmark-gfm still reads as an escaped pipe but which some
+            # other renderers (older markdown-it, some Confluence/Notion
+            # importers) read as an escaped backslash followed by a real
+            # column separator, splitting the row.
+            safe_pkg = pkg.replace("\\", "/").replace("`", "'").replace("|", "\\|")
+            lines.append(f"| `{safe_pkg}` | {categories} | {flags} |")
         lines.append("")
         lines.append("---")
         lines.append("")

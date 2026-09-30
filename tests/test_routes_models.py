@@ -853,3 +853,39 @@ async def test_persist_pipeline_event_saves_dependency_scans(saved_model, test_d
     assert len(scans) == 1
     assert scans[0]["package"] == "evil-pkg"
     assert scans[0]["source_mode"] == "npm"
+
+
+@pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_errored_and_skipped_dependencies(saved_model, test_db):
+    """A failed-resolution package (pa.resolved is None) and a manifest-level
+    skip both persist, using ref name/version, so the UI can show them
+    instead of silently dropping the dependency."""
+    from backend.models.dependencies import DependencyContext, PackageAnalysis, PackageRef
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    pa = PackageAnalysis(
+        ref=PackageRef(name="left-pad", version="1.0.0"),
+        resolved=None,
+        error="no resolvable version",
+    )
+    context = DependencyContext(
+        packages=[pa], source_mode="npm", skipped={"too-many-deps": "manifest size cap exceeded"}
+    )
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": None, "dependency_context": context},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    scans = await crud.list_dependency_scans(saved_model["id"])
+    by_package = {s["package"]: s for s in scans}
+    assert by_package["left-pad"]["version"] == "1.0.0"
+    assert by_package["left-pad"]["analysis"]["error"] == "no resolvable version"
+    assert by_package["too-many-deps"]["version"] == ""
+    # skip_reason (never analyzed), not error (analysis attempted and failed)
+    assert by_package["too-many-deps"]["analysis"]["skip_reason"] == "manifest size cap exceeded"
+    assert "error" not in by_package["too-many-deps"]["analysis"]

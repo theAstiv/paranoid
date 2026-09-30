@@ -514,3 +514,97 @@ async def test_persist_no_dependency_context_saves_no_scans(test_db):
     )
 
     assert await crud.list_dependency_scans(model_id) == []
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_errored_package_by_ref(test_db):
+    """A package that failed resolution (pa.resolved is None) is still saved,
+    using pa.ref's name/version, so the UI can show why it's missing rather
+    than dropping it silently."""
+    from backend.models.dependencies import DependencyContext, PackageAnalysis, PackageRef
+
+    pa = PackageAnalysis(
+        ref=PackageRef(name="left-pad", version="1.0.0"),
+        resolved=None,
+        error="no resolvable version",
+    )
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+        dependency_context=DependencyContext(packages=[pa], source_mode="npm"),
+    )
+
+    scans = await crud.list_dependency_scans(model_id)
+    assert len(scans) == 1
+    assert scans[0]["package"] == "left-pad"
+    assert scans[0]["version"] == "1.0.0"
+    assert scans[0]["analysis"]["error"] == "no resolvable version"
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_skipped_dependencies(test_db):
+    """Dependencies dropped before analysis ever ran (skipped: no resolvable
+    pinned version, or over the manifest size cap) are persisted too, so
+    every declared dependency shows up somewhere in the UI."""
+    from backend.models.dependencies import DependencyContext
+
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+        dependency_context=DependencyContext(
+            packages=[], source_mode="npm", skipped={"too-many-deps": "manifest size cap exceeded"}
+        ),
+    )
+
+    scans = await crud.list_dependency_scans(model_id)
+    assert len(scans) == 1
+    assert scans[0]["package"] == "too-many-deps"
+    assert scans[0]["version"] == ""
+    # skip_reason (never analyzed), not error (analysis attempted and failed)
+    assert scans[0]["analysis"]["skip_reason"] == "manifest size cap exceeded"
+    assert "error" not in scans[0]["analysis"]
+
+
+@pytest.mark.asyncio
+async def test_persist_caps_skipped_dependency_rows(test_db):
+    """A manifest crafted with thousands of bogus dependency keys must not
+    turn into thousands of dependency_scans rows — capped at
+    MAX_SKIPPED_DEPENDENCY_ROWS, with one summary row for the rest."""
+    from backend.deps.analyze import MAX_SKIPPED_DEPENDENCY_ROWS
+    from backend.models.dependencies import DependencyContext
+
+    skipped = {
+        f"pkg-{i}": "unresolvable_version_range" for i in range(MAX_SKIPPED_DEPENDENCY_ROWS + 10)
+    }
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+        dependency_context=DependencyContext(packages=[], source_mode="npm", skipped=skipped),
+    )
+
+    scans = await crud.list_dependency_scans(model_id)
+    assert len(scans) == MAX_SKIPPED_DEPENDENCY_ROWS + 1
+    summary = [s for s in scans if s["package"] == "+10 more skipped"]
+    assert len(summary) == 1
+    assert "10 additional" in summary[0]["analysis"]["skip_reason"]

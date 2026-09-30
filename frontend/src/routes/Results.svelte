@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun, getCommentCounts,
+    subscribeToRun, getCommentCounts, getModelDependencies,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -18,6 +18,7 @@
   import Assignees from '../components/Assignees.svelte'
   import Comments from '../components/Comments.svelte'
   import EntityComments from '../components/EntityComments.svelte'
+  import DependencyHeatmap from '../components/DependencyHeatmap.svelte'
 
   /** @type {{ id: string }} */
   export let params = {}
@@ -29,6 +30,7 @@
   let assetCommentCounts = {}
   let flowCommentCounts = {}
   let threatCommentCounts = {}
+  let dependencyScans = []
   /** @type {any} */ let assetsList
   /** @type {any} */ let flowsList
   /** @type {any} */ let boundariesList
@@ -92,13 +94,15 @@
   }
 
   async function loadSupplementary() {
-    const [a, f, tb, rawCounts] = await Promise.all([
+    const [a, f, tb, rawCounts, deps] = await Promise.all([
       getModelAssets(params.id).catch(() => []),
       getModelFlows(params.id).catch(() => []),
       getModelTrustBoundaries(params.id).catch(() => []),
       getCommentCounts(params.id).catch(() => []),
+      getModelDependencies(params.id).catch(() => []),
     ])
     assets = a; flows = f; trustBoundaries = tb
+    dependencyScans = deps
     assetCommentCounts = {}
     flowCommentCounts = {}
     threatCommentCounts = {}
@@ -332,6 +336,16 @@
           </div>
 
         </div>
+      </div>
+    {/if}
+
+    <!-- Dependencies -->
+    {#if !$pipelineRunning && dependencyScans.length > 0}
+      <div class="card p-5">
+        <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">
+          Dependencies <span class="normal-case font-mono text-c-faint">({dependencyScans.length})</span>
+        </h2>
+        <DependencyHeatmap scans={dependencyScans} />
       </div>
     {/if}
 

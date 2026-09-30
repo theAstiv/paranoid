@@ -27,6 +27,7 @@ from backend.db.crud import (
     update_threat_model,
     update_threat_model_status,
 )
+from backend.deps.analyze import dependency_scan_rows
 from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, TestSuite
@@ -221,17 +222,20 @@ async def _persist(
         logger.debug(f"Persisted {len(threats.threats)} threats")
 
     if dependency_context:
-        for pa in dependency_context.packages:
-            if pa.error or pa.resolved is None:
-                continue
+        rows = dependency_scan_rows(dependency_context)
+        for package, version, analysis in rows:
             await create_dependency_scan(
                 model_id=model_id,
-                package=pa.resolved.name,
-                version=pa.resolved.version,
+                package=package,
+                version=version,
                 source_mode=dependency_context.source_mode,
-                analysis=pa.model_dump(mode="json"),
+                analysis=analysis,
             )
-        logger.debug(f"Persisted {len(dependency_context.packages)} dependency scans")
+        logger.debug(
+            "Persisted %d dependency scans (%d declared dependencies skipped)",
+            len(rows),
+            len(dependency_context.skipped),
+        )
 
     if attack_trees and threat_db_ids:
         saved = 0

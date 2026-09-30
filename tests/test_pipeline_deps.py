@@ -202,6 +202,64 @@ def _pa(name: str, version: str) -> PackageAnalysis:
 
 
 # ---------------------------------------------------------------------------
+# backend.deps.analyze.dependency_scan_rows — shared DB-row flattening
+# ---------------------------------------------------------------------------
+
+
+class TestDependencyScanRows:
+    def test_resolved_package_uses_resolved_name_and_version(self):
+        context = DependencyContext(packages=[_pa("lodash", "4.17.21")], source_mode="npm")
+        rows = analyze.dependency_scan_rows(context)
+        assert rows == [("lodash", "4.17.21", rows[0][2])]
+        assert rows[0][2]["resolved"]["name"] == "lodash"
+
+    def test_errored_package_uses_ref_name_and_version(self):
+        pa = PackageAnalysis(
+            ref=PackageRef(name="left-pad", version="1.0.0"),
+            resolved=None,
+            error="no resolvable version",
+        )
+        context = DependencyContext(packages=[pa], source_mode="npm")
+        rows = analyze.dependency_scan_rows(context)
+        assert rows == [("left-pad", "1.0.0", rows[0][2])]
+        assert rows[0][2]["error"] == "no resolvable version"
+
+    def test_skipped_dependency_gets_skip_reason_not_error(self):
+        context = DependencyContext(
+            packages=[], source_mode="npm", skipped={"weird-spec": "unresolvable_version_range"}
+        )
+        rows = analyze.dependency_scan_rows(context)
+        assert rows == [("weird-spec", "", rows[0][2])]
+        assert rows[0][2]["skip_reason"] == "unresolvable_version_range"
+        assert "error" not in rows[0][2]
+
+    def test_skipped_rows_sorted_by_name(self):
+        context = DependencyContext(
+            packages=[], source_mode="npm", skipped={"zebra": "r1", "apple": "r2"}
+        )
+        rows = analyze.dependency_scan_rows(context)
+        assert [r[0] for r in rows] == ["apple", "zebra"]
+
+    def test_skipped_rows_capped_with_summary_row(self):
+        n = analyze.MAX_SKIPPED_DEPENDENCY_ROWS + 10
+        skipped = {f"pkg-{i:04d}": "unresolvable_version_range" for i in range(n)}
+        context = DependencyContext(packages=[], source_mode="npm", skipped=skipped)
+        rows = analyze.dependency_scan_rows(context)
+        assert len(rows) == analyze.MAX_SKIPPED_DEPENDENCY_ROWS + 1
+        summary_name, summary_version, summary_analysis = rows[-1]
+        assert summary_name == "+10 more skipped"
+        assert summary_version == ""
+        assert "10 additional" in summary_analysis["skip_reason"]
+
+    def test_no_cap_row_when_under_the_limit(self):
+        skipped = {"only-one": "unresolvable_version_range"}
+        context = DependencyContext(packages=[], source_mode="npm", skipped=skipped)
+        rows = analyze.dependency_scan_rows(context)
+        assert len(rows) == 1
+        assert "more skipped" not in rows[0][0]
+
+
+# ---------------------------------------------------------------------------
 # backend.deps.threats — deterministic dependency threat mapping
 # ---------------------------------------------------------------------------
 

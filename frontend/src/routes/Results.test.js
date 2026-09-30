@@ -33,6 +33,7 @@ vi.mock('../lib/api.js', () => ({
   updateComment: vi.fn(),
   deleteComment: vi.fn(),
   getCommentCounts: vi.fn().mockResolvedValue([]),
+  getModelDependencies: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -42,6 +43,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
+  getModelDependencies,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -71,6 +73,7 @@ beforeEach(() => {
   getModelAssets.mockResolvedValue([])
   getModelFlows.mockResolvedValue([])
   getModelTrustBoundaries.mockResolvedValue([])
+  getModelDependencies.mockResolvedValue([])
 })
 
 describe('Results — loading', () => {
@@ -91,6 +94,29 @@ describe('Results — loading', () => {
     await waitFor(() => expect(getModelAssets).toHaveBeenCalledWith('m1'))
     expect(getModelFlows).toHaveBeenCalledWith('m1')
     expect(getModelTrustBoundaries).toHaveBeenCalledWith('m1')
+    expect(getModelDependencies).toHaveBeenCalledWith('m1')
+  })
+})
+
+describe('Results — dependencies', () => {
+  it('hides the Dependencies section when there are no scans', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelDependencies).toHaveBeenCalled())
+    expect(screen.queryByText(/^Dependencies/)).toBeNull()
+  })
+
+  it('renders the Dependencies section with the scan count when scans exist', async () => {
+    getModelDependencies.mockResolvedValue([
+      {
+        id: 'scan-1',
+        package: 'lodash',
+        version: '4.17.21',
+        analysis: { ref: { name: 'lodash', version: '4.17.21' }, npm_profile: { status: 'ok', evidence: [] } },
+      },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('lodash@4.17.21')).toBeInTheDocument())
+    expect(screen.getByText('(1)')).toBeInTheDocument()
   })
 })
 

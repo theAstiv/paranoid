@@ -183,6 +183,14 @@ async def test_config_iterations_are_integers(client):
     assert data["max_iteration_count"] >= data["default_iterations"]
 
 
+@pytest.mark.asyncio
+async def test_config_exposes_deps_analysis_enabled(client):
+    """The wizard's Dependencies step needs to know the kill switch state
+    before offering an upload that the run endpoint would then reject."""
+    resp = await client.get("/api/config/")
+    assert isinstance(resp.json()["deps_analysis_enabled"], bool)
+
+
 def test_api_key_fields_in_sync_with_request_model():
     """API_KEY_FIELDS and UpdateConfigRequest must declare the same providers.
 

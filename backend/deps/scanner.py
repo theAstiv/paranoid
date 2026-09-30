@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import weakref
 from pathlib import Path
 
 from backend.config import settings
@@ -29,12 +30,30 @@ from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 logger = logging.getLogger(__name__)
 
 # Process-wide cap on concurrent Semgrep subprocesses, across every
-# simultaneous pipeline run and manifest sweep sharing this process — not
-# just the 4-at-a-time limit analyze.py applies within one manifest.
-# Created once at import time from the configured value; the lock analyze.py
-# already takes per manifest bounds how many *packages* run at once, this
-# bounds how many *Semgrep processes* run at once regardless of caller.
-_scan_semaphore = asyncio.Semaphore(settings.deps_max_concurrent_scans)
+# simultaneous pipeline run and manifest sweep sharing this process (one loop
+# per process in both the server and the CLI) — not just the 4-at-a-time
+# limit analyze.py applies within one manifest.
+#
+# An asyncio.Semaphore binds to whichever event loop first calls wait() on
+# it, so a module-level instance created at import time breaks the moment a
+# second `asyncio.run()` in the same process contends it (e.g. sequential
+# live-suite test functions, each with its own function-scoped loop) with
+# `RuntimeError: ... is bound to a different event loop`. Keyed lazily by
+# the running loop instead, so each loop gets its own semaphore, read from
+# settings at creation time rather than once at import.
+_scan_semaphores: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _get_scan_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _scan_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(settings.deps_max_concurrent_scans)
+        _scan_semaphores[loop] = semaphore
+    return semaphore
+
 
 RULES_DIR = Path(__file__).resolve().parent / "rules" / "js"
 # Per-file limit passed to Semgrep's own --timeout, and a much larger budget
@@ -484,7 +503,7 @@ async def scan_source(
     extra_targets = tuple(path / rel for rel in scanned_unscanned)
 
     try:
-        async with _scan_semaphore:
+        async with _get_scan_semaphore():
             runs = await _run_semgrep_scan(binary, path, extra_targets)
     except TimeoutError:
         logger.warning("Semgrep scan timed out after %ss for %s@%s", _SCAN_TIMEOUT_S, name, version)

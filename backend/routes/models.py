@@ -17,6 +17,7 @@ from backend.db.gap_utils import decode_gap_summaries
 from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
     count_resolvable_direct_dependencies,
+    dependency_scan_rows,
 )
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
@@ -478,20 +479,18 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
 
         dependency_context = event.data.get("dependency_context")
         if dependency_context and hasattr(dependency_context, "packages"):
-            for pa in dependency_context.packages:
-                if pa.error or pa.resolved is None:
-                    continue
+            for package, version, analysis in dependency_scan_rows(dependency_context):
                 try:
                     await crud.create_dependency_scan(
                         model_id=model_id,
-                        package=pa.resolved.name,
-                        version=pa.resolved.version,
+                        package=package,
+                        version=version,
                         source_mode=dependency_context.source_mode,
-                        analysis=pa.model_dump(mode="json"),
+                        analysis=analysis,
                     )
                 except Exception:
                     logger.warning(
-                        "Failed to persist dependency scan for '%s'", pa.ref.name, exc_info=True
+                        "Failed to persist dependency scan for '%s'", package, exc_info=True
                     )
 
         gap_list = event.data.get("gaps")

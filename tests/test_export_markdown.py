@@ -1,5 +1,7 @@
 """Tests for backend/export/markdown.py."""
 
+import re
+
 from backend.export.markdown import export_markdown
 
 
@@ -273,6 +275,106 @@ def test_all_sections_appear_before_summary() -> None:
     assert assets_pos < summary_pos
     assert flows_pos < summary_pos
     assert tb_pos < summary_pos
+
+
+# ---------------------------------------------------------------------------
+# Dependency findings section
+# ---------------------------------------------------------------------------
+
+_DEPENDENCY_SCAN = {
+    "package": "lodash",
+    "version": "4.17.21",
+    "analysis": {
+        "ref": {"name": "lodash", "version": "4.17.21"},
+        "npm_profile": {
+            "status": "ok",
+            "evidence": [
+                {
+                    "category": "dynamic_code",
+                    "path_class": "shipped",
+                    "file": "lib/index.js",
+                    "line": 12,
+                },
+            ],
+            "install_hooks": [],
+        },
+        "github_profile": None,
+        "drift": {"signal": True, "status": "compared"},
+        "error": None,
+    },
+}
+
+
+def test_dependency_findings_section_renders_table() -> None:
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN]
+    )
+    assert "## Dependency Findings" in md
+    assert "lodash@4.17.21" in md
+    assert "dynamic_code" in md
+    assert "drift" in md
+
+
+def test_dependency_findings_section_absent_when_empty() -> None:
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[])
+    assert "## Dependency Findings" not in md
+
+
+def test_dependency_findings_section_before_summary() -> None:
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN]
+    )
+    assert md.index("## Dependency Findings") < md.index("## Summary")
+
+
+def test_dependency_findings_hostile_package_name_is_escaped() -> None:
+    """A skipped dependency's package name comes from a raw, unvalidated
+    package.json key (a less trusted source than the LLM/user text elsewhere
+    in this file — it can come from a third-party repo cloned through
+    auto-detect) — a pipe would otherwise break the Markdown table, a raw
+    newline could inject arbitrary rows/headings, live Markdown/HTML in the
+    cell (an image, an `<img>` tag, a link) would render for anyone who
+    pastes the report into a PR or Confluence (e.g. loading an attacker's
+    tracking pixel), and a name ending in a literal backslash right before a
+    pipe (`a\\|b`) would turn our own `|` -> `\\|` escape into `a\\\\|b` —
+    which cmark-gfm still reads as one escaped pipe, but which some other
+    renderers (older markdown-it, some Confluence/Notion importers) read as
+    an escaped backslash followed by a real column separator."""
+    hostile_name = (
+        r"a\|b\c"
+        "\n\n![x](https://attacker/t.png) <img src=https://attacker/p> [click](javascript:x)"
+    )
+    hostile_scan = {
+        "package": hostile_name,
+        "version": "",
+        "analysis": {
+            "ref": {"name": hostile_name, "version": ""},
+            "skip_reason": "unresolvable_version_range",
+        },
+    }
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[hostile_scan])
+    dep_section = md[md.index("## Dependency Findings") : md.index("## Summary")]
+    table_lines = [
+        line for line in dep_section.splitlines() if line.startswith("|") and "---" not in line
+    ]
+    header, row = table_lines
+    # Every row must fit the "| Package | Capabilities | Flags |" shape —
+    # count only *unescaped* pipes (the column separators), since the fix
+    # itself adds a literal "|" preceded by a backslash for the hostile name.
+    unescaped_pipe = re.compile(r"(?<!\\)\|")
+    assert len(unescaped_pipe.findall(row)) == len(unescaped_pipe.findall(header))
+    # No raw backslash survives to combine with the "|" escape into an
+    # ambiguous "\\|" — every backslash in the name is neutralised to "/"
+    # before the pipe escape ever runs.
+    assert "\\\\|" not in row
+    # The whole collapsed, escaped name must appear as a single GFM code
+    # span — GFM applies `\|` table-cell escapes before parsing code spans,
+    # so the pipe stays a literal character and the image/img/link payload
+    # never gets a chance to render as anything but plain code-styled text.
+    expected_cell = (
+        "a/\\|b/c ![x](https://attacker/t.png) <img src=https://attacker/p> [click](javascript:x)"
+    )
+    assert f"| `{expected_cell}` |" in row
 
 
 # ---------------------------------------------------------------------------

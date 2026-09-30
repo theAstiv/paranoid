@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials } from './utils.js'
+import {
+  dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials,
+  dependencyCategorySet, dependencyFlags, dependencyDisplayName,
+} from './utils.js'
 
 describe('dreadColor', () => {
   it('returns critical color for score >= 8', () => {
@@ -114,5 +117,87 @@ describe('initials', () => {
 
   it('collapses extra whitespace between name parts', () => {
     expect(initials('Astitva   Verma')).toBe('AV')
+  })
+})
+
+describe('dependencyCategorySet', () => {
+  it('returns an empty set for a missing profile', () => {
+    expect(dependencyCategorySet(undefined).size).toBe(0)
+  })
+
+  it('includes categories only from shipped-path evidence', () => {
+    const profile = {
+      evidence: [
+        { category: 'network', path_class: 'shipped' },
+        { category: 'crypto', path_class: 'test' },
+      ],
+    }
+    const set = dependencyCategorySet(profile)
+    expect(set.has('network')).toBe(true)
+    expect(set.has('crypto')).toBe(false)
+  })
+
+  it('adds build_install when install hooks are present, even without evidence', () => {
+    const profile = { evidence: [], install_hooks: ['postinstall: node setup.js'] }
+    expect(dependencyCategorySet(profile).has('build_install')).toBe(true)
+  })
+})
+
+describe('dependencyFlags', () => {
+  it('returns no flags for a clean analysis', () => {
+    const analysis = { npm_profile: { status: 'ok' } }
+    expect(dependencyFlags(analysis)).toEqual([])
+  })
+
+  it('returns an empty array for a missing analysis', () => {
+    expect(dependencyFlags(undefined)).toEqual([])
+  })
+
+  it('flags a hard error', () => {
+    expect(dependencyFlags({ error: 'resolution failed' })).toContain('error')
+  })
+
+  it('flags drift signal', () => {
+    expect(dependencyFlags({ drift: { signal: true } })).toContain('drift')
+  })
+
+  it('flags install hooks on the npm profile', () => {
+    const analysis = { npm_profile: { install_hooks: ['postinstall: node setup.js'] } }
+    expect(dependencyFlags(analysis)).toContain('install-hook')
+  })
+
+  it('flags a non-ok scan status on either profile', () => {
+    expect(dependencyFlags({ npm_profile: { status: 'semgrep_timeout' } })).toContain('semgrep_timeout')
+    expect(dependencyFlags({ github_profile: { status: 'partial_fetch' } })).toContain('partial_fetch')
+  })
+
+  it('combines multiple flags', () => {
+    const analysis = {
+      drift: { signal: true },
+      npm_profile: { status: 'partial_fetch', install_hooks: ['prepare: husky install'] },
+    }
+    expect(dependencyFlags(analysis)).toEqual(
+      expect.arrayContaining(['drift', 'install-hook', 'partial_fetch'])
+    )
+  })
+
+  it('flags a dependency dropped before analysis as "skipped", not "error"', () => {
+    const flags = dependencyFlags({ skip_reason: 'exceeds_direct_dependency_cap' })
+    expect(flags).toContain('skipped')
+    expect(flags).not.toContain('error')
+  })
+})
+
+describe('dependencyDisplayName', () => {
+  it('joins package and version with @', () => {
+    expect(dependencyDisplayName('lodash', '4.17.21')).toBe('lodash@4.17.21')
+  })
+
+  it('omits the dangling "@" when there is no version', () => {
+    expect(dependencyDisplayName('left-pad', '')).toBe('left-pad')
+  })
+
+  it('collapses embedded whitespace/newlines in an unvalidated package name', () => {
+    expect(dependencyDisplayName('evil\nname\n![x](http://a)', '')).toBe('evil name ![x](http://a)')
   })
 })

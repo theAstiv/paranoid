@@ -366,3 +366,65 @@ async def analyze_manifest(
 
     packages.sort(key=lambda pa: pa.ref.name)
     return DependencyContext(packages=packages, skipped=skipped, source_mode=source_mode)
+
+
+# Cap on `context.skipped` rows turned into DB rows by `dependency_scan_rows()`.
+# `skipped` keys are raw, unvalidated package.json keys (a manifest key with an
+# unresolvable version range is skipped before any name regex ever runs), so
+# without a cap a manifest crafted with thousands of bogus dependency keys
+# would become thousands of dependency_scans INSERTs.
+MAX_SKIPPED_DEPENDENCY_ROWS = 50
+
+
+def dependency_scan_rows(
+    context: DependencyContext,
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Flatten a `DependencyContext` into `(package, version, analysis)` rows
+    ready for `backend.db.crud.create_dependency_scan`. Shared by the CLI
+    persistence path (`backend.db.persist`) and the API's SSE persistence
+    path (`backend.routes.models`) so the row shape and the cap below live
+    in exactly one place.
+
+    Every `PackageAnalysis` is included — using `pa.ref`'s name/version when
+    resolution failed (`pa.resolved` is None) — so a package that errored
+    out is still visible instead of silently dropped.
+
+    `context.skipped` entries (dropped *before* analysis ever ran: no
+    resolvable pinned version, or over the manifest's direct-dependency cap)
+    get their own row with `skip_reason` set, not `error` — `error` is
+    reserved for a `PackageAnalysis` that was actually attempted and failed,
+    so the UI can tell "we didn't look at this" from "we looked and it broke".
+    Capped at `MAX_SKIPPED_DEPENDENCY_ROWS`, sorted by name for a stable
+    order; any excess collapses into one summary row.
+    """
+    rows: list[tuple[str, str, dict[str, Any]]] = []
+    for pa in context.packages:
+        package = pa.resolved.name if pa.resolved else pa.ref.name
+        version = pa.resolved.version if pa.resolved else pa.ref.version
+        rows.append((package, version, pa.model_dump(mode="json")))
+
+    skipped_items = sorted(context.skipped.items())
+    for name, reason in skipped_items[:MAX_SKIPPED_DEPENDENCY_ROWS]:
+        rows.append((name, "", {"ref": {"name": name, "version": ""}, "skip_reason": reason}))
+
+    overflow = len(skipped_items) - MAX_SKIPPED_DEPENDENCY_ROWS
+    if overflow > 0:
+        summary_name = f"+{overflow} more skipped"
+        rows.append(
+            (
+                summary_name,
+                "",
+                {
+                    "ref": {"name": summary_name, "version": ""},
+                    "skip_reason": (
+                        f"{overflow} additional declared dependencies were skipped "
+                        "and are not shown individually"
+                    ),
+                    # Lets display-order sorting (backend.export._common,
+                    # the frontend heatmap) push this row last instead of
+                    # alphabetically first — "+" sorts before any letter.
+                    "skip_summary": True,
+                },
+            )
+        )
+    return rows

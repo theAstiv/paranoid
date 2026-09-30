@@ -361,10 +361,11 @@ async def test_scan_source_timeout(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scan_source_bounds_concurrent_semgrep_runs(monkeypatch):
-    """N2: `_scan_semaphore` must cap concurrent Semgrep invocations across
+    """N2: the scan semaphore must cap concurrent Semgrep invocations across
     simultaneous `scan_source` calls, not just within one manifest sweep."""
     monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
-    monkeypatch.setattr(scanner, "_scan_semaphore", asyncio.Semaphore(2))
+    monkeypatch.setattr(scanner.settings, "deps_max_concurrent_scans", 2)
+    scanner._scan_semaphores.clear()
 
     current = 0
     peak = 0
@@ -390,6 +391,38 @@ async def test_scan_source_bounds_concurrent_semgrep_runs(monkeypatch):
     )
 
     assert peak <= 2
+
+
+def test_scan_semaphore_survives_sequential_event_loops(monkeypatch):
+    """S1 regression: a module-level `asyncio.Semaphore` binds to whichever
+    event loop first contends it, so a second `asyncio.run()` call in the
+    same process raises `RuntimeError: ... bound to a different event loop`
+    once the semaphore is actually contended (i.e. concurrent scans within
+    that run). The lazy per-loop semaphore must not carry this over."""
+    monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
+    monkeypatch.setattr(scanner.settings, "deps_max_concurrent_scans", 1)
+    scanner._scan_semaphores.clear()
+
+    async def _fake_run_semgrep_scan(binary, target, extra_targets):
+        await asyncio.sleep(0.01)
+        return [(0, json.dumps({"results": [], "errors": []}), "")]
+
+    monkeypatch.setattr(scanner, "_run_semgrep_scan", _fake_run_semgrep_scan)
+
+    async def _contended_run():
+        await asyncio.gather(
+            *(
+                scanner.scan_source(
+                    FIXTURE_DIR, SourceKind.NPM_TARBALL, name="pkg", version="1.0.0"
+                )
+                for _ in range(2)
+            )
+        )
+
+    # Two independent `asyncio.run()` calls, each with its own event loop —
+    # both must succeed without clearing `_scan_semaphores` between them.
+    asyncio.run(_contended_run())
+    asyncio.run(_contended_run())
 
 
 def _pid_alive(pid: int) -> bool:

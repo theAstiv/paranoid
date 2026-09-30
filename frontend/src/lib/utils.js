@@ -80,3 +80,77 @@ export function initials(name) {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
+
+/**
+ * All 11 dependency-engine capability categories, in a fixed display order —
+ * matches backend.models.enums.CapabilityCategory.
+ */
+export const DEPENDENCY_CATEGORIES = [
+  'network', 'filesystem', 'process', 'crypto', 'deserialization',
+  'dynamic_code', 'native_ffi', 'persistence', 'authentication',
+  'environment', 'build_install',
+]
+
+/**
+ * The set of capability categories a `CapabilityProfile` shows evidence for,
+ * mirroring `CapabilityProfile.category_set()` on the backend: only
+ * `path_class === 'shipped'` evidence counts, and a flagged install hook
+ * always contributes `build_install` even without its own evidence entry.
+ * @param {{ evidence?: Array<{category: string, path_class: string}>, install_hooks?: string[] }} [profile]
+ * @returns {Set<string>}
+ */
+export function dependencyCategorySet(profile) {
+  const categories = new Set()
+  if (!profile) return categories
+  for (const e of profile.evidence ?? []) {
+    if (e.path_class === 'shipped') categories.add(e.category)
+  }
+  if (profile.install_hooks?.length) categories.add('build_install')
+  return categories
+}
+
+/**
+ * Short flag labels summarizing what's notable about one package's
+ * dependency-engine analysis — surfaced as the heatmap's flags column.
+ * @param {{
+ *   npm_profile?: {status?: string, install_hooks?: string[]},
+ *   github_profile?: {status?: string},
+ *   drift?: {signal?: boolean, status?: string},
+ *   error?: string,
+ * }} [analysis]
+ * @returns {string[]}
+ */
+export function dependencyFlags(analysis) {
+  const flags = []
+  if (!analysis) return flags
+  // `skip_reason` is a dependency that was never analyzed at all (no
+  // resolvable pinned version, over the manifest's direct-dependency cap) —
+  // distinct from `error`, which is a PackageAnalysis that was actually
+  // attempted and failed. Conflating the two would flag an ordinary
+  // git/file-spec dependency the same as a real analysis failure.
+  if (analysis.skip_reason) flags.push('skipped')
+  if (analysis.error) flags.push('error')
+  if (analysis.drift?.signal) flags.push('drift')
+  if (analysis.npm_profile?.install_hooks?.length) flags.push('install-hook')
+  for (const profile of [analysis.npm_profile, analysis.github_profile]) {
+    if (profile && profile.status && profile.status !== 'ok') flags.push(profile.status)
+  }
+  return [...new Set(flags)]
+}
+
+/**
+ * Formats a package's display label — omits a dangling "@" when a
+ * dropped/errored dependency was never resolved to a version.
+ *
+ * `pkg` may be a raw, unvalidated package.json key (a skipped dependency is
+ * dropped before any name regex runs) — collapse embedded newlines/whitespace
+ * runs so a hostile manifest key can't break the table layout. Svelte text
+ * interpolation already prevents markup injection; this is layout hygiene.
+ * @param {string} pkg
+ * @param {string} version
+ * @returns {string}
+ */
+export function dependencyDisplayName(pkg, version) {
+  const name = pkg.trim().split(/\s+/).join(' ')
+  return version ? `${name}@${version}` : name
+}
