@@ -28,6 +28,14 @@ from backend.models.enums import CapabilityCategory, PathClass, SourceKind
 
 logger = logging.getLogger(__name__)
 
+# Process-wide cap on concurrent Semgrep subprocesses, across every
+# simultaneous pipeline run and manifest sweep sharing this process — not
+# just the 4-at-a-time limit analyze.py applies within one manifest.
+# Created once at import time from the configured value; the lock analyze.py
+# already takes per manifest bounds how many *packages* run at once, this
+# bounds how many *Semgrep processes* run at once regardless of caller.
+_scan_semaphore = asyncio.Semaphore(settings.deps_max_concurrent_scans)
+
 RULES_DIR = Path(__file__).resolve().parent / "rules" / "js"
 # Per-file limit passed to Semgrep's own --timeout, and a much larger budget
 # for the whole run — a package with a few large dist/ bundles must not trip
@@ -476,7 +484,8 @@ async def scan_source(
     extra_targets = tuple(path / rel for rel in scanned_unscanned)
 
     try:
-        runs = await _run_semgrep_scan(binary, path, extra_targets)
+        async with _scan_semaphore:
+            runs = await _run_semgrep_scan(binary, path, extra_targets)
     except TimeoutError:
         logger.warning("Semgrep scan timed out after %ss for %s@%s", _SCAN_TIMEOUT_S, name, version)
         return CapabilityProfile(

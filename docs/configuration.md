@@ -108,10 +108,12 @@ docker compose up --build
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SEMGREP_BINARY` | auto | Explicit path to the `semgrep` binary; if unset, Paranoid searches `PATH`. Semgrep is not a Python dependency of Paranoid — install it separately (`pip install semgrep` or `pipx install semgrep`) |
-| `DEPS_CACHE_DIR` | `./data/deps_cache` | Immutable per-version cache for fetched npm tarball / GitHub source trees |
+| `DEPS_CACHE_DIR` | `./data/deps_cache` | Per-version cache for fetched npm tarball / GitHub source trees. A given version's entry is immutable while present, but the cache as a whole is no longer unbounded — see `DEPS_CACHE_MAX_GB` |
 | `DEPS_MAX_TARBALL_MB` | `50` | Compressed-size cap enforced during download, before extraction |
-| `DEPS_ANALYSIS_TIMEOUT_SECONDS` | `180` | Wall-clock budget for the pipeline's dependency-analysis step; exceeding it degrades to a warning and the pipeline continues without it |
+| `DEPS_ANALYSIS_TIMEOUT_SECONDS` | `180` | Wall-clock budget for the pipeline's dependency-analysis step; exceeding it degrades to a warning and the pipeline continues without it. Individual packages are budgeted against this deadline, so a cold-cache run returns whatever finished instead of discarding the whole sweep |
 | `DEPS_ANALYSIS_ENABLED` | `true` | Kill switch for server-side dependency analysis via `POST /api/models/{id}/run` (manifest upload and code-source auto-detect). `false` rejects an uploaded manifest with 422 and skips auto-detect, without a redeploy. Does not affect the `paranoid deps`/`paranoid run --manifest` CLI |
+| `DEPS_MAX_CONCURRENT_SCANS` | `2` | Process-wide cap on concurrent Semgrep subprocesses, across every simultaneous pipeline run sharing this process (separate from the 4-at-a-time limit applied within one manifest's sweep) |
+| `DEPS_CACHE_MAX_GB` | `10` | Soft size budget for `DEPS_CACHE_DIR`, in GiB. Checked after every fetch; the least-recently-used entries (by last access, not just last fetch) are deleted first, skipping anything currently being fetched, scanned, or drift-compared. `0` disables eviction entirely |
 
 See [Dependency capability engine](../README.md#dependency-capability-engine) in the README for what `paranoid deps scan|diff|scan-manifest` report and their limits.
 

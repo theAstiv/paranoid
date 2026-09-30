@@ -359,6 +359,39 @@ async def test_scan_source_timeout(monkeypatch):
     assert profile.status == "semgrep_timeout"
 
 
+@pytest.mark.asyncio
+async def test_scan_source_bounds_concurrent_semgrep_runs(monkeypatch):
+    """N2: `_scan_semaphore` must cap concurrent Semgrep invocations across
+    simultaneous `scan_source` calls, not just within one manifest sweep."""
+    monkeypatch.setattr(scanner, "resolve_semgrep_binary", lambda: "semgrep")
+    monkeypatch.setattr(scanner, "_scan_semaphore", asyncio.Semaphore(2))
+
+    current = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def _tracked_run_semgrep_scan(binary, target, extra_targets):
+        nonlocal current, peak
+        async with lock:
+            current += 1
+            peak = max(peak, current)
+        await asyncio.sleep(0.05)
+        async with lock:
+            current -= 1
+        return [(0, json.dumps({"results": [], "errors": []}), "")]
+
+    monkeypatch.setattr(scanner, "_run_semgrep_scan", _tracked_run_semgrep_scan)
+
+    await asyncio.gather(
+        *(
+            scanner.scan_source(FIXTURE_DIR, SourceKind.NPM_TARBALL, name="pkg", version="1.0.0")
+            for _ in range(5)
+        )
+    )
+
+    assert peak <= 2
+
+
 def _pid_alive(pid: int) -> bool:
     """Cross-platform liveness check — no psutil dependency in this repo."""
     if sys.platform == "win32":

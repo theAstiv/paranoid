@@ -9,6 +9,7 @@ step — one implementation, three callers.
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -18,7 +19,7 @@ from typing import Any
 import httpx
 
 from backend.deps.drift import compare_sources
-from backend.deps.fetcher import FetchError, fetch_source
+from backend.deps.fetcher import FetchError, cache_dir_for, fetch_source, mark_in_use
 from backend.deps.resolver import resolve_github_ref, resolve_npm
 from backend.deps.scanner import scan_source
 from backend.models.dependencies import (
@@ -74,6 +75,11 @@ async def fetch_and_scan_one(
         result = await fetch_source(resolved, kind, client)
     if result.path is None:
         return None, None, result.reason
+    # Eviction protection for this path is the caller's job (analyze_package
+    # marks it in-use for the whole fetch+scan+drift span before calling
+    # this function) — not scoped here, so there's no gap between this
+    # function's own work finishing and the caller's drift comparison
+    # starting.
     profile = await scan_source(result.path, kind, name=resolved.name, version=resolved.version)
     if (
         result.skipped_long_paths
@@ -120,44 +126,63 @@ async def analyze_package(
     if want_github:
         resolved = await resolve_github_ref(resolved, client)
 
-    tarball_path = tarball_profile = tarball_skip_reason = None
-    if want_npm:
-        tarball_path, tarball_profile, tarball_skip_reason = await fetch_and_scan_one(
-            resolved, SourceKind.NPM_TARBALL, client
-        )
-
-    github_path = github_profile = github_skip_reason = None
-    if want_github:
-        github_path, github_profile, github_skip_reason = await fetch_and_scan_one(
-            resolved, SourceKind.GITHUB, client
-        )
-
-    drift = None
-    if want_npm and want_github:
-        if tarball_path is None or tarball_profile is None:
-            # compare_sources requires a resolved tarball dir/profile — this is
-            # the npm side failing to fetch, not GitHub, so it gets its own label.
-            drift = DriftReport(
-                name=name,
-                version=version,
-                status="skipped_npm_unavailable",
-                skip_reason=tarball_skip_reason,
+    # Marked in-use for the entire fetch+scan+drift span, starting *before*
+    # either source is fetched — not just around the drift comparison at the
+    # end. cache_dir_for() is deterministic from (kind, name, version) alone,
+    # so the eventual fetch path is already known here, before fetch_source
+    # even runs. A narrower window (e.g. only wrapping scan_source, or only
+    # wrapping the drift comparison) leaves gaps — the GitHub fetch itself,
+    # or the time between npm's scan finishing and drift starting — where a
+    # concurrent fetch for a *different* package could still evict this
+    # entry and turn a scan-time gap into a false supply-chain drift alarm.
+    async with contextlib.AsyncExitStack() as stack:
+        if want_npm:
+            await stack.enter_async_context(
+                mark_in_use(cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version))
             )
-        else:
-            drift = compare_sources(
-                name, version, tarball_path, tarball_profile, github_path, github_profile
+        if want_github:
+            await stack.enter_async_context(
+                mark_in_use(cache_dir_for(SourceKind.GITHUB, resolved.name, resolved.version))
             )
-            if drift.status == "skipped_github_unavailable" and github_skip_reason:
-                drift = drift.model_copy(update={"skip_reason": github_skip_reason})
-            elif drift.status == "skipped_scan_incomplete":
-                incomplete_sides = [
-                    side
-                    for side, profile in (("npm", tarball_profile), ("github", github_profile))
-                    if profile is not None and profile.status != "ok"
-                ]
-                drift = drift.model_copy(
-                    update={"skip_reason": f"scan_incomplete:{','.join(incomplete_sides)}"}
+
+        tarball_path = tarball_profile = tarball_skip_reason = None
+        if want_npm:
+            tarball_path, tarball_profile, tarball_skip_reason = await fetch_and_scan_one(
+                resolved, SourceKind.NPM_TARBALL, client
+            )
+
+        github_path = github_profile = github_skip_reason = None
+        if want_github:
+            github_path, github_profile, github_skip_reason = await fetch_and_scan_one(
+                resolved, SourceKind.GITHUB, client
+            )
+
+        drift = None
+        if want_npm and want_github:
+            if tarball_path is None or tarball_profile is None:
+                # compare_sources requires a resolved tarball dir/profile — this is
+                # the npm side failing to fetch, not GitHub, so it gets its own label.
+                drift = DriftReport(
+                    name=name,
+                    version=version,
+                    status="skipped_npm_unavailable",
+                    skip_reason=tarball_skip_reason,
                 )
+            else:
+                drift = compare_sources(
+                    name, version, tarball_path, tarball_profile, github_path, github_profile
+                )
+                if drift.status == "skipped_github_unavailable" and github_skip_reason:
+                    drift = drift.model_copy(update={"skip_reason": github_skip_reason})
+                elif drift.status == "skipped_scan_incomplete":
+                    incomplete_sides = [
+                        side
+                        for side, profile in (("npm", tarball_profile), ("github", github_profile))
+                        if profile is not None and profile.status != "ok"
+                    ]
+                    drift = drift.model_copy(
+                        update={"skip_reason": f"scan_incomplete:{','.join(incomplete_sides)}"}
+                    )
 
     return PackageAnalysis(
         ref=ref,
