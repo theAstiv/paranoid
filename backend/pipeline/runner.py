@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 
 StopAfter = Literal["extraction"]
 
+# Grace period added on top of `deps_analysis_timeout_seconds` for the outer
+# dependency-analysis backstop (see below). analyze_manifest() budgets each
+# package against a deadline equal to the base timeout and returns whatever
+# finished once it passes — but cancelling a still-running Semgrep scan can
+# itself take up to ~10s (backend.deps.scanner._kill_process_tree: a taskkill
+# call plus two 5s waits). Without this grace, the outer wait_for(timeout=...)
+# can fire while analyze_manifest is still finishing that cleanup, discarding
+# the whole partial DependencyContext it was about to return — exactly the
+# all-or-nothing failure the deadline exists to avoid.
+_DEPS_ANALYSIS_BACKSTOP_GRACE_S = 30.0
+
 
 def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2) -> bool:
     """Return True when all STRIDE categories have at least min_per_category threats.
@@ -270,13 +281,29 @@ class PipelineRunner:
                 message="Analyzing dependency capabilities...",
             )
             try:
+                # analyze_manifest() itself budgets each package against
+                # `deadline` and returns partial results (finished packages
+                # plus skip reason "time_budget" for the rest) instead of an
+                # all-or-nothing failure. The outer wait_for is a hard
+                # backstop for anything analyze_manifest doesn't itself
+                # budget (e.g. it hanging before the per-package semaphore is
+                # ever reached) — expected to be a no-op in the normal case.
+                # Its timeout must exceed the deadline by
+                # _DEPS_ANALYSIS_BACKSTOP_GRACE_S, not equal it: a package
+                # cancelled right at the deadline can take several seconds to
+                # actually finish cleaning up (see the constant's docstring),
+                # and an equal timeout fires mid-cleanup, discarding the
+                # partial results analyze_manifest was about to return.
+                deadline = time.monotonic() + settings.deps_analysis_timeout_seconds
                 dependency_context = await asyncio.wait_for(
                     analyze_manifest(
                         dependency_manifest,
                         dependency_lockfile,
                         source_mode=dependency_source_mode,
+                        deadline=deadline,
                     ),
-                    timeout=settings.deps_analysis_timeout_seconds,
+                    timeout=settings.deps_analysis_timeout_seconds
+                    + _DEPS_ANALYSIS_BACKSTOP_GRACE_S,
                 )
                 yield PipelineEvent(
                     step=PipelineStep.ANALYZE_DEPENDENCIES,

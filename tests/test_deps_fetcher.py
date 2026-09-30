@@ -12,6 +12,7 @@ import io
 import json
 import os
 import tarfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,10 +24,12 @@ from backend.models.enums import SourceKind
 
 @pytest.fixture(autouse=True)
 def _isolated_cache(tmp_path, monkeypatch):
-    """Point deps_cache_dir at a per-test temp directory and reset the lock table."""
+    """Point deps_cache_dir at a per-test temp directory and reset the lock
+    and in-use tables."""
     monkeypatch.setattr(fetcher.settings, "deps_cache_dir", str(tmp_path))
     fetcher._locks.clear()
     fetcher._lock_refcounts.clear()
+    fetcher._in_use.clear()
 
 
 def _resolved(
@@ -1217,3 +1220,171 @@ async def test_path_too_long_mapped_to_path_too_long_error(monkeypatch):
     async with _client(data) as client:
         with pytest.raises(fetcher.PathTooLongError):
             await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+
+# ---------------------------------------------------------------------------
+# cache_dir_for() name/version validation (N3: defence in depth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "version"),
+    [
+        ("../../etc/passwd", "1.0.0"),
+        ("pkg", "../../../etc/passwd"),
+        ("pkg", "1.0.0/../../evil"),
+        ("..", "1.0.0"),
+        ("pkg\\..\\..\\evil", "1.0.0"),
+        ("", "1.0.0"),
+        ("pkg", ""),
+    ],
+)
+def test_cache_dir_for_rejects_unsafe_identifiers(name, version):
+    with pytest.raises(ValueError, match="Unsafe package identifier"):
+        fetcher.cache_dir_for(SourceKind.NPM_TARBALL, name, version)
+
+
+@pytest.mark.parametrize(
+    ("name", "version"),
+    [
+        ("chalk", "1.0.0"),
+        ("@babel/core", "7.20.0"),
+        ("pkg", "1.0.0-beta.1+build.5"),
+    ],
+)
+def test_cache_dir_for_accepts_real_identifiers(name, version):
+    path = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, name, version)
+    assert path.name == f"{name.replace('/', '__')}@{version}"
+
+
+# ---------------------------------------------------------------------------
+# Cache disk budget / LRU eviction (N2)
+# ---------------------------------------------------------------------------
+
+
+def _make_cache_entry(
+    kind: SourceKind, name: str, version: str, size_bytes: int, marker_json: str = "{}"
+) -> Path:
+    entry = fetcher.cache_dir_for(kind, name, version)
+    entry.mkdir(parents=True)
+    (entry / "payload.bin").write_bytes(b"x" * size_bytes)
+    (entry / ".complete").write_text(marker_json)
+    return entry
+
+
+def test_evict_cache_entries_over_budget_removes_oldest_first(monkeypatch):
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 1 / 1024)  # 1 MiB budget
+    old = _make_cache_entry(SourceKind.NPM_TARBALL, "old-pkg", "1.0.0", 700 * 1024)
+    new = _make_cache_entry(SourceKind.NPM_TARBALL, "new-pkg", "1.0.0", 700 * 1024)
+    os.utime(old / ".complete", (1_000, 1_000))
+    os.utime(new / ".complete", (2_000_000_000, 2_000_000_000))
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert not old.exists()
+    assert new.exists()
+
+
+def test_evict_cache_entries_over_budget_skips_locked_entries(monkeypatch):
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 1 / 1024)  # 1 MiB budget
+    locked = _make_cache_entry(SourceKind.NPM_TARBALL, "locked-pkg", "1.0.0", 700 * 1024)
+    other = _make_cache_entry(SourceKind.NPM_TARBALL, "other-pkg", "1.0.0", 700 * 1024)
+    os.utime(locked / ".complete", (1_000, 1_000))
+    os.utime(other / ".complete", (2_000, 2_000))
+    key = fetcher.cache_key(SourceKind.NPM_TARBALL, "locked-pkg", "1.0.0")
+    fetcher._lock_refcounts[key] = 1
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert locked.exists()
+    assert not other.exists()
+
+
+def test_evict_cache_entries_over_budget_skips_in_use_entries(monkeypatch):
+    """N2: an entry a caller marked in-use (scanning/drift, not a fetch lock)
+    must survive eviction even if it's the oldest entry."""
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 1 / 1024)  # 1 MiB budget
+    in_use = _make_cache_entry(SourceKind.NPM_TARBALL, "in-use-pkg", "1.0.0", 700 * 1024)
+    other = _make_cache_entry(SourceKind.NPM_TARBALL, "other-pkg", "1.0.0", 700 * 1024)
+    os.utime(in_use / ".complete", (1_000, 1_000))
+    os.utime(other / ".complete", (2_000, 2_000))
+    fetcher._in_use[in_use] = 1
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert in_use.exists()
+    assert not other.exists()
+
+
+def test_evict_cache_entries_disabled_when_budget_zero(monkeypatch):
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 0)
+    entry = _make_cache_entry(SourceKind.NPM_TARBALL, "pkg", "1.0.0", 5 * 1024 * 1024)
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert entry.exists()
+
+
+def test_evict_cache_entries_uses_marker_total_bytes_without_walking(monkeypatch):
+    """N2 (perf): when the marker records `total_bytes`, eviction must trust
+    it instead of walking the directory — a marker claiming a tiny size keeps
+    a huge on-disk entry from ever being counted against the budget, proving
+    the walk was skipped."""
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 1 / 1024)  # 1 MiB budget
+    small_by_marker = _make_cache_entry(
+        SourceKind.NPM_TARBALL,
+        "big-on-disk",
+        "1.0.0",
+        5 * 1024 * 1024,
+        marker_json='{"total_bytes": 1}',
+    )
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert small_by_marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_mark_in_use_protects_path_for_the_block_duration():
+    path = Path("some/cache/dir")
+    async with fetcher.mark_in_use(path):
+        assert path in fetcher._protected_cache_dirs()
+    assert path not in fetcher._protected_cache_dirs()
+
+
+def test_evict_cache_entries_over_budget_swallows_errors(monkeypatch, caplog):
+    """N2: eviction is housekeeping — a failure inside it must never turn a
+    successful fetch into a reported error, but it must still be logged so
+    a persistent eviction failure isn't silently invisible."""
+    monkeypatch.setattr(
+        fetcher,
+        "_evict_cache_entries_over_budget",
+        lambda: (_ for _ in ()).throw(OSError("simulated race")),
+    )
+
+    with caplog.at_level("WARNING", logger="backend.deps.fetcher"):
+        fetcher._evict_cache_entries_over_budget_safe()  # must not raise
+
+    assert "eviction failed" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_touches_marker_mtime_on_cache_hit(monkeypatch):
+    """N2: a cache hit must bump the marker's mtime so eviction's
+    oldest-first ordering reflects last-*used*, not just last-*fetched*."""
+    resolved = _resolved(integrity=_integrity_for(_normal_tarball_bytes()))
+    entry = _make_cache_entry(
+        SourceKind.NPM_TARBALL,
+        resolved.name,
+        resolved.version,
+        10,
+        marker_json=json.dumps({"schema_version": fetcher._MARKER_SCHEMA_VERSION}),
+    )
+    old_time = 1_000
+    os.utime(entry / ".complete", (old_time, old_time))
+
+    async with _client(b"") as client:  # never actually fetched — it's a cache hit
+        result = await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    assert result.path == entry
+    assert (entry / ".complete").stat().st_mtime > old_time

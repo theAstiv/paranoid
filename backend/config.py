@@ -130,6 +130,17 @@ class Settings(BaseSettings):
     deps_analysis_enabled: bool = True
     deps_cache_dir: str = "./data/deps_cache"
     deps_max_tarball_mb: int = Field(default=50, gt=0)
+    # Process-wide cap on concurrent Semgrep subprocesses across *all*
+    # simultaneous pipeline runs — analyze.py's own semaphore only bounds
+    # concurrency within a single manifest's sweep (4 packages at a time),
+    # so several runs started at once could otherwise spawn unbounded
+    # Semgrep processes together.
+    deps_max_concurrent_scans: int = Field(default=2, gt=0)
+    # Soft cap on DEPS_CACHE_DIR's total size, in GiB. 0 disables eviction
+    # (the original unbounded-cache behavior). Checked after every fetch;
+    # oldest entries (by `.complete` marker mtime) are evicted first,
+    # skipping any entry currently locked by an in-flight fetch.
+    deps_cache_max_gb: float = Field(default=10.0, ge=0)
     # Wall-clock budget for the pipeline's ANALYZE_DEPENDENCIES step (resolving,
     # fetching, and scanning every direct dependency). Exceeding it degrades
     # exactly like any other dependency-analysis failure: a warning event,

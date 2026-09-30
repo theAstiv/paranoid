@@ -16,6 +16,7 @@ import itertools
 import json
 import logging
 import os
+import re
 import shutil
 import tarfile
 import tempfile
@@ -137,8 +138,166 @@ def cache_key(kind: SourceKind, name: str, version: str) -> str:
     return f"{kind.value}:{name}@{version}"
 
 
+# Defence in depth for cache_dir_for(): by the time a (name, version) pair
+# reaches this module it has already been validated against the npm
+# registry (resolved_package_from_doc requires `version` to be an existing
+# key in the registry document's `versions`, so neither value can carry a
+# path-traversal payload today). This regex check doesn't rely on that
+# invariant holding forever — it rejects anything that isn't a plausible
+# npm package name / version before it's ever interpolated into a filesystem
+# path, regardless of which caller supplied it or how.
+_SAFE_NAME_RE = re.compile(r"^@?[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
+_SAFE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$")
+
+
 def cache_dir_for(kind: SourceKind, name: str, version: str) -> Path:
+    if not _SAFE_NAME_RE.match(name) or not _SAFE_VERSION_RE.match(version):
+        raise ValueError(f"Unsafe package identifier for cache path: {name!r}@{version!r}")
     return Path(settings.deps_cache_dir) / kind.value / f"{_sanitize_name(name)}@{version}"
+
+
+# Refcounted, like `_locks`/`_lock_refcounts`: a cache directory a caller has
+# marked "in use" (scanning it, comparing it in a drift check) via
+# `mark_in_use()` — protected from eviction the same as an in-flight fetch,
+# since `_locked` only covers the fetch itself and scanning/drift both run
+# on an already-fetched, already-unlocked directory.
+_in_use: dict[Path, int] = {}
+_in_use_guard = asyncio.Lock()
+
+
+@contextlib.asynccontextmanager
+async def mark_in_use(path: Path) -> AsyncIterator[None]:
+    """Hold `path` protected from cache eviction for the duration of the
+    `async with` block. Nests safely (refcounted): a caller doesn't need to
+    know whether an outer scope already marked the same path."""
+    async with _in_use_guard:
+        _in_use[path] = _in_use.get(path, 0) + 1
+    try:
+        yield
+    finally:
+        async with _in_use_guard:
+            _in_use[path] -= 1
+            if _in_use[path] <= 0:
+                _in_use.pop(path, None)
+
+
+def _protected_cache_dirs() -> set[Path]:
+    """Cache directories that must never be evicted right now: an in-flight
+    fetch (`_locked`) or a caller-marked in-use scan/drift comparison
+    (`mark_in_use`) — even if either would otherwise be the oldest entry."""
+    dirs: set[Path] = set(_in_use)
+    for key in list(_lock_refcounts):
+        kind_str, _, name_version = key.partition(":")
+        name, _, version = name_version.rpartition("@")
+        if not name or not version:
+            continue
+        try:
+            kind = SourceKind(kind_str)
+        except ValueError:
+            continue
+        dirs.add(cache_dir_for(kind, name, version))
+    return dirs
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _entry_size(entry: Path, marker_data: dict) -> int:
+    """Prefer the marker's recorded `total_bytes` (written at fetch time) over
+    walking + stat()ing every file in `entry` — the whole point of eviction
+    running after *every* fetch is to stay cheap, and a full walk of a
+    multi-GB cache on that path would eat into the same wall-clock budget
+    `deps_analysis_timeout_seconds` is trying to protect. Only a marker
+    written before this field existed falls back to the walk."""
+    total_bytes = marker_data.get("total_bytes")
+    if isinstance(total_bytes, int) and total_bytes >= 0:
+        return total_bytes
+    return _dir_size(entry)
+
+
+def _touch_marker(marker: Path) -> None:
+    """Bump a `.complete` marker's mtime to now on a cache hit, so eviction's
+    "oldest first" ordering reflects last-*used*, not just last-*fetched* —
+    a popular package that's read from cache constantly must not be the
+    first thing evicted just because it was fetched long ago."""
+    with contextlib.suppress(OSError):
+        os.utime(marker, None)
+
+
+def _evict_cache_entries_over_budget() -> None:
+    """Keep DEPS_CACHE_DIR under `settings.deps_cache_max_gb` by deleting the
+    least-recently-used entries first (by `.complete` marker mtime, bumped on
+    every cache hit by `_touch_marker`). A no-op when the budget is 0
+    (disabled) or the cache is already under it. Never touches an entry with
+    an in-flight fetch or a caller-marked in-use scan/drift comparison (see
+    `_protected_cache_dirs`). Runs synchronously — the caller offloads it to
+    a thread, matching every other blocking filesystem op in this module, and
+    wraps it in a try/except: eviction is housekeeping, so a failure in it
+    (e.g. two evictions racing on the same file) must never turn a
+    successful fetch into a reported error."""
+    max_gb = settings.deps_cache_max_gb
+    if max_gb <= 0:
+        return
+    root = Path(settings.deps_cache_dir)
+    if not root.is_dir():
+        return
+
+    entries: list[tuple[float, Path, int]] = []
+    total = 0
+    for kind_dir in root.iterdir():
+        if not kind_dir.is_dir():
+            continue
+        for entry in kind_dir.iterdir():
+            marker = entry / ".complete"
+            if not entry.is_dir() or not marker.is_file():
+                continue
+            marker_data = _read_marker_data(marker)
+            size = _entry_size(entry, marker_data)
+            total += size
+            try:
+                mtime = marker.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            entries.append((mtime, entry, size))
+
+    budget_bytes = int(max_gb * 1024**3)
+    if total <= budget_bytes:
+        return
+
+    protected = _protected_cache_dirs()
+    for _mtime, entry, size in sorted(entries, key=lambda e: e[0]):
+        if total <= budget_bytes:
+            break
+        if entry in protected:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        total -= size
+        logger.info(
+            "Evicted dependency cache entry %s (%.1f MB freed) — cache exceeded the %.1f GB budget",
+            entry,
+            size / 1024**2,
+            max_gb,
+        )
+
+
+def _evict_cache_entries_over_budget_safe() -> None:
+    """`_evict_cache_entries_over_budget()`, but never propagates: eviction is
+    background housekeeping triggered after every successful fetch, and a
+    failure in it (e.g. two evictions racing on the same file, or a
+    ValueError from `cache_dir_for` inside `_protected_cache_dirs` for a
+    malformed lock key) must never turn that fetch into a reported error."""
+    try:
+        _evict_cache_entries_over_budget()
+    except Exception:
+        logger.warning("Dependency cache eviction failed — continuing", exc_info=True)
 
 
 # Bumped whenever the `.complete` marker's JSON shape gains a field that
@@ -175,6 +334,11 @@ def _write_marker(
                 "skipped_long_path_names": list(extract.skipped_long_path_names),
                 "discovered_directory": discovered_directory,
                 "external_build_markers": sorted(external_build_markers),
+                # Informational only — not gated by schema_version, since a
+                # marker missing it is still a perfectly valid cache hit.
+                # Eviction falls back to walking any entry whose marker
+                # predates this field.
+                "total_bytes": extract.total_bytes,
             }
         ),
         encoding="utf-8",
@@ -573,6 +737,10 @@ class _ExtractResult:
     # recomputing the length check against a different, shorter base path
     # and reaching the wrong answer for names in the gap between the two.
     skipped_long_path_names: tuple[str, ...] = ()
+    # Sum of extracted (written) member sizes — recorded on the marker so
+    # cache eviction can budget the cache without re-walking and stat()ing
+    # every file in it on every fetch.
+    total_bytes: int = 0
 
 
 def _safe_extract(
@@ -697,6 +865,7 @@ def _safe_extract(
         skipped_long_paths=skipped_long_paths,
         skipped_link_names=tuple(skipped_link_names),
         skipped_long_path_names=tuple(skipped_long_path_names),
+        total_bytes=extracted_bytes,
     )
 
 
@@ -729,6 +898,7 @@ async def fetch_source(
     if marker.is_file():
         marker_data = _read_marker_data(marker)
         if not _is_stale_marker(marker_data):
+            _touch_marker(marker)
             return _fetch_result_from_marker(marker_data, cache_dir)
         logger.info(
             "Stale cache marker for %s %s@%s (schema_version=%s, current=%s) — refetching",
@@ -745,6 +915,7 @@ async def fetch_source(
         if marker.is_file():
             marker_data = _read_marker_data(marker)
             if not _is_stale_marker(marker_data):
+                _touch_marker(marker)
                 return _fetch_result_from_marker(marker_data, cache_dir)
 
         owns_client = client is None
@@ -836,6 +1007,7 @@ async def fetch_source(
             await asyncio.to_thread(
                 _write_marker, marker, extract, discovered_directory, external_build_markers
             )
+            await asyncio.to_thread(_evict_cache_entries_over_budget_safe)
             logger.info(
                 "Fetched %s %s@%s -> %s (skipped_links=%d, skipped_long_paths=%d%s%s)",
                 kind.value,
