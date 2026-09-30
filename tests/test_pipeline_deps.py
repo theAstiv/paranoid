@@ -9,8 +9,10 @@ Covers three layers:
 """
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from backend.deps import analyze
@@ -128,6 +130,69 @@ class TestAnalyzeManifest:
         by_name = {pa.ref.name: pa for pa in context.packages}
         assert by_name["good"].error is None
         assert "OSError" in by_name["bad"].error
+
+    @pytest.mark.asyncio
+    async def test_deadline_already_passed_skips_all_with_time_budget_reason(self):
+        """N1: a deadline already in the past when the sweep starts must skip
+        every target with reason 'time_budget' instead of attempting any of
+        them — the partial-results contract also covers the zero-budget case."""
+        manifest = {"dependencies": {"a": "1.0.0", "b": "1.0.0"}}
+
+        with patch.object(
+            analyze,
+            "analyze_package",
+            new=AsyncMock(side_effect=lambda n, v, *_a, **_kw: _pa(n, v)),
+        ) as mock_analyze:
+            context = await analyze.analyze_manifest(
+                manifest, None, source_mode="npm", deadline=time.monotonic() - 1
+            )
+
+        mock_analyze.assert_not_awaited()
+        assert context.packages == []
+        assert context.skipped == {"a": "time_budget", "b": "time_budget"}
+
+    @pytest.mark.asyncio
+    async def test_deadline_mid_sweep_returns_partial_results(self):
+        """A package still running when the deadline passes is skipped with
+        reason 'time_budget'; packages that already finished are kept —
+        analyze_manifest returns whatever it has instead of discarding
+        everything, unlike wrapping the whole sweep in one wait_for."""
+        manifest = {"dependencies": {"fast": "1.0.0", "slow": "1.0.0"}}
+
+        async def fake_analyze(name, version, source_mode, client):
+            if name == "slow":
+                await asyncio.sleep(10)
+            return _pa(name, version)
+
+        # A pre-built client avoids httpx.AsyncClient()'s own construction
+        # cost (SSL context setup) eating into the deadline budget below —
+        # analyze_manifest() would otherwise build one itself before the
+        # first package even starts.
+        async with httpx.AsyncClient() as client:
+            with patch.object(analyze, "analyze_package", new=AsyncMock(side_effect=fake_analyze)):
+                context = await analyze.analyze_manifest(
+                    manifest,
+                    None,
+                    source_mode="npm",
+                    client=client,
+                    deadline=time.monotonic() + 0.2,
+                )
+
+        by_name = {pa.ref.name: pa for pa in context.packages}
+        assert "fast" in by_name
+        assert context.skipped == {"slow": "time_budget"}
+
+    @pytest.mark.asyncio
+    async def test_no_deadline_means_unbounded_as_before(self):
+        manifest = {"dependencies": {"a": "1.0.0"}}
+
+        with patch.object(
+            analyze, "analyze_package", new=AsyncMock(return_value=_pa("a", "1.0.0"))
+        ):
+            context = await analyze.analyze_manifest(manifest, None, source_mode="npm")
+
+        assert len(context.packages) == 1
+        assert context.skipped == {}
 
 
 def _pa(name: str, version: str) -> PackageAnalysis:
@@ -588,6 +653,7 @@ class TestRunnerDependencyAnalysisScope:
     @pytest.mark.asyncio
     async def test_dependency_analysis_timeout_degrades_gracefully(self):
         from backend.config import settings
+        from backend.pipeline import runner as runner_module
 
         provider = MockProvider(gap_call_threshold=1)
         runner = PipelineRunner(
@@ -598,7 +664,12 @@ class TestRunnerDependencyAnalysisScope:
             await asyncio.sleep(10)
 
         original_timeout = settings.deps_analysis_timeout_seconds
+        original_grace = runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S
         settings.deps_analysis_timeout_seconds = 0.05
+        # Also shrink the backstop's grace period (see its docstring): the
+        # real 30s grace exists to outlive a cancelled scan's cleanup, but
+        # would make this test wait ~30s for the outer wait_for to fire.
+        runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S = 0.05
         try:
             with patch("backend.pipeline.runner.analyze_manifest", new=_hangs):
                 events = [
@@ -611,6 +682,7 @@ class TestRunnerDependencyAnalysisScope:
                 ]
         finally:
             settings.deps_analysis_timeout_seconds = original_timeout
+            runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S = original_grace
 
         assert events[-1].step == PipelineStep.COMPLETE
         assert events[-1].status == "completed"
@@ -619,3 +691,60 @@ class TestRunnerDependencyAnalysisScope:
         ]
         assert len(info_events) == 1
         assert "timed out" in info_events[0].message.lower()
+
+    @pytest.mark.asyncio
+    async def test_backstop_grace_survives_slow_partial_return(self):
+        """N1 regression: analyze_manifest() can legitimately take a little
+        longer than its own deadline to actually return — e.g. cancelling a
+        still-running scan takes real wall-clock time
+        (backend.deps.scanner._kill_process_tree: up to ~10s). If the outer
+        wait_for's timeout equalled the deadline instead of exceeding it by
+        _DEPS_ANALYSIS_BACKSTOP_GRACE_S, it would fire while analyze_manifest
+        is still finishing that cleanup and discard the partial
+        DependencyContext it was about to return — the exact all-or-nothing
+        failure the deadline exists to avoid."""
+        from backend.config import settings
+        from backend.pipeline import runner as runner_module
+
+        provider = MockProvider(gap_call_threshold=1)
+        runner = PipelineRunner(
+            provider=provider, config=PipelineConfig(max_iterations=1), model_id="t"
+        )
+
+        partial_context = DependencyContext(
+            packages=[_pa("fast", "1.0.0")], skipped={"slow": "time_budget"}, source_mode="npm"
+        )
+
+        async def _slow_to_return_partial(*args, **kwargs):
+            # Finishes past the per-package deadline (simulated by the tiny
+            # settings.deps_analysis_timeout_seconds below), the way a real
+            # cancelled-scan cleanup would, but still within the backstop's
+            # grace period.
+            await asyncio.sleep(0.08)
+            return partial_context
+
+        original_timeout = settings.deps_analysis_timeout_seconds
+        original_grace = runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S
+        settings.deps_analysis_timeout_seconds = 0.01
+        runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S = 1.0
+        try:
+            with patch("backend.pipeline.runner.analyze_manifest", new=_slow_to_return_partial):
+                events = [
+                    e
+                    async for e in runner.run(
+                        description="A service",
+                        framework=Framework.STRIDE,
+                        dependency_manifest={"dependencies": {"fast": "1.0.0", "slow": "1.0.0"}},
+                    )
+                ]
+        finally:
+            settings.deps_analysis_timeout_seconds = original_timeout
+            runner_module._DEPS_ANALYSIS_BACKSTOP_GRACE_S = original_grace
+
+        completed = [
+            e
+            for e in events
+            if e.step == PipelineStep.ANALYZE_DEPENDENCIES and e.status == "completed"
+        ]
+        assert len(completed) == 1
+        assert completed[0].data == {"package_count": 1, "skipped_count": 1}

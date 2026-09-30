@@ -11,6 +11,7 @@ step — one implementation, three callers.
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -247,6 +248,7 @@ async def analyze_manifest(
     source_mode: str = "npm",
     client: httpx.AsyncClient | None = None,
     max_direct_dependencies: int | None = DEFAULT_MAX_DIRECT_DEPENDENCIES,
+    deadline: float | None = None,
 ) -> DependencyContext:
     """Analyze every direct dependency declared in a package.json.
 
@@ -263,6 +265,14 @@ async def analyze_manifest(
 
     One dependency's failure (network, a hostile tarball, a filesystem error)
     is captured on its own `PackageAnalysis.error` and never aborts the sweep.
+
+    `deadline` (a `time.monotonic()` timestamp) makes a time-budgeted sweep
+    return whatever finished instead of an all-or-nothing failure: a package
+    whose turn comes up after the deadline is skipped with reason
+    "time_budget" instead of started, and one already running when the
+    deadline passes is cancelled individually (skipped the same way) rather
+    than aborting every other in-flight package alongside it. None (the
+    default) means no budget — the sweep runs to completion.
 
     `packages` in the returned context is sorted by name — analysis runs
     concurrently, so insertion order would otherwise follow whichever scan
@@ -294,10 +304,26 @@ async def analyze_manifest(
 
     async def _one(pkg_name: str, pkg_version: str, http_client: httpx.AsyncClient) -> None:
         async with semaphore:
+            remaining: float | None = None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    skipped[pkg_name] = "time_budget"
+                    return
             try:
-                packages.append(
-                    await analyze_package(pkg_name, pkg_version, source_mode, http_client)
-                )
+                if remaining is not None:
+                    result = await asyncio.wait_for(
+                        analyze_package(pkg_name, pkg_version, source_mode, http_client),
+                        timeout=remaining,
+                    )
+                else:
+                    result = await analyze_package(pkg_name, pkg_version, source_mode, http_client)
+                packages.append(result)
+            except TimeoutError:
+                # The deadline passed mid-analysis for this package — skip it
+                # and let the sweep return whatever already finished, instead
+                # of the caller's outer wait_for discarding everything.
+                skipped[pkg_name] = "time_budget"
             except Exception as e:
                 # One dependency's failure must never abort the whole manifest sweep.
                 packages.append(
