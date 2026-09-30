@@ -276,6 +276,56 @@ def test_all_sections_appear_before_summary() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Dependency findings section
+# ---------------------------------------------------------------------------
+
+_DEPENDENCY_SCAN = {
+    "package": "lodash",
+    "version": "4.17.21",
+    "analysis": {
+        "ref": {"name": "lodash", "version": "4.17.21"},
+        "npm_profile": {
+            "status": "ok",
+            "evidence": [
+                {
+                    "category": "dynamic_code",
+                    "path_class": "shipped",
+                    "file": "lib/index.js",
+                    "line": 12,
+                },
+            ],
+            "install_hooks": [],
+        },
+        "github_profile": None,
+        "drift": {"signal": True, "status": "compared"},
+        "error": None,
+    },
+}
+
+
+def test_dependency_findings_section_renders_table() -> None:
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN]
+    )
+    assert "## Dependency Findings" in md
+    assert "lodash@4.17.21" in md
+    assert "dynamic_code" in md
+    assert "drift" in md
+
+
+def test_dependency_findings_section_absent_when_empty() -> None:
+    md = export_markdown([_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[])
+    assert "## Dependency Findings" not in md
+
+
+def test_dependency_findings_section_before_summary() -> None:
+    md = export_markdown(
+        [_STRIDE_THREAT_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN]
+    )
+    assert md.index("## Dependency Findings") < md.index("## Summary")
+
+
+# ---------------------------------------------------------------------------
 # Gap analysis section
 # ---------------------------------------------------------------------------
 

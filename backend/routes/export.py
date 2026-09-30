@@ -75,6 +75,9 @@ async def export_model(
     assets = await crud.list_assets(model_id)
     flows = await crud.list_flows(model_id)
     trust_boundaries = await crud.list_trust_boundaries(model_id)
+    dependency_scans = (
+        await crud.list_dependency_scans(model_id) if export_format in ("markdown", "pdf") else []
+    )
 
     title = model.get("title")
     framework = model.get("framework", "STRIDE")
@@ -117,6 +120,7 @@ async def export_model(
             attack_trees=attack_trees or None,
             test_suites=test_suites or None,
             gap_summaries=gap_summaries or None,
+            dependency_scans=dependency_scans or None,
         )
         return Response(
             content=content,
@@ -140,6 +144,7 @@ async def export_model(
             attack_trees=attack_trees or None,
             test_suites=test_suites or None,
             gap_summaries=gap_summaries or None,
+            dependency_scans=dependency_scans or None,
         )
         return Response(
             content=pdf_bytes,

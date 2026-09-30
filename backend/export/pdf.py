@@ -23,7 +23,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from backend.export._common import MERMAID_DIAGRAM_PREFIXES
+from backend.export._common import MERMAID_DIAGRAM_PREFIXES, dependency_findings_rows
 
 
 def export_pdf(
@@ -40,6 +40,7 @@ def export_pdf(
     attack_trees: dict[str, dict[str, Any]] | None = None,
     test_suites: dict[str, dict[str, Any]] | None = None,
     gap_summaries: list[str] | None = None,
+    dependency_scans: list[dict[str, Any]] | None = None,
 ) -> bytes:
     """Export threats to PDF format.
 
@@ -57,6 +58,8 @@ def export_pdf(
         trust_boundaries: Optional list of trust boundary dicts from the DB.
         attack_trees: Optional mapping of threat_id -> AttackTree.model_dump().
         test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
+        dependency_scans: Optional list of dependency_scans DB rows (see
+                          backend.db.crud.list_dependency_scans).
 
     Returns:
         PDF content as bytes, ready to write to a .pdf file.
@@ -154,6 +157,15 @@ def export_pdf(
         story.append(Paragraph("Trust Boundaries", styles["h2"]))
         story.append(Spacer(1, 6))
         story.append(_build_trust_boundaries_table(trust_boundaries))
+        story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
+    # --- Dependency Findings ---
+    if dependency_scans:
+        story.append(Paragraph("Dependency Findings", styles["h2"]))
+        story.append(Spacer(1, 6))
+        story.append(_build_dependency_findings_table(dependency_scans))
         story.append(Spacer(1, 14))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
         story.append(Spacer(1, 10))
@@ -295,6 +307,16 @@ def _build_trust_boundaries_table(trust_boundaries: list[dict[str, Any]]) -> Tab
             ]
         )
     col_widths = [1.6 * inch, 1.6 * inch, 3.1 * inch]
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle(_TABLE_STYLE_BASE))
+    return table
+
+
+def _build_dependency_findings_table(dependency_scans: list[dict[str, Any]]) -> Table:
+    rows = [["Package", "Capabilities", "Flags"]]
+    for pkg, categories, flags in dependency_findings_rows(dependency_scans):
+        rows.append([_cell(pkg), _cell(categories), _cell(flags)])
+    col_widths = [1.8 * inch, 3.1 * inch, 1.4 * inch]
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(_TABLE_STYLE_BASE))
     return table

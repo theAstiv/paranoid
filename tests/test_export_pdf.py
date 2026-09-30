@@ -215,6 +215,48 @@ def test_pdf_trust_boundaries_section_adds_content() -> None:
     assert len(pdf_with) > len(pdf_without)
 
 
+_DEPENDENCY_SCAN = {
+    "package": "lodash",
+    "version": "4.17.21",
+    "analysis": {
+        "ref": {"name": "lodash", "version": "4.17.21"},
+        "npm_profile": {
+            "status": "ok",
+            "evidence": [
+                {
+                    "category": "dynamic_code",
+                    "path_class": "shipped",
+                    "file": "lib/index.js",
+                    "line": 12,
+                },
+            ],
+            "install_hooks": [],
+        },
+        "github_profile": None,
+        "drift": {"signal": True, "status": "compared"},
+        "error": None,
+    },
+}
+
+
+def test_pdf_dependency_findings_produces_valid_pdf() -> None:
+    result = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN])
+    assert result.startswith(b"%PDF")
+
+
+def test_pdf_dependency_findings_section_adds_content() -> None:
+    """A PDF with a Dependency Findings section is larger than one without."""
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", dependency_scans=[_DEPENDENCY_SCAN])
+    assert len(pdf_with) > len(pdf_without)
+
+
+def test_pdf_dependency_findings_section_absent_when_empty() -> None:
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_empty = export_pdf([_STRIDE_FLAT], "mid", "STRIDE", dependency_scans=[])
+    assert len(pdf_empty) == len(pdf_without)
+
+
 def test_pdf_includes_gap_analysis() -> None:
     """Gap summaries produce a non-empty PDF; the section adds bytes vs baseline."""
     pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
