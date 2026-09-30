@@ -128,8 +128,16 @@ async def _parse_dependency_json_upload(
     a limit real package-lock.json files from large monorepos routinely
     exceed. File parts aren't subject to that per-field text cap, so this
     function enforces its own size limit instead, consistently as a 422.
+
+    Reads at most `max_bytes + 1` rather than `upload.read()` with no
+    argument: Starlette spools an oversized file part to disk during
+    multipart parsing (bounded there), but an unbounded `.read()` still
+    pulls the whole spooled file into one in-memory `bytes` object before
+    any size check runs — an arbitrarily large upload would be fully
+    buffered in RAM first. Capping the read itself means memory use stays
+    bounded by `max_bytes` regardless of how large the actual upload is.
     """
-    raw = await upload.read()
+    raw = await upload.read(max_bytes + 1)
     if len(raw) > max_bytes:
         raise HTTPException(
             status_code=422,

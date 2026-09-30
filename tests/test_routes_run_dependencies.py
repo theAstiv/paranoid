@@ -572,3 +572,58 @@ async def test_get_dependencies_rejects_non_member(client, model_id):
         assert resp.status_code == 403
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+# ---------------------------------------------------------------------------
+# _parse_dependency_json_upload: bounded read (N4)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingUploadFile:
+    """Stands in for FastAPI's `UploadFile` and records the `size` argument
+    every `.read()` call receives, so the test can assert the parser never
+    asks for more than `max_bytes + 1` regardless of how large the real
+    underlying upload is."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+        self.read_sizes: list[int | None] = []
+
+    async def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        if size is None or size < 0:
+            return self._data
+        return self._data[:size]
+
+
+@pytest.mark.asyncio
+async def test_parse_dependency_json_upload_bounds_the_read_size():
+    """A read with no size argument would pull an arbitrarily large upload
+    entirely into memory before the size check ever runs. The parser must
+    instead request at most `max_bytes + 1` bytes."""
+    from fastapi import HTTPException
+
+    from backend.routes.models import _parse_dependency_json_upload
+
+    max_bytes = 1024
+    oversized = _RecordingUploadFile(b"x" * (max_bytes * 50))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_dependency_json_upload(oversized, "dependency_manifest", max_bytes)
+
+    assert exc_info.value.status_code == 422
+    assert oversized.read_sizes == [max_bytes + 1]
+
+
+@pytest.mark.asyncio
+async def test_parse_dependency_json_upload_accepts_within_bound():
+    from backend.routes.models import _parse_dependency_json_upload
+
+    max_bytes = 1024
+    payload = json.dumps({"dependencies": {"lodash": "1.0.0"}}).encode()
+    upload = _RecordingUploadFile(payload)
+
+    parsed = await _parse_dependency_json_upload(upload, "dependency_manifest", max_bytes)
+
+    assert parsed == {"dependencies": {"lodash": "1.0.0"}}
+    assert upload.read_sizes == [max_bytes + 1]
