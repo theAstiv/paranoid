@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials,
-  dependencyCategorySet, dependencyFlags,
+  dependencyCategorySet, dependencyFlags, dependencyDisplayName,
 } from './utils.js'
 
 describe('dreadColor', () => {
@@ -179,5 +179,25 @@ describe('dependencyFlags', () => {
     expect(dependencyFlags(analysis)).toEqual(
       expect.arrayContaining(['drift', 'install-hook', 'partial_fetch'])
     )
+  })
+
+  it('flags a dependency dropped before analysis as "skipped", not "error"', () => {
+    const flags = dependencyFlags({ skip_reason: 'exceeds_direct_dependency_cap' })
+    expect(flags).toContain('skipped')
+    expect(flags).not.toContain('error')
+  })
+})
+
+describe('dependencyDisplayName', () => {
+  it('joins package and version with @', () => {
+    expect(dependencyDisplayName('lodash', '4.17.21')).toBe('lodash@4.17.21')
+  })
+
+  it('omits the dangling "@" when there is no version', () => {
+    expect(dependencyDisplayName('left-pad', '')).toBe('left-pad')
+  })
+
+  it('collapses embedded whitespace/newlines in an unvalidated package name', () => {
+    expect(dependencyDisplayName('evil\nname\n![x](http://a)', '')).toBe('evil name ![x](http://a)')
   })
 })

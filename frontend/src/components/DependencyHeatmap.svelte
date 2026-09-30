@@ -24,28 +24,42 @@
     error: 'chip-red',
     drift: 'chip-orange',
     'install-hook': 'chip-amber',
+    skipped: 'chip-gray',
   }
   function flagChip(flag) {
     return FLAG_CHIPS[flag] ?? 'chip-gray'
   }
 
-  $: packages = scans.map(scan => {
-    const analysis = scan.analysis ?? {}
-    const npmSet = dependencyCategorySet(analysis.npm_profile)
-    const githubSet = dependencyCategorySet(analysis.github_profile)
-    const categories = new Set([...npmSet, ...githubSet])
-    const evidence = evidenceFor(analysis)
-    return {
-      key: scan.id,
-      displayName: dependencyDisplayName(scan.package, scan.version),
-      analysis,
-      categories,
-      flags: dependencyFlags(analysis),
-      evidence: evidence.slice(0, EVIDENCE_LIMIT),
-      evidenceOverflow: Math.max(0, evidence.length - EVIDENCE_LIMIT),
-      drift: driftSummary(analysis.drift),
-    }
-  })
+  $: packages = scans
+    .map(scan => {
+      const analysis = scan.analysis ?? {}
+      const npmSet = dependencyCategorySet(analysis.npm_profile)
+      const githubSet = dependencyCategorySet(analysis.github_profile)
+      const categories = new Set([...npmSet, ...githubSet])
+      const evidence = evidenceFor(analysis)
+      return {
+        key: scan.id,
+        displayName: dependencyDisplayName(scan.package, scan.version),
+        analysis,
+        categories,
+        flags: dependencyFlags(analysis),
+        evidence: evidence.slice(0, EVIDENCE_LIMIT),
+        evidenceOverflow: Math.max(0, evidence.length - EVIDENCE_LIMIT),
+        drift: driftSummary(analysis.drift),
+      }
+    })
+    // `scans` comes back ordered by created_at DESC (skipped rows are
+    // inserted last, so they'd otherwise sort first) — display order should
+    // be case-insensitively alphabetical instead, except the "+N more
+    // skipped" summary row (backend.deps.analyze.dependency_scan_rows),
+    // which sorts last regardless of name — a leading "+" would otherwise
+    // put it first.
+    .sort((a, b) => {
+      const aSummary = !!a.analysis.skip_summary
+      const bSummary = !!b.analysis.skip_summary
+      if (aSummary !== bSummary) return aSummary ? 1 : -1
+      return a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase())
+    })
 
   let expandedKey = null
   function toggle(key) {
@@ -144,8 +158,10 @@
           {#if expandedKey === pkg.key}
             <tr class="border-b border-c-divider bg-c-panel2">
               <td colspan={DEPENDENCY_CATEGORIES.length + 2} class="p-3">
-                {#if pkg.analysis.error}
-                  <p class="text-xs text-c-critical mb-2">Skipped: {pkg.analysis.error}</p>
+                {#if pkg.analysis.skip_reason}
+                  <p class="text-xs text-c-muted mb-2">Not analyzed: {pkg.analysis.skip_reason}</p>
+                {:else if pkg.analysis.error}
+                  <p class="text-xs text-c-critical mb-2">Failed: {pkg.analysis.error}</p>
                 {/if}
                 {#if pkg.evidence.length > 0}
                   <p class="font-mono text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-1">Evidence</p>

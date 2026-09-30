@@ -68,11 +68,22 @@ describe('DependencyHeatmap', () => {
     expect(screen.getByText('eval(x)')).toBeInTheDocument()
   })
 
-  it('shows the skip error for a package that failed to resolve', async () => {
+  it('shows the failure reason for a package whose analysis was attempted and failed', async () => {
     const s = scan({ analysis: { ref: { name: 'left-pad', version: '1.0.0' }, error: 'no resolvable version' } })
     render(DependencyHeatmap, { props: { scans: [s] } })
     await fireEvent.click(screen.getByText('lodash@4.17.21'))
-    expect(screen.getByText('Skipped: no resolvable version')).toBeInTheDocument()
+    expect(screen.getByText('Failed: no resolvable version')).toBeInTheDocument()
+  })
+
+  it('shows a gray "skipped" flag and "Not analyzed" for a dependency dropped before analysis ran', async () => {
+    const s = scan({
+      package: 'too-many-deps', version: '',
+      analysis: { ref: { name: 'too-many-deps', version: '' }, skip_reason: 'exceeds_direct_dependency_cap' },
+    })
+    render(DependencyHeatmap, { props: { scans: [s] } })
+    expect(screen.getByText('skipped')).toBeInTheDocument()
+    await fireEvent.click(screen.getByText('too-many-deps'))
+    expect(screen.getByText('Not analyzed: exceeds_direct_dependency_cap')).toBeInTheDocument()
   })
 
   it('omits the dangling "@" for a package that was never resolved to a version', () => {
@@ -80,6 +91,42 @@ describe('DependencyHeatmap', () => {
     render(DependencyHeatmap, { props: { scans: [s] } })
     expect(screen.getByText('left-pad')).toBeInTheDocument()
     expect(screen.queryByText('left-pad@')).toBeNull()
+  })
+
+  it('sorts packages by display name, not scan order', () => {
+    const scans = [
+      scan({ id: 'scan-1', package: 'zebra', version: '1.0.0' }),
+      scan({ id: 'scan-2', package: 'apple', version: '1.0.0' }),
+    ]
+    render(DependencyHeatmap, { props: { scans } })
+    const rows = screen.getAllByText(/^(zebra|apple)@1\.0\.0$/)
+    expect(rows[0]).toHaveTextContent('apple@1.0.0')
+    expect(rows[1]).toHaveTextContent('zebra@1.0.0')
+  })
+
+  it('sorts case-insensitively', () => {
+    const scans = [
+      scan({ id: 'scan-1', package: 'Zebra', version: '1.0.0' }),
+      scan({ id: 'scan-2', package: 'apple', version: '1.0.0' }),
+    ]
+    render(DependencyHeatmap, { props: { scans } })
+    const rows = screen.getAllByText(/^(Zebra|apple)@1\.0\.0$/)
+    expect(rows[0]).toHaveTextContent('apple@1.0.0')
+    expect(rows[1]).toHaveTextContent('Zebra@1.0.0')
+  })
+
+  it('puts the "+N more skipped" summary row last regardless of its name', () => {
+    const scans = [
+      scan({
+        id: 'scan-summary', package: '+5 more skipped', version: '',
+        analysis: { ref: { name: '+5 more skipped', version: '' }, skip_summary: true, skip_reason: '5 additional...' },
+      }),
+      scan({ id: 'scan-apple', package: 'apple', version: '1.0.0' }),
+    ]
+    render(DependencyHeatmap, { props: { scans } })
+    const rows = screen.getAllByText(/^(\+5 more skipped|apple@1\.0\.0)$/)
+    expect(rows[0]).toHaveTextContent('apple@1.0.0')
+    expect(rows[1]).toHaveTextContent('+5 more skipped')
   })
 
   it('labels evidence with its source (npm vs github)', async () => {

@@ -27,6 +27,7 @@ from backend.db.crud import (
     update_threat_model,
     update_threat_model_status,
 )
+from backend.deps.analyze import dependency_scan_rows
 from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, TestSuite
@@ -221,31 +222,18 @@ async def _persist(
         logger.debug(f"Persisted {len(threats.threats)} threats")
 
     if dependency_context:
-        for pa in dependency_context.packages:
-            package = pa.resolved.name if pa.resolved else pa.ref.name
-            version = pa.resolved.version if pa.resolved else pa.ref.version
+        rows = dependency_scan_rows(dependency_context)
+        for package, version, analysis in rows:
             await create_dependency_scan(
                 model_id=model_id,
                 package=package,
                 version=version,
                 source_mode=dependency_context.source_mode,
-                analysis=pa.model_dump(mode="json"),
-            )
-        # Dependencies dropped before analysis ever ran (no resolvable pinned
-        # version, or the manifest-size cap) — surfaced the same way as a
-        # resolution failure so the UI shows every declared dependency, not
-        # just the ones that made it far enough to produce a PackageAnalysis.
-        for name, reason in dependency_context.skipped.items():
-            await create_dependency_scan(
-                model_id=model_id,
-                package=name,
-                version="",
-                source_mode=dependency_context.source_mode,
-                analysis={"ref": {"name": name, "version": ""}, "error": reason},
+                analysis=analysis,
             )
         logger.debug(
-            "Persisted %d dependency scans (%d skipped)",
-            len(dependency_context.packages),
+            "Persisted %d dependency scans (%d declared dependencies skipped)",
+            len(rows),
             len(dependency_context.skipped),
         )
 

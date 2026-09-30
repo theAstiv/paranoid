@@ -123,6 +123,12 @@ export function dependencyCategorySet(profile) {
 export function dependencyFlags(analysis) {
   const flags = []
   if (!analysis) return flags
+  // `skip_reason` is a dependency that was never analyzed at all (no
+  // resolvable pinned version, over the manifest's direct-dependency cap) —
+  // distinct from `error`, which is a PackageAnalysis that was actually
+  // attempted and failed. Conflating the two would flag an ordinary
+  // git/file-spec dependency the same as a real analysis failure.
+  if (analysis.skip_reason) flags.push('skipped')
   if (analysis.error) flags.push('error')
   if (analysis.drift?.signal) flags.push('drift')
   if (analysis.npm_profile?.install_hooks?.length) flags.push('install-hook')
@@ -135,10 +141,16 @@ export function dependencyFlags(analysis) {
 /**
  * Formats a package's display label — omits a dangling "@" when a
  * dropped/errored dependency was never resolved to a version.
+ *
+ * `pkg` may be a raw, unvalidated package.json key (a skipped dependency is
+ * dropped before any name regex runs) — collapse embedded newlines/whitespace
+ * runs so a hostile manifest key can't break the table layout. Svelte text
+ * interpolation already prevents markup injection; this is layout hygiene.
  * @param {string} pkg
  * @param {string} version
  * @returns {string}
  */
 export function dependencyDisplayName(pkg, version) {
-  return version ? `${pkg}@${version}` : pkg
+  const name = pkg.trim().split(/\s+/).join(' ')
+  return version ? `${name}@${version}` : name
 }

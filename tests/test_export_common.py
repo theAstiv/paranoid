@@ -89,3 +89,37 @@ def test_dependency_findings_rows_placeholder_for_no_categories_or_flags() -> No
         }
     ]
     assert dependency_findings_rows(scans) == [("left-pad@1.0.0", "—", "—")]
+
+
+def test_dependency_flags_skipped_is_distinct_from_error() -> None:
+    """skip_reason (never analyzed) must not also read as error (analysis
+    attempted and failed) — conflating the two would flag an ordinary
+    git/file-spec dependency the same as a real analysis failure."""
+    flags = dependency_flags({"skip_reason": "exceeds_direct_dependency_cap"})
+    assert "skipped" in flags
+    assert "error" not in flags
+
+
+def test_dependency_findings_rows_sorted_case_insensitively() -> None:
+    scans = [
+        {"package": "Zebra", "version": "1.0.0", "analysis": {}},
+        {"package": "apple", "version": "1.0.0", "analysis": {}},
+    ]
+    rows = dependency_findings_rows(scans)
+    assert [r[0] for r in rows] == ["apple@1.0.0", "Zebra@1.0.0"]
+
+
+def test_dependency_findings_rows_summary_row_sorts_last() -> None:
+    """The `dependency_scan_rows()` "+N more skipped" row must not sort
+    alphabetically first just because "+" precedes every letter."""
+    scans = [
+        {
+            "package": "+5 more skipped",
+            "version": "",
+            "analysis": {"skip_summary": True, "skip_reason": "5 additional..."},
+        },
+        {"package": "apple", "version": "1.0.0", "analysis": {}},
+    ]
+    rows = dependency_findings_rows(scans)
+    assert rows[-1][0] == "+5 more skipped"
+    assert rows[0][0] == "apple@1.0.0"

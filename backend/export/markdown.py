@@ -146,7 +146,22 @@ def export_markdown(
         lines.append("| Package | Capabilities | Flags |")
         lines.append("|---------|--------------|-------|")
         for pkg, categories, flags in dependency_findings_rows(dependency_scans):
-            lines.append(f"| {pkg} | {categories} | {flags} |")
+            # `pkg` may come from an unvalidated package.json key (see
+            # dependency_display_name) — a less trusted source than the LLM
+            # or user-entered text everywhere else in this file (it can come
+            # from a third-party repo cloned through auto-detect). Escaping
+            # "|" alone only protects the table structure; wrapping in a code
+            # span additionally stops the cell rendering as a live image,
+            # `<img>`, or link (GFM applies `\|` escapes before parsing code
+            # spans, so both together survive as literal text). A literal
+            # backslash must be neutralised *first* — a package name ending
+            # in "\" would otherwise turn a later "|" escape into "\\|",
+            # which cmark-gfm still reads as an escaped pipe but which some
+            # other renderers (older markdown-it, some Confluence/Notion
+            # importers) read as an escaped backslash followed by a real
+            # column separator, splitting the row.
+            safe_pkg = pkg.replace("\\", "/").replace("`", "'").replace("|", "\\|")
+            lines.append(f"| `{safe_pkg}` | {categories} | {flags} |")
         lines.append("")
         lines.append("---")
         lines.append("")

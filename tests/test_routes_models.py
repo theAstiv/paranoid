@@ -886,4 +886,6 @@ async def test_persist_pipeline_event_saves_errored_and_skipped_dependencies(sav
     assert by_package["left-pad"]["version"] == "1.0.0"
     assert by_package["left-pad"]["analysis"]["error"] == "no resolvable version"
     assert by_package["too-many-deps"]["version"] == ""
-    assert by_package["too-many-deps"]["analysis"]["error"] == "manifest size cap exceeded"
+    # skip_reason (never analyzed), not error (analysis attempted and failed)
+    assert by_package["too-many-deps"]["analysis"]["skip_reason"] == "manifest size cap exceeded"
+    assert "error" not in by_package["too-many-deps"]["analysis"]

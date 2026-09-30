@@ -17,6 +17,7 @@ from backend.db.gap_utils import decode_gap_summaries
 from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
     count_resolvable_direct_dependencies,
+    dependency_scan_rows,
 )
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
@@ -478,37 +479,19 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
 
         dependency_context = event.data.get("dependency_context")
         if dependency_context and hasattr(dependency_context, "packages"):
-            for pa in dependency_context.packages:
-                package = pa.resolved.name if pa.resolved else pa.ref.name
-                version = pa.resolved.version if pa.resolved else pa.ref.version
+            for package, version, analysis in dependency_scan_rows(dependency_context):
                 try:
                     await crud.create_dependency_scan(
                         model_id=model_id,
                         package=package,
                         version=version,
                         source_mode=dependency_context.source_mode,
-                        analysis=pa.model_dump(mode="json"),
+                        analysis=analysis,
                     )
                 except Exception:
                     logger.warning(
-                        "Failed to persist dependency scan for '%s'", pa.ref.name, exc_info=True
+                        "Failed to persist dependency scan for '%s'", package, exc_info=True
                     )
-            # Dependencies dropped before analysis ever ran (no resolvable
-            # pinned version, or the manifest-size cap) — surfaced the same
-            # way as a resolution failure so the UI shows every declared
-            # dependency, not just the ones that made it far enough to
-            # produce a PackageAnalysis.
-            for name, reason in dependency_context.skipped.items():
-                try:
-                    await crud.create_dependency_scan(
-                        model_id=model_id,
-                        package=name,
-                        version="",
-                        source_mode=dependency_context.source_mode,
-                        analysis={"ref": {"name": name, "version": ""}, "error": reason},
-                    )
-                except Exception:
-                    logger.warning("Failed to persist skipped dependency '%s'", name, exc_info=True)
 
         gap_list = event.data.get("gaps")
         if gap_list:

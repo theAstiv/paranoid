@@ -47,6 +47,13 @@ def dependency_flags(analysis: dict[str, Any] | None) -> list[str]:
     flags: list[str] = []
     if not analysis:
         return flags
+    # `skip_reason` is a dependency that was never analyzed at all (no
+    # resolvable pinned version, over the manifest's direct-dependency cap) —
+    # distinct from `error`, which is a `PackageAnalysis` that was actually
+    # attempted and failed. Conflating the two would flag an ordinary
+    # git/file-spec dependency the same as a real analysis failure.
+    if analysis.get("skip_reason"):
+        flags.append("skipped")
     if analysis.get("error"):
         flags.append("error")
     drift = analysis.get("drift") or {}
@@ -64,8 +71,18 @@ def dependency_flags(analysis: dict[str, Any] | None) -> list[str]:
 
 def dependency_display_name(package: str, version: str) -> str:
     """Format a package's display label — omits a dangling "@" when a
-    dropped/errored dependency was never resolved to a version."""
-    return f"{package}@{version}" if version else package
+    dropped/errored dependency was never resolved to a version.
+
+    `package` may be a raw, unvalidated package.json key (a `context.skipped`
+    entry is skipped *before* any name regex runs, so it never goes through
+    `backend.deps.fetcher`'s npm-shaped validation) — collapse embedded
+    newlines so one hostile manifest key can't break a table row across both
+    export formats. Markdown's own `|` escaping happens at the call site in
+    `backend.export.markdown`, since a literal `\\|` would be meaningless in
+    the PDF export's Paragraph cells.
+    """
+    name = " ".join(package.split())
+    return f"{name}@{version}" if version else name
 
 
 def dependency_findings_rows(
@@ -76,9 +93,22 @@ def dependency_findings_rows(
     `dependency_scans` is the raw `dependency_scans` DB row list (each row's
     `analysis` field already `json.loads`-decoded into a `PackageAnalysis`-
     shaped dict) — see `backend.db.crud.list_dependency_scans`.
+
+    Rows are sorted case-insensitively by package name — `list_dependency_scans`
+    orders by `created_at DESC`, which is meaningless for display (skipped
+    rows are inserted last, so they'd sort first; everything else is reverse
+    alphabetical) — except the `dependency_scan_rows()` "+N more skipped"
+    summary row, which sorts last regardless of its name (a leading "+"
+    would otherwise put it first).
     """
+
+    def _sort_key(scan: dict[str, Any]) -> tuple[bool, str]:
+        analysis = scan.get("analysis") or {}
+        name = dependency_display_name(scan.get("package", ""), scan.get("version", ""))
+        return (bool(analysis.get("skip_summary")), name.lower())
+
     rows: list[tuple[str, str, str]] = []
-    for scan in dependency_scans or []:
+    for scan in sorted(dependency_scans or [], key=_sort_key):
         analysis = scan.get("analysis") or {}
         categories = dependency_category_set(analysis.get("npm_profile")) | dependency_category_set(
             analysis.get("github_profile")
