@@ -120,8 +120,23 @@
     ? JSON.parse(threat.mitigations)
     : (threat.mitigations ?? []))
 
-  const sourceChip = $derived(threat.source === 'rule_engine' ? 'chip-amber' : 'chip-blue')
-  const sourceLabel = $derived(threat.source === 'rule_engine' ? 'Rule Engine' : 'LLM')
+  const sourceChip = $derived(
+    threat.source === 'dependency' ? 'chip-orange'
+    : threat.source === 'rule_engine' ? 'chip-amber'
+    : 'chip-blue'
+  )
+  const sourceLabel = $derived(
+    threat.source === 'dependency' ? 'Dependency'
+    : threat.source === 'rule_engine' ? 'Rule Engine'
+    : 'LLM'
+  )
+  const dependencyLabel = $derived.by(() => {
+    const ref = threat.dependency_ref
+    if (!ref) return ''
+    let label = `${ref.package}@${ref.version}`
+    if (ref.file) label += ` · ${ref.file}${ref.line != null ? ':' + ref.line : ''}`
+    return label
+  })
 
   const confidencePct = $derived(threat.confidence != null ? Math.round(threat.confidence * 100) : null)
   const confidenceColor = $derived(confidencePct == null ? ''
@@ -152,6 +167,9 @@
         {/if}
         {#if threat.source}
           <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {sourceChip}">{sourceLabel}</span>
+        {/if}
+        {#if dependencyLabel}
+          <span class="font-mono text-[11px] text-c-faint">{dependencyLabel}</span>
         {/if}
         <DreadBadge {threat} />
         {#if confidencePct != null}

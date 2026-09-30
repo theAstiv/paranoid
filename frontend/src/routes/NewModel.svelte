@@ -6,7 +6,7 @@
   import { getModel } from '../lib/api.js'
   import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject } from '../lib/stores.js'
 
-  const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
+  const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Dependencies', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
 
   let step = 0
   let submitting = false
@@ -72,11 +72,48 @@
     return false
   })()
   $: providerLabel = $config?.default_provider ?? 'the provider'
+  $: depsAnalysisEnabled = $config?.deps_analysis_enabled !== false
 
   let selectedCodeSourceId = null
   let readySources = []
   let loadingSources = false
   let sourcesLoaded = false
+
+  // Dependency capability engine — package.json (+ optional lockfile) input.
+  const MAX_MANIFEST_BYTES = 1024 * 1024
+  const MAX_LOCKFILE_BYTES = 20 * 1024 * 1024
+  let manifestFile = null
+  let lockfileFile = null
+  let depsSourceMode = 'npm'
+  let useCodeSourceManifest = false
+
+  function handleManifestChange(e) {
+    const file = e.target.files[0]
+    // Any manifest change (including clearing the input) invalidates a
+    // previously chosen lockfile — its own input is only rendered while a
+    // manifest is set, so a stale File object left in this variable would
+    // otherwise get silently re-uploaded once a new manifest is chosen.
+    lockfileFile = null
+    if (!file) { manifestFile = null; return }
+    if (file.size > MAX_MANIFEST_BYTES) {
+      notify('error', 'package.json must be under 1 MB')
+      e.target.value = ''
+      manifestFile = null
+      return
+    }
+    manifestFile = file
+  }
+
+  function handleLockfileChange(e) {
+    const file = e.target.files[0]
+    if (!file) { lockfileFile = null; return }
+    if (file.size > MAX_LOCKFILE_BYTES) {
+      notify('error', 'Lockfile must be under 20 MB')
+      e.target.value = ''
+      return
+    }
+    lockfileFile = file
+  }
 
   $: if (step === 3 && !sourcesLoaded) loadSources()
 
@@ -112,7 +149,7 @@
   $: nextDisabled = (() => {
     if (step === 0) return !title.trim() || title.length > 200
     if (step === 1) return description.trim().length < 10
-    if (step === 7) return submitting || strictBlocked || providerKeyMissing
+    if (step === 8) return submitting || strictBlocked || providerKeyMissing
     return false
   })()
 
@@ -158,6 +195,14 @@
       fd.append('has_ai_components', String(hasAiComponents))
       if (diagramFile) fd.append('diagram', diagramFile)
       if (selectedCodeSourceId) fd.append('code_source_id', selectedCodeSourceId)
+      if (manifestFile) {
+        fd.append('dependency_manifest', manifestFile)
+        if (lockfileFile) fd.append('dependency_lockfile', lockfileFile)
+        fd.append('deps_source_mode', depsSourceMode)
+      } else if (selectedCodeSourceId && useCodeSourceManifest) {
+        fd.append('use_code_source_manifest', 'true')
+        fd.append('deps_source_mode', depsSourceMode)
+      }
       pipelineEvents.set([])
       pipelineRunning.set(true)
       const modelId = model.id
@@ -330,6 +375,75 @@
       </div>
 
     {:else if step === 4}
+      <div class="space-y-4">
+        <p class="text-sm font-medium text-c-text2">Dependencies <span class="text-c-faint font-normal">(optional)</span></p>
+        {#if !depsAnalysisEnabled}
+          <div class="rounded-panel border border-c-border bg-c-well px-4 py-6 text-center space-y-1">
+            <p class="text-sm text-c-muted">Dependency analysis is disabled on this instance.</p>
+            <p class="text-xs text-c-faint">An admin can enable it with DEPS_ANALYSIS_ENABLED.</p>
+          </div>
+        {:else}
+        <p class="text-xs text-c-muted">Upload a package.json (and optional lockfile) to fold the dependency capability engine's findings into this model — what each package can do, and drift between the npm tarball and its GitHub source.</p>
+
+        <div>
+          <label class="{LABEL_CLASS}" for="file-manifest">package.json</label>
+          <input id="file-manifest" type="file" accept="application/json,.json"
+            on:change={handleManifestChange}
+            class="block w-full text-sm text-c-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-panel file:border file:border-c-border file:text-xs file:font-medium file:bg-c-well file:text-c-text2 hover:file:bg-c-panel" />
+          <p class="mt-1 text-xs text-c-faint">JSON, max 1 MB, up to 50 resolvable direct dependencies.</p>
+        </div>
+
+        {#if manifestFile}
+          <div class="flex items-center gap-2 text-sm text-c-muted bg-c-well border border-c-border rounded-panel px-3 py-2">
+            <svg class="w-4 h-4 text-c-faint flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+            {manifestFile.name}
+          </div>
+
+          {#key manifestFile}
+          <div>
+            <label class="{LABEL_CLASS}" for="file-lockfile">package-lock.json <span class="text-c-faint font-normal normal-case">(optional)</span></label>
+            <input id="file-lockfile" type="file" accept="application/json,.json"
+              on:change={handleLockfileChange}
+              class="block w-full text-sm text-c-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-panel file:border file:border-c-border file:text-xs file:font-medium file:bg-c-well file:text-c-text2 hover:file:bg-c-panel" />
+            <p class="mt-1 text-xs text-c-faint">Max 20 MB. Pins exact resolved versions.</p>
+          </div>
+          {/key}
+          {#if lockfileFile}
+            <div class="flex items-center gap-2 text-sm text-c-muted bg-c-well border border-c-border rounded-panel px-3 py-2">
+              <svg class="w-4 h-4 text-c-faint flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+              {lockfileFile.name}
+            </div>
+          {/if}
+        {:else if selectedCodeSourceId}
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" bind:checked={useCodeSourceManifest}
+              class="mt-0.5 h-4 w-4 rounded border-c-border text-c-accent focus:ring-c-accent" />
+            <div>
+              <p class="text-sm font-medium text-c-text2">Use the code source's own package.json</p>
+              <p class="text-xs text-c-muted mt-0.5">Auto-detects the root manifest (and lockfile) from the selected code source's clone. Nothing new is fetched from the repo.</p>
+            </div>
+          </label>
+        {/if}
+
+        {#if manifestFile || (selectedCodeSourceId && useCodeSourceManifest)}
+          <div>
+            <p class="{LABEL_CLASS}">Analysis depth</p>
+            <div class="flex gap-4 mt-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" bind:group={depsSourceMode} value="npm" class="text-c-accent focus:ring-c-accent" />
+                <span class="text-sm font-medium text-c-text2">Fast (npm)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" bind:group={depsSourceMode} value="both" class="text-c-accent focus:ring-c-accent" />
+                <span class="text-sm font-medium text-c-text2">Deep (npm + GitHub drift)</span>
+              </label>
+            </div>
+          </div>
+        {/if}
+        {/if}
+      </div>
+
+    {:else if step === 5}
       <div class="space-y-3">
         <p class="text-sm font-medium text-c-text2">Assumptions <span class="text-c-faint font-normal">(optional)</span></p>
         <p class="text-xs text-c-muted">List existing security controls, scope boundaries, and focus areas.</p>
@@ -360,7 +474,7 @@
         {/if}
       </div>
 
-    {:else if step === 5}
+    {:else if step === 6}
       <div class="space-y-4">
         <div>
           <label class="{LABEL_CLASS}" for="iterations">
@@ -376,7 +490,7 @@
         <p class="text-xs text-c-muted">Each iteration runs gap analysis and generates additional threats. More iterations = broader coverage, longer runtime.</p>
       </div>
 
-    {:else if step === 6}
+    {:else if step === 7}
       <div class="space-y-4">
         {#if framework === 'MAESTRO' || framework === 'HYBRID'}
           <div class="rounded-panel border border-c-accent/30 bg-c-accent/5 px-4 py-3 text-sm text-c-accent">
@@ -398,7 +512,7 @@
         {/if}
       </div>
 
-    {:else if step === 7}
+    {:else if step === 8}
       <div class="space-y-4">
         <h3 class="text-sm font-semibold text-c-text">Ready to run</h3>
 
@@ -428,6 +542,16 @@
           <dd class="text-c-text2">{diagramFile ? diagramFile.name : '—'}</dd>
           <dt class="text-c-muted">Code source</dt>
           <dd class="text-c-text2">{selectedCodeSourceId ? (readySources.find(s => s.id === selectedCodeSourceId)?.name ?? '—') : '—'}</dd>
+          <dt class="text-c-muted">Dependencies</dt>
+          <dd class="text-c-text2">
+            {#if manifestFile}
+              {manifestFile.name}{lockfileFile ? ' + lockfile' : ''} ({depsSourceMode === 'both' ? 'deep' : 'fast'})
+            {:else if selectedCodeSourceId && useCodeSourceManifest}
+              From code source ({depsSourceMode === 'both' ? 'deep' : 'fast'})
+            {:else}
+              —
+            {/if}
+          </dd>
           <dt class="text-c-muted">Assumptions</dt>
           <dd class="text-c-text2">{assumptions.length > 0 ? assumptions.length + ' added' : '—'}</dd>
         </dl>

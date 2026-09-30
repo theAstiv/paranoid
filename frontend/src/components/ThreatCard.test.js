@@ -71,6 +71,22 @@ describe('ThreatCard', () => {
     expect(screen.getByText('WAF')).toBeInTheDocument()
   })
 
+  it('renders a Dependency chip with package@version · file:line for dependency-sourced threats', () => {
+    const threat = {
+      ...baseThreat,
+      source: 'dependency',
+      dependency_ref: { package: 'lodash', version: '4.17.21', file: 'lib/index.js', line: 42, rule_id: 'js-dynamic-code' },
+    }
+    render(ThreatCard, { props: { threat } })
+    expect(screen.getByText('Dependency')).toBeInTheDocument()
+    expect(screen.getByText('lodash@4.17.21 · lib/index.js:42')).toBeInTheDocument()
+  })
+
+  it('omits the dependency label when dependency_ref is absent', () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    expect(screen.queryByText(/@.*·/)).toBeNull()
+  })
+
   it('shows Approve button when status is pending', () => {
     render(ThreatCard, { props: { threat: baseThreat } })
     expect(screen.getByText('Approve')).toBeInTheDocument()

@@ -114,22 +114,87 @@ describe('NewModel — step 3 (code source)', () => {
   })
 })
 
-describe('NewModel — step 4 (assumptions)', () => {
+describe('NewModel — step 4 (dependencies)', () => {
   async function toStep4() {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
     await goToStep(4)
   }
 
-  it('adds an assumption to the list', async () => {
+  it('shows the manifest upload field and no lockfile field until a manifest is chosen', async () => {
     await toStep4()
+    expect(screen.getByLabelText('package.json')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/package-lock.json/)).toBeNull()
+  })
+
+  it('reveals the lockfile field and analysis depth choice once a manifest is uploaded', async () => {
+    await toStep4()
+    const file = new File(['{"name":"x","dependencies":{}}'], 'my-manifest.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [file] } })
+    expect(screen.getByText('my-manifest.json')).toBeInTheDocument()
+    expect(screen.getByLabelText(/package-lock.json/)).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Fast (npm)' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Deep (npm + GitHub drift)' })).toBeInTheDocument()
+  })
+
+  it('rejects a manifest file over 1 MB and does not keep a previously accepted one', async () => {
+    await toStep4()
+    const good = new File(['{"name":"x","dependencies":{}}'], 'my-manifest.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [good] } })
+    expect(screen.getByText('my-manifest.json')).toBeInTheDocument()
+
+    const big = new File([new Uint8Array(1024 * 1024 + 1)], 'too-big.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [big] } })
+    expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('1 MB'))
+    // The stale accepted manifest must not linger — the field reverts to empty.
+    expect(screen.queryByText('my-manifest.json')).toBeNull()
+    expect(screen.queryByLabelText(/package-lock.json/)).toBeNull()
+  })
+
+  it('clears a previously chosen lockfile when the manifest is replaced', async () => {
+    await toStep4()
+    const manifest1 = new File(['{"name":"x"}'], 'manifest1.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [manifest1] } })
+    const lockfile = new File(['{}'], 'my-lockfile.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText(/package-lock.json/), { target: { files: [lockfile] } })
+    expect(screen.getByText('my-lockfile.json')).toBeInTheDocument()
+
+    // Clear the manifest input, then choose a new manifest.
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [] } })
+    const manifest2 = new File(['{"name":"y"}'], 'manifest2.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [manifest2] } })
+
+    // The lockfile field is back to unset — the stale File object was cleared.
+    expect(screen.queryByText('my-lockfile.json')).toBeNull()
+    // The {#key manifestFile} block recreates the lockfile <input>, so its
+    // native file list is reset too, not just the displayed filename text.
+    expect(screen.getByLabelText(/package-lock.json/).files.length).toBe(0)
+  })
+
+  it('shows a disabled message instead of the upload UI when DEPS_ANALYSIS_ENABLED is false', async () => {
+    config.set({ deps_analysis_enabled: false })
+    await toStep4()
+    expect(screen.getByText('Dependency analysis is disabled on this instance.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('package.json')).toBeNull()
+  })
+})
+
+describe('NewModel — step 5 (assumptions)', () => {
+  async function toStep5() {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(5)
+  }
+
+  it('adds an assumption to the list', async () => {
+    await toStep5()
     await fireEvent.input(screen.getByPlaceholderText(/TLS 1.3 enforced/), { target: { value: 'MFA required for admins' } })
     await fireEvent.click(screen.getByText('Add'))
     expect(screen.getByText('MFA required for admins')).toBeInTheDocument()
   })
 
   it('adds an assumption on Enter key', async () => {
-    await toStep4()
+    await toStep5()
     const input = screen.getByPlaceholderText(/TLS 1.3 enforced/)
     await fireEvent.input(input, { target: { value: 'Rate limiting enabled' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
@@ -137,7 +202,7 @@ describe('NewModel — step 4 (assumptions)', () => {
   })
 
   it('removes an assumption', async () => {
-    await toStep4()
+    await toStep5()
     await fireEvent.input(screen.getByPlaceholderText(/TLS 1.3 enforced/), { target: { value: 'Temp assumption' } })
     await fireEvent.click(screen.getByText('Add'))
     expect(screen.getByText('Temp assumption')).toBeInTheDocument()
@@ -148,11 +213,11 @@ describe('NewModel — step 4 (assumptions)', () => {
   })
 })
 
-describe('NewModel — step 5 (iterations)', () => {
+describe('NewModel — step 6 (iterations)', () => {
   it('defaults to 3 iterations and updates the label when changed', async () => {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
-    await goToStep(5)
+    await goToStep(6)
     expect(screen.getByText('3', { selector: 'span' })).toBeInTheDocument()
 
     const slider = screen.getByLabelText(/Iteration count/)
@@ -161,11 +226,11 @@ describe('NewModel — step 5 (iterations)', () => {
   })
 })
 
-describe('NewModel — step 6 (AI components)', () => {
+describe('NewModel — step 7 (AI components)', () => {
   it('shows a checkbox for STRIDE and toggles hasAiComponents', async () => {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
-    await goToStep(6)
+    await goToStep(7)
     expect(screen.getByText('System includes AI/ML components')).toBeInTheDocument()
   })
 
@@ -173,17 +238,17 @@ describe('NewModel — step 6 (AI components)', () => {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
     await fireEvent.click(screen.getByRole('radio', { name: 'MAESTRO' }))
-    await goToStep(6)
+    await goToStep(7)
     expect(screen.getByText(/MAESTRO framework already generates/)).toBeInTheDocument()
     expect(screen.queryByText('System includes AI/ML components')).toBeNull()
   })
 })
 
-describe('NewModel — step 7 (review & submit)', () => {
+describe('NewModel — step 8 (review & submit)', () => {
   async function toReview({ title = 'My System' } = {}) {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: title } })
-    await goToStep(7)
+    await goToStep(8)
   }
 
   it('shows a summary of the entered values', async () => {
@@ -236,5 +301,24 @@ describe('NewModel — step 7 (review & submit)', () => {
     await waitFor(() =>
       expect(createModel).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'proj-9' }))
     )
+  })
+
+  it('includes an uploaded dependency manifest and depsSourceMode in the run FormData', async () => {
+    createModel.mockResolvedValue({ id: 'model-789' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'My System' } })
+    await goToStep(4)
+    const file = new File(['{"name":"x","dependencies":{}}'], 'package.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [file] } })
+    await fireEvent.click(screen.getByRole('radio', { name: 'Deep (npm + GitHub drift)' }))
+    await goToStep(4)
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
+    const fd = subscribeToRun.mock.calls[0][1]
+    expect(fd.get('dependency_manifest')).toBe(file)
+    expect(fd.get('deps_source_mode')).toBe('both')
+    expect(fd.get('dependency_lockfile')).toBeNull()
   })
 })

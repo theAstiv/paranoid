@@ -201,6 +201,14 @@ export function getModelStats(id) {
 }
 
 /**
+ * List persisted dependency capability scans for a model, most recent first.
+ * @param {string} id
+ */
+export function getModelDependencies(id) {
+  return request('GET', `/models/${id}/dependencies`)
+}
+
+/**
  * Compare two models: show what threats were added, removed, or changed.
  * @param {string} headId  The newer / re-run model
  * @param {string} baseId  The older / reference model
