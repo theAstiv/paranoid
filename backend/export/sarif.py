@@ -5,6 +5,7 @@ for security findings in GitHub, GitLab, VS Code, and most CI systems.
 """
 
 from datetime import UTC, datetime
+from pathlib import PurePath
 from typing import Any
 
 from backend.models.state import ThreatsList
@@ -209,6 +210,17 @@ def _generate_results(
     return results
 
 
+def to_sarif_uri(path: PurePath | str) -> str:
+    """Forward-slash form of a path for SARIF `artifactLocation.uri`.
+
+    A URI reference never contains backslashes, and GitHub resolves it against
+    the repo — a Windows `str(Path)` ("examples\\app\\system.md") matches nothing.
+    """
+    if isinstance(path, PurePath):
+        return path.as_posix()
+    return path.replace("\\", "/")
+
+
 def _build_locations(
     threat: Any, source_file: str | None, dependency_manifest_path: str = "package.json"
 ) -> list[dict[str, Any]]:
@@ -232,24 +244,27 @@ def _build_locations(
     matters for a monorepo package (e.g. "apps/web/package.json"). The
     dependency's own file:line survives in properties.dependencyRef and the
     result message for anyone reading the raw SARIF.
+
+    The physical and logical parts share ONE location object. GitHub code
+    scanning reads locations[0] and rejects the *entire* upload ("expected a
+    physical location") if it has no physicalLocation, so a logical-only
+    entry must never lead (verified by uploading a real CLI run).
     """
     dependency_ref = getattr(threat, "dependency_ref", None)
     if dependency_ref is not None:
         return [
             {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": to_sarif_uri(dependency_manifest_path)},
+                    "region": {"startLine": 1, "startColumn": 1},
+                },
                 "logicalLocations": [
                     {
                         "name": f"npm:{dependency_ref.package}@{dependency_ref.version}",
                         "kind": "module",
                     }
-                ]
-            },
-            {
-                "physicalLocation": {
-                    "artifactLocation": {"uri": dependency_manifest_path},
-                    "region": {"startLine": 1, "startColumn": 1},
-                }
-            },
+                ],
+            }
         ]
 
     locations = []
@@ -260,7 +275,7 @@ def _build_locations(
             {
                 "physicalLocation": {
                     "artifactLocation": {
-                        "uri": source_file,
+                        "uri": to_sarif_uri(source_file),
                     },
                     "region": {
                         "startLine": 1,

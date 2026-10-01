@@ -275,3 +275,56 @@ def test_run_manifest_dependency_count_ignores_unresolvable_ranges(
 
     assert result.exit_code == 0, result.output
     assert captured["dependency_manifest"] == manifest_data
+
+
+def test_run_sarif_output_uses_forward_slash_uris(
+    runner, sample_input_file, tmp_path, monkeypatch, fake_settings
+):
+    """On Windows `str(Path)` has backslashes, which are not valid in a SARIF
+    artifact URI and don't resolve on GitHub — for both the threat results and
+    the description-completeness findings the CLI appends itself."""
+    _patch_settings(monkeypatch, fake_settings)
+
+    async def _fake_run_pipeline_for_model(*args, **kwargs):
+        return
+        yield  # pragma: no cover
+
+    class _Gap:
+        severity = "error"
+        field = "authentication"
+        message = "no described authentication"
+
+    class _FakeBundleResult:
+        is_sufficient = False
+        gaps = [_Gap()]
+
+    class _EmptyResult:
+        is_sufficient = True
+        gaps: list = []
+
+    class _FakeBundle:
+        description = _FakeBundleResult()
+        assumptions = _EmptyResult()
+
+    async def _fake_analyze_bundle(*args, **kwargs):
+        return _FakeBundle()
+
+    monkeypatch.setattr("cli.commands.run.run_pipeline_for_model", _fake_run_pipeline_for_model)
+    monkeypatch.setattr("cli.commands.run.analyze_bundle", _fake_analyze_bundle)
+
+    out = tmp_path / "out.sarif"
+    result = runner.invoke(
+        run,
+        [str(sample_input_file), "--format", "sarif", "--output", str(out), "--quiet"],
+    )
+    assert result.exit_code == 0, result.output
+
+    uris = [
+        loc["physicalLocation"]["artifactLocation"]["uri"]
+        for res in json.loads(out.read_text(encoding="utf-8"))["runs"][0]["results"]
+        for loc in res["locations"]
+        if "physicalLocation" in loc
+    ]
+    assert uris, "expected at least the description-completeness finding"
+    assert all("\\" not in uri for uri in uris), uris
+    assert all(uri.endswith("system.md") for uri in uris)
