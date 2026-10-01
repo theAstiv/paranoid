@@ -465,6 +465,14 @@ async def test_ollama_repairs_missing_top_level_list():
         assert result.assets == []
 
 
+def test_anthropic_default_timeout_covers_slow_thinking_models():
+    """60s timed out generate_threats on claude-sonnet-5 (8K-token output) on every
+    retry, dropping the whole run to rule-engine-only; matches OpenAI's 240s."""
+    with patch("backend.providers.anthropic.Anthropic") as client_cls:
+        AnthropicProvider(model="claude-sonnet-5", api_key="k")
+    assert client_cls.call_args.kwargs["timeout"] == 240.0
+
+
 def test_ollama_default_timeout_is_300s():
     """Default timeout was raised from 120s to 300s to handle dense MAESTRO runs."""
     provider = OllamaProvider(model="llama3")
