@@ -15,7 +15,7 @@ from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
     count_resolvable_direct_dependencies,
 )
-from backend.export.sarif import export_sarif
+from backend.export.sarif import export_sarif, to_sarif_uri
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.enums import Framework
@@ -1163,7 +1163,7 @@ async def _run_pipeline_inside_provider(
                                 "locations": [
                                     {
                                         "physicalLocation": {
-                                            "artifactLocation": {"uri": str(input_file)},
+                                            "artifactLocation": {"uri": to_sarif_uri(input_file)},
                                             "region": {"startLine": 1},
                                         }
                                     }

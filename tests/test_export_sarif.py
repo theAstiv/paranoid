@@ -190,9 +190,11 @@ def test_sarif_dependency_threat_without_file_still_gets_manifest_location():
 
     result = output["runs"][0]["results"][0]
     locations = result["locations"]
-    assert len(locations) == 2
+    # One location carrying both parts: GitHub rejects the whole upload unless
+    # locations[0] has a physicalLocation.
+    assert len(locations) == 1
     assert locations[0]["logicalLocations"][0]["name"] == "npm:ua-parser-js@0.7.29"
-    assert locations[1]["physicalLocation"]["artifactLocation"]["uri"] == "package.json"
+    assert locations[0]["physicalLocation"]["artifactLocation"]["uri"] == "package.json"
     assert "Found in" not in result["message"]["text"]
 
 
@@ -224,3 +226,64 @@ def test_sarif_dependency_threat_uses_caller_supplied_manifest_path():
         loc for loc in output["runs"][0]["results"][0]["locations"] if "physicalLocation" in loc
     )
     assert physical["physicalLocation"]["artifactLocation"]["uri"] == "apps/web/package.json"
+
+
+def _dependency_threat(package="lodash", version="4.17.21"):
+    from backend.models.state import DependencyRef, Threat
+
+    return Threat(
+        name="Install-time code execution",
+        stride_category="Elevation of Privilege",
+        description="x " * 40,
+        target=package,
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        source="dependency",
+        dependency_ref=DependencyRef(package=package, version=version, file=None, line=None),
+    )
+
+
+def test_sarif_dependency_result_leads_with_a_physical_location():
+    """GitHub code scanning reads locations[0] and rejects the *entire* upload
+    ("locationFromSarifResult: expected a physical location") when it has no
+    physicalLocation — found by uploading a real CLI run. The npm logical
+    location therefore lives in the same location object, after the physical
+    one, rather than as a separate leading entry."""
+    output = export_sarif(
+        threats=ThreatsList(threats=[_dependency_threat()]),
+        model_id="dep-gh",
+        framework="STRIDE",
+        source_file="examples/stride-example.md",
+    )
+    locations = output["runs"][0]["results"][0]["locations"]
+    assert "physicalLocation" in locations[0]
+    assert locations[0]["logicalLocations"][0]["name"] == "npm:lodash@4.17.21"
+
+
+def test_to_sarif_uri_uses_forward_slashes_for_windows_paths():
+    from pathlib import PureWindowsPath
+
+    from backend.export.sarif import to_sarif_uri
+
+    assert to_sarif_uri(PureWindowsPath("examples\\arsenal-deps\\description.md")) == (
+        "examples/arsenal-deps/description.md"
+    )
+    assert to_sarif_uri("apps\\web\\package.json") == "apps/web/package.json"
+    assert to_sarif_uri("already/posix.md") == "already/posix.md"
+
+
+def test_sarif_locations_normalize_windows_style_paths():
+    """SARIF artifact URIs are URI references: a Windows `str(Path)` with
+    backslashes does not resolve against the repo on GitHub."""
+    output = export_sarif(
+        threats=ThreatsList(threats=[_dependency_threat()]),
+        model_id="dep-win",
+        framework="STRIDE",
+        source_file="examples\\arsenal-deps\\description.md",
+        dependency_manifest_path="apps\\web\\package.json",
+    )
+    uri = output["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ]
+    assert uri == "apps/web/package.json"
