@@ -1,0 +1,16 @@
+{
+  "name": "mediadrop-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Arsenal demo fixture for Paranoid's dependency capability engine (W3-4). Not a real published package.",
+  "dependencies": {
+    "express": "^5.2.1",
+    "axios": "^1.20.0",
+    "sharp": "^0.35.4",
+    "esbuild": "^0.28.2",
+    "jsonwebtoken": "^9.0.3",
+    "zod": "^4.6.5",
+    "uuid": "^14.0.2",
+    "ws": "^8.22.0"
+  }
+}
