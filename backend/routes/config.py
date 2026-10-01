@@ -52,7 +52,13 @@ async def _api_key_source(provider: str) -> str | None:
         # silent half-broken config.
         logger.warning(f"Decryption failed for config key {db_key!r} — returning unset.")
         return None
-    return "db" if value else None
+    if value:
+        return "db"
+    # No env var, no DB row — but a key loaded from `.env` lands directly in
+    # pydantic Settings without ever touching os.environ or the DB.
+    if getattr(settings, db_key, "").strip():
+        return "env"
+    return None
 
 
 async def _is_first_run() -> bool:
@@ -60,17 +66,13 @@ async def _is_first_run() -> bool:
 
     Ollama is exempt — it has no API key concept and its base URL may point
     at a server not yet running. Users can verify via test-connection.
+
+    Delegates to `_api_key_source` rather than re-deriving the same
+    env/db/settings precedence, so the two can't drift out of sync.
     """
     if settings.default_provider in ("ollama", "bedrock"):
         return False
-    env_name, db_key = API_KEY_FIELDS[settings.default_provider]
-    if os.environ.get(env_name, "").strip():
-        return False
-    try:
-        value = await get_config_value(db_key)
-    except PATDecryptionError:
-        return True
-    return not value
+    return await _api_key_source(settings.default_provider) is None
 
 
 async def _config_payload() -> dict:
