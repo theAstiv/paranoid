@@ -161,6 +161,34 @@ async def test_first_run_false_after_key_set(client):
 
 
 @pytest.mark.asyncio
+async def test_first_run_false_when_key_loaded_from_dotenv(client, monkeypatch):
+    """A key loaded into pydantic Settings from `.env` (not exported to the
+    process environment) must still count as configured — first_run false and
+    the source reported as `env`, not just `db`."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-from-dotenv")
+    resp = await client.get("/api/config/")
+    data = resp.json()
+    assert data["first_run"] is False
+    assert data["anthropic_api_key_set"] is True
+    assert data["anthropic_api_key_source"] == "env"
+
+
+@pytest.mark.asyncio
+async def test_db_key_wins_source_over_dotenv_settings(client, monkeypatch):
+    """A key saved through the API (→ DB) takes precedence as the reported
+    source over a `.env`-loaded settings value for the same provider —
+    matching main.py's startup hydration order (DB overrides `.env`)."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-from-dotenv")
+    resp = await client.patch("/api/config/", json={"anthropic_api_key": "sk-ant-from-db"})
+    assert resp.status_code == 200
+
+    resp = await client.get("/api/config/")
+    data = resp.json()
+    assert data["anthropic_api_key_source"] == "db"
+    assert data["first_run"] is False
+
+
+@pytest.mark.asyncio
 async def test_first_run_false_for_ollama(client, monkeypatch):
     """Ollama is exempt from first-run because it has no API key concept."""
     monkeypatch.setattr(settings, "default_provider", "ollama")
