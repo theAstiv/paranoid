@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # enrichment (attack trees / test cases).  Only applies when
     # default_provider == 'anthropic'.  Set FAST_MODEL="" to disable.
     fast_model: str = "claude-haiku-4-5-20251001"
+    # Opt-in `output_config.effort` for the *main* Anthropic model (never the
+    # fast model). Unset keeps the model's default; claude-sonnet-5 at its
+    # default overran 4096 tokens on threat JSON and truncated, `medium`
+    # finished comfortably. Older models reject the parameter.
+    anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     default_iterations: int = 3
 
     # Embedding settings
@@ -155,6 +160,12 @@ class Settings(BaseSettings):
     # Empty list (default) loads all 16 collections — no behaviour change.
     # Example: SEED_COLLECTIONS=stride,auth,cloud
     seed_collections: list[str] = Field(default_factory=list)
+
+    @field_validator("anthropic_effort", mode="before")
+    @classmethod
+    def blank_effort_is_unset(cls, v: object) -> object:
+        # `ANTHROPIC_EFFORT=` in .env arrives as "" rather than being absent.
+        return None if isinstance(v, str) and not v.strip() else v
 
     @field_validator("seed_collections")
     @classmethod

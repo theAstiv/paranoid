@@ -51,6 +51,7 @@ class AnthropicProvider:
         api_key: str,
         max_retries: int = 3,
         timeout: float = 240.0,
+        effort: str | None = None,
     ):
         """Initialize Anthropic provider.
 
@@ -59,6 +60,9 @@ class AnthropicProvider:
             api_key: Anthropic API key
             max_retries: Number of retry attempts for failed requests
             timeout: Request timeout in seconds
+            effort: Optional `output_config.effort` level (low/medium/high/xhigh/max).
+                None sends nothing, which is the model's default — older models
+                reject the parameter, so it is strictly opt-in.
         """
         self._model = model
         self._client = Anthropic(
@@ -71,6 +75,10 @@ class AnthropicProvider:
         # lazily on first call and cached per instance so later calls for
         # the same model+process skip the doomed round-trip entirely.
         self._temperature_unsupported = False
+        # Same lazy detection for `effort`: a model that rejects it gets one
+        # retry without it, remembered for the rest of this instance's calls.
+        self._effort = effort
+        self._effort_unsupported = False
 
     @staticmethod
     def _is_temperature_deprecated_error(e: BadRequestError) -> bool:
@@ -98,25 +106,50 @@ class AnthropicProvider:
             message=f"No text block in response.content (got: {[type(b).__name__ for b in response.content]})",
         )
 
+    @staticmethod
+    def _is_effort_unsupported_error(e: BadRequestError) -> bool:
+        message = str(e).lower()
+        return "effort" in message or "output_config" in message
+
     async def _create_message(self, temperature: float, **kwargs):
-        """Call `messages.create`, retrying once without `temperature` if this
-        model rejects it outright (some model families do, as a 400 rather
-        than accepting/silently ignoring it)."""
-        if not self._temperature_unsupported:
+        """Call `messages.create`, dropping `temperature` and/or `effort` once
+        if this model rejects them outright (a 400 rather than being accepted
+        or silently ignored). Each rejection flips a per-instance flag, so the
+        loop retries at most once per parameter."""
+        while True:
+            call = dict(kwargs)
+            if not self._temperature_unsupported:
+                call["temperature"] = temperature
+            if self._effort and not self._effort_unsupported:
+                # extra_body rather than the typed `output_config` argument so
+                # this works on every SDK version the `anthropic>=` pin allows.
+                call["extra_body"] = {
+                    **call.get("extra_body", {}),
+                    "output_config": {"effort": self._effort},
+                }
             try:
-                return await run_sync_in_executor(
-                    self._client.messages.create, temperature=temperature, **kwargs
-                )
+                return await run_sync_in_executor(self._client.messages.create, **call)
             except BadRequestError as e:
-                if not self._is_temperature_deprecated_error(e):
+                if not self._temperature_unsupported and self._is_temperature_deprecated_error(e):
+                    self._temperature_unsupported = True
+                    logger.warning(
+                        "Model %s rejects the `temperature` parameter — omitting it "
+                        "for the rest of this provider instance's calls",
+                        self._model,
+                    )
+                elif (
+                    self._effort
+                    and not self._effort_unsupported
+                    and (self._is_effort_unsupported_error(e))
+                ):
+                    self._effort_unsupported = True
+                    logger.warning(
+                        "Model %s rejects the `effort` parameter — omitting it "
+                        "for the rest of this provider instance's calls",
+                        self._model,
+                    )
+                else:
                     raise
-                self._temperature_unsupported = True
-                logger.warning(
-                    "Model %s rejects the `temperature` parameter — omitting it "
-                    "for the rest of this provider instance's calls",
-                    self._model,
-                )
-        return await run_sync_in_executor(self._client.messages.create, **kwargs)
 
     @property
     def name(self) -> str:
