@@ -31,6 +31,16 @@ def bedrock_kwargs(provider_type: str) -> dict:
     return {"region": settings.aws_region, "profile": settings.aws_profile}
 
 
+def anthropic_kwargs(provider_type: str) -> dict:
+    """Return the opt-in effort kwarg for create_provider when provider is anthropic.
+
+    Only for the main provider: the fast (Haiku) provider must not get it.
+    """
+    if provider_type != "anthropic" or not settings.anthropic_effort:
+        return {}
+    return {"effort": settings.anthropic_effort}
+
+
 def resolve_provider(
     provider_name: str | None,
     model_name: str | None = None,
@@ -62,6 +72,7 @@ def build_provider_from_record(record: dict) -> LLMProvider:
             api_key=api_key,
             base_url=base_url,
             **bedrock_kwargs(provider_type),
+            **anthropic_kwargs(provider_type),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

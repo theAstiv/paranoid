@@ -186,6 +186,73 @@ async def test_anthropic_temperature_deprecated_retries_without_it():
 
 
 @pytest.mark.asyncio
+async def test_anthropic_effort_is_sent_as_output_config():
+    """claude-sonnet-5 at its default effort overran 4096 tokens on threat JSON
+    and failed to parse; an opt-in effort setting must reach the API."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_success = MagicMock()
+        mock_success.content = [MagicMock(text="ok")]
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_success
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k", effort="medium")
+        await provider.generate(prompt="Hello")
+
+        kwargs = mock_client.messages.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"output_config": {"effort": "medium"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_without_effort_sends_no_output_config():
+    """Unset effort must leave requests byte-identical to before (older models
+    such as Haiku 4.5 reject the parameter)."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_success = MagicMock()
+        mock_success.content = [MagicMock(text="ok")]
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_success
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-haiku-4-5", api_key="k")
+        await provider.generate(prompt="Hello")
+
+        assert "extra_body" not in mock_client.messages.create.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_effort_rejected_retries_without_it_and_remembers():
+    """A model that rejects `effort` must not turn a run into rule-engine-only:
+    retry once without it, and remember so later calls skip the doomed trip."""
+    from anthropic import BadRequestError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        effort_error = BadRequestError(
+            message="output_config.effort: this model does not support effort",
+            response=mock_response,
+            body={"error": {"message": "output_config.effort is not supported"}},
+        )
+        mock_success = MagicMock()
+        mock_success.content = [MagicMock(text="ok without effort")]
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [effort_error, mock_success]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-haiku-4-5", api_key="k", effort="medium")
+        assert await provider.generate(prompt="Hello") == "ok without effort"
+        assert mock_client.messages.create.call_count == 2
+        calls = mock_client.messages.create.call_args_list
+        assert "extra_body" in calls[0].kwargs
+        assert "extra_body" not in calls[1].kwargs
+
+        mock_client.messages.create.side_effect = [mock_success]
+        await provider.generate(prompt="Hello again")
+        assert "extra_body" not in mock_client.messages.create.call_args_list[-1].kwargs
+
+
+@pytest.mark.asyncio
 async def test_anthropic_other_bad_request_error_still_raises():
     """A 400 unrelated to `temperature` must not be swallowed by the
     temperature-fallback retry — it should surface as a ProviderError."""

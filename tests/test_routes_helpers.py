@@ -7,7 +7,49 @@ import pytest
 from fastapi import HTTPException
 
 from backend.config import settings
-from backend.routes._helpers import bedrock_kwargs
+from backend.routes._helpers import (
+    anthropic_kwargs,
+    bedrock_kwargs,
+    build_fast_provider,
+    build_provider_from_record,
+)
+
+
+def test_anthropic_kwargs_passes_effort_only_for_anthropic_when_set(monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    assert anthropic_kwargs("anthropic") == {"effort": "medium"}
+    assert anthropic_kwargs("openai") == {}
+    assert anthropic_kwargs("bedrock") == {}
+
+
+def test_anthropic_kwargs_unset_effort_returns_empty(monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_effort", None)
+    assert anthropic_kwargs("anthropic") == {}
+
+
+def test_effort_reaches_main_provider_but_not_fast_provider(monkeypatch):
+    """Haiku (the fast model) rejects `effort`, so only the main model gets it."""
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    monkeypatch.setattr(settings, "anthropic_api_key", "k")
+    monkeypatch.setattr(settings, "fast_model", "claude-haiku-4-5-20251001")
+    record = {"provider": "anthropic", "model": "claude-sonnet-5"}
+
+    assert build_provider_from_record(record)._effort == "medium"
+    assert build_fast_provider(record)._effort is None
+
+
+def test_anthropic_effort_setting_validates_and_treats_blank_as_unset(monkeypatch):
+    from pydantic import ValidationError
+
+    from backend.config import Settings
+
+    monkeypatch.setenv("ANTHROPIC_EFFORT", "")
+    assert Settings().anthropic_effort is None
+    monkeypatch.setenv("ANTHROPIC_EFFORT", "medium")
+    assert Settings().anthropic_effort == "medium"
+    monkeypatch.setenv("ANTHROPIC_EFFORT", "bogus")
+    with pytest.raises(ValidationError):
+        Settings()
 
 
 def test_bedrock_kwargs_non_bedrock_returns_empty():

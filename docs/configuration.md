@@ -23,6 +23,7 @@ docker compose up --build
 | `AWS_PROFILE` | — | AWS named profile for Bedrock; empty uses boto3's default credential chain |
 | `DEFAULT_PROVIDER` | `anthropic` | Active provider: `anthropic`, `openai`, `ollama`, `bedrock` |
 | `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model name |
+| `ANTHROPIC_EFFORT` | — | Optional `low`/`medium`/`high`/`xhigh`/`max`; sent as `output_config.effort` to the **main** Anthropic model only (never the fast model). Unset keeps the model default. `claude-sonnet-5` at its default overran 4096 tokens on threat JSON; `medium` finished. Older models (e.g. Haiku 4.5) reject it — the provider then retries once without it |
 | `FAST_MODEL` | `claude-haiku-4-5-20251001` | Haiku-class model for extraction/enrichment steps (Anthropic only); set to same as `DEFAULT_MODEL` to disable fast routing |
 
 **Recommended models by provider:**
