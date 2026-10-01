@@ -50,7 +50,7 @@ class AnthropicProvider:
         model: str,
         api_key: str,
         max_retries: int = 3,
-        timeout: float = 60.0,
+        timeout: float = 240.0,
     ):
         """Initialize Anthropic provider.
 
