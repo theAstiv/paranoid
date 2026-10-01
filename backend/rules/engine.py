@@ -5,6 +5,7 @@ patterns, and provides vector similarity retrieval for RAG context injection.
 Runs independently of any LLM provider — no external API calls.
 """
 
+import functools
 import json
 import logging
 import re
@@ -115,6 +116,121 @@ _KEYWORD_PATTERNS: list[str] = [
 ]
 
 
+# Technology-specific terms: product/framework names rather than generic
+# architecture nouns (e.g. "api", "auth", "admin", "web"). A seed pattern
+# whose name/target names one of these technologies is gated in
+# `_score_pattern` — it only scores against a description that mentions that
+# same technology, so a FastAPI-specific pattern can't score purely on
+# generic terms an Express app's description also happens to use.
+_TECH_TERMS: frozenset[str] = frozenset(
+    {
+        # Web frameworks
+        "django",
+        "fastapi",
+        "express",
+        "expressjs",
+        "rails",
+        "next",
+        "nextjs",
+        "flask",
+        "spring",
+        "springboot",
+        "laravel",
+        "nuxt",
+        # Databases
+        "mysql",
+        "postgresql",
+        "postgres",
+        "sqlite",
+        "oracle",
+        "mssql",
+        "mongodb",
+        "redis",
+        "cassandra",
+        "dynamodb",
+        "elasticsearch",
+        "neo4j",
+        # ORMs / query builders
+        "prisma",
+        "sqlalchemy",
+        "mongoose",
+        "drizzle",
+        "sequelize",
+        "typeorm",
+        "hibernate",
+        "activerecord",
+        # Message brokers & stream processors
+        "kafka",
+        "rabbitmq",
+        "celery",
+        "bullmq",
+        "sidekiq",
+        "nats",
+        "pulsar",
+        # Managed identity / auth providers
+        "auth0",
+        "clerk",
+        "cognito",
+        "firebase",
+        "supabase",
+        "okta",
+        "keycloak",
+        # AI/LLM tooling & vector stores
+        "langchain",
+        "pinecone",
+        "weaviate",
+        "qdrant",
+        "chromadb",
+        "milvus",
+        # IaC / infra tools
+        "nginx",
+        "terraform",
+        "helm",
+        "istio",
+        "envoy",
+        "vault",
+        "consul",
+        "ansible",
+    }
+)
+
+
+@functools.lru_cache(maxsize=1024)
+def _prefix_word_regex(term: str) -> re.Pattern[str]:
+    """Compile a left-boundary-only regex for `term` (`-` counts as a word char).
+
+    Used for keyword scoring, where a keyword must still match its plural or
+    inflected forms in pattern text ("auth" → "authentication", "token" →
+    "tokens", "privilege" → "privileges"). Only the left edge is guarded:
+    plain substring search (the previous behaviour) matched "api" inside
+    "FastAPI", inflating scores for unrelated patterns, and a left-boundary
+    check alone is enough to block that ("api" is preceded by "t", a word
+    char, inside "fastapi") without losing suffixed matches.
+    """
+    escaped = re.escape(term)
+    return re.compile(rf"(?<![\w-]){escaped}")
+
+
+@functools.lru_cache(maxsize=1024)
+def _full_word_regex(term: str) -> re.Pattern[str]:
+    """Compile a whole-word regex for `term` (`-` counts as a word char).
+
+    Used only to detect whether a pattern names a specific technology (the
+    `_TECH_TERMS` gate), where both edges must be guarded so "express"
+    doesn't match "expression" and "helm" doesn't match "helmet".
+    """
+    escaped = re.escape(term)
+    return re.compile(rf"(?<![\w-]){escaped}(?![\w-])")
+
+
+def _text_contains_term_prefix(term: str, text: str) -> bool:
+    return _prefix_word_regex(term).search(text) is not None
+
+
+def _text_contains_term_full(term: str, text: str) -> bool:
+    return _full_word_regex(term).search(text) is not None
+
+
 def extract_keywords(description: str) -> set[str]:
     """Extract security-relevant technology keywords from a system description.
 
@@ -182,7 +298,11 @@ def _score_pattern(pattern: dict[str, Any], keywords: set[str]) -> int:
     """Score a seed pattern's relevance against extracted keywords.
 
     Counts how many extracted keywords appear in the pattern's name,
-    description, and target fields.
+    description, and target fields — gated by `_TECH_TERMS`: a pattern whose
+    name/target names a specific technology (e.g. "FastAPI") only scores
+    against a description that mentions that same technology, so generic
+    keyword overlap ("api", "admin") can't match a technology-specific
+    pattern the description has no connection to.
 
     Args:
         pattern: Seed pattern dictionary
@@ -191,6 +311,7 @@ def _score_pattern(pattern: dict[str, Any], keywords: set[str]) -> int:
     Returns:
         Integer relevance score (0 = no match)
     """
+    name_target = " ".join([pattern.get("name", ""), pattern.get("target", "")]).lower()
     searchable = " ".join(
         [
             pattern.get("name", ""),
@@ -199,7 +320,15 @@ def _score_pattern(pattern: dict[str, Any], keywords: set[str]) -> int:
         ]
     ).lower()
 
-    return sum(1 for kw in keywords if kw in searchable)
+    # Gate only on name/target: the description often mentions a technology
+    # merely as an example (e.g. "AWS ElastiCache... (Redis/Memcached)"),
+    # which would otherwise gate out an unrelated, generally-applicable
+    # pattern.
+    pattern_tech_terms = {t for t in _TECH_TERMS if _text_contains_term_full(t, name_target)}
+    if pattern_tech_terms and not (pattern_tech_terms & keywords):
+        return 0
+
+    return sum(1 for kw in keywords if _text_contains_term_prefix(kw, searchable))
 
 
 def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat | None:
