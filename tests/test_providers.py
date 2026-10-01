@@ -185,6 +185,105 @@ async def test_anthropic_temperature_deprecated_retries_without_it():
         assert "temperature" not in third_call_kwargs
 
 
+def _text_response(text: str, stop_reason: str = "end_turn", extra_blocks=()):
+    response = MagicMock()
+    response.stop_reason = stop_reason
+    response.usage.output_tokens = 123
+    response.content = [*extra_blocks, MagicMock(type="text", text=text)]
+    return response
+
+
+@pytest.mark.asyncio
+async def test_anthropic_empty_response_is_retried_with_a_bigger_budget():
+    """After a max_tokens bump, claude-sonnet-5 once returned an empty text
+    block (not stop_reason=max_tokens), which raised `Expecting value` and dropped
+    gap analysis to the fallback. An empty response must be retried like a
+    truncation."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        truncated = _text_response('{"assets": [', stop_reason="max_tokens")
+        empty = _text_response("")
+        ok = _text_response('{"assets": []}')
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [truncated, empty, ok]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        result = await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+        assert result.assets == []
+        budgets = [c.kwargs["max_tokens"] for c in mock_client.messages.create.call_args_list]
+        assert budgets[0] < budgets[1] < budgets[2]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_persistent_empty_response_reports_why(caplog):
+    """When every attempt is empty the error must say so, with the stop reason and
+    block types (the log previously gave no clue what the model returned)."""
+    import logging
+
+    from backend.providers import ProviderError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        thinking = MagicMock(type="thinking", text=None)
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = lambda **_: _text_response(
+            "", extra_blocks=[thinking]
+        )
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        with caplog.at_level(logging.WARNING, logger="backend.providers.anthropic"):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+        message = str(exc_info.value)
+        assert "empty response" in message
+        assert "stop_reason=end_turn" in message
+        assert "thinking" in message
+        assert any("stop_reason=end_turn" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_non_json_response_is_retried_at_the_same_budget(caplog):
+    """B4/B5 (live): gap analysis intermittently came back as non-JSON text
+    (`Expecting value: line 1 column 1`), which failed the whole step on the first
+    occurrence. It is intermittent, so one retry should recover — without a
+    pointless token bump, since it isn't a truncation."""
+    import logging
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        prose = _text_response("I'll analyze the coverage gaps now.")
+        ok = _text_response('{"assets": []}')
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [prose, ok]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        with caplog.at_level(logging.WARNING, logger="backend.providers.anthropic"):
+            result = await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+        assert result.assets == []
+        budgets = [c.kwargs["max_tokens"] for c in mock_client.messages.create.call_args_list]
+        assert budgets[0] == budgets[1]
+        # The diagnostic records what the model actually said.
+        assert any("analyze the coverage gaps" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_persistent_non_json_response_still_raises():
+    from backend.providers import ProviderError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = lambda **_: _text_response("not json at all")
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        with pytest.raises(ProviderError, match="Failed to parse structured output"):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+        assert mock_client.messages.create.call_count == 3
+
+
 @pytest.mark.asyncio
 async def test_anthropic_effort_is_sent_as_output_config():
     """claude-sonnet-5 at its default effort overran 4096 tokens on threat JSON

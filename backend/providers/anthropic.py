@@ -264,6 +264,33 @@ class AnthropicProvider:
                 response_text = self._extract_text(response)
                 response_text = strip_markdown_fences(response_text)
 
+                # An empty text block (seen after a max_tokens bump on
+                # claude-sonnet-5, with stop_reason != max_tokens) would
+                # otherwise surface as the opaque "Expecting value" below.
+                # Retry it like a truncation and record what came back.
+                if not response_text.strip():
+                    detail = (
+                        f"empty response (stop_reason={response.stop_reason}, "
+                        f"blocks={[getattr(b, 'type', type(b).__name__) for b in response.content]}, "
+                        f"output_tokens={getattr(response.usage, 'output_tokens', None)}, "
+                        f"max_tokens={budget})"
+                    )
+                    last_error = ProviderError(
+                        provider=self.name,
+                        message=f"Failed to parse structured output: {detail}",
+                    )
+                    if attempt < _MAX_RETRIES:
+                        budget = min(budget * 2, _MAX_AUTO_BUMP)
+                        logger.warning(
+                            "Anthropic returned an %s — retrying at %d tokens (attempt %d/%d)",
+                            detail,
+                            budget,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        continue
+                    raise last_error
+
                 try:
                     # strict=False allows raw control characters (literal
                     # newlines, tabs, ...) inside JSON string values instead
@@ -284,6 +311,39 @@ class AnthropicProvider:
                             return response_model.model_validate(data)
                         except (json.JSONDecodeError, ValidationError):
                             pass
+
+                    # Record what the model actually returned: "Expecting value"
+                    # at char 0 means the text isn't JSON at all (prose, a
+                    # refusal, a stray tag), which the message alone can't show.
+                    logger.warning(
+                        "Anthropic response failed JSON parsing (%s): stop_reason=%s "
+                        "blocks=%s output_tokens=%s max_tokens=%d head=%r",
+                        err_str[:80],
+                        response.stop_reason,
+                        [getattr(b, "type", type(b).__name__) for b in response.content],
+                        getattr(response.usage, "output_tokens", None),
+                        budget,
+                        response_text[:200],
+                    )
+
+                    # Text that isn't JSON from the first character (seen
+                    # intermittently on gap analysis, live) is not a truncation, so
+                    # retry at the same budget rather than bumping.
+                    if err_str.startswith("Expecting value: line 1 column 1") and (
+                        attempt < _MAX_RETRIES
+                    ):
+                        last_error = ProviderError(
+                            provider=self.name,
+                            message=f"Failed to parse structured output: {e}",
+                            original_error=e,
+                        )
+                        logger.warning(
+                            "Retrying non-JSON response at %d tokens (attempt %d/%d)",
+                            budget,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        continue
 
                     is_truncation = any(pat in err_str for pat in _TRUNCATION_PATTERNS)
 
