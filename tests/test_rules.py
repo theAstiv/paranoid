@@ -16,6 +16,7 @@ from backend.rules.engine import (
     SEED_COLLECTIONS,
     _load_seed_patterns,
     _pattern_to_threat,
+    _score_pattern,
     extract_keywords,
     fetch_rag_context,
     match_patterns,
@@ -241,6 +242,93 @@ def test_pattern_to_threat_missing_name_returns_none():
     }
     threat = _pattern_to_threat(pattern, Framework.STRIDE)
     assert threat is None
+
+
+# ---------------------------------------------------------------------------
+# _score_pattern — technology gate + word-boundary matching
+# ---------------------------------------------------------------------------
+
+
+def _fastapi_pattern() -> dict:
+    return {
+        "name": "FastAPI Missing Auth Dependency on Protected Routes",
+        "stride_category": "Elevation of Privilege",
+        "description": "FastAPI Depends(get_current_user) omitted from a route.",
+        "target": "FastAPI Route Definition",
+    }
+
+
+def test_score_pattern_api_keyword_does_not_substring_match_fastapi():
+    """ "api" must not score against "FastAPI" via substring containment —
+    the word-boundary check should see "api" is embedded in a larger word."""
+    pattern = _fastapi_pattern()
+    assert _score_pattern(pattern, {"api"}) == 0
+
+
+def test_score_pattern_tech_gate_blocks_generic_keyword_overlap():
+    """A description with only generic keywords ("api", "admin") that happen
+    to overlap a FastAPI pattern's text must not score it — reproduces the
+    "FastAPI pattern on an Express app" false positive (P8, week4-plan)."""
+    pattern = _fastapi_pattern()
+    generic_keywords = {"api", "admin", "dependency", "auth"}
+    assert _score_pattern(pattern, generic_keywords) == 0
+
+
+def test_score_pattern_tech_gate_allows_matching_technology_mention():
+    """The same pattern scores normally once the description actually
+    mentions "fastapi"."""
+    pattern = _fastapi_pattern()
+    keywords = {"fastapi", "auth", "api"}
+    assert _score_pattern(pattern, keywords) > 0
+
+
+def test_score_pattern_ungated_for_patterns_without_tech_terms():
+    """A pattern that names no specific technology isn't gated — ordinary
+    keyword overlap still scores it."""
+    pattern = {
+        "name": "SQL Injection",
+        "description": "Unvalidated input reaches a SQL query.",
+        "target": "Database",
+    }
+    assert _score_pattern(pattern, {"sql"}) > 0
+
+
+def test_score_pattern_keyword_matches_plural_and_inflected_forms():
+    """Scoring uses a prefix-only boundary so a singular keyword still
+    matches its plural/inflected form in pattern text ("role" → "Roles",
+    "auth" → "Authentication") — only the left edge needs guarding to
+    reject the "api"-in-"fastapi" case."""
+    pattern = {
+        "name": "Misconfigured IAM Roles and Policies",
+        "description": "Overly permissive IAM roles grant excessive privileges.",
+        "target": "Cloud IAM",
+    }
+    assert _score_pattern(pattern, {"role", "privilege"}) == 2
+
+
+def test_score_pattern_tech_term_only_in_description_is_not_gated():
+    """The tech gate only inspects name/target, not description — a pattern
+    that merely mentions a technology as an example in its description (not
+    its name/target) must not be gated out for an unrelated description."""
+    pattern = {
+        "name": "Cloud Data Destruction via Deletion API (T1485)",
+        "description": "Applies to data stores such as DynamoDB or Cloud Storage.",
+        "target": "Cloud Data Store",
+    }
+    assert _score_pattern(pattern, {"api", "cloud"}) > 0
+
+
+def test_match_patterns_express_description_excludes_fastapi_pattern():
+    """End-to-end: an Express-only description (generic api/admin/auth
+    keywords, no mention of FastAPI) must not surface the FastAPI pattern."""
+    desc = (
+        "A Node.js Express application exposing a REST API with JWT "
+        "authentication and an admin panel; dependency updates are managed "
+        "via npm."
+    )
+    result = match_patterns(desc, Framework.STRIDE, max_results=50)
+    names = [t.name.lower() for t in result.threats]
+    assert not any("fastapi" in n for n in names)
 
 
 # ---------------------------------------------------------------------------
