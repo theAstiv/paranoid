@@ -195,6 +195,22 @@ _TECH_TERMS: frozenset[str] = frozenset(
 )
 
 
+# Alternate spellings of the same technology -> the canonical term. Seed
+# patterns name "Express.js" / "Next.js" / "PostgreSQL" while descriptions often
+# say "ExpressJS" / "NextJS" / "Postgres", which extract as different keywords;
+# without this the gate in `_score_pattern` would silently drop the patterns.
+_TECH_ALIASES: dict[str, str] = {
+    "expressjs": "express",
+    "nextjs": "next",
+    "springboot": "spring",
+    "postgres": "postgresql",
+}
+
+
+def _canonical_tech(term: str) -> str:
+    return _TECH_ALIASES.get(term, term)
+
+
 @functools.lru_cache(maxsize=1024)
 def _prefix_word_regex(term: str) -> re.Pattern[str]:
     """Compile a left-boundary-only regex for `term` (`-` counts as a word char).
@@ -324,11 +340,21 @@ def _score_pattern(pattern: dict[str, Any], keywords: set[str]) -> int:
     # merely as an example (e.g. "AWS ElastiCache... (Redis/Memcached)"),
     # which would otherwise gate out an unrelated, generally-applicable
     # pattern.
-    pattern_tech_terms = {t for t in _TECH_TERMS if _text_contains_term_full(t, name_target)}
-    if pattern_tech_terms and not (pattern_tech_terms & keywords):
+    pattern_tech_terms = {
+        _canonical_tech(t) for t in _TECH_TERMS if _text_contains_term_full(t, name_target)
+    }
+    keyword_techs = {_canonical_tech(kw) for kw in keywords}
+    if pattern_tech_terms and not (pattern_tech_terms & keyword_techs):
         return 0
 
-    return sum(1 for kw in keywords if _text_contains_term_prefix(kw, searchable))
+    # An alias counts as the technology it names: "expressjs" should score against
+    # a pattern whose text says "Express.js", just as "express" does.
+    return sum(
+        1
+        for kw in keywords
+        if _text_contains_term_prefix(kw, searchable)
+        or _text_contains_term_prefix(_canonical_tech(kw), searchable)
+    )
 
 
 def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat | None:

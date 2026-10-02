@@ -25,4 +25,11 @@ describe('font loading', () => {
       expect(main).toMatch(new RegExp(`@fontsource/ibm-plex-mono/latin-${weight}\\.css`))
     }
   })
+
+  it('main.js imports the italic face used by the muted empty-state captions', () => {
+    // Several captions use Tailwind's `italic`; without a real italic face the
+    // browser slants the upright font (faux italic), which looks off-brand.
+    const main = readFileSync(resolve(here, 'src/main.js'), 'utf-8')
+    expect(main).toMatch(/@fontsource\/ibm-plex-sans\/latin-400-italic\.css/)
+  })
 })

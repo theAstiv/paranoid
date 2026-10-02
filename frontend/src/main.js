@@ -4,6 +4,9 @@ import '@fontsource/ibm-plex-sans/latin-400.css'
 import '@fontsource/ibm-plex-sans/latin-500.css'
 import '@fontsource/ibm-plex-sans/latin-600.css'
 import '@fontsource/ibm-plex-sans/latin-700.css'
+// A real italic face for the muted empty-state captions (Tailwind `italic`);
+// without it the browser slants the upright font.
+import '@fontsource/ibm-plex-sans/latin-400-italic.css'
 import '@fontsource/ibm-plex-mono/latin-400.css'
 import '@fontsource/ibm-plex-mono/latin-500.css'
 import '@fontsource/ibm-plex-mono/latin-600.css'
