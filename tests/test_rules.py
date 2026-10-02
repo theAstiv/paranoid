@@ -293,6 +293,68 @@ def test_score_pattern_ungated_for_patterns_without_tech_terms():
     assert _score_pattern(pattern, {"sql"}) > 0
 
 
+def _express_pattern() -> dict:
+    return {
+        "name": "Express.js Prototype Pollution via Request Body",
+        "stride_category": "Tampering",
+        "description": "Unsafe object merge of the parsed request body pollutes Object.prototype.",
+        "target": "Express.js Application",
+    }
+
+
+@pytest.mark.parametrize("spelling", ["express", "expressjs"])
+def test_score_pattern_tech_gate_accepts_alias_spellings_of_express(spelling):
+    """A description saying "ExpressJS" yields the keyword `expressjs`, while the
+    seed pattern names "Express.js" (`express`); the gate must treat them as one
+    technology rather than silently dropping both Express.js patterns."""
+    assert _score_pattern(_express_pattern(), {spelling, "api"}) > 0
+
+
+@pytest.mark.parametrize("spelling", ["next", "nextjs"])
+def test_score_pattern_tech_gate_accepts_alias_spellings_of_nextjs(spelling):
+    pattern = {
+        "name": "Next.js Middleware Auth Bypass via Malformed URL",
+        "stride_category": "Elevation of Privilege",
+        "description": "Middleware matching can be bypassed with a crafted path.",
+        "target": "Next.js Middleware",
+    }
+    assert _score_pattern(pattern, {spelling, "auth"}) > 0
+
+
+@pytest.mark.parametrize("spelling", ["postgres", "postgresql"])
+def test_score_pattern_tech_gate_accepts_alias_spellings_of_postgres(spelling):
+    """Same shape as the real seed: the pattern names `supabase` and `postgresql`."""
+    pattern = {
+        "name": "Supabase Row Level Security Policy Bypass",
+        "stride_category": "Elevation of Privilege",
+        "description": "A permissive RLS policy exposes other tenants' rows.",
+        "target": "Supabase PostgreSQL",
+    }
+    assert _score_pattern(pattern, {spelling, "policy"}) > 0
+
+
+@pytest.mark.parametrize("spelling", ["spring", "springboot"])
+def test_score_pattern_tech_gate_accepts_alias_spellings_of_spring(spelling):
+    pattern = {
+        "name": "Spring Boot Actuator Endpoints Exposed",
+        "stride_category": "Information Disclosure",
+        "description": "Actuator endpoints expose environment and heap dumps.",
+        "target": "Spring Boot Actuator",
+    }
+    assert _score_pattern(pattern, {spelling, "http"}) > 0
+
+
+def test_aliases_do_not_leak_across_unrelated_technologies():
+    """Canonicalizing aliases must not make a Postgres description unlock a
+    MongoDB-specific pattern, or an Express one unlock a Next.js pattern."""
+    nextjs = {
+        "name": "Next.js Middleware Auth Bypass via Malformed URL",
+        "description": "Middleware bypass.",
+        "target": "Next.js Middleware",
+    }
+    assert _score_pattern(nextjs, {"expressjs", "auth"}) == 0
+
+
 def test_score_pattern_keyword_matches_plural_and_inflected_forms():
     """Scoring uses a prefix-only boundary so a singular keyword still
     matches its plural/inflected form in pattern text ("role" → "Roles",
