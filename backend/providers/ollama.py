@@ -332,6 +332,7 @@ class OllamaProvider:
 
             response.raise_for_status()
             result = response.json()
+            self._record_usage(result)
             return result.get("response", "")
 
         except httpx.TimeoutException as e:

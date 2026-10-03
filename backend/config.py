@@ -7,6 +7,29 @@ from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Mirrors backend.pipeline.runner.PipelineStep's values, duplicated as plain
+# strings rather than imported: that module does `from backend.config import
+# settings` at its own module-load time, so importing it back from here
+# would be circular at Settings() construction. Keep in sync —
+# tests/test_config_settings.py asserts the two match.
+_VALID_PIPELINE_STEPS = {
+    "analyze_dependencies",
+    "summarize",
+    "summarize_code",
+    "extract_assets",
+    "extract_flows",
+    "generate_threats",
+    "gap_analysis",
+    "iterate",
+    "generate_attack_tree",
+    "generate_test_cases",
+    "rule_engine",
+    "complete",
+}
+# Mirrors backend.pipeline.runner.FORBIDDEN_FAST_STEPS.
+_FORBIDDEN_FAST_STEP_NAMES = {"generate_threats", "gap_analysis"}
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -39,6 +62,19 @@ class Settings(BaseSettings):
     # finished comfortably. Older models reject the parameter.
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     default_iterations: int = 3
+    # Fast model per non-Anthropic provider (week 4a-2). FAST_MODEL above
+    # covers Anthropic; these let "fast" routing apply under any provider.
+    # Empty string means "same as main" (no distinct fast provider built).
+    fast_model_openai: str = "gpt-4.1-mini"
+    fast_model_bedrock: str = ""
+    fast_model_ollama: str = ""
+    # Per-step fast/main routing override (week 4a-2), e.g.
+    # STEP_MODELS='{"extract_flows":"main"}'. Keys are PipelineStep values,
+    # merged over the provider's default map in
+    # backend.pipeline.runner.resolve_step_models(). Validated eagerly below
+    # (step names, "fast"/"main" values, and the forbidden-fast rule) so a
+    # bad env var fails at startup, not on the first pipeline run.
+    step_models: dict[str, str] = Field(default_factory=dict)
 
     # Embedding settings
     embedding_model: str = "BAAI/bge-small-en-v1.5"
@@ -166,6 +202,23 @@ class Settings(BaseSettings):
     def blank_effort_is_unset(cls, v: object) -> object:
         # `ANTHROPIC_EFFORT=` in .env arrives as "" rather than being absent.
         return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("step_models")
+    @classmethod
+    def validate_step_models(cls, v: dict[str, str]) -> dict[str, str]:
+        bad_steps = set(v) - _VALID_PIPELINE_STEPS
+        if bad_steps:
+            raise ValueError(
+                f"Unknown pipeline step(s) in STEP_MODELS: {sorted(bad_steps)!r}. "
+                f"Valid steps: {sorted(_VALID_PIPELINE_STEPS)}"
+            )
+        bad_values = {k: val for k, val in v.items() if val not in ("fast", "main")}
+        if bad_values:
+            raise ValueError(f"STEP_MODELS values must be 'fast' or 'main': {bad_values!r}")
+        forbidden_fast = sorted(k for k in v if k in _FORBIDDEN_FAST_STEP_NAMES and v[k] == "fast")
+        if forbidden_fast:
+            raise ValueError(f"Steps {forbidden_fast} can never be routed to the fast model")
+        return v
 
     @field_validator("seed_collections")
     @classmethod

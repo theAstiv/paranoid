@@ -10,7 +10,7 @@ import json
 import logging
 import time
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -111,6 +111,88 @@ class PipelineStep(str, Enum):
     COMPLETE = "complete"
 
 
+StepModelChoice = Literal["fast", "main"]
+
+# generate_threats and gap_analysis are the pipeline's highest-stakes LLM
+# calls — never route them to the cheaper fast model, regardless of config.
+FORBIDDEN_FAST_STEPS = frozenset({PipelineStep.GENERATE_THREATS, PipelineStep.GAP_ANALYSIS})
+
+# Default per-step routing. Reproduces, exactly, the hardcoded main/fast
+# split that predates per-step config, so enabling step_models changes no
+# behaviour for existing callers that don't set it.
+_DEFAULT_STEP_MODELS: dict[PipelineStep, StepModelChoice] = {
+    PipelineStep.SUMMARIZE: "main",
+    PipelineStep.SUMMARIZE_CODE: "main",
+    PipelineStep.EXTRACT_ASSETS: "fast",
+    PipelineStep.EXTRACT_FLOWS: "fast",
+    PipelineStep.GENERATE_THREATS: "main",
+    PipelineStep.GAP_ANALYSIS: "main",
+    PipelineStep.GENERATE_ATTACK_TREE: "fast",
+    PipelineStep.GENERATE_TEST_CASES: "fast",
+}
+
+# Per-provider overrides applied on top of _DEFAULT_STEP_MODELS. gpt-4.1-mini
+# shares gpt-4.1's 32,768-token output ceiling (not a capacity limit), but
+# dense MAESTRO flow extraction is suspected to come out thinner on the mini
+# model — unmeasured as of week 4a-2, so this provider default stays
+# conservative (main) until the 4a-3 routing comparison quantifies it.
+_PROVIDER_STEP_MODEL_OVERRIDES: dict[str, dict[PipelineStep, StepModelChoice]] = {
+    "openai": {PipelineStep.EXTRACT_FLOWS: "main"},
+}
+
+
+def default_step_models(provider_name: str) -> dict[PipelineStep, StepModelChoice]:
+    """Return the default fast/main routing map for a provider name."""
+    merged = dict(_DEFAULT_STEP_MODELS)
+    merged.update(_PROVIDER_STEP_MODEL_OVERRIDES.get(provider_name, {}))
+    return merged
+
+
+def validate_step_models(step_models: dict[PipelineStep, StepModelChoice]) -> None:
+    """Raise ValueError if a forbidden step is routed to the fast model."""
+    violations = sorted(s.value for s in FORBIDDEN_FAST_STEPS if step_models.get(s) == "fast")
+    if violations:
+        raise ValueError(f"Steps {violations} can never be routed to the fast model")
+
+
+def resolve_step_models(
+    provider_name: str,
+    overrides: dict[PipelineStep, StepModelChoice] | None,
+) -> dict[PipelineStep, StepModelChoice]:
+    """Merge an override layer onto the provider's default routing map.
+
+    Must be a merge, not a replace: a step absent from `overrides` keeps its
+    provider default rather than silently falling back to "main" — e.g.
+    ``{SUMMARIZE: "fast"}`` must not also move extract_assets/extract_flows
+    off the fast model they default to.
+    """
+    merged = default_step_models(provider_name)
+    if overrides:
+        merged.update(overrides)
+        validate_step_models(merged)
+    return merged
+
+
+def step_models_override_from_settings(
+    explicit: dict[PipelineStep, StepModelChoice] | None,
+    env_step_models: dict[str, str],
+) -> dict[PipelineStep, StepModelChoice] | None:
+    """Build the override layer passed as ``PipelineConfig.step_models``.
+
+    An explicit override (e.g. a CLI ``--step-model`` flag) takes priority
+    entirely over ``settings.step_models`` (the ``STEP_MODELS`` env var);
+    when neither is set, returns None so ``resolve_step_models`` applies
+    pure provider defaults. Settings.step_models keys are already-validated
+    PipelineStep values (validated at Settings() construction) by the time
+    this runs, so the enum conversion here cannot raise.
+    """
+    if explicit is not None:
+        return explicit
+    if env_step_models:
+        return {PipelineStep(name): choice for name, choice in env_step_models.items()}
+    return None
+
+
 @dataclass
 class PipelineEvent:
     """SSE event for pipeline progress."""
@@ -152,6 +234,14 @@ class PipelineConfig:
     dedup_saturation_threshold: float = 0.7  # Stop if ≥N fraction of new threats were duplicates
     min_iterations: int = 1  # Min iterations before early-stop conditions (gap/saturation) fire
     seed_collections: list[str] | None = None  # None = all seed collections; [] treated as None
+    # Override layer merged onto the provider's default routing map by
+    # PipelineRunner (see resolve_step_models) — a step left out here keeps
+    # its provider default. None = pure provider defaults, no override.
+    step_models: dict[PipelineStep, StepModelChoice] | None = None
+
+    def __post_init__(self) -> None:
+        if self.step_models is not None:
+            validate_step_models(self.step_models)
 
 
 @dataclass
@@ -210,6 +300,53 @@ class PipelineRunner:
         # breakdown so the caller can attach it to that step's PipelineEvent.
         self._step_runs: list[StepRun] = []
         self.last_usage: list = []
+        # Per-step routing (week 4a-2): config.step_models is merged onto
+        # the provider's default map, not substituted for it — a step left
+        # out of an override must keep its provider default.
+        self._step_models = resolve_step_models(self.provider.name, config.step_models)
+
+    def _provider_for(self, step: PipelineStep) -> LLMProvider:
+        """Return the provider instance routed for `step` by self._step_models."""
+        return (
+            self.fast_provider if self._step_models.get(step, "main") == "fast" else self.provider
+        )
+
+    async def _call_step(
+        self,
+        step: PipelineStep,
+        iteration: int,
+        build_coro: Callable[[LLMProvider], Awaitable[Any]],
+        input_value: Any,
+    ) -> tuple[Any, LLMProvider, "PipelineEvent | None"]:
+        """Run a node on the provider routed for `step`, falling back to the
+        main provider if the fast model fails.
+
+        Returns (result, provider_used, fallback_event). fallback_event is
+        None unless the fast model raised a ProviderError and the retry on
+        main succeeded — the caller yields it as an "info" PipelineEvent
+        before the step's normal "completed" event.
+        """
+        provider = self._provider_for(step)
+        try:
+            result = await self._instrument(
+                step, iteration, provider, build_coro(provider), input_value
+            )
+            return result, provider, None
+        except ProviderError as e:
+            if provider is self.provider:
+                raise
+            logger.warning(
+                "Fast model failed for step %s, retrying on main model: %s", step.value, e
+            )
+            fallback_event = PipelineEvent(
+                step=step,
+                status="info",
+                message=f"Fast model unavailable for {step.value} ({e}) — retried on main model",
+            )
+            result = await self._instrument(
+                step, iteration, self.provider, build_coro(self.provider), input_value
+            )
+            return result, self.provider, fallback_event
 
     async def _instrument(
         self,
@@ -499,21 +636,22 @@ class PipelineRunner:
                 # signals (tech stack, entry points, auth patterns, anti-patterns) without
                 # the token cost of a second LLM call at this stage.
                 if code_context:
-                    summary = await self._instrument(
+                    summary, summarize_provider, fallback_event = await self._call_step(
                         PipelineStep.SUMMARIZE,
                         0,
-                        self.provider,
-                        nodes.summarize(
+                        lambda p: nodes.summarize(
                             description=description,
                             architecture_diagram=architecture_diagram,
                             assumptions=assumptions,
                             code_context=code_context,
-                            provider=self.provider,
+                            provider=p,
                             diagram_data=diagram_data,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
                     )
+                    if fallback_event:
+                        yield fallback_event
 
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE,
@@ -521,7 +659,7 @@ class PipelineRunner:
                         message=f"Summary generated: {len(summary.summary)} chars",
                         data={
                             "summary": summary.summary,
-                            "model": self.provider.model,
+                            "model": summarize_provider.model,
                             "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
@@ -532,17 +670,30 @@ class PipelineRunner:
                         message="Analyzing code structure and security patterns...",
                     )
 
-                    code_summary = await self._instrument(
+                    # Known limitation: nodes.summarize_code() catches
+                    # ProviderError itself and returns a deterministic
+                    # fallback rather than re-raising (see
+                    # backend/pipeline/nodes/summary.py). If this step is
+                    # ever routed to "fast" via step_models and the fast
+                    # model fails, _call_step below never sees the
+                    # ProviderError to retry on main — the deterministic
+                    # fallback silently wins instead. Not a behaviour change
+                    # today (SUMMARIZE_CODE defaults to "main" and nothing
+                    # overrides it), but a future fast-routing change here
+                    # should make the node re-raise so fast → main → the
+                    # deterministic fallback runs in that priority order.
+                    code_summary, summarize_code_provider, fallback_event = await self._call_step(
                         PipelineStep.SUMMARIZE_CODE,
                         0,
-                        self.provider,
-                        nodes.summarize_code(
+                        lambda p: nodes.summarize_code(
                             code_context=code_context,
-                            provider=self.provider,
+                            provider=p,
                             temperature=self.config.temperature,
                         ),
                         code_context,
                     )
+                    if fallback_event:
+                        yield fallback_event
 
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE_CODE,
@@ -552,27 +703,28 @@ class PipelineRunner:
                             "tech_stack": code_summary.tech_stack,
                             "entry_points": code_summary.entry_points,
                             "code_summary": code_summary,
-                            "model": self.provider.model,
+                            "model": summarize_code_provider.model,
                             "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
                 else:
-                    summary = await self._instrument(
+                    summary, summarize_provider, fallback_event = await self._call_step(
                         PipelineStep.SUMMARIZE,
                         0,
-                        self.provider,
-                        nodes.summarize(
+                        lambda p: nodes.summarize(
                             description=description,
                             architecture_diagram=architecture_diagram,
                             assumptions=assumptions,
                             code_context=None,
-                            provider=self.provider,
+                            provider=p,
                             diagram_data=diagram_data,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
                     )
                     code_summary = None
+                    if fallback_event:
+                        yield fallback_event
 
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE,
@@ -580,7 +732,7 @@ class PipelineRunner:
                         message=f"Summary generated: {len(summary.summary)} chars",
                         data={
                             "summary": summary.summary,
-                            "model": self.provider.model,
+                            "model": summarize_provider.model,
                             "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
@@ -601,23 +753,24 @@ class PipelineRunner:
                         message="Identifying assets and entities...",
                     )
 
-                    assets = await self._instrument(
+                    assets, assets_provider, fallback_event = await self._call_step(
                         PipelineStep.EXTRACT_ASSETS,
                         0,
-                        self.fast_provider,
-                        nodes.extract_assets(
+                        lambda p: nodes.extract_assets(
                             summary=summary.summary,
                             description=description,
                             architecture_diagram=architecture_diagram,
                             assumptions=assumptions,
                             framework=framework,
-                            provider=self.fast_provider,
+                            provider=p,
                             temperature=self.config.temperature,
                             code_summary=code_summary,
                             diagram_data=diagram_data,
                         ),
                         {"summary": summary.summary, "description": description},
                     )
+                    if fallback_event:
+                        yield fallback_event
 
                     yield PipelineEvent(
                         step=PipelineStep.EXTRACT_ASSETS,
@@ -626,7 +779,7 @@ class PipelineRunner:
                         data={
                             "asset_count": len(assets.assets),
                             "assets": assets,
-                            "model": self.fast_provider.model,
+                            "model": assets_provider.model,
                             "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
@@ -651,23 +804,24 @@ class PipelineRunner:
                         message="Extracting data flows and trust boundaries...",
                     )
 
-                    flows = await self._instrument(
+                    flows, flows_provider, fallback_event = await self._call_step(
                         PipelineStep.EXTRACT_FLOWS,
                         0,
-                        self.fast_provider,
-                        nodes.extract_flows(
+                        lambda p: nodes.extract_flows(
                             summary=summary.summary,
                             description=description,
                             architecture_diagram=architecture_diagram,
                             assumptions=assumptions,
                             assets=assets,
-                            provider=self.fast_provider,
+                            provider=p,
                             temperature=self.config.temperature,
                             code_summary=code_summary,
                             diagram_data=diagram_data,
                         ),
                         {"summary": summary.summary, "assets": assets},
                     )
+                    if fallback_event:
+                        yield fallback_event
 
                     yield PipelineEvent(
                         step=PipelineStep.EXTRACT_FLOWS,
@@ -677,7 +831,7 @@ class PipelineRunner:
                             "flow_count": len(flows.data_flows),
                             "boundary_count": len(flows.trust_boundaries),
                             "flows": flows,
-                            "model": self.fast_provider.model,
+                            "model": flows_provider.model,
                             "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
@@ -1419,22 +1573,22 @@ class PipelineRunner:
         Returns:
             AttackTree with Mermaid.js graph
         """
-        return await self._instrument(
+        result, _provider, _fallback_event = await self._call_step(
             PipelineStep.GENERATE_ATTACK_TREE,
             0,
-            self.fast_provider,
-            nodes.generate_attack_tree(
+            lambda p: nodes.generate_attack_tree(
                 threat=threat_name,
                 threat_description=threat_description,
                 target=target,
                 stride_category=stride_category,
                 maestro_category=maestro_category,
                 mitigations=mitigations,
-                provider=self.fast_provider,
+                provider=p,
                 temperature=0.3,  # Slightly higher for creativity
             ),
             {"threat_id": threat_id, "threat_name": threat_name},
         )
+        return result
 
     async def generate_test_cases_for_threat(
         self,
@@ -1456,20 +1610,20 @@ class PipelineRunner:
         Returns:
             TestSuite with Gherkin scenarios
         """
-        return await self._instrument(
+        result, _provider, _fallback_event = await self._call_step(
             PipelineStep.GENERATE_TEST_CASES,
             0,
-            self.fast_provider,
-            nodes.generate_test_cases(
+            lambda p: nodes.generate_test_cases(
                 threat=threat_name,
                 threat_description=threat_description,
                 target=target,
                 mitigations=mitigations,
-                provider=self.fast_provider,
+                provider=p,
                 temperature=0.3,
             ),
             {"threat_id": threat_id, "threat_name": threat_name},
         )
+        return result
 
 
 async def run_pipeline_for_model(
@@ -1496,6 +1650,7 @@ async def run_pipeline_for_model(
     dependency_lockfile: dict | None = None,
     dependency_source_mode: str = "npm",
     persist_usage: bool = False,
+    step_models: dict[PipelineStep, StepModelChoice] | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -1529,11 +1684,15 @@ async def run_pipeline_for_model(
         persist_usage: Write a pipeline_runs audit row per step. Only set
             this when `model_id` already names a saved threat_models row
             (true for the web run route) — see PipelineRunner's docstring.
+        step_models: Per-step fast/main routing override. None (default)
+            uses settings.step_models merged over the provider's default
+            map (see PipelineRunner._step_models).
 
     Yields:
         PipelineEvent for progress tracking
     """
     _clamped_max = max(1, min(15, max_iterations))
+    step_models_override = step_models_override_from_settings(step_models, settings.step_models)
     config = PipelineConfig(
         max_iterations=_clamped_max,
         max_execution_time_minutes=settings.pipeline_timeout_minutes,
@@ -1551,6 +1710,7 @@ async def run_pipeline_for_model(
         seed_collections=seed_collections
         if seed_collections is not None
         else (settings.seed_collections or None),
+        step_models=step_models_override,
     )
 
     runner = PipelineRunner(

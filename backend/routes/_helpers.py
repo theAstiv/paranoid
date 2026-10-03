@@ -4,7 +4,7 @@ import logging
 
 from fastapi import HTTPException
 
-from backend.config import settings
+from backend.config import Settings, settings
 from backend.db import crud_comments
 from backend.providers.base import LLMProvider, create_provider
 
@@ -12,23 +12,25 @@ from backend.providers.base import LLMProvider, create_provider
 logger = logging.getLogger(__name__)
 
 
-def get_api_key(provider_type: str) -> str | None:
+def get_api_key(provider_type: str, settings_obj: Settings | None = None) -> str | None:
     """Return the API key for the given provider, or None if not needed."""
+    s = settings_obj or settings
     if provider_type == "anthropic":
-        return settings.anthropic_api_key or None
+        return s.anthropic_api_key or None
     if provider_type == "openai":
-        return settings.openai_api_key or None
+        return s.openai_api_key or None
     return None  # ollama / bedrock need no key
 
 
-def bedrock_kwargs(provider_type: str) -> dict:
+def bedrock_kwargs(provider_type: str, settings_obj: Settings | None = None) -> dict:
     """Return region/profile kwargs for create_provider when provider is bedrock.
 
     Non-bedrock callers spread an empty dict, so this is always safe to pass through.
     """
+    s = settings_obj or settings
     if provider_type != "bedrock":
         return {}
-    return {"region": settings.aws_region, "profile": settings.aws_profile}
+    return {"region": s.aws_region, "profile": s.aws_profile}
 
 
 def anthropic_kwargs(provider_type: str) -> dict:
@@ -78,37 +80,58 @@ def build_provider_from_record(record: dict) -> LLMProvider:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def build_fast_provider(record: dict) -> LLMProvider | None:
+def _fast_model_for(provider_type: str, settings_obj: Settings | None = None) -> str:
+    """Return the configured fast model for a provider type, or "" if none."""
+    s = settings_obj or settings
+    return {
+        "anthropic": s.fast_model,
+        "openai": s.fast_model_openai,
+        "bedrock": s.fast_model_bedrock,
+        "ollama": s.fast_model_ollama,
+    }.get(provider_type, "")
+
+
+def build_fast_provider(record: dict, settings_obj: Settings | None = None) -> LLMProvider | None:
     """Build an optional fast (cheap) provider for extraction and enrichment steps.
 
-    Returns a Haiku provider when:
-    - The resolved provider is 'anthropic'
-    - ``settings.fast_model`` is non-empty
+    The single shared builder for both the web routes (default ``settings_obj``,
+    the global singleton) and the CLI (passes its own merged ``Settings``
+    instance — env + .env + CLI config file) — previously duplicated between
+    this module and ``cli/commands/run.py``.
+
+    Returns a provider of the same type as the resolved main provider, built
+    from that provider's configured fast model (``FAST_MODEL`` /
+    ``FAST_MODEL_OPENAI`` / ``FAST_MODEL_BEDROCK`` / ``FAST_MODEL_OLLAMA``),
+    when:
+    - A fast model is configured for the resolved provider type
     - The fast model differs from the main model (so we don't create a duplicate)
+
+    Never forwards ``anthropic_kwargs()`` (the opt-in ``effort`` setting) —
+    that applies to the main model only, never the fast model.
 
     Returns None in all other cases — callers pass None directly to
     ``run_pipeline_for_model(fast_provider=...)`` which then falls back to the
     main provider transparently.
     """
-    provider_type = record.get("provider") or settings.default_provider
-    if provider_type != "anthropic":
-        return None
-
-    fast_model = settings.fast_model
+    s = settings_obj or settings
+    provider_type = record.get("provider") or s.default_provider
+    fast_model = _fast_model_for(provider_type, s)
     if not fast_model:
         return None
 
-    main_model = record.get("model") or settings.default_model
+    main_model = record.get("model") or s.default_model
     if fast_model == main_model:
         return None  # identical — no benefit in creating a second instance
 
-    api_key = get_api_key("anthropic")
+    api_key = get_api_key(provider_type, s)
+    base_url = s.ollama_base_url if provider_type == "ollama" else None
     try:
         return create_provider(
-            provider_type="anthropic",
+            provider_type=provider_type,
             model=fast_model,
             api_key=api_key,
-            base_url=None,
+            base_url=base_url,
+            **bedrock_kwargs(provider_type, s),
         )
     except ValueError:
         logger.warning("Could not create fast provider for model %s — falling back", fast_model)
