@@ -27,6 +27,7 @@ from backend.pipeline.runner import (
     PipelineRunner,
     PipelineStep,
     run_pipeline_for_model,
+    step_models_override_from_settings,
 )
 from backend.providers import (
     ProviderAuthError,
@@ -35,6 +36,7 @@ from backend.providers import (
     create_provider,
 )
 from backend.providers.base import LLMProvider
+from backend.routes._helpers import build_fast_provider
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
@@ -542,21 +544,14 @@ def run(
         except Exception as e:
             raise ConfigurationError(f"Failed to initialize LLM provider: {e}") from e
 
-        # Build an optional fast provider for extraction and enrichment steps.
-        # Mirrors build_fast_provider() in backend/routes/_helpers.py.
-        fast_provider: LLMProvider | None = None
-        if settings.default_provider == "anthropic" and settings.fast_model:
-            _fast_model = settings.fast_model
-            if _fast_model != settings.default_model:
-                try:
-                    fast_provider = create_provider(
-                        provider_type="anthropic",
-                        model=_fast_model,
-                        api_key=settings.anthropic_api_key or None,
-                        base_url=None,
-                    )
-                except Exception:
-                    pass  # fast provider is optional — falls back to main provider
+        # Build an optional fast provider for extraction and enrichment steps —
+        # the single shared builder also used by the web routes
+        # (backend/routes/_helpers.py:build_fast_provider), passed this CLI
+        # run's merged Settings instance since it isn't the global singleton.
+        fast_provider: LLMProvider | None = build_fast_provider(
+            {"provider": settings.default_provider, "model": settings.default_model},
+            settings_obj=settings,
+        )
 
         # Show configuration (unless quiet mode)
         if not quiet:
@@ -1072,7 +1067,9 @@ async def _run_pipeline_inside_provider(
         runner = PipelineRunner(
             provider=provider,
             fast_provider=fast_provider,
-            config=PipelineConfig(),
+            config=PipelineConfig(
+                step_models=step_models_override_from_settings(None, settings.step_models)
+            ),
             model_id=model_id,
         )
         threat_list = json_writer.threats.threats

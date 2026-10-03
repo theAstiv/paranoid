@@ -254,6 +254,7 @@ class OpenAIProvider:
                 temperature=temperature,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._record_usage(getattr(response, "usage", None))
 
             return response.choices[0].message.content
 
