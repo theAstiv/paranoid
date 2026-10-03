@@ -7,12 +7,14 @@ from openai import APIError, AuthenticationError, LengthFinishReasonError, OpenA
 from pydantic import BaseModel
 
 from backend.models.extended import ImageContent
+from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
     run_sync_in_executor,
 )
+from backend.providers.usage import as_token_count, record_usage
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,33 @@ class OpenAIProvider:
             base_url=base_url,
             max_retries=max_retries,
             timeout=timeout,
+        )
+
+    def _record_usage(self, usage) -> None:
+        """Record this response's token usage. ``prompt_tokens`` includes any
+        cached portion on OpenAI, so it's split out into cache_read_tokens to
+        match the other providers' "uncached input" meaning.
+
+        Still records a (zero-token) call when ``usage`` is missing, so the
+        call count stays consistent with the other three providers, which
+        all record a zero-filled UsageRecord via ``as_token_count()``'s
+        None-handling rather than skipping the call outright.
+        """
+        if usage is None:
+            record_usage(UsageRecord(provider=self.name, model=self._model))
+            return
+        cached = as_token_count(
+            getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
+        )
+        prompt_tokens = as_token_count(getattr(usage, "prompt_tokens", None))
+        record_usage(
+            UsageRecord(
+                provider=self.name,
+                model=self._model,
+                input_tokens=max(prompt_tokens - cached, 0),
+                output_tokens=as_token_count(getattr(usage, "completion_tokens", None)),
+                cache_read_tokens=cached,
+            )
         )
 
     @property
@@ -136,6 +165,7 @@ class OpenAIProvider:
                         ],
                     )
 
+                    self._record_usage(response.usage)
                     parsed = response.choices[0].message.parsed
                     if parsed is None:
                         refusal = response.choices[0].message.refusal
@@ -147,6 +177,8 @@ class OpenAIProvider:
 
                 except LengthFinishReasonError as e:
                     # Model hit its output token ceiling before completing JSON.
+                    # The truncated completion still billed tokens — record them.
+                    self._record_usage(e.completion.usage)
                     current = budget or 4096
                     if attempt < _MAX_RETRIES and current < _MAX_AUTO_BUMP:
                         old = current

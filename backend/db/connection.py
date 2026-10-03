@@ -44,6 +44,21 @@ class ConnectionManager:
         self._initialized: bool = False
         self._reader_pool: asyncio.Queue[aiosqlite.Connection] | None = None
 
+    @property
+    def is_initialized(self) -> bool:
+        """Whether the writer connection is already up.
+
+        Callers that only want to persist *if* the application has already
+        set up a database (the FastAPI lifespan, a test's own fixture) check
+        this instead of calling `get()`/`reader()`, which lazily opens a
+        connection to `settings.db_path` as a side effect — harmless in the
+        app, but not something an incidental caller (e.g. optional audit
+        logging from the pipeline runner) should trigger on its own in a
+        context — a bare unit test — that never intended to touch a database
+        at all.
+        """
+        return self._initialized
+
     async def initialize(self, db_path: str) -> None:
         """Initialize the writer connection, enable WAL + FK, create schema, warm reader pool.
 

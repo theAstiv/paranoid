@@ -4,6 +4,8 @@ Uses AsyncClient with ASGITransport — no lifespan triggered.
 The test_db fixture sets up DB state before each test so db.get() works.
 """
 
+import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -889,3 +891,48 @@ async def test_persist_pipeline_event_saves_errored_and_skipped_dependencies(sav
     # skip_reason (never analyzed), not error (analysis attempted and failed)
     assert by_package["too-many-deps"]["analysis"]["skip_reason"] == "manifest size cap exceeded"
     assert "error" not in by_package["too-many-deps"]["analysis"]
+
+
+@pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_usage_summary(saved_model, test_db, client):
+    """A COMPLETE event's data.usage (RunUsage, already a plain dict from
+    run_usage.model_dump()) persists to threat_models.usage_summary and is
+    readable back via GET /models/{id} as `usage` — the Results page's
+    fallback for after a page reload (see Results.svelte's runUsage)."""
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    usage = {
+        "steps": [],
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "calls": 2,
+                "input_tokens": 300,
+                "output_tokens": 100,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "total_tokens": 400,
+            }
+        ],
+        "total_tokens": 400,
+        "fast_model": None,
+        "fast_model_tokens": 0,
+        "fast_model_share": None,
+    }
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": None, "usage": usage},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    record = await crud.get_threat_model(saved_model["id"])
+    assert json.loads(record["usage_summary"]) == usage
+
+    resp = await client.get(f"/api/models/{saved_model['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["usage"] == usage

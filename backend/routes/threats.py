@@ -42,7 +42,9 @@ def _default_runner(model_id: str) -> PipelineRunner:
         **anthropic_kwargs(provider_type),
     )
     config = PipelineConfig(max_iterations=1, temperature=0.3)
-    return PipelineRunner(provider=provider, config=config, model_id=model_id)
+    # persist_usage=True: model_id here always names an existing threat_models
+    # row (enrichment operates on an already-created model's threats).
+    return PipelineRunner(provider=provider, config=config, model_id=model_id, persist_usage=True)
 
 
 # ---------------------------------------------------------------------------

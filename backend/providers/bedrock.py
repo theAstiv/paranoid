@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
+from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -14,6 +15,7 @@ from backend.providers.base import (
     ProviderTimeoutError,
     run_sync_in_executor,
 )
+from backend.providers.usage import as_token_count, record_usage
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,20 @@ class BedrockProvider:
             ),
         )
 
+    def _record_usage(self, response: dict) -> None:
+        """Record this response's token usage from the Converse API's `usage` block."""
+        usage = response.get("usage", {})
+        record_usage(
+            UsageRecord(
+                provider=self.name,
+                model=self._model,
+                input_tokens=as_token_count(usage.get("inputTokens")),
+                output_tokens=as_token_count(usage.get("outputTokens")),
+                cache_read_tokens=as_token_count(usage.get("cacheReadInputTokens")),
+                cache_write_tokens=as_token_count(usage.get("cacheWriteInputTokens")),
+            )
+        )
+
     @property
     def name(self) -> str:
         return "bedrock"
@@ -179,6 +195,7 @@ class BedrockProvider:
                     messages=[{"role": "user", "content": content_blocks}],
                     toolConfig=tool_config,
                 )
+                self._record_usage(response)
 
                 stop_reason = response.get("stopReason", "")
 
@@ -245,6 +262,7 @@ class BedrockProvider:
                 modelId=self._model,
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
             )
+            self._record_usage(response)
             output_content = response.get("output", {}).get("message", {}).get("content", [])
             text_block = next((b for b in output_content if "text" in b), None)
             if text_block is None:

@@ -344,6 +344,71 @@ async def test_persist_handles_none_assets_flows_threats(test_db):
 
 
 @pytest.mark.asyncio
+async def test_persist_saves_usage_summary(test_db):
+    """The COMPLETE event's RunUsage dict round-trips to usage_summary — the
+    CLI's path to a model getting a Results-page "Run summary" card, since
+    the CLI's pipeline_runs audit rows are skipped entirely (its run id
+    isn't a saved threat_models row until this very call)."""
+    import json
+
+    usage = {
+        "steps": [],
+        "by_model": [
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-5",
+                "calls": 4,
+                "input_tokens": 300,
+                "output_tokens": 100,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "total_tokens": 400,
+            }
+        ],
+        "total_tokens": 400,
+        "fast_model": None,
+        "fast_model_tokens": 0,
+        "fast_model_share": None,
+    }
+    model_id = await persist_pipeline_result(
+        title="usage_run",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-5",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=None,
+        usage_summary=usage,
+    )
+
+    model = await crud.get_threat_model(model_id)
+    assert json.loads(model["usage_summary"]) == usage
+
+
+@pytest.mark.asyncio
+async def test_persist_handles_none_usage_summary(test_db):
+    """No usage_summary passed (e.g. the pipeline failed before any step
+    completed) leaves the column unset rather than writing a null/empty
+    JSON blob the frontend would have to special-case."""
+    model_id = await persist_pipeline_result(
+        title="no_usage_run",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-5",
+        framework=Framework.STRIDE,
+        iterations_completed=0,
+        assets=None,
+        flows=None,
+        threats=None,
+    )
+
+    model = await crud.get_threat_model(model_id)
+    assert model["usage_summary"] is None
+
+
+@pytest.mark.asyncio
 async def test_persist_returns_none_on_db_failure(test_db):
     """Non-fatal wrapper returns None (not raises) when DB operation fails."""
     from backend.db.connection import db

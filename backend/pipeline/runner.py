@@ -5,6 +5,7 @@ and emits server-sent events for real-time progress tracking.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -13,7 +14,9 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic import BaseModel
 
 from backend.config import settings
 from backend.dedup import deduplicate_threats
@@ -23,9 +26,11 @@ from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
+from backend.models.usage import StepRun
 from backend.pipeline import nodes
 from backend.pipeline.nodes.helpers import build_shared_context
 from backend.providers.base import LLMProvider, ProviderError
+from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
 
@@ -44,6 +49,27 @@ StopAfter = Literal["extraction"]
 # the whole partial DependencyContext it was about to return — exactly the
 # all-or-nothing failure the deadline exists to avoid.
 _DEPS_ANALYSIS_BACKSTOP_GRACE_S = 30.0
+
+
+def _hash_value(value: Any) -> str:
+    """Stable fingerprint of a step's input or output for the pipeline_runs audit.
+
+    Not meant to byte-reproduce the value — Pydantic models are dumped via
+    `model_dump(mode="json")` so the hash only changes when the data does,
+    not the containing object's identity.
+    """
+    if isinstance(value, BaseModel):
+        payload: Any = value.model_dump(mode="json")
+    elif isinstance(value, list | tuple):
+        payload = [v.model_dump(mode="json") if isinstance(v, BaseModel) else v for v in value]
+    elif isinstance(value, dict):
+        payload = {
+            k: (v.model_dump(mode="json") if isinstance(v, BaseModel) else v)
+            for k, v in value.items()
+        }
+    else:
+        payload = value
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2) -> bool:
@@ -150,6 +176,7 @@ class PipelineRunner:
         config: PipelineConfig,
         model_id: str,
         fast_provider: LLMProvider | None = None,
+        persist_usage: bool = False,
     ):
         """Initialize pipeline runner.
 
@@ -160,12 +187,123 @@ class PipelineRunner:
             fast_provider: Optional cheaper/faster provider for extraction steps
                 (assets, flows) and enrichment (attack trees, test cases).
                 Falls back to ``provider`` when not set.
+            persist_usage: Write a pipeline_runs audit row per instrumented
+                step. Opt-in and False by default: `pipeline_runs.model_id`
+                has a foreign key to `threat_models(id)`, so this must only
+                be set when `model_id` already names a saved row — true for
+                the web run route and per-threat enrichment, but not for the
+                CLI, which generates its own `<file>-<timestamp>` run id and
+                only creates the real threat_models row *after* the pipeline
+                finishes (persist_pipeline_result). Turning this on for an
+                unsaved model_id doesn't corrupt anything — the insert just
+                fails on FOREIGN KEY constraint and is logged — but doing it
+                on every step floods the log with one traceback per step.
         """
         self.provider = provider
         self.fast_provider = fast_provider or provider
         self.config = config
         self.model_id = model_id
+        self.persist_usage = persist_usage
         self.start_time: datetime | None = None
+        # Usage accounting (week 4a-1): every instrumented node call appends a
+        # StepRun here; `last_usage` holds the most recent call's per-model
+        # breakdown so the caller can attach it to that step's PipelineEvent.
+        self._step_runs: list[StepRun] = []
+        self.last_usage: list = []
+
+    async def _instrument(
+        self,
+        step: "PipelineStep",
+        iteration: int,
+        provider: LLMProvider,
+        coro: Any,
+        input_value: Any,
+    ) -> Any:
+        """Run a node coroutine inside a usage-collection scope and record a
+        pipeline_runs audit row — on failure too (any exception, not just
+        ProviderError: a cancelled or timed-out call still billed whatever
+        the provider had already recorded). Sets ``self.last_usage`` so the
+        caller can attach ``{"model", "usage"}`` to its own PipelineEvent.
+        """
+        t0 = time.monotonic()
+        status = "failed"
+        result = None
+        with collect_usage() as records:
+            try:
+                result = await coro
+                status = "completed"
+                self.last_usage = summarize_usage(records)
+            finally:
+                await self._record_step(
+                    step, iteration, provider, status, t0, input_value, result, records
+                )
+        return result
+
+    async def _record_step(
+        self,
+        step: "PipelineStep",
+        iteration: int,
+        provider: LLMProvider,
+        status: str,
+        t0: float,
+        input_value: Any,
+        output_value: Any,
+        records: list,
+    ) -> None:
+        """Append a StepRun and, when ``self.persist_usage`` is set, persist it
+        to pipeline_runs. Persistence is non-fatal — a DB error here must
+        never interrupt the pipeline — and is also skipped outright when no
+        connection is already up (see ConnectionManager.is_initialized) so a
+        bare unit test of the runner never lazily opens the real on-disk
+        database as a side effect. ``persist_usage=False`` (the CLI's case,
+        before its own threat_models row exists) skips the write entirely
+        rather than attempting and swallowing a FOREIGN KEY failure on every
+        single step."""
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        model_usage = summarize_usage(records)
+        step_run = StepRun(
+            step=step.value,
+            iteration=iteration,
+            status=status,
+            provider=provider.name,
+            model=provider.model,
+            duration_ms=duration_ms,
+            input_hash=_hash_value(input_value),
+            output_hash=_hash_value(output_value) if output_value is not None else "",
+            usage=model_usage,
+        )
+        self._step_runs.append(step_run)
+        if not self.persist_usage:
+            return
+        from backend.db.connection import db  # local import: mirrors the RAG project-id
+
+        if not db.is_initialized:
+            return
+        try:
+            from backend.db import crud
+
+            total = sum(u.total_tokens for u in model_usage)
+            await crud.create_pipeline_run(
+                model_id=self.model_id,
+                iteration=iteration,
+                step=step.value,
+                input_hash=step_run.input_hash,
+                output_hash=step_run.output_hash,
+                provider=provider.name,
+                duration_ms=duration_ms,
+                tokens_used=total or None,
+                model=provider.model,
+                input_tokens=sum(u.input_tokens for u in model_usage) or None,
+                output_tokens=sum(u.output_tokens for u in model_usage) or None,
+                cache_read_tokens=sum(u.cache_read_tokens for u in model_usage) or None,
+                cache_write_tokens=sum(u.cache_write_tokens for u in model_usage) or None,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist pipeline_runs audit row for step %s (non-fatal)",
+                step.value,
+                exc_info=True,
+            )
 
     def _check_time_limit(self) -> bool:
         """Check if execution time limit has been reached."""
@@ -361,21 +499,31 @@ class PipelineRunner:
                 # signals (tech stack, entry points, auth patterns, anti-patterns) without
                 # the token cost of a second LLM call at this stage.
                 if code_context:
-                    summary = await nodes.summarize(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        code_context=code_context,
-                        provider=self.provider,
-                        diagram_data=diagram_data,
-                        temperature=self.config.temperature,
+                    summary = await self._instrument(
+                        PipelineStep.SUMMARIZE,
+                        0,
+                        self.provider,
+                        nodes.summarize(
+                            description=description,
+                            architecture_diagram=architecture_diagram,
+                            assumptions=assumptions,
+                            code_context=code_context,
+                            provider=self.provider,
+                            diagram_data=diagram_data,
+                            temperature=self.config.temperature,
+                        ),
+                        {"description": description, "assumptions": assumptions},
                     )
 
                     yield PipelineEvent(
                         step=PipelineStep.SUMMARIZE,
                         status="completed",
                         message=f"Summary generated: {len(summary.summary)} chars",
-                        data={"summary": summary.summary},
+                        data={
+                            "summary": summary.summary,
+                            "model": self.provider.model,
+                            "usage": [u.model_dump() for u in self.last_usage],
+                        },
                     )
 
                     yield PipelineEvent(
@@ -384,10 +532,16 @@ class PipelineRunner:
                         message="Analyzing code structure and security patterns...",
                     )
 
-                    code_summary = await nodes.summarize_code(
-                        code_context=code_context,
-                        provider=self.provider,
-                        temperature=self.config.temperature,
+                    code_summary = await self._instrument(
+                        PipelineStep.SUMMARIZE_CODE,
+                        0,
+                        self.provider,
+                        nodes.summarize_code(
+                            code_context=code_context,
+                            provider=self.provider,
+                            temperature=self.config.temperature,
+                        ),
+                        code_context,
                     )
 
                     yield PipelineEvent(
@@ -398,17 +552,25 @@ class PipelineRunner:
                             "tech_stack": code_summary.tech_stack,
                             "entry_points": code_summary.entry_points,
                             "code_summary": code_summary,
+                            "model": self.provider.model,
+                            "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
                 else:
-                    summary = await nodes.summarize(
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        code_context=None,
-                        provider=self.provider,
-                        diagram_data=diagram_data,
-                        temperature=self.config.temperature,
+                    summary = await self._instrument(
+                        PipelineStep.SUMMARIZE,
+                        0,
+                        self.provider,
+                        nodes.summarize(
+                            description=description,
+                            architecture_diagram=architecture_diagram,
+                            assumptions=assumptions,
+                            code_context=None,
+                            provider=self.provider,
+                            diagram_data=diagram_data,
+                            temperature=self.config.temperature,
+                        ),
+                        {"description": description, "assumptions": assumptions},
                     )
                     code_summary = None
 
@@ -416,7 +578,11 @@ class PipelineRunner:
                         step=PipelineStep.SUMMARIZE,
                         status="completed",
                         message=f"Summary generated: {len(summary.summary)} chars",
-                        data={"summary": summary.summary},
+                        data={
+                            "summary": summary.summary,
+                            "model": self.provider.model,
+                            "usage": [u.model_dump() for u in self.last_usage],
+                        },
                     )
 
                 # Step 2: Extract Assets (skip if pre-edited assets injected)
@@ -435,23 +601,34 @@ class PipelineRunner:
                         message="Identifying assets and entities...",
                     )
 
-                    assets = await nodes.extract_assets(
-                        summary=summary.summary,
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        framework=framework,
-                        provider=self.fast_provider,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
+                    assets = await self._instrument(
+                        PipelineStep.EXTRACT_ASSETS,
+                        0,
+                        self.fast_provider,
+                        nodes.extract_assets(
+                            summary=summary.summary,
+                            description=description,
+                            architecture_diagram=architecture_diagram,
+                            assumptions=assumptions,
+                            framework=framework,
+                            provider=self.fast_provider,
+                            temperature=self.config.temperature,
+                            code_summary=code_summary,
+                            diagram_data=diagram_data,
+                        ),
+                        {"summary": summary.summary, "description": description},
                     )
 
                     yield PipelineEvent(
                         step=PipelineStep.EXTRACT_ASSETS,
                         status="completed",
                         message=f"Identified {len(assets.assets)} assets/entities",
-                        data={"asset_count": len(assets.assets), "assets": assets},
+                        data={
+                            "asset_count": len(assets.assets),
+                            "assets": assets,
+                            "model": self.fast_provider.model,
+                            "usage": [u.model_dump() for u in self.last_usage],
+                        },
                     )
 
                 # Step 3: Extract Flows (skip if pre-edited flows injected)
@@ -474,16 +651,22 @@ class PipelineRunner:
                         message="Extracting data flows and trust boundaries...",
                     )
 
-                    flows = await nodes.extract_flows(
-                        summary=summary.summary,
-                        description=description,
-                        architecture_diagram=architecture_diagram,
-                        assumptions=assumptions,
-                        assets=assets,
-                        provider=self.fast_provider,
-                        temperature=self.config.temperature,
-                        code_summary=code_summary,
-                        diagram_data=diagram_data,
+                    flows = await self._instrument(
+                        PipelineStep.EXTRACT_FLOWS,
+                        0,
+                        self.fast_provider,
+                        nodes.extract_flows(
+                            summary=summary.summary,
+                            description=description,
+                            architecture_diagram=architecture_diagram,
+                            assumptions=assumptions,
+                            assets=assets,
+                            provider=self.fast_provider,
+                            temperature=self.config.temperature,
+                            code_summary=code_summary,
+                            diagram_data=diagram_data,
+                        ),
+                        {"summary": summary.summary, "assets": assets},
                     )
 
                     yield PipelineEvent(
@@ -494,6 +677,8 @@ class PipelineRunner:
                             "flow_count": len(flows.data_flows),
                             "boundary_count": len(flows.trust_boundaries),
                             "flows": flows,
+                            "model": self.fast_provider.model,
+                            "usage": [u.model_dump() for u in self.last_usage],
                         },
                     )
 
@@ -613,23 +798,35 @@ class PipelineRunner:
 
                         # Generate STRIDE threats
                         try:
-                            stride_threats = await nodes.generate_threats(
-                                description=description,
-                                architecture_diagram=architecture_diagram,
-                                assumptions=assumptions,
-                                assets=assets,
-                                flows=flows,
-                                framework=Framework.STRIDE,
-                                provider=self.provider,
-                                existing_threats=current_threats
-                                if iteration > 1
-                                else (cumulative_threats if cumulative_threats.threats else None),
-                                gap_analysis=gaps[-1] if gaps else None,
-                                rag_context=rag_context,
-                                temperature=self.config.temperature,
-                                code_summary=code_summary,
-                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
-                                shared_context=shared_ctx,
+                            stride_threats = await self._instrument(
+                                PipelineStep.GENERATE_THREATS,
+                                iteration,
+                                self.provider,
+                                nodes.generate_threats(
+                                    description=description,
+                                    architecture_diagram=architecture_diagram,
+                                    assumptions=assumptions,
+                                    assets=assets,
+                                    flows=flows,
+                                    framework=Framework.STRIDE,
+                                    provider=self.provider,
+                                    existing_threats=current_threats
+                                    if iteration > 1
+                                    else (
+                                        cumulative_threats if cumulative_threats.threats else None
+                                    ),
+                                    gap_analysis=gaps[-1] if gaps else None,
+                                    rag_context=rag_context,
+                                    temperature=self.config.temperature,
+                                    code_summary=code_summary,
+                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    shared_context=shared_ctx,
+                                ),
+                                {
+                                    "iteration": iteration,
+                                    "framework": "STRIDE",
+                                    "gap": gaps[-1] if gaps else None,
+                                },
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -659,6 +856,8 @@ class PipelineRunner:
                                 "threat_count": len(stride_threats.threats),
                                 "framework": "STRIDE",
                                 "threats": stride_threats,
+                                "model": self.provider.model,
+                                "usage": [u.model_dump() for u in self.last_usage],
                             },
                         )
 
@@ -671,23 +870,35 @@ class PipelineRunner:
                         )
 
                         try:
-                            maestro_threats = await nodes.generate_threats(
-                                description=description,
-                                architecture_diagram=architecture_diagram,
-                                assumptions=assumptions,
-                                assets=assets,
-                                flows=flows,
-                                framework=Framework.MAESTRO,
-                                provider=self.provider,
-                                existing_threats=current_threats
-                                if iteration > 1
-                                else (cumulative_threats if cumulative_threats.threats else None),
-                                gap_analysis=gaps[-1] if gaps else None,
-                                rag_context=rag_context,
-                                temperature=self.config.temperature,
-                                code_summary=code_summary,
-                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
-                                shared_context=shared_ctx,
+                            maestro_threats = await self._instrument(
+                                PipelineStep.GENERATE_THREATS,
+                                iteration,
+                                self.provider,
+                                nodes.generate_threats(
+                                    description=description,
+                                    architecture_diagram=architecture_diagram,
+                                    assumptions=assumptions,
+                                    assets=assets,
+                                    flows=flows,
+                                    framework=Framework.MAESTRO,
+                                    provider=self.provider,
+                                    existing_threats=current_threats
+                                    if iteration > 1
+                                    else (
+                                        cumulative_threats if cumulative_threats.threats else None
+                                    ),
+                                    gap_analysis=gaps[-1] if gaps else None,
+                                    rag_context=rag_context,
+                                    temperature=self.config.temperature,
+                                    code_summary=code_summary,
+                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    shared_context=shared_ctx,
+                                ),
+                                {
+                                    "iteration": iteration,
+                                    "framework": "MAESTRO",
+                                    "gap": gaps[-1] if gaps else None,
+                                },
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -720,6 +931,8 @@ class PipelineRunner:
                                 "threat_count": len(maestro_threats.threats),
                                 "framework": "MAESTRO",
                                 "threats": maestro_threats,
+                                "model": self.provider.model,
+                                "usage": [u.model_dump() for u in self.last_usage],
                             },
                         )
 
@@ -761,23 +974,35 @@ class PipelineRunner:
                         )
 
                         try:
-                            current_threats = await nodes.generate_threats(
-                                description=description,
-                                architecture_diagram=architecture_diagram,
-                                assumptions=assumptions,
-                                assets=assets,
-                                flows=flows,
-                                framework=framework,
-                                provider=self.provider,
-                                existing_threats=current_threats
-                                if iteration > 1
-                                else (cumulative_threats if cumulative_threats.threats else None),
-                                gap_analysis=gaps[-1] if gaps else None,
-                                rag_context=rag_context,
-                                temperature=self.config.temperature,
-                                code_summary=code_summary,
-                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
-                                shared_context=shared_ctx,
+                            current_threats = await self._instrument(
+                                PipelineStep.GENERATE_THREATS,
+                                iteration,
+                                self.provider,
+                                nodes.generate_threats(
+                                    description=description,
+                                    architecture_diagram=architecture_diagram,
+                                    assumptions=assumptions,
+                                    assets=assets,
+                                    flows=flows,
+                                    framework=framework,
+                                    provider=self.provider,
+                                    existing_threats=current_threats
+                                    if iteration > 1
+                                    else (
+                                        cumulative_threats if cumulative_threats.threats else None
+                                    ),
+                                    gap_analysis=gaps[-1] if gaps else None,
+                                    rag_context=rag_context,
+                                    temperature=self.config.temperature,
+                                    code_summary=code_summary,
+                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    shared_context=shared_ctx,
+                                ),
+                                {
+                                    "iteration": iteration,
+                                    "framework": framework.value,
+                                    "gap": gaps[-1] if gaps else None,
+                                },
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -806,6 +1031,8 @@ class PipelineRunner:
                             data={
                                 "threat_count": len(current_threats.threats),
                                 "threats": current_threats,
+                                "model": self.provider.model,
+                                "usage": [u.model_dump() for u in self.last_usage],
                             },
                         )
 
@@ -949,22 +1176,31 @@ class PipelineRunner:
                         )
 
                         try:
-                            gap_result = await nodes.gap_analysis(
-                                description=description,
-                                architecture_diagram=architecture_diagram,
-                                assumptions=assumptions,
-                                assets=assets,
-                                flows=flows,
-                                threats=cumulative_threats,
-                                framework=framework,
-                                provider=self.provider,
-                                previous_gaps=gaps[
-                                    -2:
-                                ],  # cap: only last 2 gaps to bound prompt growth
-                                temperature=self.config.temperature,
-                                code_summary=code_summary,
-                                diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
-                                shared_context=shared_ctx,
+                            gap_result = await self._instrument(
+                                PipelineStep.GAP_ANALYSIS,
+                                iteration,
+                                self.provider,
+                                nodes.gap_analysis(
+                                    description=description,
+                                    architecture_diagram=architecture_diagram,
+                                    assumptions=assumptions,
+                                    assets=assets,
+                                    flows=flows,
+                                    threats=cumulative_threats,
+                                    framework=framework,
+                                    provider=self.provider,
+                                    previous_gaps=gaps[
+                                        -2:
+                                    ],  # cap: only last 2 gaps to bound prompt growth
+                                    temperature=self.config.temperature,
+                                    code_summary=code_summary,
+                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    shared_context=shared_ctx,
+                                ),
+                                {
+                                    "iteration": iteration,
+                                    "threat_count": len(cumulative_threats.threats),
+                                },
                             )
                         except ProviderError as e:
                             provider_failed = True
@@ -991,7 +1227,12 @@ class PipelineRunner:
                                 status="completed",
                                 message="Gap analysis satisfied - stopping iterations",
                                 iteration=iteration,
-                                data={"stop": True, "gap": gap_result.gap},
+                                data={
+                                    "stop": True,
+                                    "gap": gap_result.gap,
+                                    "model": self.provider.model,
+                                    "usage": [u.model_dump() for u in self.last_usage],
+                                },
                             )
                             stopped_reason = "gap_satisfied"
                             break
@@ -1006,7 +1247,12 @@ class PipelineRunner:
                                     f"({self.config.min_iterations}) requires continuing"
                                 ),
                                 iteration=iteration,
-                                data={"stop": False, "gap": None},
+                                data={
+                                    "stop": False,
+                                    "gap": None,
+                                    "model": self.provider.model,
+                                    "usage": [u.model_dump() for u in self.last_usage],
+                                },
                             )
                         else:
                             gaps.append(gap_result.gap)
@@ -1015,7 +1261,12 @@ class PipelineRunner:
                                 status="completed",
                                 message=f"Gap identified: {gap_result.gap[:100]}...",
                                 iteration=iteration,
-                                data={"stop": False, "gap": gap_result.gap},
+                                data={
+                                    "stop": False,
+                                    "gap": gap_result.gap,
+                                    "model": self.provider.model,
+                                    "usage": [u.model_dump() for u in self.last_usage],
+                                },
                             )
 
                     iteration += 1
@@ -1094,6 +1345,22 @@ class PipelineRunner:
             # Step 5: Complete
             total_duration = (datetime.now() - self.start_time).total_seconds()
 
+            # fast_model is the identifier actually used for fast-routed steps,
+            # or None when this run had no distinct fast provider (fast_model_share
+            # would be meaningless in that case). build_run_usage() matches by
+            # model *name* (it has no provider-object identity to compare), so
+            # a same-named fast/main model here would wrongly report a 100%
+            # share — checking .model, not just object identity, guards that
+            # even though today's fast-provider builders already never
+            # produce that pairing.
+            fast_model = (
+                self.fast_provider.model
+                if self.fast_provider is not self.provider
+                and self.fast_provider.model != self.provider.model
+                else None
+            )
+            run_usage = build_run_usage(self._step_runs, fast_model=fast_model)
+
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,
                 status="completed",
@@ -1107,6 +1374,7 @@ class PipelineRunner:
                     "gaps": gaps,
                     "code_summary": code_summary,
                     "dependency_context": dependency_context,
+                    "usage": run_usage.model_dump(),
                 },
             )
             logger.info(
@@ -1151,15 +1419,21 @@ class PipelineRunner:
         Returns:
             AttackTree with Mermaid.js graph
         """
-        return await nodes.generate_attack_tree(
-            threat=threat_name,
-            threat_description=threat_description,
-            target=target,
-            stride_category=stride_category,
-            maestro_category=maestro_category,
-            mitigations=mitigations,
-            provider=self.fast_provider,
-            temperature=0.3,  # Slightly higher for creativity
+        return await self._instrument(
+            PipelineStep.GENERATE_ATTACK_TREE,
+            0,
+            self.fast_provider,
+            nodes.generate_attack_tree(
+                threat=threat_name,
+                threat_description=threat_description,
+                target=target,
+                stride_category=stride_category,
+                maestro_category=maestro_category,
+                mitigations=mitigations,
+                provider=self.fast_provider,
+                temperature=0.3,  # Slightly higher for creativity
+            ),
+            {"threat_id": threat_id, "threat_name": threat_name},
         )
 
     async def generate_test_cases_for_threat(
@@ -1182,13 +1456,19 @@ class PipelineRunner:
         Returns:
             TestSuite with Gherkin scenarios
         """
-        return await nodes.generate_test_cases(
-            threat=threat_name,
-            threat_description=threat_description,
-            target=target,
-            mitigations=mitigations,
-            provider=self.fast_provider,
-            temperature=0.3,
+        return await self._instrument(
+            PipelineStep.GENERATE_TEST_CASES,
+            0,
+            self.fast_provider,
+            nodes.generate_test_cases(
+                threat=threat_name,
+                threat_description=threat_description,
+                target=target,
+                mitigations=mitigations,
+                provider=self.fast_provider,
+                temperature=0.3,
+            ),
+            {"threat_id": threat_id, "threat_name": threat_name},
         )
 
 
@@ -1215,6 +1495,7 @@ async def run_pipeline_for_model(
     dependency_manifest: dict | None = None,
     dependency_lockfile: dict | None = None,
     dependency_source_mode: str = "npm",
+    persist_usage: bool = False,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -1245,6 +1526,9 @@ async def run_pipeline_for_model(
             dependency_context isn't already provided.
         dependency_lockfile: Parsed package-lock.json (optional).
         dependency_source_mode: "npm" | "github" | "both" for dependency analysis.
+        persist_usage: Write a pipeline_runs audit row per step. Only set
+            this when `model_id` already names a saved threat_models row
+            (true for the web run route) — see PipelineRunner's docstring.
 
     Yields:
         PipelineEvent for progress tracking
@@ -1274,6 +1558,7 @@ async def run_pipeline_for_model(
         config=config,
         model_id=model_id,
         fast_provider=fast_provider,
+        persist_usage=persist_usage,
     )
 
     async for event in runner.run(

@@ -89,6 +89,7 @@ class ConsoleRenderer:
         iterations: int,
         duration: float,
         output_file: str | None = None,
+        usage: dict | None = None,
     ) -> None:
         """Render final summary with separators.
 
@@ -97,6 +98,9 @@ class ConsoleRenderer:
             iterations: Number of iterations completed
             duration: Total duration in seconds
             output_file: Output file path (if JSON export enabled)
+            usage: The COMPLETE event's ``data["usage"]`` (a serialized
+                ``RunUsage``) — tokens by model and the fast-model share, if
+                a distinct fast provider was used. None prints nothing extra.
         """
         click.echo()
         click.secho("=" * 80, fg="white")
@@ -107,4 +111,25 @@ class ConsoleRenderer:
         click.echo(f"Duration:           {duration:.1f} seconds")
         if output_file:
             click.echo(f"Output:             {output_file}")
+        self._render_usage(usage)
         click.echo()
+
+    def _render_usage(self, usage: dict | None) -> None:
+        """Print the per-model token breakdown and fast-model share.
+
+        No dollar figures here by design (decided 2026-10-01): tokens are
+        reported by model, pricing is left to the user's own provider logs.
+        """
+        if not usage or not usage.get("by_model"):
+            return
+        click.echo(f"Total Tokens:       {usage.get('total_tokens', 0):,}")
+        for model_usage in usage["by_model"]:
+            tokens = model_usage.get("total_tokens", 0)
+            calls = model_usage.get("calls", 0)
+            click.echo(
+                f"  {model_usage['model']:<30} {tokens:>10,} tokens  ({calls} call{'s' if calls != 1 else ''})"
+            )
+        if usage.get("fast_model_share") is not None:
+            click.echo(
+                f"Fast-model share:   {usage['fast_model_share']:.0%} of tokens served by {usage['fast_model']}"
+            )

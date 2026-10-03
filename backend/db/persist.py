@@ -52,6 +52,7 @@ async def persist_pipeline_result(
     test_suites: dict[str, TestSuite] | None = None,
     gap_summaries: list[str] | None = None,
     dependency_context: DependencyContext | None = None,
+    usage_summary: dict | None = None,
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
@@ -75,6 +76,12 @@ async def persist_pipeline_result(
         attack_trees: Map of synthetic threat index → AttackTree (from --enrich), or None
         test_suites: Map of synthetic threat index → TestSuite (from --enrich), or None
         dependency_context: Dependency capability analysis, or None
+        usage_summary: The COMPLETE event's data.usage (a RunUsage dict) — the
+            CLI's run never has a saved threat_models row while it's running
+            (see PipelineRunner's persist_usage), so the per-step audit rows
+            never get written; this is the one summary field that still
+            reaches the model once it's saved, for the Results page's "Run
+            summary" card.
 
     Returns:
         model_id string on success, None on failure
@@ -94,6 +101,7 @@ async def persist_pipeline_result(
             test_suites=test_suites,
             gap_summaries=gap_summaries,
             dependency_context=dependency_context,
+            usage_summary=usage_summary,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -116,6 +124,7 @@ async def _persist(
     test_suites: dict[str, TestSuite] | None = None,
     gap_summaries: list[str] | None = None,
     dependency_context: DependencyContext | None = None,
+    usage_summary: dict | None = None,
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -263,6 +272,9 @@ async def _persist(
 
     if gap_summaries:
         await update_threat_model(model_id, gap_summaries=json.dumps(gap_summaries))
+
+    if usage_summary:
+        await update_threat_model(model_id, usage_summary=json.dumps(usage_summary))
 
     await update_threat_model_status(model_id, "completed")
     return model_id

@@ -296,6 +296,10 @@ async def get_model(
     record["threats"] = threats
     record["gap_summaries"] = decode_gap_summaries(record.get("gap_summaries"))
     record["code_summary"] = _decode_json_field(record.get("code_summary"))
+    # Exposed as "usage" (not the raw usage_summary column name) so the
+    # frontend reads the same shape here as from the live SSE event's
+    # data.usage — see Results.svelte's runUsage fallback.
+    record["usage"] = _decode_json_field(record.get("usage_summary"))
     return JSONResponse(content=record)
 
 
@@ -516,6 +520,17 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                     exc_info=True,
                 )
 
+        usage = event.data.get("usage")
+        if usage is not None:
+            try:
+                await crud.update_threat_model(model_id, usage_summary=json.dumps(usage))
+            except Exception:
+                logger.warning(
+                    "Failed to persist usage_summary for model %s",
+                    model_id,
+                    exc_info=True,
+                )
+
 
 # ---------------------------------------------------------------------------
 # Pipeline SSE stream
@@ -713,6 +728,7 @@ async def run_pipeline(
                     dependency_manifest=dependency_manifest_dict,
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,
+                    persist_usage=True,  # model_id already names a saved threat_models row
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
@@ -1063,6 +1079,7 @@ async def extract_model_context(
                     provider=provider,
                     fast_provider=fast_provider,
                     stop_after="extraction",
+                    persist_usage=True,  # model_id already names a saved threat_models row
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
