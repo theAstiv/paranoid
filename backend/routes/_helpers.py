@@ -133,8 +133,15 @@ def build_fast_provider(record: dict, settings_obj: Settings | None = None) -> L
             base_url=base_url,
             **bedrock_kwargs(provider_type, s),
         )
-    except ValueError:
-        logger.warning("Could not create fast provider for model %s — falling back", fast_model)
+    except Exception:
+        # Broad on purpose: this path is always optional (callers fall back
+        # to the main provider on None), so any construction failure here —
+        # not just create_provider's own ValueError, but e.g. a Bedrock
+        # client error that isn't wrapped as one — must never take down the
+        # run. Mirrors the old CLI-only builder's bare `except Exception`.
+        logger.warning(
+            "Could not create fast provider for model %s — falling back", fast_model, exc_info=True
+        )
         return None
 
 

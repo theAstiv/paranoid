@@ -61,6 +61,23 @@ def test_build_fast_provider_returns_none_when_fast_equals_main(monkeypatch):
     assert build_fast_provider(record) is None
 
 
+def test_build_fast_provider_swallows_any_construction_error_not_just_valueerror(monkeypatch):
+    """The CLI's pre-4a-2 inline builder caught any exception when
+    constructing the optional fast provider; build_fast_provider must keep
+    that breadth now that it's the single shared builder — a non-ValueError
+    failure (e.g. a Bedrock client error not wrapped by create_provider)
+    must still fall back to None, not crash the run."""
+    monkeypatch.setattr(settings, "fast_model_bedrock", "us.anthropic.claude-haiku-fast-v1:0")
+
+    def _boom(provider_type, model, **kwargs):
+        raise RuntimeError("simulated non-ValueError construction failure")
+
+    monkeypatch.setattr("backend.routes._helpers.create_provider", _boom)
+
+    record = {"provider": "bedrock", "model": "us.anthropic.claude-sonnet-5-v1:0"}
+    assert build_fast_provider(record) is None
+
+
 def test_build_fast_provider_passes_ollama_base_url(monkeypatch):
     monkeypatch.setattr(settings, "fast_model_ollama", "llama3.1:8b-fast")
     monkeypatch.setattr(settings, "ollama_base_url", "http://my-ollama:11434")

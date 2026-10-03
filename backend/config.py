@@ -7,24 +7,24 @@ from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Mirrors backend.pipeline.runner.PipelineStep's values, duplicated as plain
-# strings rather than imported: that module does `from backend.config import
-# settings` at its own module-load time, so importing it back from here
-# would be circular at Settings() construction. Keep in sync —
+# Mirrors the keys of backend.pipeline.runner's _DEFAULT_STEP_MODELS — the
+# subset of PipelineStep that actually calls an LLM and so can be routed —
+# duplicated as plain strings rather than imported: that module does `from
+# backend.config import settings` at its own module-load time, so importing
+# it back from here would be circular at Settings() construction. A step
+# like rule_engine/iterate/complete/analyze_dependencies never reaches a
+# provider, so a STEP_MODELS entry for one would silently do nothing; kept
+# out of this set so it's rejected instead. Keep in sync —
 # tests/test_config_settings.py asserts the two match.
 _VALID_PIPELINE_STEPS = {
-    "analyze_dependencies",
     "summarize",
     "summarize_code",
     "extract_assets",
     "extract_flows",
     "generate_threats",
     "gap_analysis",
-    "iterate",
     "generate_attack_tree",
     "generate_test_cases",
-    "rule_engine",
-    "complete",
 }
 # Mirrors backend.pipeline.runner.FORBIDDEN_FAST_STEPS.
 _FORBIDDEN_FAST_STEP_NAMES = {"generate_threats", "gap_analysis"}

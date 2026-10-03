@@ -29,7 +29,12 @@ from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsLis
 from backend.models.usage import StepRun
 from backend.pipeline import nodes
 from backend.pipeline.nodes.helpers import build_shared_context
-from backend.providers.base import LLMProvider, ProviderError
+from backend.providers.base import (
+    LLMProvider,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+)
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.rules.engine import fetch_rag_context, merge_rule_and_llm_threats, run_rule_engine
 from backend.serialization import serialize_event_data
@@ -304,9 +309,20 @@ class PipelineRunner:
         # the provider's default map, not substituted for it — a step left
         # out of an override must keep its provider default.
         self._step_models = resolve_step_models(self.provider.name, config.step_models)
+        # Circuit breaker: set once a fast-routed step hits a non-transient
+        # ProviderError (auth failure, unknown model, bad request — anything
+        # other than a rate limit or timeout, which can reasonably succeed
+        # on a later call). Once set, _provider_for stops trying the fast
+        # model for the rest of this run — without it, a permanently broken
+        # fast model (e.g. a FAST_MODEL_OPENAI the account has no access to)
+        # pays one failed call *per step*, and per *enrichment call* under
+        # --enrich (one attack-tree/test-case pair per threat).
+        self._fast_disabled = False
 
     def _provider_for(self, step: PipelineStep) -> LLMProvider:
         """Return the provider instance routed for `step` by self._step_models."""
+        if self._fast_disabled:
+            return self.provider
         return (
             self.fast_provider if self._step_models.get(step, "main") == "fast" else self.provider
         )
@@ -338,11 +354,15 @@ class PipelineRunner:
             logger.warning(
                 "Fast model failed for step %s, retrying on main model: %s", step.value, e
             )
-            fallback_event = PipelineEvent(
-                step=step,
-                status="info",
-                message=f"Fast model unavailable for {step.value} ({e}) — retried on main model",
-            )
+            message = f"Fast model unavailable for {step.value} ({e}) — retried on main model"
+            # Rate limits and timeouts can clear up on a later call; anything
+            # else (auth failure, unknown model, bad request, ...) won't, so
+            # stop spending a failed call on the fast model for every
+            # remaining step/enrichment call in this run.
+            if not isinstance(e, ProviderRateLimitError | ProviderTimeoutError):
+                self._fast_disabled = True
+                message += "; fast routing disabled for the rest of this run"
+            fallback_event = PipelineEvent(step=step, status="info", message=message)
             result = await self._instrument(
                 step, iteration, self.provider, build_coro(self.provider), input_value
             )

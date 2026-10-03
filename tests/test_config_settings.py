@@ -57,12 +57,23 @@ def test_step_models_rejects_forbidden_fast_step_at_startup(monkeypatch):
         _settings()
 
 
-def test_valid_pipeline_steps_matches_pipeline_step_enum():
-    """backend.config duplicates PipelineStep's values as plain strings to
-    avoid a circular import (backend.pipeline.runner imports `settings` from
-    backend.config at module load). Guard against the two drifting apart."""
+def test_valid_pipeline_steps_matches_llm_calling_steps():
+    """backend.config duplicates the routable (LLM-calling) step names as
+    plain strings to avoid a circular import (backend.pipeline.runner
+    imports `settings` from backend.config at module load). Guard against
+    the two drifting apart. Deliberately narrower than the full PipelineStep
+    enum — rule_engine/iterate/complete/analyze_dependencies never reach a
+    provider, so STEP_MODELS must reject them rather than silently no-op."""
     from backend.config import _FORBIDDEN_FAST_STEP_NAMES, _VALID_PIPELINE_STEPS
-    from backend.pipeline.runner import FORBIDDEN_FAST_STEPS, PipelineStep
+    from backend.pipeline.runner import _DEFAULT_STEP_MODELS, FORBIDDEN_FAST_STEPS
 
-    assert {s.value for s in PipelineStep} == _VALID_PIPELINE_STEPS
+    assert {s.value for s in _DEFAULT_STEP_MODELS} == _VALID_PIPELINE_STEPS
     assert {s.value for s in FORBIDDEN_FAST_STEPS} == _FORBIDDEN_FAST_STEP_NAMES
+
+
+def test_step_models_rejects_non_llm_step_name(monkeypatch):
+    """rule_engine never calls an LLM, so a STEP_MODELS entry for it would
+    silently do nothing — reject it instead of accepting dead config."""
+    monkeypatch.setenv("STEP_MODELS", '{"rule_engine": "main"}')
+    with pytest.raises(ValidationError, match="Unknown pipeline step"):
+        _settings()

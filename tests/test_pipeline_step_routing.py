@@ -22,6 +22,7 @@ from backend.pipeline.runner import (
     run_pipeline_for_model,
     validate_step_models,
 )
+from backend.providers.base import ProviderError, ProviderRateLimitError
 from backend.providers.usage import record_usage
 from tests.fixtures.pipeline import make_code_context
 from tests.mock_provider import MockProvider
@@ -179,12 +180,15 @@ async def test_fast_model_failure_falls_back_to_main_and_completes():
     assert completed, "pipeline must still complete the step after falling back"
     assert completed[0].data["model"] == "main-v1"
 
-    # extract_flows runs normally on the fast provider afterward — the
-    # fallback for one step must not poison later steps.
+    # A generic ProviderError (MockProvider's default) is treated as
+    # non-transient, which trips the circuit breaker — extract_flows is
+    # routed straight to main rather than failing against fast again too.
+    # See test_non_transient_fast_failure_disables_fast_for_rest_of_run for
+    # the breaker's own dedicated coverage.
     flows_completed = [
         e for e in events if e.step == PipelineStep.EXTRACT_FLOWS and e.status == "completed"
     ]
-    assert flows_completed[0].data["model"] == "fast-v1"
+    assert flows_completed[0].data["model"] == "main-v1"
 
 
 @pytest.mark.asyncio
@@ -433,3 +437,126 @@ def test_pipeline_config_step_models_merges_with_provider_defaults_in_runner():
     assert runner._step_models[PipelineStep.EXTRACT_ASSETS] == "fast"  # untouched default
     assert runner._step_models[PipelineStep.EXTRACT_FLOWS] == "fast"  # untouched default
     assert runner._step_models[PipelineStep.GENERATE_THREATS] == "main"  # untouched default
+
+
+class _AlwaysFailsProvider(NamedMockProvider):
+    """Raises a fixed exception on every generate_structured() call,
+    regardless of response_model — used to simulate a permanently broken
+    fast model (e.g. a FAST_MODEL_OPENAI the account has no access to)."""
+
+    def __init__(self, model: str, exc_factory, **kwargs) -> None:
+        super().__init__(model=model, **kwargs)
+        self._exc_factory = exc_factory
+
+    async def generate_structured(self, *args, **kwargs):
+        self.calls.append(
+            {
+                "method": "generate_structured",
+                "response_model": kwargs.get("response_model", args[1] if len(args) > 1 else None),
+            }
+        )
+        raise self._exc_factory()
+
+
+@pytest.mark.asyncio
+async def test_non_transient_fast_failure_disables_fast_for_rest_of_run():
+    """A 404/auth/bad-request-class failure must not be retried against the
+    fast model again later in the same run — one failed call, not one per
+    step (and, under --enrich, not one per threat)."""
+    main_provider = NamedMockProvider(model="main-v1")
+    fast_provider = _AlwaysFailsProvider(
+        model="fast-v1",
+        exc_factory=lambda: ProviderError(provider="mock", message="404 model not found"),
+    )
+    config = PipelineConfig(enable_rag=False, max_iterations=1)
+    runner = PipelineRunner(
+        provider=main_provider, fast_provider=fast_provider, config=config, model_id="t15"
+    )
+
+    events = []
+    async for event in runner.run(description="A document sharing app", framework=Framework.STRIDE):
+        events.append(event)
+
+    assert runner._fast_disabled is True
+    assets_info = [
+        e for e in events if e.step == PipelineStep.EXTRACT_ASSETS and e.status == "info"
+    ]
+    assert "fast routing disabled for the rest of this run" in assets_info[0].message
+
+    # extract_flows defaults to fast too, but the breaker must have already
+    # routed it straight to main — no second failed call against fast_provider.
+    flows_calls_on_fast = [
+        c for c in fast_provider.calls if c["response_model"].__name__ == "FlowsList"
+    ]
+    assert flows_calls_on_fast == []
+    flows_completed = [
+        e for e in events if e.step == PipelineStep.EXTRACT_FLOWS and e.status == "completed"
+    ]
+    assert flows_completed[0].data["model"] == "main-v1"
+
+
+@pytest.mark.asyncio
+async def test_transient_fast_failure_does_not_disable_fast_routing():
+    """A rate limit is retryable — it must not trip the breaker; the next
+    fast-routed step should still try the fast model."""
+    main_provider = NamedMockProvider(model="main-v1")
+    fast_provider = _AlwaysFailsProvider(
+        model="fast-v1",
+        exc_factory=lambda: ProviderRateLimitError(provider="mock", message="rate limited"),
+    )
+    config = PipelineConfig(enable_rag=False, max_iterations=1)
+    runner = PipelineRunner(
+        provider=main_provider, fast_provider=fast_provider, config=config, model_id="t16"
+    )
+
+    events = []
+    async for event in runner.run(description="A document sharing app", framework=Framework.STRIDE):
+        events.append(event)
+
+    assert runner._fast_disabled is False
+    assets_info = [
+        e for e in events if e.step == PipelineStep.EXTRACT_ASSETS and e.status == "info"
+    ]
+    assert "fast routing disabled" not in assets_info[0].message
+    # extract_flows still attempted the fast model (and failed again) — the
+    # breaker didn't short-circuit it.
+    flows_calls_on_fast = [
+        c for c in fast_provider.calls if c["response_model"].__name__ == "FlowsList"
+    ]
+    assert len(flows_calls_on_fast) == 1
+
+
+@pytest.mark.asyncio
+async def test_enrichment_calls_stop_retrying_fast_after_one_non_transient_failure():
+    """Under --enrich, each threat calls generate_attack_tree_for_threat and
+    generate_test_cases_for_threat independently — the breaker must persist
+    across those separate calls on the same runner, not just within one."""
+    main_provider = NamedMockProvider(model="main-v1")
+    fast_provider = _AlwaysFailsProvider(
+        model="fast-v1",
+        exc_factory=lambda: ProviderError(provider="mock", message="404 model not found"),
+    )
+    config = PipelineConfig(enable_rag=False)
+    runner = PipelineRunner(
+        provider=main_provider, fast_provider=fast_provider, config=config, model_id="t17"
+    )
+
+    for i in range(3):
+        result = await runner.generate_attack_tree_for_threat(
+            threat_id=str(i),
+            threat_name="Spoofed login",
+            threat_description="An attacker spoofs a login request.",
+            target="auth-service",
+            stride_category="spoofing",
+            maestro_category=None,
+            mitigations=["MFA"],
+        )
+        assert isinstance(result, AttackTree)
+
+    # Only the first threat's call actually reached the fast provider —
+    # the breaker tripped on that failure and routed the other two straight
+    # to main.
+    fast_calls = [c for c in fast_provider.calls if c["response_model"] is AttackTree]
+    assert len(fast_calls) == 1
+    main_calls = [c for c in main_provider.calls if c["response_model"] is AttackTree]
+    assert len(main_calls) == 3
