@@ -267,3 +267,77 @@ describe('Results — code analysis panel', () => {
     expect(screen.queryByText('Code Analysis')).toBeNull()
   })
 })
+
+describe('Results — run summary panel', () => {
+  // Persisted fallback (threat_models.usage_summary, exposed as model.usage) —
+  // the realistic case, since onMount clears pipelineEvents unless a pipeline
+  // is actively streaming, so a page reload after completion has none.
+  it('renders per-model token totals and the fast-model share from the persisted model', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [
+          { model: 'claude-sonnet-5', calls: 2, total_tokens: 300 },
+          { model: 'claude-haiku-4-5', calls: 2, total_tokens: 120 },
+        ],
+        total_tokens: 420,
+        fast_model: 'claude-haiku-4-5',
+        fast_model_share: 0.2857,
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
+    expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
+    expect(screen.getByText('claude-haiku-4-5')).toBeInTheDocument()
+    expect(screen.getByText('300 tokens · 2 calls')).toBeInTheDocument()
+    expect(screen.getByText('420 tokens')).toBeInTheDocument()
+    expect(screen.getByText('29% of tokens served by claude-haiku-4-5')).toBeInTheDocument()
+  })
+
+  it('omits the fast-model line when the run used no distinct fast model', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        fast_model: null,
+        fast_model_share: null,
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
+    expect(screen.queryByText(/served by/)).toBeNull()
+  })
+
+  it('omits the run summary panel when the model has no usage data', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+    expect(screen.queryByText('Run Summary')).toBeNull()
+  })
+
+  it('prefers the live complete event over the persisted model when both are present', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: { by_model: [{ model: 'stale-model', calls: 1, total_tokens: 1 }], total_tokens: 1 },
+    })
+    // onMount clears pipelineEvents unless a pipeline is already streaming —
+    // mark one as running so the seeded event below survives mount.
+    pipelineRunning.set(true)
+    pipelineEvents.set([
+      {
+        step: 'complete',
+        status: 'completed',
+        data: {
+          usage: {
+            by_model: [{ model: 'live-model', calls: 1, total_tokens: 50 }],
+            total_tokens: 50,
+          },
+        },
+      },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
+    expect(screen.getByText('live-model')).toBeInTheDocument()
+    expect(screen.queryByText('stale-model')).toBeNull()
+  })
+})

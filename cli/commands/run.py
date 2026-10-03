@@ -957,6 +957,7 @@ async def _run_pipeline_inside_provider(
     # Track results
     total_threats = 0
     iterations_completed = 0
+    run_usage: dict | None = None
     start_time = asyncio.get_running_loop().time()
 
     # Always create a JSONWriter for data accumulation (assets, flows, threats).
@@ -1015,6 +1016,8 @@ async def _run_pipeline_inside_provider(
                         total_threats = event.data["total_threats"]
                     if "iterations_completed" in event.data:
                         iterations_completed = event.data["iterations_completed"]
+                    if "usage" in event.data:
+                        run_usage = event.data["usage"]
 
     except ProviderAuthError as e:
         raise PipelineExecutionError(
@@ -1255,6 +1258,7 @@ async def _run_pipeline_inside_provider(
             iterations=iterations_completed,
             duration=duration,
             output_file=output_file_str,
+            usage=run_usage,
         )
     elif quiet:
         # In quiet mode, show minimal summary

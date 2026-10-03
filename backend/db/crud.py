@@ -106,6 +106,7 @@ async def update_threat_model(
     gap_summaries: str | None = None,
     code_summary: str | None = None,
     assumptions: str | None = None,
+    usage_summary: str | None = None,
 ) -> None:
     """
     Update threat model details. Only provided fields will be updated.
@@ -119,6 +120,8 @@ async def update_threat_model(
         gap_summaries: JSON-encoded list of per-iteration gap analysis strings
         code_summary: JSON-encoded CodeSummary dict from code analysis
         assumptions: JSON-encoded list of assumption strings
+        usage_summary: JSON-encoded RunUsage dict (backend/models/usage.py) from
+            the COMPLETE event's data.usage
     """
     update_fields = []
     params = []
@@ -150,6 +153,10 @@ async def update_threat_model(
     if assumptions is not None:
         update_fields.append("assumptions = ?")
         params.append(assumptions)
+
+    if usage_summary is not None:
+        update_fields.append("usage_summary = ?")
+        params.append(usage_summary)
 
     # Always update timestamp
     update_fields.append("updated_at = ?")
@@ -1108,8 +1115,18 @@ async def create_pipeline_run(
     provider: str,
     duration_ms: int,
     tokens_used: int | None = None,
+    model: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> str:
-    """Create a pipeline run audit record."""
+    """Create a pipeline run audit record.
+
+    ``tokens_used`` is the total (input + output + cache) for callers that
+    only want one number; the four per-kind columns are optional detail
+    filled in by the runner's usage-accounting wiring.
+    """
     run_id = generate_id()
     now = now_iso()
 
@@ -1118,8 +1135,9 @@ async def create_pipeline_run(
         """
         INSERT INTO pipeline_runs (
             id, model_id, iteration, step, input_hash, output_hash,
-            provider, tokens_used, duration_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            provider, tokens_used, duration_ms, created_at,
+            model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -1132,6 +1150,11 @@ async def create_pipeline_run(
             tokens_used,
             duration_ms,
             now,
+            model,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
         ),
     )
     await conn.commit()
@@ -1163,6 +1186,22 @@ async def get_pipeline_stats(model_id: str) -> dict[str, Any]:
                 "avg_duration_ms": row[3],
             }
         return {}
+
+
+async def list_pipeline_runs(model_id: str) -> list[dict[str, Any]]:
+    """List every pipeline_runs row for a model, oldest first.
+
+    Used to build the per-step/per-model usage breakdown (Results page "Run
+    summary" card, CLI run summary) — the raw rows rather than another
+    bespoke aggregate query, since the breakdown needed differs by caller.
+    """
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM pipeline_runs WHERE model_id = ? ORDER BY created_at ASC",
+        (model_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 # Config KV store

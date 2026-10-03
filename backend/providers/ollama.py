@@ -8,11 +8,13 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
+from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderError,
     ProviderTimeoutError,
     strip_markdown_fences,
 )
+from backend.providers.usage import as_token_count, record_usage
 
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,18 @@ class OllamaProvider:
         self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
 
+    def _record_usage(self, api_result: dict) -> None:
+        """Record this response's token usage. Ollama has no caching concept,
+        so cache fields stay at their zero default."""
+        record_usage(
+            UsageRecord(
+                provider=self.name,
+                model=self._model,
+                input_tokens=as_token_count(api_result.get("prompt_eval_count")),
+                output_tokens=as_token_count(api_result.get("eval_count")),
+            )
+        )
+
     @property
     def name(self) -> str:
         """Provider name."""
@@ -189,6 +203,7 @@ class OllamaProvider:
                 response.raise_for_status()
                 api_result = response.json()
                 content = api_result.get("response", "")
+                self._record_usage(api_result)
 
                 # ── Check for explicit truncation via done_reason ─────────
                 done_reason = api_result.get("done_reason", "")

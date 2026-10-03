@@ -40,6 +40,12 @@
 
   $: stoppedReason = $pipelineEvents.find(e => e.step === 'complete')?.data?.stopped_reason ?? ''
   $: codeAnalysis = $pipelineEvents.find(e => e.step === 'summarize_code' && e.status === 'completed')?.data?.code_summary ?? model?.code_summary ?? null
+  // RunUsage from the COMPLETE event's data.usage (backend/models/usage.py) — tokens
+  // by model and the fast-model share, no price fields (decided 2026-10-01). Falls
+  // back to the persisted `usage` field (threat_models.usage_summary) since
+  // pipelineEvents is cleared on mount unless a pipeline run is actively streaming
+  // (see onMount), so a page reload after completion has no live SSE events.
+  $: runUsage = $pipelineEvents.find(e => e.step === 'complete')?.data?.usage ?? model?.usage ?? null
 
   let _wasRunning = false
   $: {
@@ -264,6 +270,32 @@
               Review {$threats.length} Threats
             </a>
           </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Run summary: token usage by model, no prices (decided 2026-10-01) -->
+    {#if runUsage?.by_model?.length}
+      <div class="card p-5">
+        <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">Run Summary</h2>
+        <div class="space-y-1.5">
+          {#each runUsage.by_model as m (m.model)}
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-mono text-c-text2">{m.model}</span>
+              <span class="font-mono text-c-muted">
+                {m.total_tokens.toLocaleString()} tokens · {m.calls} call{m.calls === 1 ? '' : 's'}
+              </span>
+            </div>
+          {/each}
+        </div>
+        <div class="mt-3 pt-3 border-t border-c-border flex items-center justify-between text-xs">
+          <span class="text-c-muted">Total</span>
+          <span class="font-mono font-semibold text-c-text2">{runUsage.total_tokens.toLocaleString()} tokens</span>
+        </div>
+        {#if runUsage.fast_model_share !== null && runUsage.fast_model_share !== undefined}
+          <p class="text-[11px] text-c-faint mt-2">
+            {Math.round(runUsage.fast_model_share * 100)}% of tokens served by {runUsage.fast_model}
+          </p>
         {/if}
       </div>
     {/if}

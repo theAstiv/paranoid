@@ -8,6 +8,7 @@ from anthropic import Anthropic, APIError, AuthenticationError, BadRequestError,
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
+from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -15,6 +16,7 @@ from backend.providers.base import (
     run_sync_in_executor,
     strip_markdown_fences,
 )
+from backend.providers.usage import as_token_count, record_usage
 
 
 logger = logging.getLogger(__name__)
@@ -128,7 +130,9 @@ class AnthropicProvider:
                     "output_config": {"effort": self._effort},
                 }
             try:
-                return await run_sync_in_executor(self._client.messages.create, **call)
+                response = await run_sync_in_executor(self._client.messages.create, **call)
+                self._record_usage(response)
+                return response
             except BadRequestError as e:
                 if not self._temperature_unsupported and self._is_temperature_deprecated_error(e):
                     self._temperature_unsupported = True
@@ -150,6 +154,23 @@ class AnthropicProvider:
                     )
                 else:
                     raise
+
+    def _record_usage(self, response) -> None:
+        """Record this response's token usage. ``input_tokens`` already
+        excludes cache reads/writes on the Messages API, so no adjustment."""
+        usage = getattr(response, "usage", None)
+        record_usage(
+            UsageRecord(
+                provider=self.name,
+                model=self._model,
+                input_tokens=as_token_count(getattr(usage, "input_tokens", None)),
+                output_tokens=as_token_count(getattr(usage, "output_tokens", None)),
+                cache_read_tokens=as_token_count(getattr(usage, "cache_read_input_tokens", None)),
+                cache_write_tokens=as_token_count(
+                    getattr(usage, "cache_creation_input_tokens", None)
+                ),
+            )
+        )
 
     @property
     def name(self) -> str:
