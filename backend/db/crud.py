@@ -1191,9 +1191,12 @@ async def get_pipeline_stats(model_id: str) -> dict[str, Any]:
 async def list_pipeline_runs(model_id: str) -> list[dict[str, Any]]:
     """List every pipeline_runs row for a model, oldest first.
 
-    Used to build the per-step/per-model usage breakdown (Results page "Run
-    summary" card, CLI run summary) — the raw rows rather than another
-    bespoke aggregate query, since the breakdown needed differs by caller.
+    No production caller yet — the Results page "Run summary" card and the
+    CLI's run summary both read the already-rolled-up RunUsage instead (the
+    COMPLETE event's data.usage / threat_models.usage_summary), which is
+    cheaper than re-aggregating these per-step rows on every read. This is
+    the per-step detail underneath that rollup, for whoever needs it next
+    (a step-level breakdown UI, a CSV export, ad-hoc debugging).
     """
     conn = await db.get()
     async with conn.execute(

@@ -728,6 +728,7 @@ async def run_pipeline(
                     dependency_manifest=dependency_manifest_dict,
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,
+                    persist_usage=True,  # model_id already names a saved threat_models row
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
@@ -1078,6 +1079,7 @@ async def extract_model_context(
                     provider=provider,
                     fast_provider=fast_provider,
                     stop_after="extraction",
+                    persist_usage=True,  # model_id already names a saved threat_models row
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()

@@ -1290,6 +1290,7 @@ async def _run_pipeline_inside_provider(
             test_suites=test_suites or None,
             gap_summaries=json_writer.gap_summaries or None,
             dependency_context=json_writer.dependency_context,
+            usage_summary=run_usage,
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")

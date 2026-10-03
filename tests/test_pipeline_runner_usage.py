@@ -2,8 +2,11 @@
 
 Covers: usage attached to each instrumented step's PipelineEvent, the final
 COMPLETE event's rolled-up RunUsage, the fast-model token share, and the
-pipeline_runs audit rows (written only when a DB connection is already up —
-see backend/db/connection.py's ConnectionManager.is_initialized).
+pipeline_runs audit rows — written only when the caller opts in
+(`persist_usage=True`, since `pipeline_runs.model_id` has a foreign key to
+threat_models and the CLI's run id is never a saved row until after the
+pipeline finishes) *and* a DB connection is already up (see
+backend/db/connection.py's ConnectionManager.is_initialized).
 """
 
 import pytest
@@ -155,13 +158,13 @@ async def test_fast_model_share_omitted_when_fast_and_main_models_share_a_name()
 
 
 @pytest.mark.asyncio
-async def test_pipeline_runs_audit_row_written_when_db_initialized(test_db):
+async def test_pipeline_runs_audit_row_written_when_opted_in_and_db_initialized(test_db):
     from backend.db import crud
 
     model_id = await crud.create_threat_model("Usage Test", "Desc", "mock", "mock-v1")
     provider = UsageMockProvider(gap_call_threshold=1)
     config = PipelineConfig(max_iterations=1)
-    runner = PipelineRunner(provider=provider, config=config, model_id=model_id)
+    runner = PipelineRunner(provider=provider, config=config, model_id=model_id, persist_usage=True)
 
     await _collect_events(runner, "A document sharing app", Framework.STRIDE)
 
@@ -177,13 +180,34 @@ async def test_pipeline_runs_audit_row_written_when_db_initialized(test_db):
 
 
 @pytest.mark.asyncio
+async def test_no_audit_row_written_without_opting_in(test_db):
+    """persist_usage defaults to False — this is the CLI's case, whose run id
+    is never a saved threat_models row until after the pipeline finishes. A
+    runner that doesn't opt in must not attempt the write at all (not just
+    swallow a FOREIGN KEY failure), even when a DB connection is up."""
+    from backend.db import crud
+
+    model_id = await crud.create_threat_model("Usage Test", "Desc", "mock", "mock-v1")
+    provider = UsageMockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id=model_id)
+    assert runner.persist_usage is False
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    assert events[-1].step == PipelineStep.COMPLETE
+    assert events[-1].data["usage"]["total_tokens"] > 0
+    assert await crud.list_pipeline_runs(model_id) == []
+
+
+@pytest.mark.asyncio
 async def test_no_audit_row_written_without_an_initialized_db_connection():
-    """A runner whose config never touches the DB any other way (RAG off —
+    """Even an opted-in runner must not open the real on-disk database as a
+    side effect when nothing has initialized a connection yet (RAG off here —
     the pre-existing RAG project-id lookup has its own, unrelated, lazy-init
-    call) must not open the real on-disk database just to try persisting a
-    pipeline_runs row. Force-resets ConnectionManager state so this is
-    order-independent: an earlier test in the same session may have already
-    initialized the singleton via its own test_db fixture or the RAG path."""
+    call). Force-resets ConnectionManager state so this is order-independent:
+    an earlier test in the same session may have already initialized the
+    singleton via its own test_db fixture or the RAG path."""
     from backend.db.connection import db
 
     previous = (db._connection, db._db_path, db._initialized, db._reader_pool)
@@ -191,7 +215,9 @@ async def test_no_audit_row_written_without_an_initialized_db_connection():
     try:
         provider = UsageMockProvider(gap_call_threshold=1)
         config = PipelineConfig(max_iterations=1, enable_rag=False)
-        runner = PipelineRunner(provider=provider, config=config, model_id="test-no-db")
+        runner = PipelineRunner(
+            provider=provider, config=config, model_id="test-no-db", persist_usage=True
+        )
 
         events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
 
@@ -231,3 +257,32 @@ async def test_usage_recorded_even_when_provider_fails_after_auto_bump_attempts(
     assert failed_steps, "expected at least one failed StepRun"
     assert failed_steps[0].usage
     assert failed_steps[0].usage[0].input_tokens == 100
+
+
+@pytest.mark.asyncio
+async def test_usage_recorded_for_a_non_provider_error_too():
+    """A cancellation or timeout isn't a ProviderError, but still billed
+    whatever the provider had already recorded before it propagated —
+    _instrument's `finally` must catch every exception type, not just
+    ProviderError."""
+
+    class CancelledMidCallProvider(UsageMockProvider):
+        async def generate_structured(self, *args, **kwargs):
+            record_usage(UsageRecord(provider=self.name, model=self.model, input_tokens=77))
+            raise TimeoutError("simulated request timeout")
+
+    provider = CancelledMidCallProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1, enable_rag=False)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-usage-timeout")
+
+    # The runner's own try/except only degrades gracefully for ProviderError;
+    # a TimeoutError propagates all the way out of run() as a genuine failure.
+    # That's expected — the point here is only that the StepRun was recorded
+    # before it propagated.
+    with pytest.raises(TimeoutError):
+        await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    failed_steps = [s for s in runner._step_runs if s.status == "failed"]
+    assert failed_steps, "expected a failed StepRun even for a non-ProviderError exception"
+    assert failed_steps[0].usage
+    assert failed_steps[0].usage[0].input_tokens == 77

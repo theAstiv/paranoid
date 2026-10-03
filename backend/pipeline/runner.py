@@ -176,6 +176,7 @@ class PipelineRunner:
         config: PipelineConfig,
         model_id: str,
         fast_provider: LLMProvider | None = None,
+        persist_usage: bool = False,
     ):
         """Initialize pipeline runner.
 
@@ -186,11 +187,23 @@ class PipelineRunner:
             fast_provider: Optional cheaper/faster provider for extraction steps
                 (assets, flows) and enrichment (attack trees, test cases).
                 Falls back to ``provider`` when not set.
+            persist_usage: Write a pipeline_runs audit row per instrumented
+                step. Opt-in and False by default: `pipeline_runs.model_id`
+                has a foreign key to `threat_models(id)`, so this must only
+                be set when `model_id` already names a saved row — true for
+                the web run route and per-threat enrichment, but not for the
+                CLI, which generates its own `<file>-<timestamp>` run id and
+                only creates the real threat_models row *after* the pipeline
+                finishes (persist_pipeline_result). Turning this on for an
+                unsaved model_id doesn't corrupt anything — the insert just
+                fails on FOREIGN KEY constraint and is logged — but doing it
+                on every step floods the log with one traceback per step.
         """
         self.provider = provider
         self.fast_provider = fast_provider or provider
         self.config = config
         self.model_id = model_id
+        self.persist_usage = persist_usage
         self.start_time: datetime | None = None
         # Usage accounting (week 4a-1): every instrumented node call appends a
         # StepRun here; `last_usage` holds the most recent call's per-model
@@ -207,24 +220,23 @@ class PipelineRunner:
         input_value: Any,
     ) -> Any:
         """Run a node coroutine inside a usage-collection scope and record a
-        pipeline_runs audit row — on failure too, since a provider that threw
-        ProviderError after exhausting its auto-bump retries still billed
-        every attempt. Sets ``self.last_usage`` so the caller can attach
-        ``{"model", "usage"}`` to its own PipelineEvent.
+        pipeline_runs audit row — on failure too (any exception, not just
+        ProviderError: a cancelled or timed-out call still billed whatever
+        the provider had already recorded). Sets ``self.last_usage`` so the
+        caller can attach ``{"model", "usage"}`` to its own PipelineEvent.
         """
         t0 = time.monotonic()
+        status = "failed"
+        result = None
         with collect_usage() as records:
             try:
                 result = await coro
-            except ProviderError:
+                status = "completed"
+                self.last_usage = summarize_usage(records)
+            finally:
                 await self._record_step(
-                    step, iteration, provider, "failed", t0, input_value, None, records
+                    step, iteration, provider, status, t0, input_value, result, records
                 )
-                raise
-        self.last_usage = summarize_usage(records)
-        await self._record_step(
-            step, iteration, provider, "completed", t0, input_value, result, records
-        )
         return result
 
     async def _record_step(
@@ -238,13 +250,15 @@ class PipelineRunner:
         output_value: Any,
         records: list,
     ) -> None:
-        """Append a StepRun and persist it to pipeline_runs. Persistence is
-        non-fatal — a DB error here must never interrupt the pipeline — and
-        is skipped entirely when no connection is already up (see
-        ConnectionManager.is_initialized) so a bare unit test of the runner
-        never lazily opens the real on-disk database as a side effect."""
-        from backend.db.connection import db  # local import: mirrors the RAG project-id
-
+        """Append a StepRun and, when ``self.persist_usage`` is set, persist it
+        to pipeline_runs. Persistence is non-fatal — a DB error here must
+        never interrupt the pipeline — and is also skipped outright when no
+        connection is already up (see ConnectionManager.is_initialized) so a
+        bare unit test of the runner never lazily opens the real on-disk
+        database as a side effect. ``persist_usage=False`` (the CLI's case,
+        before its own threat_models row exists) skips the write entirely
+        rather than attempting and swallowing a FOREIGN KEY failure on every
+        single step."""
         duration_ms = int((time.monotonic() - t0) * 1000)
         model_usage = summarize_usage(records)
         step_run = StepRun(
@@ -259,6 +273,10 @@ class PipelineRunner:
             usage=model_usage,
         )
         self._step_runs.append(step_run)
+        if not self.persist_usage:
+            return
+        from backend.db.connection import db  # local import: mirrors the RAG project-id
+
         if not db.is_initialized:
             return
         try:
@@ -1477,6 +1495,7 @@ async def run_pipeline_for_model(
     dependency_manifest: dict | None = None,
     dependency_lockfile: dict | None = None,
     dependency_source_mode: str = "npm",
+    persist_usage: bool = False,
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -1507,6 +1526,9 @@ async def run_pipeline_for_model(
             dependency_context isn't already provided.
         dependency_lockfile: Parsed package-lock.json (optional).
         dependency_source_mode: "npm" | "github" | "both" for dependency analysis.
+        persist_usage: Write a pipeline_runs audit row per step. Only set
+            this when `model_id` already names a saved threat_models row
+            (true for the web run route) — see PipelineRunner's docstring.
 
     Yields:
         PipelineEvent for progress tracking
@@ -1536,6 +1558,7 @@ async def run_pipeline_for_model(
         config=config,
         model_id=model_id,
         fast_provider=fast_provider,
+        persist_usage=persist_usage,
     )
 
     async for event in runner.run(
