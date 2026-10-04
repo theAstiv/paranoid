@@ -995,6 +995,11 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
     await conn.execute("DELETE FROM dependency_scans WHERE model_id = ?", (model_id,))
+    # model_diagrams is NOT cleared here: a diagram is user input (like an
+    # asset with user_edited=1), not pipeline output like dependency_scans.
+    # A re-run or re-extract that doesn't re-upload a diagram must not wipe
+    # the one already shown on the Results page. See clear_model_diagrams(),
+    # called only when a new diagram is actually uploaded.
     if preserve_user_edits:
         await conn.execute("DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,))
         await conn.execute("DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,))
@@ -1009,6 +1014,92 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     logger.info(
         f"Cleared pipeline data for model {model_id} (preserve_user_edits={preserve_user_edits})"
     )
+
+
+# Model Diagrams CRUD
+
+
+async def create_model_diagram(
+    model_id: str,
+    name: str,
+    kind: str,
+    content: str,
+    size_bytes: int,
+    media_type: str | None = None,
+) -> str:
+    """Persist an uploaded architecture diagram (mermaid source, or base64 png/jpg)."""
+    diagram_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute(
+        """
+        INSERT INTO model_diagrams (
+            id, model_id, name, kind, content, media_type, size_bytes,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (diagram_id, model_id, name, kind, content, media_type, size_bytes, now, now),
+    )
+    await conn.commit()
+
+    logger.info(f"Created model diagram {diagram_id} for model {model_id} (kind={kind})")
+    return diagram_id
+
+
+async def replace_model_diagram(
+    model_id: str,
+    name: str,
+    kind: str,
+    content: str,
+    size_bytes: int,
+    media_type: str | None = None,
+) -> str:
+    """Atomically replace a model's diagram(s) with a newly uploaded one.
+
+    Called only when a new diagram is actually uploaded (see
+    _persist_diagram_data in backend/routes/models.py) — NOT part of
+    clear_model_data(), since a diagram is user input that must survive a
+    re-run that doesn't re-upload one. Delete + insert share one commit so a
+    failed insert can't leave the model with no diagram at all.
+    """
+    diagram_id = generate_id()
+    now = now_iso()
+
+    conn = await db.get()
+    await conn.execute("DELETE FROM model_diagrams WHERE model_id = ?", (model_id,))
+    await conn.execute(
+        """
+        INSERT INTO model_diagrams (
+            id, model_id, name, kind, content, media_type, size_bytes,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (diagram_id, model_id, name, kind, content, media_type, size_bytes, now, now),
+    )
+    await conn.commit()
+
+    logger.info(f"Replaced model diagram(s) for model {model_id} with {diagram_id} (kind={kind})")
+    return diagram_id
+
+
+async def list_model_diagrams(model_id: str) -> list[dict[str, Any]]:
+    """List diagrams for a model, most recently created first."""
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT * FROM model_diagrams WHERE model_id = ? ORDER BY created_at DESC",
+        (model_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_model_diagram(diagram_id: str) -> dict[str, Any] | None:
+    """Get a single diagram by ID."""
+    conn = await db.get()
+    async with conn.execute("SELECT * FROM model_diagrams WHERE id = ?", (diagram_id,)) as cursor:
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
 
 # Attack Trees CRUD
