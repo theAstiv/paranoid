@@ -79,6 +79,18 @@ def test_empty_fast_model_flag_disables_routing(monkeypatch, sample_input_file):
     assert "Fast model: off" in result.output
 
 
+def test_fast_model_equals_form_disables_routing_the_same_way(monkeypatch, sample_input_file):
+    """The documented shell-safe form (PowerShell drops a bare empty-string
+    argument like `--fast-model ""` before it reaches the program — verified
+    directly: `python -c "import sys; print(sys.argv)" --fast-model ""`
+    comes back without the empty element). `--fast-model=` survives because
+    it's a single token."""
+    result, captured = _invoke(monkeypatch, sample_input_file, ["--fast-model="])
+    assert result.exit_code == 0, result.output
+    assert captured["fast_provider"] is None
+    assert captured["created"] == ["claude-sonnet-5"]
+
+
 def test_step_model_flags_replace_settings_step_models(monkeypatch, sample_input_file):
     result, captured = _invoke(
         monkeypatch,

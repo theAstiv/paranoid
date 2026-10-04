@@ -53,6 +53,20 @@ describe('Settings — loading', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('unreachable')))
   })
 
+  it('disables Save when the config failed to load, so a save cannot overwrite it with defaults', async () => {
+    getConfig.mockRejectedValue(new Error('unreachable'))
+    render(Settings)
+    await waitFor(() => expect(notify).toHaveBeenCalled())
+    expect(screen.getByText('Save').closest('button')).toBeDisabled()
+    expect(updateConfig).not.toHaveBeenCalled()
+  })
+
+  it('keeps Save enabled once the config has loaded', async () => {
+    render(Settings)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeInTheDocument())
+    expect(screen.getByText('Save').closest('button')).not.toBeDisabled()
+  })
+
   it('shows "Backend unreachable" when health check fails', async () => {
     getHealth.mockRejectedValue(new Error('down'))
     render(Settings)

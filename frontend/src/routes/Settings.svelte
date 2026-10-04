@@ -16,6 +16,10 @@
   let health = null
   let loading = true
   let saving = false
+  // Guards Save: a failed load leaves `draft` at its hardcoded defaults, and
+  // saving those would overwrite the real provider/iterations/fast-model
+  // settings instead of leaving them untouched.
+  let configLoaded = false
   let configSecret = ''
   let configSecretRequired = false
 
@@ -46,6 +50,7 @@
       health = h
       configSecretRequired = cfg.config_secret_required ?? false
       syncDraft(cfg)
+      configLoaded = true
     } catch (err) {
       notify('error', `Failed to load config: ${err.message}`)
     } finally {
@@ -215,7 +220,9 @@
     <div class="card p-5">
       <div class="flex items-center justify-between mb-5">
         <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Configuration</h2>
-        <span class="text-xs text-c-faint">Changes take effect immediately</span>
+        <span class="text-xs text-c-faint">
+          {configLoaded ? 'Changes take effect immediately' : 'Could not load current settings — saving is disabled'}
+        </span>
       </div>
 
       <form on:submit|preventDefault={save} class="space-y-4">
@@ -394,7 +401,7 @@
         <div class="flex items-center justify-end gap-3 pt-2 border-t border-c-border">
           <button type="button" on:click={reset}
             class="btn-ghost text-xs px-3 py-1.5">Reset</button>
-          <button type="submit" disabled={saving}
+          <button type="submit" disabled={saving || !configLoaded}
             class="btn-primary text-xs px-4 py-1.5 disabled:opacity-50">
             {saving ? 'Saving…' : 'Save'}
           </button>

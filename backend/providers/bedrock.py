@@ -327,6 +327,9 @@ def _is_temperature_deprecated_error(exc: Exception) -> bool:
 _CLIENT_ERROR_CLASSES: dict[str, type[ProviderError]] = {
     "AccessDeniedException": ProviderAuthError,
     "ThrottlingException": ProviderRateLimitError,
+    # AWS documents this as a 429 ("the model isn't ready to serve
+    # inference requests") that should be retried, same as throttling.
+    "ModelNotReadyException": ProviderRateLimitError,
     "ModelTimeoutException": ProviderTimeoutError,
     "ServiceUnavailableException": ProviderTransientError,
     "InternalServerException": ProviderTransientError,
@@ -353,8 +356,24 @@ def _map_boto_error(provider_name: str, exc: Exception) -> ProviderError:
             message = f"Could not reach Bedrock endpoint: {exc}"
         elif isinstance(exc, bce.ClientError):
             code = exc.response["Error"]["Code"]
-            error_cls = _CLIENT_ERROR_CLASSES.get(code, ProviderError)
+            if code in _CLIENT_ERROR_CLASSES:
+                error_cls = _CLIENT_ERROR_CLASSES[code]
+            else:
+                # Not one of the codes we know by name — fall back to the HTTP
+                # status so an unlisted 5xx (a new AWS error code, a transient
+                # gateway response) still gets retried instead of permanently
+                # disabling fast routing.
+                http_status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                error_cls = (
+                    ProviderTransientError if http_status and http_status >= 500 else ProviderError
+                )
             message = f"Bedrock error [{code}]: {exc.response['Error'].get('Message', '')}"
+        elif isinstance(exc, bce.HTTPClientError):
+            # Covers ConnectionClosedError, ResponseStreamingError and any
+            # other client-side HTTP failure not already matched above by a
+            # more specific type (timeouts, endpoint connection).
+            error_cls = ProviderTransientError
+            message = f"Bedrock connection error: {exc}"
         return error_cls(provider=provider_name, message=message, original_error=exc)
 
     except ImportError:

@@ -811,7 +811,18 @@ async def test_anthropic_and_openai_not_found_stays_non_transient():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("status", "transient"), [(500, True), (503, True), (404, False), (400, False)]
+    ("status", "transient"),
+    [
+        # Ollama returns 500 for a permanent load failure (not enough system
+        # memory, a crashed runtime) and 502/503/504 for a busy/restarting
+        # server — only the latter can reasonably succeed on a later call.
+        (500, False),
+        (502, True),
+        (503, True),
+        (504, True),
+        (404, False),
+        (400, False),
+    ],
 )
 async def test_ollama_http_status_classification(status, transient):
     import httpx

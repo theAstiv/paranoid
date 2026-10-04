@@ -354,7 +354,7 @@ def _parse_step_models(
     "fast_model_override",
     type=str,
     default=None,
-    help='Override the fast model for the active provider. --fast-model "" runs every step on the main model.',
+    help="Override the fast model for the active provider. --fast-model= (the = form) runs every step on the main model.",
 )
 @click.option(
     "--step-model",
@@ -1038,7 +1038,8 @@ async def _run_pipeline_inside_provider(
             dependency_source_mode=dependency_source_mode,
             # Passed explicitly: run_pipeline_for_model otherwise falls back to
             # the global settings, not this run's merged copy (which carries
-            # --step-model and any config-file STEP_MODELS).
+            # --step-model and any STEP_MODELS env var — the config file has
+            # no field for it, only default_provider/model/iterations).
             step_models=step_models_override_from_settings(None, settings.step_models),
         ):
             # Render event (unless quiet mode)

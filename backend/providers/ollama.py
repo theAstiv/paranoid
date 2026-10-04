@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+# Ollama returns 500 for a permanent load failure (not enough system memory,
+# a crashed runtime) and 502/503/504 when the server is busy or restarting —
+# only the latter can reasonably succeed on a later call.
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
+
 # Auto-bump constants — Ollama truncation is detected via done_reason="length"
 # or JSON parse errors with truncation patterns.
 _MAX_AUTO_BUMP = 32768
@@ -298,7 +303,11 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            error_cls = ProviderTransientError if e.response.status_code >= 500 else ProviderError
+            error_cls = (
+                ProviderTransientError
+                if e.response.status_code in _TRANSIENT_STATUS_CODES
+                else ProviderError
+            )
             raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
@@ -344,7 +353,11 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            error_cls = ProviderTransientError if e.response.status_code >= 500 else ProviderError
+            error_cls = (
+                ProviderTransientError
+                if e.response.status_code in _TRANSIENT_STATUS_CODES
+                else ProviderError
+            )
             raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
