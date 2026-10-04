@@ -388,6 +388,11 @@ export function listTestCases(id) {
   return request('GET', `/threats/${id}/test-cases`)
 }
 
+/** @param {string} modelId */
+export function listModelDiagrams(modelId) {
+  return request('GET', `/models/${modelId}/diagrams`)
+}
+
 // ── Assets CRUD ───────────────────────────────────────────────────────────────
 
 /** @param {string} modelId @param {{ name: string, type?: string, description?: string }} body */

@@ -34,6 +34,7 @@ vi.mock('../lib/api.js', () => ({
   deleteComment: vi.fn(),
   getCommentCounts: vi.fn().mockResolvedValue([]),
   getModelDependencies: vi.fn().mockResolvedValue([]),
+  listModelDiagrams: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -41,9 +42,15 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
+const mermaidRender = vi.fn().mockResolvedValue({ svg: '<svg>diagram</svg>' })
+vi.mock('mermaid', () => ({
+  default: { initialize: vi.fn(), render: (...args) => mermaidRender(...args), registerLayoutLoaders: vi.fn() },
+}))
+vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
+
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
-  getModelDependencies,
+  getModelDependencies, listModelDiagrams,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -74,6 +81,7 @@ beforeEach(() => {
   getModelFlows.mockResolvedValue([])
   getModelTrustBoundaries.mockResolvedValue([])
   getModelDependencies.mockResolvedValue([])
+  listModelDiagrams.mockResolvedValue([])
 })
 
 describe('Results — loading', () => {
@@ -117,6 +125,23 @@ describe('Results — dependencies', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('lodash@4.17.21')).toBeInTheDocument())
     expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+})
+
+describe('Results — diagram', () => {
+  it('hides the Diagram section when no diagram was uploaded', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(listModelDiagrams).toHaveBeenCalled())
+    expect(screen.queryByText(/^Diagram/)).toBeNull()
+  })
+
+  it('renders the Diagram section and the diagram when one exists', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'arch.mmd', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Diagram')).toBeInTheDocument())
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalled())
   })
 })
 

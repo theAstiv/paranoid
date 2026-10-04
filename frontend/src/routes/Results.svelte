@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun, getCommentCounts, getModelDependencies,
+    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -19,6 +19,7 @@
   import Comments from '../components/Comments.svelte'
   import EntityComments from '../components/EntityComments.svelte'
   import DependencyHeatmap from '../components/DependencyHeatmap.svelte'
+  import DiagramView from '../components/DiagramView.svelte'
 
   /** @type {{ id: string }} */
   export let params = {}
@@ -31,6 +32,9 @@
   let flowCommentCounts = {}
   let threatCommentCounts = {}
   let dependencyScans = []
+  let diagrams = []
+  let selectedDiagramId = null
+  $: selectedDiagram = diagrams.find(d => d.id === selectedDiagramId) ?? diagrams[0] ?? null
   /** @type {any} */ let assetsList
   /** @type {any} */ let flowsList
   /** @type {any} */ let boundariesList
@@ -108,15 +112,17 @@
   }
 
   async function loadSupplementary() {
-    const [a, f, tb, rawCounts, deps] = await Promise.all([
+    const [a, f, tb, rawCounts, deps, dgs] = await Promise.all([
       getModelAssets(params.id).catch(() => []),
       getModelFlows(params.id).catch(() => []),
       getModelTrustBoundaries(params.id).catch(() => []),
       getCommentCounts(params.id).catch(() => []),
       getModelDependencies(params.id).catch(() => []),
+      listModelDiagrams(params.id).catch(() => []),
     ])
     assets = a; flows = f; trustBoundaries = tb
     dependencyScans = deps
+    diagrams = dgs
     assetCommentCounts = {}
     flowCommentCounts = {}
     threatCommentCounts = {}
@@ -417,6 +423,33 @@
           </div>
 
         </div>
+      </div>
+    {/if}
+
+    <!-- Diagram -->
+    {#if !$pipelineRunning && diagrams.length > 0}
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">
+            Diagram <span class="normal-case font-mono text-c-faint">({diagrams.length})</span>
+          </h2>
+          {#if diagrams.length > 1}
+            <select bind:value={selectedDiagramId}
+              class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
+              {#each diagrams as d}
+                <option value={d.id}>{d.name}</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+        {#if selectedDiagram}
+          <DiagramView
+            kind={selectedDiagram.kind}
+            content={selectedDiagram.content}
+            mediaType={selectedDiagram.media_type}
+            name={selectedDiagram.name}
+          />
+        {/if}
       </div>
     {/if}
 

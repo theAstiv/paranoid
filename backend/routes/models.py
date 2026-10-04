@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
 from typing import Annotated
 
+import aiosqlite
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -111,6 +112,37 @@ async def _build_diagram_data(upload: UploadFile) -> DiagramData:
         media_type=media_type,
         size_bytes=len(raw),
     )
+
+
+async def _persist_diagram_data(model_id: str, diagram_data: DiagramData) -> None:
+    """Store an uploaded diagram so it survives a page reload (Results diagram tab).
+
+    Unlike dependency_scans, a diagram is user input, not pipeline output — it
+    is replaced here only because a new one was actually uploaded, never wiped
+    by clear_model_data() on a re-run that didn't upload one (see
+    crud.replace_model_diagram's docstring). The delete-old + insert-new pair
+    is atomic (one commit) so a failed insert can't leave the model with no
+    diagram at all.
+    """
+    name = diagram_data.source_path or "diagram"
+    if diagram_data.format == DiagramFormat.MERMAID:
+        content = diagram_data.mermaid_source or ""
+        await crud.replace_model_diagram(
+            model_id=model_id,
+            name=name,
+            kind=DiagramFormat.MERMAID.value,
+            content=content,
+            size_bytes=len(content.encode("utf-8")),
+        )
+    else:
+        await crud.replace_model_diagram(
+            model_id=model_id,
+            name=name,
+            kind=diagram_data.format.value,
+            content=diagram_data.base64_data or "",
+            size_bytes=diagram_data.size_bytes or 0,
+            media_type=diagram_data.media_type,
+        )
 
 
 async def _parse_dependency_json_upload(
@@ -667,6 +699,14 @@ async def run_pipeline(
         # Persist assumptions unconditionally — clears stale data from prior runs
         await crud.update_threat_model(model_id, assumptions=json.dumps(parsed_assumptions))
 
+        if diagram_data is not None:
+            try:
+                await _persist_diagram_data(model_id, diagram_data)
+            except aiosqlite.Error:
+                logger.warning(
+                    "Failed to persist uploaded diagram for model %s", model_id, exc_info=True
+                )
+
         # Extract code context from the indexed clone directory (if requested).
         # This runs inside the SSE stream so the user sees extraction progress.
         # Any failure degrades gracefully — the pipeline continues without code context.
@@ -839,6 +879,35 @@ async def list_model_dependencies(
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     scans = await crud.list_dependency_scans(model_id)
     return JSONResponse(content=scans)
+
+
+@router.get("/{model_id}/diagrams")
+async def list_model_diagrams(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
+    """List persisted architecture diagrams for a model, most recently uploaded first."""
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    diagrams = await crud.list_model_diagrams(model_id)
+    return JSONResponse(content=diagrams)
+
+
+@router.get("/{model_id}/diagrams/{diagram_id}")
+async def get_model_diagram(
+    model_id: str,
+    diagram_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
+    """Get one persisted diagram's content for a model."""
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    diagram = await crud.get_model_diagram(diagram_id)
+    if diagram is None or diagram["model_id"] != model_id:
+        raise HTTPException(status_code=404, detail=f"Diagram '{diagram_id}' not found")
+    return JSONResponse(content=diagram)
 
 
 # ---------------------------------------------------------------------------

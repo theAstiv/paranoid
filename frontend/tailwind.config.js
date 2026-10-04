@@ -8,6 +8,9 @@ export default {
         mono: ['IBM Plex Mono', 'Menlo', 'monospace'],
       },
       colors: {
+        // src/lib/diagram_theme.js duplicates the relevant hex values below
+        // for mermaid's themeVariables (no CSS custom properties exist to
+        // read these from at runtime) — keep the two in sync by hand.
         c: {
           bg:             '#0A0E16',
           sidebar:        '#0C111A',
