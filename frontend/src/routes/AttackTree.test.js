@@ -108,7 +108,7 @@ describe('AttackTree — generate', () => {
 
     await fireEvent.click(screen.getByText('Generate'))
 
-    await waitFor(() => expect(screen.getByText('Mermaid rendering failed')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Diagram rendering failed')).toBeInTheDocument())
     expect(screen.queryByText('graph TD; broken!!!')).toBeNull()
 
     await fireEvent.click(screen.getByText('Show raw source'))
