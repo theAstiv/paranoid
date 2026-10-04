@@ -81,6 +81,18 @@ describe('Settings — form fields', () => {
     expect(screen.getByDisplayValue('0.85')).toBeInTheDocument()
   })
 
+  it('shows the fast model of the selected provider', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, fast_model_openai: 'gpt-4.1-mini', fast_model_ollama: '' })
+    render(Settings)
+    await waitFor(() => expect(screen.getByLabelText(/Fast model/)).toHaveValue('claude-haiku-4-5'))
+
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } })
+    expect(screen.getByLabelText(/Fast model/)).toHaveValue('gpt-4.1-mini')
+
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'ollama' } })
+    expect(screen.getByLabelText(/Fast model/)).toHaveValue('')
+  })
+
   it('shows the config secret field only when required', async () => {
     getConfig.mockResolvedValue({ ...baseConfig, config_secret_required: true })
     render(Settings)
@@ -169,6 +181,36 @@ describe('Settings — save', () => {
       undefined,
     ))
     await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Settings saved'))
+  })
+
+  it('sends an empty fast model when cleared, so routing can be turned off', async () => {
+    updateConfig.mockResolvedValue({ ...baseConfig, fast_model: '' })
+    render(Settings)
+    await waitFor(() => expect(screen.getByLabelText(/Fast model/)).toHaveValue('claude-haiku-4-5'))
+
+    await fireEvent.input(screen.getByLabelText(/Fast model/), { target: { value: '' } })
+    await fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ fast_model: '' }),
+      undefined,
+    ))
+  })
+
+  it('saves the fast model under the selected provider only', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, fast_model_openai: 'gpt-4.1-mini' })
+    updateConfig.mockResolvedValue(baseConfig)
+    render(Settings)
+    await waitFor(() => expect(screen.getByLabelText(/Fast model/)).toHaveValue('claude-haiku-4-5'))
+
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'openai' } })
+    await fireEvent.input(screen.getByLabelText(/Fast model/), { target: { value: 'gpt-4.1-nano' } })
+    await fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ fast_model: 'claude-haiku-4-5', fast_model_openai: 'gpt-4.1-nano' }),
+      undefined,
+    ))
   })
 
   it('includes the config secret header value when provided', async () => {

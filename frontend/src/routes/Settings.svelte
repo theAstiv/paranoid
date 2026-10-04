@@ -29,6 +29,9 @@
     default_provider: 'anthropic',
     model: '',
     fast_model: '',
+    fast_model_openai: '',
+    fast_model_bedrock: '',
+    fast_model_ollama: '',
     default_iterations: 3,
     similarity_threshold: 0.85,
     ollama_base_url: '',
@@ -55,6 +58,9 @@
       default_provider: cfg.default_provider ?? 'anthropic',
       model: cfg.model ?? '',
       fast_model: cfg.fast_model ?? '',
+      fast_model_openai: cfg.fast_model_openai ?? '',
+      fast_model_bedrock: cfg.fast_model_bedrock ?? '',
+      fast_model_ollama: cfg.fast_model_ollama ?? '',
       default_iterations: cfg.default_iterations ?? 3,
       similarity_threshold: cfg.similarity_threshold ?? 0.85,
       ollama_base_url: cfg.ollama_base_url ?? '',
@@ -111,7 +117,11 @@
       const payload = {
         default_provider: draft.default_provider,
         model: draft.model || undefined,
-        fast_model: draft.fast_model || undefined,
+        // Sent as-is: "" is meaningful (no fast model, every step on main).
+        fast_model: draft.fast_model,
+        fast_model_openai: draft.fast_model_openai,
+        fast_model_bedrock: draft.fast_model_bedrock,
+        fast_model_ollama: draft.fast_model_ollama,
         default_iterations: Number(draft.default_iterations),
         similarity_threshold: Number(draft.similarity_threshold),
         ollama_base_url: draft.ollama_base_url || undefined,
@@ -135,6 +145,21 @@
   function reset() {
     if ($config) syncDraft($config)
   }
+
+  // Draft key holding each provider's fast model (mirrors FAST_MODEL_FIELDS in backend/routes/_helpers.py).
+  const FAST_MODEL_FIELDS = {
+    anthropic: 'fast_model',
+    openai: 'fast_model_openai',
+    bedrock: 'fast_model_bedrock',
+    ollama: 'fast_model_ollama',
+  }
+  const FAST_MODEL_PLACEHOLDERS = {
+    anthropic: 'e.g. claude-haiku-4-5-20251001',
+    openai: 'e.g. gpt-4.1-mini',
+    bedrock: 'Bedrock model ID',
+    ollama: 'e.g. llama3.1:8b',
+  }
+  $: fastField = FAST_MODEL_FIELDS[draft.default_provider] ?? 'fast_model'
 
   const FIELD_CLASS = 'field w-full'
   const LABEL_CLASS = 'text-sm text-c-muted text-right'
@@ -217,9 +242,15 @@
             Fast model
             <span class="{SUBLABEL_CLASS}">extraction &amp; enrichment</span>
           </label>
-          <input id="cfg-fast-model" type="text" bind:value={draft.fast_model}
-            placeholder="e.g. claude-haiku-4-5-20251001"
-            class="col-span-2 {FIELD_CLASS} font-mono" />
+          <div class="col-span-2">
+            <input id="cfg-fast-model" type="text" bind:value={draft[fastField]}
+              placeholder={FAST_MODEL_PLACEHOLDERS[draft.default_provider] ?? ''}
+              aria-describedby="cfg-fast-model-hint"
+              class="{FIELD_CLASS} font-mono" />
+            <p id="cfg-fast-model-hint" class="mt-1 text-xs text-c-faint">
+              For {draft.default_provider}. Leave empty to run every step on the main model.
+            </p>
+          </div>
         </div>
 
         <div class="grid grid-cols-3 items-center gap-4">
@@ -381,7 +412,9 @@
           ['OLLAMA_BASE_URL', 'Ollama server URL (default: http://host.docker.internal:11434)'],
           ['DEFAULT_PROVIDER', 'anthropic | openai | ollama'],
           ['DEFAULT_MODEL', 'Main model identifier (e.g. claude-sonnet-4-20250514)'],
-          ['FAST_MODEL', 'Fast model for extraction & enrichment (default: claude-haiku-4-5-20251001)'],
+          ['FAST_MODEL', 'Anthropic fast model for extraction & enrichment (default: claude-haiku-4-5-20251001; empty = off)'],
+          ['FAST_MODEL_OPENAI', 'OpenAI fast model (default: gpt-4.1-mini); also FAST_MODEL_BEDROCK, FAST_MODEL_OLLAMA'],
+          ['STEP_MODELS', 'Per-step routing JSON, e.g. {"extract_flows":"main"}'],
           ['DEFAULT_ITERATIONS', '1–15 (default: 3)'],
           ['DB_PATH', 'SQLite path (default: ./data/paranoid.db)'],
           ['SIMILARITY_THRESHOLD', 'Dedup cosine threshold (default: 0.85)'],

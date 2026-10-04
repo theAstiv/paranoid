@@ -51,6 +51,42 @@ async def test_config_contains_expected_keys(client):
         assert key in data, f"Missing key: {key}"
 
 
+_FAST_MODEL_FIELDS = ("fast_model", "fast_model_openai", "fast_model_bedrock", "fast_model_ollama")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", _FAST_MODEL_FIELDS)
+async def test_fast_model_fields_round_trip(client, monkeypatch, field):
+    monkeypatch.setattr(settings, field, "original-fast")
+    resp = await client.get("/api/config/")
+    assert resp.json()[field] == "original-fast"
+
+    resp = await client.patch("/api/config/", json={field: "new-fast"})
+    assert resp.status_code == 200
+    assert resp.json()[field] == "new-fast"
+    assert getattr(settings, field) == "new-fast"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", _FAST_MODEL_FIELDS)
+async def test_empty_fast_model_disables_routing_for_that_provider(client, monkeypatch, field):
+    monkeypatch.setattr(settings, field, "original-fast")
+    resp = await client.patch("/api/config/", json={field: ""})
+    assert resp.status_code == 200
+    assert resp.json()[field] == ""
+    assert getattr(settings, field) == ""
+
+
+@pytest.mark.asyncio
+async def test_omitted_fast_model_fields_are_unchanged(client, monkeypatch):
+    for field in _FAST_MODEL_FIELDS:
+        monkeypatch.setattr(settings, field, f"{field}-kept")
+    resp = await client.patch("/api/config/", json={"default_iterations": 4})
+    data = resp.json()
+    for field in _FAST_MODEL_FIELDS:
+        assert data[field] == f"{field}-kept"
+
+
 @pytest.mark.asyncio
 async def test_get_never_leaks_key_values(client, monkeypatch):
     """GET must expose only presence+source booleans, never the raw value."""

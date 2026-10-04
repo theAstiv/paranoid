@@ -22,7 +22,7 @@ from backend.providers.healthcheck import (
     ping_openai,
     rate_limit_check,
 )
-from backend.routes._helpers import get_api_key
+from backend.routes._helpers import FAST_MODEL_FIELDS, get_api_key
 from backend.security.source_key import PATDecryptionError
 
 
@@ -86,6 +86,9 @@ async def _config_payload() -> dict:
         "provider": settings.default_provider,
         "model": settings.default_model,
         "fast_model": settings.fast_model,
+        "fast_model_openai": settings.fast_model_openai,
+        "fast_model_bedrock": settings.fast_model_bedrock,
+        "fast_model_ollama": settings.fast_model_ollama,
         "default_iterations": settings.default_iterations,
         "max_iteration_count": settings.max_iteration_count,
         "min_iteration_count": settings.min_iteration_count,
@@ -132,7 +135,11 @@ class UpdateConfigRequest(BaseModel):
 
     default_provider: ProviderName | None = None
     model: str | None = Field(None, description="Main model identifier")
-    fast_model: str | None = Field(None, description="Fast model for extraction and enrichment")
+    # Fast model per provider; "" means no fast model (every step on main).
+    fast_model: str | None = Field(None, description="Anthropic fast model")
+    fast_model_openai: str | None = Field(None, description="OpenAI fast model")
+    fast_model_bedrock: str | None = Field(None, description="Bedrock fast model")
+    fast_model_ollama: str | None = Field(None, description="Ollama fast model")
     default_iterations: int | None = Field(None, ge=1, le=15)
     similarity_threshold: float | None = Field(None, ge=0.0, le=1.0)
     ollama_base_url: str | None = None
@@ -200,8 +207,10 @@ async def update_config(
         settings.default_provider = body.default_provider  # type: ignore[assignment]
     if body.model is not None:
         settings.default_model = body.model
-    if body.fast_model is not None:
-        settings.fast_model = body.fast_model
+    for field in FAST_MODEL_FIELDS.values():
+        value = getattr(body, field)
+        if value is not None:
+            setattr(settings, field, value.strip())
     if body.default_iterations is not None:
         settings.default_iterations = body.default_iterations
     if body.similarity_threshold is not None:
