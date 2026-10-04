@@ -24,13 +24,20 @@ docker compose up --build
 | `DEFAULT_PROVIDER` | `anthropic` | Active provider: `anthropic`, `openai`, `ollama`, `bedrock` |
 | `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model name |
 | `ANTHROPIC_EFFORT` | — | Optional `low`/`medium`/`high`/`xhigh`/`max`; sent as `output_config.effort` to the **main** Anthropic model only (never the fast model). Unset keeps the model default. `claude-sonnet-5` at its default overran 4096 tokens on threat JSON; `medium` finished. Older models (e.g. Haiku 4.5) reject it — the provider then retries once without it |
-| `FAST_MODEL` | `claude-haiku-4-5-20251001` | Haiku-class model for extraction/enrichment steps when `DEFAULT_PROVIDER=anthropic`; set to same as `DEFAULT_MODEL` to disable fast routing |
+| `FAST_MODEL` | `claude-haiku-4-5-20251001` | Haiku-class model for extraction/enrichment steps when `DEFAULT_PROVIDER=anthropic`; set to `""` (or the same value as `DEFAULT_MODEL`) to disable fast routing |
 | `FAST_MODEL_OPENAI` | `gpt-4.1-mini` | Fast model when `DEFAULT_PROVIDER=openai`. **Behaviour change:** before week 4a-2, fast routing only existed for Anthropic — existing OpenAI users now get `gpt-4.1-mini` for extraction and enrichment steps by default. Set to the same value as `DEFAULT_MODEL`, or to `""`, to disable it |
 | `FAST_MODEL_BEDROCK` | — (disabled) | Fast model when `DEFAULT_PROVIDER=bedrock`. Empty by default — a Bedrock model ID can't be verified without live AWS credentials, so there's no safe default to ship |
 | `FAST_MODEL_OLLAMA` | — (disabled) | Fast model when `DEFAULT_PROVIDER=ollama`. Empty by default (same as main) |
 | `STEP_MODELS` | `{}` | JSON object overriding which pipeline steps use the fast vs. main model, e.g. `STEP_MODELS={"extract_flows":"main"}`. Keys: `summarize`, `summarize_code`, `extract_assets`, `extract_flows`, `generate_attack_tree`, `generate_test_cases` (and `generate_threats`/`gap_analysis`, which may only be set to `"main"` — routing either to the fast model is rejected at startup). Merges onto the active provider's default map; a step left out keeps its default. Invalid steps or values fail at startup, not on the first pipeline run |
 
-A step routed to the fast model that fails with a non-transient error (anything other than a rate limit, timeout, connection error or 5xx / "overloaded" response — an auth failure, an unknown/inaccessible model, a bad request) disables fast routing for the rest of that run; later steps, and later per-threat enrichment calls under `--enrich`, go straight to the main model instead of each paying a failed call first.
+A step routed to the fast model that fails with a non-transient error (anything other than a rate limit, timeout, connection error or 5xx / "overloaded" response — an auth failure, an unknown/inaccessible model, a bad request) disables fast routing for the rest of that run; later steps, and later per-threat enrichment calls under `--enrich`, go straight to the main model instead of each paying a failed call first. Such a run is flagged: its usage summary has `fast_routing_disabled: true`, the CLI summary prints a warning, and the Results page's Run Summary shows a "fast routing disabled mid-run" chip — its token split doesn't reflect the configured routing.
+
+**Changing routing without editing the environment:**
+
+- **CLI, per run:** `--fast-model <id>` overrides the active provider's fast model (`--fast-model ""` runs every step on the main model); `--step-model STEP=fast|main` (repeatable) replaces `STEP_MODELS` for that run. See the [CLI reference](cli-reference.md).
+- **Settings page:** the *Fast model* field edits the fast model of the provider selected above it (`FAST_MODEL`, `FAST_MODEL_OPENAI`, `FAST_MODEL_BEDROCK` or `FAST_MODEL_OLLAMA`). Leave it empty to turn routing off for that provider. Like the other non-key settings it is held in memory and resets to the environment value on restart.
+
+The Run Summary on the Results page lists each step's model and its input / output / cache-read / cache-write tokens, so you can see what the fast model actually served.
 
 **Recommended models by provider:**
 
