@@ -178,6 +178,38 @@ async def test_openai_records_zero_usage_row_when_usage_missing():
 
 
 @pytest.mark.asyncio
+async def test_openai_plain_generate_records_usage():
+    """generate() (non-structured) must record usage too (week 4a-2
+    follow-up) — previously only generate_structured() did, silently
+    dropping tokens for any future caller of the plain path."""
+    with patch("backend.providers.openai.OpenAI") as mock_openai:
+        mock_message = MagicMock()
+        mock_message.content = "plain text"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = MagicMock(
+            prompt_tokens=90,
+            completion_tokens=30,
+            prompt_tokens_details=None,
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.return_value = mock_client
+
+        provider = OpenAIProvider(model="gpt-4.1-mini", api_key="test-key")
+        with collect_usage() as records:
+            await provider.generate(prompt="hi")
+
+        assert records == [
+            UsageRecord(provider="openai", model="gpt-4.1-mini", input_tokens=90, output_tokens=30)
+        ]
+
+
+@pytest.mark.asyncio
 async def test_openai_records_usage_from_truncated_response_before_raising():
     """LengthFinishReasonError.completion.usage reflects the truncated
     attempt — those tokens were billed and must be recorded even though the
@@ -236,6 +268,33 @@ async def test_ollama_records_usage_from_eval_counts():
 
         assert records == [
             UsageRecord(provider="ollama", model="llama3.1:8b", input_tokens=60, output_tokens=40)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_ollama_plain_generate_records_usage():
+    """generate() (non-structured) must record usage too (week 4a-2
+    follow-up) — previously only generate_structured() did."""
+    with patch("backend.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "response": "plain text",
+            "done_reason": "stop",
+            "prompt_eval_count": 25,
+            "eval_count": 15,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        provider = OllamaProvider(model="llama3.1:8b")
+        with collect_usage() as records:
+            await provider.generate(prompt="hi")
+
+        assert records == [
+            UsageRecord(provider="ollama", model="llama3.1:8b", input_tokens=25, output_tokens=15)
         ]
 
 
