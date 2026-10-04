@@ -117,3 +117,71 @@ def test_no_routing_flags_keeps_settings_untouched(monkeypatch, sample_input_fil
     assert captured["settings"].step_models == {}
     assert captured["fast_provider"].model == "claude-haiku-4-5"
     assert "Step models:" not in result.output
+
+
+class _StopAfterCaptureError(Exception):
+    pass
+
+
+def _invoke_to_pipeline(monkeypatch, sample_input_file, args, **settings_kwargs):
+    """Run the real CLI path up to run_pipeline_for_model; return its kwargs.
+
+    Unlike _invoke, this goes through _run_pipeline_async, so it checks the
+    routing override actually reaches the pipeline — not just the CLI's
+    Settings copy (run_pipeline_for_model otherwise reads the global one).
+    """
+    from types import SimpleNamespace
+
+    base = {
+        "default_provider": "anthropic",
+        "default_model": "claude-sonnet-5",
+        "anthropic_api_key": "sk-ant-test",
+        "fast_model": "claude-haiku-4-5",
+        "default_iterations": 1,
+    }
+    base.update(settings_kwargs)
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: Settings(**base))
+    monkeypatch.setattr(
+        "cli.commands.run.create_provider", lambda **kw: MagicMock(model=kw["model"])
+    )
+    monkeypatch.setattr(
+        "backend.routes._helpers.create_provider", lambda **kw: MagicMock(model=kw["model"])
+    )
+
+    ok = SimpleNamespace(gaps=[], is_sufficient=True)
+
+    async def _no_gaps(**kwargs):
+        return SimpleNamespace(description=ok, assumptions=ok)
+
+    monkeypatch.setattr("cli.commands.run.analyze_bundle", _no_gaps)
+
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        raise _StopAfterCaptureError
+        yield  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr("cli.commands.run.run_pipeline_for_model", _capture)
+    CliRunner().invoke(run, [str(sample_input_file), *args])
+    return captured
+
+
+def test_step_model_flag_reaches_the_pipeline(monkeypatch, sample_input_file):
+    from backend.pipeline.runner import PipelineStep
+
+    captured = _invoke_to_pipeline(
+        monkeypatch, sample_input_file, ["--step-model", "extract_flows=main"]
+    )
+    assert captured["step_models"] == {PipelineStep.EXTRACT_FLOWS: "main"}
+
+
+def test_no_step_model_flag_passes_no_override(monkeypatch, sample_input_file):
+    captured = _invoke_to_pipeline(monkeypatch, sample_input_file, [])
+    assert "step_models" in captured, "CLI must pass its own step_models, not rely on globals"
+    assert captured["step_models"] is None
+
+
+def test_empty_fast_model_flag_reaches_the_pipeline(monkeypatch, sample_input_file):
+    captured = _invoke_to_pipeline(monkeypatch, sample_input_file, ["--fast-model", ""])
+    assert captured["fast_provider"] is None

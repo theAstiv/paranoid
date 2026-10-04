@@ -1036,6 +1036,10 @@ async def _run_pipeline_inside_provider(
             dependency_manifest=dependency_manifest,
             dependency_lockfile=dependency_lockfile,
             dependency_source_mode=dependency_source_mode,
+            # Passed explicitly: run_pipeline_for_model otherwise falls back to
+            # the global settings, not this run's merged copy (which carries
+            # --step-model and any config-file STEP_MODELS).
+            step_models=step_models_override_from_settings(None, settings.step_models),
         ):
             # Render event (unless quiet mode)
             if renderer:
