@@ -46,6 +46,14 @@
   // pipelineEvents is cleared on mount unless a pipeline run is actively streaming
   // (see onMount), so a page reload after completion has no live SSE events.
   $: runUsage = $pipelineEvents.find(e => e.step === 'complete')?.data?.usage ?? model?.usage ?? null
+  $: stepRows = (runUsage?.steps ?? []).map(s => ({ ...s, tokens: sumStepUsage(s.usage) }))
+
+  // A step normally has one usage entry; a fast→main retry adds a second.
+  function sumStepUsage(usage) {
+    const t = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }
+    for (const u of usage ?? []) for (const k in t) t[k] += u[k] ?? 0
+    return t
+  }
 
   let _wasRunning = false
   $: {
@@ -296,6 +304,47 @@
           <p class="text-[11px] text-c-faint mt-2">
             {Math.round(runUsage.fast_model_share * 100)}% of tokens served by {runUsage.fast_model}
           </p>
+        {/if}
+        {#if runUsage.fast_routing_disabled}
+          <span class="inline-block mt-2 chip-amber font-mono text-[11px] px-2 py-0.5 rounded-chip">fast routing disabled mid-run</span>
+        {/if}
+        {#if stepRows.length}
+          <details class="mt-3 pt-3 border-t border-c-border">
+            <summary class="text-xs text-c-muted cursor-pointer select-none">By step ({stepRows.length})</summary>
+            <div class="mt-2 overflow-x-auto">
+              <table class="w-full text-[11px] font-mono">
+                <thead>
+                  <tr class="text-c-faint text-left">
+                    <th class="font-normal py-1 pr-3">Step</th>
+                    <th class="font-normal py-1 pr-3">Iter</th>
+                    <th class="font-normal py-1 pr-3">Model</th>
+                    <th class="font-normal py-1 pr-3 text-right">Input</th>
+                    <th class="font-normal py-1 pr-3 text-right">Output</th>
+                    <th class="font-normal py-1 pr-3 text-right">Cache read</th>
+                    <th class="font-normal py-1 text-right">Cache write</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each stepRows as row, i (i)}
+                    <tr class="border-t border-c-border {row.status === 'failed' ? 'text-c-critical' : 'text-c-text2'}">
+                      <td class="py-1 pr-3">{row.step}</td>
+                      <td class="py-1 pr-3 text-c-muted">{row.iteration}</td>
+                      <td class="py-1 pr-3">
+                        {row.model}
+                        {#if runUsage.fast_model && row.model === runUsage.fast_model}
+                          <span class="ml-1 chip-blue px-1.5 rounded-chip">fast</span>
+                        {/if}
+                      </td>
+                      <td class="py-1 pr-3 text-right">{row.tokens.input_tokens.toLocaleString()}</td>
+                      <td class="py-1 pr-3 text-right">{row.tokens.output_tokens.toLocaleString()}</td>
+                      <td class="py-1 pr-3 text-right">{row.tokens.cache_read_tokens.toLocaleString()}</td>
+                      <td class="py-1 text-right">{row.tokens.cache_write_tokens.toLocaleString()}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </details>
         {/if}
       </div>
     {/if}

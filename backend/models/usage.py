@@ -70,3 +70,7 @@ class RunUsage(BaseModel):
     fast_model: str | None = None
     fast_model_tokens: int = 0
     fast_model_share: float | None = None
+    # True when a non-transient fast-model failure tripped the circuit
+    # breaker, so later fast-routed steps ran on main — such a run's token
+    # split doesn't represent the configured routing.
+    fast_routing_disabled: bool = False

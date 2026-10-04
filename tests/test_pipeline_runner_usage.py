@@ -90,6 +90,7 @@ async def test_complete_event_rolls_up_run_usage_with_no_fast_model():
     usage = complete.data["usage"]
     assert usage["fast_model"] is None
     assert usage["fast_model_share"] is None
+    assert usage["fast_routing_disabled"] is False
     assert usage["total_tokens"] > 0
     assert len(usage["by_model"]) == 1
     assert usage["by_model"][0]["model"] == "mock-v1"

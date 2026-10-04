@@ -490,6 +490,9 @@ async def test_non_transient_fast_failure_disables_fast_for_rest_of_run(exc_fact
         events.append(event)
 
     assert runner._fast_disabled is True
+    # Surfaced in the run's usage summary so a measurement can exclude it.
+    assert events[-1].step == PipelineStep.COMPLETE
+    assert events[-1].data["usage"]["fast_routing_disabled"] is True
     assets_info = [
         e for e in events if e.step == PipelineStep.EXTRACT_ASSETS and e.status == "info"
     ]
@@ -534,6 +537,7 @@ async def test_transient_fast_failure_does_not_disable_fast_routing(exc_factory)
         events.append(event)
 
     assert runner._fast_disabled is False
+    assert events[-1].data["usage"]["fast_routing_disabled"] is False
     assets_info = [
         e for e in events if e.step == PipelineStep.EXTRACT_ASSETS and e.status == "info"
     ]

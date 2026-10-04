@@ -1534,6 +1534,7 @@ class PipelineRunner:
                 else None
             )
             run_usage = build_run_usage(self._step_runs, fast_model=fast_model)
+            run_usage.fast_routing_disabled = self._fast_disabled
 
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,
