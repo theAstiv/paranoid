@@ -1060,24 +1060,28 @@ async def replace_model_diagram(
     Called only when a new diagram is actually uploaded (see
     _persist_diagram_data in backend/routes/models.py) — NOT part of
     clear_model_data(), since a diagram is user input that must survive a
-    re-run that doesn't re-upload one. Delete + insert share one commit so a
-    failed insert can't leave the model with no diagram at all.
+    re-run that doesn't re-upload one.
+
+    Uses db.writer()'s BEGIN IMMEDIATE, not a plain execute+execute+commit:
+    on the shared connection, a failed INSERT after an uncommitted DELETE
+    left that DELETE pending — an unrelated later save on the same
+    connection would commit it and silently wipe the diagram. writer() rolls
+    back both statements together on any exception instead.
     """
     diagram_id = generate_id()
     now = now_iso()
 
-    conn = await db.get()
-    await conn.execute("DELETE FROM model_diagrams WHERE model_id = ?", (model_id,))
-    await conn.execute(
-        """
-        INSERT INTO model_diagrams (
-            id, model_id, name, kind, content, media_type, size_bytes,
-            created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (diagram_id, model_id, name, kind, content, media_type, size_bytes, now, now),
-    )
-    await conn.commit()
+    async with db.writer() as conn:
+        await conn.execute("DELETE FROM model_diagrams WHERE model_id = ?", (model_id,))
+        await conn.execute(
+            """
+            INSERT INTO model_diagrams (
+                id, model_id, name, kind, content, media_type, size_bytes,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (diagram_id, model_id, name, kind, content, media_type, size_bytes, now, now),
+        )
 
     logger.info(f"Replaced model diagram(s) for model {model_id} with {diagram_id} (kind={kind})")
     return diagram_id

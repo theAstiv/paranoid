@@ -7,6 +7,7 @@ mapping DiagramData -> model_diagrams for both the mermaid and image
 branches, including replacing an existing diagram on a fresh upload.
 """
 
+import sqlite3
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -110,6 +111,36 @@ async def test_replace_model_diagram_is_atomic_delete_then_insert(test_db, model
     assert len(rows) == 1
     assert rows[0]["id"] == new_id
     assert rows[0]["name"] == "b.mmd"
+
+
+@pytest.mark.asyncio
+async def test_replace_model_diagram_rolls_back_delete_on_failed_insert(test_db, model_id):
+    """Regression: a plain execute+execute+commit left the DELETE pending
+    on the shared connection when the INSERT failed, so an unrelated later
+    write on that connection would commit it and silently wipe the diagram.
+    db.writer()'s BEGIN IMMEDIATE must roll back both statements together."""
+    await crud.create_model_diagram(
+        model_id=model_id, name="a.mmd", kind="mermaid", content="graph TD; A-->B", size_bytes=15
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # the kind CHECK constraint
+        await crud.replace_model_diagram(
+            model_id=model_id,
+            name="b.mmd",
+            kind="not-a-valid-kind",
+            content="graph TD; C-->D",
+            size_bytes=15,
+        )
+    # The original diagram must survive the failed replace.
+    rows = await crud.list_model_diagrams(model_id)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "a.mmd"
+
+    # An unrelated later write on the shared connection must not resurrect
+    # or commit any stray state left by the failed replace.
+    await crud.update_threat_model(model_id, title="Renamed")
+    rows = await crud.list_model_diagrams(model_id)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "a.mmd"
 
 
 # ---------------------------------------------------------------------------
