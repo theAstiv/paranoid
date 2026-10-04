@@ -44,8 +44,9 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 
 const mermaidRender = vi.fn().mockResolvedValue({ svg: '<svg>diagram</svg>' })
 vi.mock('mermaid', () => ({
-  default: { initialize: vi.fn(), render: (...args) => mermaidRender(...args) },
+  default: { initialize: vi.fn(), render: (...args) => mermaidRender(...args), registerLayoutLoaders: vi.fn() },
 }))
+vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,

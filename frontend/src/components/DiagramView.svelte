@@ -1,3 +1,18 @@
+<script context="module">
+  // Registered once per page load, shared across every DiagramView instance —
+  // mermaid.registerLayoutLoaders() is a global registration, not per-render.
+  let elkRegisterPromise = null
+
+  async function ensureElkRegistered(mermaid) {
+    if (!elkRegisterPromise) {
+      elkRegisterPromise = import('@mermaid-js/layout-elk').then((mod) => {
+        mermaid.registerLayoutLoaders(mod.default)
+      })
+    }
+    return elkRegisterPromise
+  }
+</script>
+
 <script>
   import { sanitizeMermaid } from '../lib/mermaid_sanitize.js'
   import { diagramInitConfig, diagramThemeVariables } from '../lib/diagram_theme.js'
@@ -64,6 +79,8 @@
       return
     }
     const mermaid = (await import('mermaid')).default
+    await ensureElkRegistered(mermaid)
+    if (seq !== renderSeq || !container) return
     mermaid.initialize(diagramInitConfig)
     const renderId = `diagram-${Math.random().toString(36).slice(2)}`
     try {

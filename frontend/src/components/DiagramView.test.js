@@ -4,12 +4,15 @@ import DiagramView from './DiagramView.svelte'
 
 const mermaidRender = vi.fn()
 const mermaidInitialize = vi.fn()
+const mermaidRegisterLayoutLoaders = vi.fn()
 vi.mock('mermaid', () => ({
   default: {
     initialize: (...args) => mermaidInitialize(...args),
     render: (...args) => mermaidRender(...args),
+    registerLayoutLoaders: (...args) => mermaidRegisterLayoutLoaders(...args),
   },
 }))
+vi.mock('@mermaid-js/layout-elk', () => ({ default: ['elk-layout-stub'] }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -17,6 +20,16 @@ beforeEach(() => {
 })
 
 describe('DiagramView — mermaid', () => {
+  it('registers the ELK layout loader before the first render', async () => {
+    // elkRegisterPromise (module scope) caches after the first call, so this
+    // must stay the first test in the file to observe the registration call.
+    render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },
+    })
+    await waitFor(() => expect(mermaidRegisterLayoutLoaders).toHaveBeenCalledWith(['elk-layout-stub']))
+    expect(mermaidInitialize).toHaveBeenCalledWith(expect.objectContaining({ layout: 'elk' }))
+  })
+
   it('renders mermaid source into the container', async () => {
     const { container } = render(DiagramView, {
       props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },

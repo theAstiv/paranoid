@@ -28,4 +28,8 @@ export const diagramInitConfig = {
   securityLevel: 'strict',
   theme: 'base',
   themeVariables: diagramThemeVariables,
+  // @mermaid-js/layout-elk 0.2.3 is pinned to mermaid's ^11.x peer range
+  // (the installed 11.17.2 satisfies it) — registered once in DiagramView
+  // via mermaid.registerLayoutLoaders() before this config is used.
+  layout: 'elk',
 }

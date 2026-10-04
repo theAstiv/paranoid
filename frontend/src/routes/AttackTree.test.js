@@ -22,8 +22,10 @@ vi.mock('mermaid', () => ({
   default: {
     initialize: vi.fn(),
     render: (...args) => mermaidRender(...args),
+    registerLayoutLoaders: vi.fn(),
   },
 }))
+vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import { getThreat, listAttackTrees, generateAttackTree } from '../lib/api.js'
 import { notify, currentModel } from '../lib/stores.js'
