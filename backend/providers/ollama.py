@@ -12,6 +12,7 @@ from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderError,
     ProviderTimeoutError,
+    ProviderTransientError,
     strip_markdown_fences,
 )
 from backend.providers.usage import as_token_count, record_usage
@@ -297,13 +298,14 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            raise ProviderError(
+            error_cls = ProviderTransientError if e.response.status_code >= 500 else ProviderError
+            raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
                 original_error=e,
             )
         except httpx.RequestError as e:
-            raise ProviderError(
+            raise ProviderTransientError(
                 provider=self.name,
                 message=f"Connection error - is Ollama running at {self._base_url}?",
                 original_error=e,
@@ -342,13 +344,14 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            raise ProviderError(
+            error_cls = ProviderTransientError if e.response.status_code >= 500 else ProviderError
+            raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
                 original_error=e,
             )
         except httpx.RequestError as e:
-            raise ProviderError(
+            raise ProviderTransientError(
                 provider=self.name,
                 message=f"Connection error - is Ollama running at {self._base_url}?",
                 original_error=e,

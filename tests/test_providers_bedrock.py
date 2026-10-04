@@ -16,9 +16,10 @@ from backend.providers.base import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderTransientError,
     create_provider,
 )
-from backend.providers.bedrock import BedrockProvider
+from backend.providers.bedrock import BedrockProvider, _map_boto_error
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +368,40 @@ async def test_bedrock_access_denied():
         provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
         with pytest.raises(ProviderAuthError):
             await provider.generate_structured("test", _SimpleModel)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (_make_client_error("ServiceUnavailableException"), ProviderTransientError),
+        (_make_client_error("InternalServerException"), ProviderTransientError),
+        (_make_client_error("ThrottlingException"), ProviderRateLimitError),
+        (_make_client_error("ModelTimeoutException"), ProviderTimeoutError),
+        (_bce.ReadTimeoutError(endpoint_url="https://bedrock.test"), ProviderTimeoutError),
+        (_bce.ConnectTimeoutError(endpoint_url="https://bedrock.test"), ProviderTimeoutError),
+        (_bce.EndpointConnectionError(endpoint_url="https://bedrock.test"), ProviderTransientError),
+    ],
+    ids=lambda v: type(v).__name__ if isinstance(v, Exception) else v.__name__,
+)
+def test_map_boto_error_classifies_transient_failures(error, expected):
+    mapped = _map_boto_error("bedrock", error)
+    assert isinstance(mapped, expected)
+    assert isinstance(mapped, ProviderTransientError)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _make_client_error("ValidationException"),
+        _make_client_error("ResourceNotFoundException"),
+        _make_client_error("AccessDeniedException"),
+    ],
+    ids=lambda e: e.response["Error"]["Code"],
+)
+def test_map_boto_error_keeps_permanent_failures_non_transient(error):
+    mapped = _map_boto_error("bedrock", error)
+    assert isinstance(mapped, ProviderError)
+    assert not isinstance(mapped, ProviderTransientError)
 
 
 # ---------------------------------------------------------------------------

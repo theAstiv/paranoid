@@ -30,7 +30,7 @@ docker compose up --build
 | `FAST_MODEL_OLLAMA` | — (disabled) | Fast model when `DEFAULT_PROVIDER=ollama`. Empty by default (same as main) |
 | `STEP_MODELS` | `{}` | JSON object overriding which pipeline steps use the fast vs. main model, e.g. `STEP_MODELS={"extract_flows":"main"}`. Keys: `summarize`, `summarize_code`, `extract_assets`, `extract_flows`, `generate_attack_tree`, `generate_test_cases` (and `generate_threats`/`gap_analysis`, which may only be set to `"main"` — routing either to the fast model is rejected at startup). Merges onto the active provider's default map; a step left out keeps its default. Invalid steps or values fail at startup, not on the first pipeline run |
 
-A step routed to the fast model that fails with a non-transient error (anything other than a rate limit or timeout — an auth failure, an unknown/inaccessible model, a bad request) disables fast routing for the rest of that run; later steps, and later per-threat enrichment calls under `--enrich`, go straight to the main model instead of each paying a failed call first.
+A step routed to the fast model that fails with a non-transient error (anything other than a rate limit, timeout, connection error or 5xx / "overloaded" response — an auth failure, an unknown/inaccessible model, a bad request) disables fast routing for the rest of that run; later steps, and later per-threat enrichment calls under `--enrich`, go straight to the main model instead of each paying a failed call first.
 
 **Recommended models by provider:**
 

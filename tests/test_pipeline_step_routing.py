@@ -22,7 +22,13 @@ from backend.pipeline.runner import (
     run_pipeline_for_model,
     validate_step_models,
 )
-from backend.providers.base import ProviderError, ProviderRateLimitError
+from backend.providers.base import (
+    ProviderAuthError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderTransientError,
+)
 from backend.providers.usage import record_usage
 from tests.fixtures.pipeline import make_code_context
 from tests.mock_provider import MockProvider
@@ -459,15 +465,21 @@ class _AlwaysFailsProvider(NamedMockProvider):
 
 
 @pytest.mark.asyncio
-async def test_non_transient_fast_failure_disables_fast_for_rest_of_run():
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        lambda: ProviderError(provider="mock", message="404 model not found"),
+        lambda: ProviderError(provider="mock", message="400 bad request"),
+        lambda: ProviderAuthError(provider="mock", message="401 unauthorized"),
+    ],
+    ids=["not-found", "bad-request", "auth"],
+)
+async def test_non_transient_fast_failure_disables_fast_for_rest_of_run(exc_factory):
     """A 404/auth/bad-request-class failure must not be retried against the
     fast model again later in the same run — one failed call, not one per
     step (and, under --enrich, not one per threat)."""
     main_provider = NamedMockProvider(model="main-v1")
-    fast_provider = _AlwaysFailsProvider(
-        model="fast-v1",
-        exc_factory=lambda: ProviderError(provider="mock", message="404 model not found"),
-    )
+    fast_provider = _AlwaysFailsProvider(model="fast-v1", exc_factory=exc_factory)
     config = PipelineConfig(enable_rag=False, max_iterations=1)
     runner = PipelineRunner(
         provider=main_provider, fast_provider=fast_provider, config=config, model_id="t15"
@@ -496,14 +508,22 @@ async def test_non_transient_fast_failure_disables_fast_for_rest_of_run():
 
 
 @pytest.mark.asyncio
-async def test_transient_fast_failure_does_not_disable_fast_routing():
-    """A rate limit is retryable — it must not trip the breaker; the next
-    fast-routed step should still try the fast model."""
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        lambda: ProviderRateLimitError(provider="mock", message="rate limited"),
+        lambda: ProviderTimeoutError(provider="mock", message="timed out"),
+        lambda: ProviderTransientError(provider="mock", message="529 overloaded"),
+        lambda: ProviderTransientError(provider="mock", message="connection reset"),
+    ],
+    ids=["rate-limit", "timeout", "5xx", "connection"],
+)
+async def test_transient_fast_failure_does_not_disable_fast_routing(exc_factory):
+    """Rate limits, timeouts, 5xx and connection errors are retryable — they
+    must not trip the breaker; the next fast-routed step should still try
+    the fast model."""
     main_provider = NamedMockProvider(model="main-v1")
-    fast_provider = _AlwaysFailsProvider(
-        model="fast-v1",
-        exc_factory=lambda: ProviderRateLimitError(provider="mock", message="rate limited"),
-    )
+    fast_provider = _AlwaysFailsProvider(model="fast-v1", exc_factory=exc_factory)
     config = PipelineConfig(enable_rag=False, max_iterations=1)
     runner = PipelineRunner(
         provider=main_provider, fast_provider=fast_provider, config=config, model_id="t16"

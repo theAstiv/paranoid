@@ -13,6 +13,8 @@ from backend.providers import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderTransientError,
     create_provider,
 )
 
@@ -679,6 +681,179 @@ async def test_ollama_connection_error():
             await provider.generate(prompt="Hello")
 
         assert "is Ollama running" in str(exc_info.value)
+
+
+# Transient error classification (week 4a-3)
+#
+# Timeouts, connection errors and 5xx responses must surface as
+# ProviderTransientError (or its ProviderTimeoutError subclass) so the
+# runner's fast-model circuit breaker doesn't treat them as permanent.
+
+
+def _http_request():
+    import httpx
+
+    return httpx.Request("POST", "https://api.example.test/v1")
+
+
+def _http_response(status: int):
+    import httpx
+
+    return httpx.Response(status, request=_http_request())
+
+
+def _anthropic_errors():
+    import anthropic
+    from anthropic import _exceptions
+
+    return [
+        ("timeout", anthropic.APITimeoutError(request=_http_request()), ProviderTimeoutError),
+        (
+            "connection",
+            anthropic.APIConnectionError(request=_http_request()),
+            ProviderTransientError,
+        ),
+        (
+            "500",
+            anthropic.InternalServerError("boom", response=_http_response(500), body=None),
+            ProviderTransientError,
+        ),
+        (
+            "529-overloaded",
+            _exceptions.OverloadedError("overloaded", response=_http_response(529), body=None),
+            ProviderTransientError,
+        ),
+    ]
+
+
+def _openai_errors():
+    import openai
+
+    return [
+        ("timeout", openai.APITimeoutError(request=_http_request()), ProviderTimeoutError),
+        (
+            "connection",
+            openai.APIConnectionError(request=_http_request()),
+            ProviderTransientError,
+        ),
+        (
+            "503",
+            openai.InternalServerError("unavailable", response=_http_response(503), body=None),
+            ProviderTransientError,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "error", "expected"),
+    _anthropic_errors(),
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+async def test_anthropic_transient_errors_are_classified(label, error, expected):
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = error
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-sonnet-4", api_key="test-key")
+
+        with pytest.raises(expected):
+            await provider.generate(prompt="Hello")
+        with pytest.raises(expected):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "error", "expected"), _openai_errors(), ids=lambda v: v if isinstance(v, str) else ""
+)
+async def test_openai_transient_errors_are_classified(label, error, expected):
+    with patch("backend.providers.openai.OpenAI") as mock_openai:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = error
+        mock_client.chat.completions.parse.side_effect = error
+        mock_openai.return_value = mock_client
+        provider = OpenAIProvider(model="gpt-4o", api_key="test-key")
+
+        with pytest.raises(expected):
+            await provider.generate(prompt="Hello")
+        with pytest.raises(expected):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_and_openai_not_found_stays_non_transient():
+    import anthropic
+    import openai
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = anthropic.NotFoundError(
+            "model not found", response=_http_response(404), body=None
+        )
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-nope", api_key="test-key")
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.generate(prompt="Hello")
+        assert not isinstance(exc_info.value, ProviderTransientError)
+
+    with patch("backend.providers.openai.OpenAI") as mock_openai:
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = openai.NotFoundError(
+            "model not found", response=_http_response(404), body=None
+        )
+        mock_openai.return_value = mock_client
+        provider = OpenAIProvider(model="gpt-nope", api_key="test-key")
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.generate(prompt="Hello")
+        assert not isinstance(exc_info.value, ProviderTransientError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "transient"), [(500, True), (503, True), (404, False), (400, False)]
+)
+async def test_ollama_http_status_classification(status, transient):
+    import httpx
+
+    response = _http_response(status)
+    error = httpx.HTTPStatusError("status", request=response.request, response=response)
+    with patch("backend.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = error
+        mock_client_class.return_value = mock_client
+        provider = OllamaProvider(model="llama3")
+
+        for make_call in (
+            lambda: provider.generate(prompt="Hello"),
+            lambda: provider.generate_structured(prompt="x", response_model=AssetsList),
+        ):
+            with pytest.raises(ProviderError) as exc_info:
+                await make_call()
+            assert isinstance(exc_info.value, ProviderTransientError) is transient
+
+
+@pytest.mark.asyncio
+async def test_ollama_connection_error_is_transient():
+    import httpx
+
+    with patch("backend.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.ConnectError("Connection refused")
+        mock_client_class.return_value = mock_client
+        provider = OllamaProvider(model="llama3")
+
+        with pytest.raises(ProviderTransientError, match="is Ollama running"):
+            await provider.generate(prompt="Hello")
+        with pytest.raises(ProviderTransientError, match="is Ollama running"):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+
+def test_timeout_and_rate_limit_errors_are_transient():
+    assert issubclass(ProviderTimeoutError, ProviderTransientError)
+    assert issubclass(ProviderRateLimitError, ProviderTransientError)
+    assert issubclass(ProviderTransientError, ProviderError)
+    assert not issubclass(ProviderAuthError, ProviderTransientError)
 
 
 # Factory Tests

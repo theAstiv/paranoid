@@ -7,6 +7,7 @@ from backend.providers.base import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderTransientError,
     create_provider,
 )
 from backend.providers.ollama import OllamaProvider
@@ -22,5 +23,6 @@ __all__ = [
     "ProviderError",
     "ProviderRateLimitError",
     "ProviderTimeoutError",
+    "ProviderTransientError",
     "create_provider",
 ]

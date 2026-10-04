@@ -4,7 +4,15 @@ import json
 import logging
 from typing import TypeVar
 
-from anthropic import Anthropic, APIError, AuthenticationError, BadRequestError, RateLimitError
+from anthropic import (
+    Anthropic,
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    RateLimitError,
+)
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
@@ -13,6 +21,7 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    map_sdk_api_error,
     run_sync_in_executor,
     strip_markdown_fences,
 )
@@ -420,11 +429,12 @@ class AnthropicProvider:
                 original_error=e,
             )
         except APIError as e:
-            raise ProviderError(
-                provider=self.name,
-                message=f"API error: {e!s}",
-                original_error=e,
-            )
+            raise map_sdk_api_error(
+                self.name,
+                e,
+                timeout_error=APITimeoutError,
+                connection_error=APIConnectionError,
+            ) from e
 
     async def generate(
         self,
@@ -457,11 +467,12 @@ class AnthropicProvider:
                 original_error=e,
             )
         except APIError as e:
-            raise ProviderError(
-                provider=self.name,
-                message=f"API error: {e!s}",
-                original_error=e,
-            )
+            raise map_sdk_api_error(
+                self.name,
+                e,
+                timeout_error=APITimeoutError,
+                connection_error=APIConnectionError,
+            ) from e
 
     async def __aenter__(self) -> "AnthropicProvider":
         """Enter async context manager."""

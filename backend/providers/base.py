@@ -112,13 +112,20 @@ class ProviderError(Exception):
         super().__init__(f"{provider}: {message}")
 
 
-class ProviderTimeoutError(ProviderError):
+class ProviderTransientError(ProviderError):
+    """A failure that can reasonably succeed on a later call: timeouts, rate
+    limits, connection errors and 5xx / overloaded responses."""
+
+    pass
+
+
+class ProviderTimeoutError(ProviderTransientError):
     """Raised when provider request times out."""
 
     pass
 
 
-class ProviderRateLimitError(ProviderError):
+class ProviderRateLimitError(ProviderTransientError):
     """Raised when provider rate limit is exceeded."""
 
     pass
@@ -128,6 +135,37 @@ class ProviderAuthError(ProviderError):
     """Raised when provider authentication fails."""
 
     pass
+
+
+def map_sdk_api_error(
+    provider: str,
+    error: Exception,
+    *,
+    timeout_error: type[Exception],
+    connection_error: type[Exception],
+) -> ProviderError:
+    """Map an Anthropic/OpenAI SDK ``APIError`` (auth and rate-limit errors
+    already handled by the caller) to a ProviderError subclass.
+
+    Both SDKs share this hierarchy: ``APITimeoutError`` subclasses
+    ``APIConnectionError``, so the timeout check must come first. 5xx is
+    matched by status code rather than class because Anthropic's 529
+    ``OverloadedError`` isn't exported at the package top level.
+    """
+    if isinstance(error, timeout_error):
+        return ProviderTimeoutError(
+            provider=provider, message=f"Request timed out: {error!s}", original_error=error
+        )
+    if isinstance(error, connection_error):
+        return ProviderTransientError(
+            provider=provider, message=f"Connection error: {error!s}", original_error=error
+        )
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and status >= 500:
+        return ProviderTransientError(
+            provider=provider, message=f"Server error {status}: {error!s}", original_error=error
+        )
+    return ProviderError(provider=provider, message=f"API error: {error!s}", original_error=error)
 
 
 # Utility functions for all providers
