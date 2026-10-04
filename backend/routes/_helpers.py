@@ -80,15 +80,19 @@ def build_provider_from_record(record: dict) -> LLMProvider:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+FAST_MODEL_FIELDS: dict[str, str] = {
+    "anthropic": "fast_model",
+    "openai": "fast_model_openai",
+    "bedrock": "fast_model_bedrock",
+    "ollama": "fast_model_ollama",
+}
+
+
 def _fast_model_for(provider_type: str, settings_obj: Settings | None = None) -> str:
     """Return the configured fast model for a provider type, or "" if none."""
     s = settings_obj or settings
-    return {
-        "anthropic": s.fast_model,
-        "openai": s.fast_model_openai,
-        "bedrock": s.fast_model_bedrock,
-        "ollama": s.fast_model_ollama,
-    }.get(provider_type, "")
+    field = FAST_MODEL_FIELDS.get(provider_type)
+    return getattr(s, field) if field else ""
 
 
 def build_fast_provider(record: dict, settings_obj: Settings | None = None) -> LLMProvider | None:

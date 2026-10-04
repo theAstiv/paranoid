@@ -20,6 +20,8 @@ paranoid run <description-file> [OPTIONS]
 |------|---------|-------------|
 | `--provider` | config default | LLM provider: `anthropic`, `openai`, `ollama` |
 | `--model` | config default | Model name (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
+| `--fast-model` | config default | Fast model for the active provider (overrides `FAST_MODEL` / `FAST_MODEL_OPENAI` / …). `--fast-model ""` runs every step on the main model |
+| `--step-model` | provider defaults | `STEP=fast\|main`, repeatable (e.g. `--step-model extract_flows=main`). Replaces `STEP_MODELS` for this run; `generate_threats` and `gap_analysis` can never be `fast` |
 | `--iterations` | `3` | Pipeline iterations (1–15) |
 | `--framework` | auto-detect | Force `STRIDE` or `MAESTRO` |
 | `--maestro` | off | Run STRIDE + MAESTRO in parallel |
@@ -58,6 +60,10 @@ paranoid run system.md --format markdown -o report.md
 
 # Force provider/model for a single run
 paranoid run system.md --provider openai --model gpt-4o
+
+# Model routing: keep flow extraction on the main model, or turn routing off
+paranoid run system.md --step-model extract_flows=main
+paranoid run system.md --fast-model ""
 
 # Dual framework
 paranoid run system.md --maestro --iterations 5
