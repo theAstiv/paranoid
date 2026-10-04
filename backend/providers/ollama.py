@@ -12,6 +12,7 @@ from backend.models.usage import UsageRecord
 from backend.providers.base import (
     ProviderError,
     ProviderTimeoutError,
+    ProviderTransientError,
     strip_markdown_fences,
 )
 from backend.providers.usage import as_token_count, record_usage
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T", bound=BaseModel)
+
+# Ollama returns 500 for a permanent load failure (not enough system memory,
+# a crashed runtime) and 502/503/504 when the server is busy or restarting —
+# only the latter can reasonably succeed on a later call.
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
 
 # Auto-bump constants — Ollama truncation is detected via done_reason="length"
 # or JSON parse errors with truncation patterns.
@@ -297,13 +303,18 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            raise ProviderError(
+            error_cls = (
+                ProviderTransientError
+                if e.response.status_code in _TRANSIENT_STATUS_CODES
+                else ProviderError
+            )
+            raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
                 original_error=e,
             )
         except httpx.RequestError as e:
-            raise ProviderError(
+            raise ProviderTransientError(
                 provider=self.name,
                 message=f"Connection error - is Ollama running at {self._base_url}?",
                 original_error=e,
@@ -342,13 +353,18 @@ class OllamaProvider:
                 original_error=e,
             )
         except httpx.HTTPStatusError as e:
-            raise ProviderError(
+            error_cls = (
+                ProviderTransientError
+                if e.response.status_code in _TRANSIENT_STATUS_CODES
+                else ProviderError
+            )
+            raise error_cls(
                 provider=self.name,
                 message=f"HTTP {e.response.status_code}: {e.response.text}",
                 original_error=e,
             )
         except httpx.RequestError as e:
-            raise ProviderError(
+            raise ProviderTransientError(
                 provider=self.name,
                 message=f"Connection error - is Ollama running at {self._base_url}?",
                 original_error=e,

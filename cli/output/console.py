@@ -133,3 +133,9 @@ class ConsoleRenderer:
             click.echo(
                 f"Fast-model share:   {usage['fast_model_share']:.0%} of tokens served by {usage['fast_model']}"
             )
+        if usage.get("fast_routing_disabled"):
+            click.secho(
+                "Warning: fast routing was disabled mid-run after a fast-model failure; "
+                "later fast-routed steps ran on the main model.",
+                fg="yellow",
+            )

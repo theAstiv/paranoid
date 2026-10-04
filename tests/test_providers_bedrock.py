@@ -16,9 +16,10 @@ from backend.providers.base import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderTransientError,
     create_provider,
 )
-from backend.providers.bedrock import BedrockProvider
+from backend.providers.bedrock import BedrockProvider, _map_boto_error
 
 
 # ---------------------------------------------------------------------------
@@ -47,14 +48,18 @@ def _make_text_response(text: str) -> dict:
     }
 
 
-def _make_client_error(code: str, message: str = "test error") -> Any:
-    """Create a botocore ClientError with the given error code."""
+def _make_client_error(
+    code: str, message: str = "test error", http_status: int | None = None
+) -> Any:
+    """Create a botocore ClientError with the given error code and, when a
+    caller wants to test status-code-based classification for a code that
+    isn't in the explicit lookup table, an HTTP status on ResponseMetadata."""
     import botocore.exceptions
 
-    return botocore.exceptions.ClientError(
-        {"Error": {"Code": code, "Message": message}},
-        "Converse",
-    )
+    response: dict = {"Error": {"Code": code, "Message": message}}
+    if http_status is not None:
+        response["ResponseMetadata"] = {"HTTPStatusCode": http_status}
+    return botocore.exceptions.ClientError(response, "Converse")
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +372,52 @@ async def test_bedrock_access_denied():
         provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
         with pytest.raises(ProviderAuthError):
             await provider.generate_structured("test", _SimpleModel)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (_make_client_error("ServiceUnavailableException"), ProviderTransientError),
+        (_make_client_error("InternalServerException"), ProviderTransientError),
+        (_make_client_error("ThrottlingException"), ProviderRateLimitError),
+        (_make_client_error("ModelTimeoutException"), ProviderTimeoutError),
+        (_bce.ReadTimeoutError(endpoint_url="https://bedrock.test"), ProviderTimeoutError),
+        (_bce.ConnectTimeoutError(endpoint_url="https://bedrock.test"), ProviderTimeoutError),
+        (_bce.EndpointConnectionError(endpoint_url="https://bedrock.test"), ProviderTransientError),
+        (_bce.ConnectionClosedError(endpoint_url="https://bedrock.test"), ProviderTransientError),
+        (_bce.ResponseStreamingError(error=RuntimeError("stream broke")), ProviderTransientError),
+        (_make_client_error("ModelNotReadyException"), ProviderRateLimitError),
+        # Not in the explicit code table — classified by HTTP status instead.
+        (_make_client_error("InternalFailure", http_status=502), ProviderTransientError),
+        (_make_client_error("UnmappedException", http_status=503), ProviderTransientError),
+    ],
+    ids=lambda v: type(v).__name__ if isinstance(v, Exception) else v.__name__,
+)
+def test_map_boto_error_classifies_transient_failures(error, expected):
+    mapped = _map_boto_error("bedrock", error)
+    assert isinstance(mapped, expected)
+    assert isinstance(mapped, ProviderTransientError)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _make_client_error("ValidationException"),
+        _make_client_error("ResourceNotFoundException"),
+        _make_client_error("AccessDeniedException"),
+        # No ResponseMetadata at all — must not crash, must not be treated
+        # as transient by default.
+        _make_client_error("SomeOtherException"),
+        _make_client_error("SomeOtherException", http_status=400),
+    ],
+    ids=lambda e: (
+        f"{e.response['Error']['Code']}-{e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')}"
+    ),
+)
+def test_map_boto_error_keeps_permanent_failures_non_transient(error):
+    mapped = _map_boto_error("bedrock", error)
+    assert isinstance(mapped, ProviderError)
+    assert not isinstance(mapped, ProviderTransientError)
 
 
 # ---------------------------------------------------------------------------

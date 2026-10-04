@@ -36,7 +36,7 @@ from backend.providers import (
     create_provider,
 )
 from backend.providers.base import LLMProvider
-from backend.routes._helpers import build_fast_provider
+from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
@@ -247,6 +247,24 @@ async def _extract_code_context(
         return None
 
 
+def _parse_step_models(
+    ctx: click.Context, param: click.Parameter, values: tuple[str, ...]
+) -> dict[str, str] | None:
+    """Parse repeated STEP=fast|main values, validated like the STEP_MODELS env var."""
+    if not values:
+        return None
+    parsed: dict[str, str] = {}
+    for value in values:
+        step, sep, choice = value.partition("=")
+        if not sep or not step.strip():
+            raise click.BadParameter(f"expected STEP=fast|main, got {value!r}", ctx, param)
+        parsed[step.strip()] = choice.strip()
+    try:
+        return Settings.validate_step_models(parsed)
+    except ValueError as e:
+        raise click.BadParameter(str(e), ctx, param) from e
+
+
 @click.command()
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -332,6 +350,25 @@ async def _extract_code_context(
     help="Override configured model name (e.g. claude-opus-4-5, gpt-4o)",
 )
 @click.option(
+    "--fast-model",
+    "fast_model_override",
+    type=str,
+    default=None,
+    help="Override the fast model for the active provider. --fast-model= (the = form) runs every step on the main model.",
+)
+@click.option(
+    "--step-model",
+    "step_model_overrides",
+    multiple=True,
+    metavar="STEP=fast|main",
+    callback=_parse_step_models,
+    help=(
+        "Route one LLM step to the fast or main model (repeatable), e.g. "
+        "--step-model extract_flows=main. Replaces STEP_MODELS for this run. "
+        "generate_threats and gap_analysis can never be fast."
+    ),
+)
+@click.option(
     "--strict",
     is_flag=True,
     default=False,
@@ -407,6 +444,8 @@ def run(
     diagram: Path | None,
     provider_override: str | None,
     model_override: str | None,
+    fast_model_override: str | None,
+    step_model_overrides: dict[str, str] | None,
     strict: bool,
     enrich: bool,
     seed_collections: tuple[str, ...],
@@ -484,6 +523,12 @@ def run(
             settings.default_provider = provider_override.lower()
         if model_override is not None:
             settings.default_model = model_override
+        if fast_model_override is not None:
+            fast_field = FAST_MODEL_FIELDS.get(settings.default_provider)
+            if fast_field:
+                setattr(settings, fast_field, fast_model_override.strip())
+        if step_model_overrides is not None:
+            settings.step_models = step_model_overrides
 
         # Re-validate API key after provider override
         # bedrock and ollama use credential-chain auth — no API key check required.
@@ -565,6 +610,13 @@ def run(
             if model_override is not None:
                 model_str += " (overridden)"
             click.echo(f"  Model: {model_str}")
+            fast_str = fast_provider.model if fast_provider is not None else "off"
+            if fast_model_override is not None:
+                fast_str += " (overridden)"
+            click.echo(f"  Fast model: {fast_str}")
+            if settings.step_models:
+                overrides = ", ".join(f"{k}={v}" for k, v in settings.step_models.items())
+                click.echo(f"  Step models: {overrides}")
             iterations_str = f"{settings.default_iterations}"
             if iterations is not None:
                 iterations_str += " (overridden)"
@@ -984,6 +1036,11 @@ async def _run_pipeline_inside_provider(
             dependency_manifest=dependency_manifest,
             dependency_lockfile=dependency_lockfile,
             dependency_source_mode=dependency_source_mode,
+            # Passed explicitly: run_pipeline_for_model otherwise falls back to
+            # the global settings, not this run's merged copy (which carries
+            # --step-model and any STEP_MODELS env var — the config file has
+            # no field for it, only default_provider/model/iterations).
+            step_models=step_models_override_from_settings(None, settings.step_models),
         ):
             # Render event (unless quiet mode)
             if renderer:

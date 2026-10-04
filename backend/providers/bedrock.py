@@ -13,6 +13,7 @@ from backend.providers.base import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderTransientError,
     run_sync_in_executor,
 )
 from backend.providers.usage import as_token_count, record_usage
@@ -323,6 +324,18 @@ def _is_temperature_deprecated_error(exc: Exception) -> bool:
     )
 
 
+_CLIENT_ERROR_CLASSES: dict[str, type[ProviderError]] = {
+    "AccessDeniedException": ProviderAuthError,
+    "ThrottlingException": ProviderRateLimitError,
+    # AWS documents this as a 429 ("the model isn't ready to serve
+    # inference requests") that should be retried, same as throttling.
+    "ModelNotReadyException": ProviderRateLimitError,
+    "ModelTimeoutException": ProviderTimeoutError,
+    "ServiceUnavailableException": ProviderTransientError,
+    "InternalServerException": ProviderTransientError,
+}
+
+
 def _map_boto_error(provider_name: str, exc: Exception) -> ProviderError:
     """Map botocore/boto3 exceptions to ProviderError subclasses."""
     try:
@@ -330,38 +343,38 @@ def _map_boto_error(provider_name: str, exc: Exception) -> ProviderError:
 
         bce = importlib.import_module("botocore.exceptions")
 
+        error_cls: type[ProviderError] = ProviderError
+        message = str(exc)
         if isinstance(exc, bce.NoCredentialsError):
-            return ProviderAuthError(
-                provider=provider_name,
-                message="No AWS credentials found. Configure via environment, ~/.aws/credentials, or IAM role.",
-                original_error=exc,
-            )
-
-        if isinstance(exc, bce.ClientError):
+            error_cls = ProviderAuthError
+            message = "No AWS credentials found. Configure via environment, ~/.aws/credentials, or IAM role."
+        elif isinstance(exc, (bce.ReadTimeoutError, bce.ConnectTimeoutError)):
+            error_cls = ProviderTimeoutError
+            message = f"Bedrock request timed out: {exc}"
+        elif isinstance(exc, bce.EndpointConnectionError):
+            error_cls = ProviderTransientError
+            message = f"Could not reach Bedrock endpoint: {exc}"
+        elif isinstance(exc, bce.ClientError):
             code = exc.response["Error"]["Code"]
-            if code == "AccessDeniedException":
-                return ProviderAuthError(
-                    provider=provider_name,
-                    message=f"AWS access denied: {exc.response['Error'].get('Message', code)}",
-                    original_error=exc,
+            if code in _CLIENT_ERROR_CLASSES:
+                error_cls = _CLIENT_ERROR_CLASSES[code]
+            else:
+                # Not one of the codes we know by name — fall back to the HTTP
+                # status so an unlisted 5xx (a new AWS error code, a transient
+                # gateway response) still gets retried instead of permanently
+                # disabling fast routing.
+                http_status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                error_cls = (
+                    ProviderTransientError if http_status and http_status >= 500 else ProviderError
                 )
-            if code == "ThrottlingException":
-                return ProviderRateLimitError(
-                    provider=provider_name,
-                    message="Bedrock rate limit exceeded",
-                    original_error=exc,
-                )
-            if code == "ModelTimeoutException":
-                return ProviderTimeoutError(
-                    provider=provider_name,
-                    message="Bedrock model timed out",
-                    original_error=exc,
-                )
-            return ProviderError(
-                provider=provider_name,
-                message=f"Bedrock error [{code}]: {exc.response['Error'].get('Message', '')}",
-                original_error=exc,
-            )
+            message = f"Bedrock error [{code}]: {exc.response['Error'].get('Message', '')}"
+        elif isinstance(exc, bce.HTTPClientError):
+            # Covers ConnectionClosedError, ResponseStreamingError and any
+            # other client-side HTTP failure not already matched above by a
+            # more specific type (timeouts, endpoint connection).
+            error_cls = ProviderTransientError
+            message = f"Bedrock connection error: {exc}"
+        return error_cls(provider=provider_name, message=message, original_error=exc)
 
     except ImportError:
         pass

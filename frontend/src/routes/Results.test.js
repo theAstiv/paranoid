@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte'
 import Results from './Results.svelte'
 
 vi.mock('svelte-spa-router', () => ({
@@ -307,6 +307,73 @@ describe('Results — run summary panel', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
     expect(screen.queryByText(/served by/)).toBeNull()
+  })
+
+  it('lists per-step rows with the token split and marks fast-model steps', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        steps: [
+          {
+            step: 'summarize', iteration: 0, status: 'completed', provider: 'anthropic',
+            model: 'claude-sonnet-5', duration_ms: 900,
+            usage: [{ model: 'claude-sonnet-5', input_tokens: 101, output_tokens: 22, cache_read_tokens: 303, cache_write_tokens: 44, total_tokens: 470 }],
+          },
+          {
+            step: 'extract_assets', iteration: 0, status: 'completed', provider: 'anthropic',
+            model: 'claude-haiku-4-5', duration_ms: 400,
+            usage: [{ model: 'claude-haiku-4-5', input_tokens: 55, output_tokens: 66, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 121 }],
+          },
+        ],
+        by_model: [
+          { model: 'claude-sonnet-5', calls: 1, total_tokens: 470 },
+          { model: 'claude-haiku-4-5', calls: 1, total_tokens: 121 },
+        ],
+        total_tokens: 591,
+        fast_model: 'claude-haiku-4-5',
+        fast_model_share: 0.2047,
+        fast_routing_disabled: false,
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('By step (2)')).toBeInTheDocument())
+
+    const summarizeRow = screen.getByText('summarize').closest('tr')
+    for (const value of ['101', '22', '303', '44']) {
+      expect(within(summarizeRow).getByText(value)).toBeInTheDocument()
+    }
+    expect(within(summarizeRow).queryByText('fast')).toBeNull()
+
+    const assetsRow = screen.getByText('extract_assets').closest('tr')
+    expect(within(assetsRow).getByText('fast')).toBeInTheDocument()
+    expect(within(assetsRow).getByText('55')).toBeInTheDocument()
+    expect(screen.queryByText(/fast routing disabled/)).toBeNull()
+  })
+
+  it('flags a run where fast routing was disabled mid-run', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        steps: [],
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        fast_model: 'claude-haiku-4-5',
+        fast_model_share: 0,
+        fast_routing_disabled: true,
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('fast routing disabled mid-run')).toBeInTheDocument())
+  })
+
+  it('omits the per-step section for summaries saved without steps', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: { by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }], total_tokens: 600 },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
+    expect(screen.queryByText(/By step/)).toBeNull()
   })
 
   it('omits the run summary panel when the model has no usage data', async () => {
