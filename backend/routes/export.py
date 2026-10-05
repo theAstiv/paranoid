@@ -15,7 +15,7 @@ from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif
 from backend.models.api import ExportFormat
-from backend.models.state import DependencyRef, Threat, ThreatsList
+from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,14 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
             fields = dict(row)
             if fields.get("dependency_ref") is not None:
                 fields["dependency_ref"] = DependencyRef.model_validate(fields["dependency_ref"])
+            # Same issue as dependency_ref above: attack_techniques comes back
+            # from crud.list_threats() as plain dicts, and sarif.py's
+            # `t.id` attribute access on each technique would crash with
+            # AttributeError on any model that has technique matches.
+            if fields.get("attack_techniques"):
+                fields["attack_techniques"] = [
+                    TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
+                ]
             built.append(Threat.model_construct(**fields))
         except Exception as exc:
             logger.warning("Skipping threat '%s' during SARIF build: %s", row.get("name"), exc)

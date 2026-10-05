@@ -506,3 +506,20 @@ def test_markdown_gap_section_between_summary_and_threats() -> None:
     gap_pos = md.index("## Gap Analysis")
     threats_pos = md.index("## Threats")
     assert summary_pos < gap_pos < threats_pos
+
+
+def test_markdown_attack_techniques_line_rendered() -> None:
+    threat = {
+        **_STRIDE_THREAT_FLAT,
+        "attack_techniques": [
+            {"id": "T1195.002", "name": "Compromise Software Supply Chain"},
+            {"id": "T1059", "name": "Command and Scripting Interpreter"},
+        ],
+    }
+    md = export_markdown([threat], "tech", "STRIDE")
+    assert "**ATT&CK/ATLAS:** T1195.002, T1059" in md
+
+
+def test_markdown_no_attack_techniques_line_when_absent() -> None:
+    md = export_markdown([_STRIDE_THREAT_FLAT], "tech", "STRIDE")
+    assert "ATT&CK/ATLAS" not in md

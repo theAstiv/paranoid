@@ -6,7 +6,11 @@ Produces clean Markdown suitable for PRs, Confluence, Notion, and security revie
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.export._common import MERMAID_DIAGRAM_PREFIXES, dependency_findings_rows
+from backend.export._common import (
+    MERMAID_DIAGRAM_PREFIXES,
+    attack_techniques_display,
+    dependency_findings_rows,
+)
 
 
 def export_markdown(
@@ -224,6 +228,10 @@ def export_markdown(
             dread_line = _dread_display(t)
             if dread_line:
                 lines.append(dread_line)
+
+            techniques_line = attack_techniques_display(t)
+            if techniques_line:
+                lines.append(f"**ATT&CK/ATLAS:** {techniques_line}")
 
             lines.append("")
 

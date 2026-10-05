@@ -85,6 +85,16 @@ def dependency_display_name(package: str, version: str) -> str:
     return f"{name}@{version}" if version else name
 
 
+def attack_techniques_display(threat: dict[str, Any]) -> str | None:
+    """Comma-separated "T1078.004, T1059" label for a threat's technique
+    matches, or None if it has none. Shared by markdown.py and pdf.py.
+    """
+    techniques = threat.get("attack_techniques") or []
+    if not techniques:
+        return None
+    return ", ".join(t["id"] for t in techniques if t.get("id"))
+
+
 def dependency_findings_rows(
     dependency_scans: list[dict[str, Any]] | None,
 ) -> list[tuple[str, str, str]]:

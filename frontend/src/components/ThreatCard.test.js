@@ -87,6 +87,34 @@ describe('ThreatCard', () => {
     expect(screen.queryByText(/@.*·/)).toBeNull()
   })
 
+  it('renders a technique chip linking to MITRE ATT&CK for each matched technique', () => {
+    const threat = {
+      ...baseThreat,
+      attack_techniques: [
+        { id: 'T1195.002', name: 'Compromise Software Supply Chain', url: 'https://attack.mitre.org/techniques/T1195/002', confidence: 0.9 },
+      ],
+    }
+    render(ThreatCard, { props: { threat } })
+    const link = screen.getByRole('link', { name: 'T1195.002' })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1195/002')
+  })
+
+  it('links an ATLAS technique id to atlas.mitre.org when no url is given', () => {
+    const threat = {
+      ...baseThreat,
+      attack_techniques: [{ id: 'AML.T0020', name: 'ML Training Data Poisoning', confidence: 0.6 }],
+    }
+    render(ThreatCard, { props: { threat } })
+    const link = screen.getByRole('link', { name: 'AML.T0020' })
+    expect(link).toHaveAttribute('href', 'https://atlas.mitre.org/techniques/AML.T0020')
+  })
+
+  it('renders no technique chip when attack_techniques is empty', () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    expect(screen.queryByRole('link', { name: /^T\d|^AML\./ })).toBeNull()
+  })
+
   it('shows Approve button when status is pending', () => {
     render(ThreatCard, { props: { threat: baseThreat } })
     expect(screen.getByText('Approve')).toBeInTheDocument()

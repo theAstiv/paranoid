@@ -190,6 +190,10 @@ def _generate_results(
                 "ruleId": dependency_ref.rule_id,
             }
 
+        attack_techniques = getattr(threat, "attack_techniques", None)
+        if attack_techniques:
+            result["properties"]["tags"] = [f"attack/{t.id}" for t in attack_techniques]
+
         # Add DREAD score if available
         if hasattr(threat, "dread") and threat.dread:
             result["properties"]["dread"] = {

@@ -204,6 +204,52 @@ async def test_export_sarif_with_persisted_dependency_threat(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_export_sarif_with_persisted_attack_techniques(client, test_db):
+    """A threat with persisted attack_techniques must not crash SARIF export.
+
+    Same bug class as test_export_sarif_with_persisted_dependency_threat:
+    crud.list_threats() decodes attack_techniques from its stored JSON into
+    plain dicts; _build_threats_list() must convert them to TechniqueRef
+    before sarif.py's `t.id` attribute access runs, or every SARIF export of
+    a model with technique matches raises AttributeError."""
+    model_id = await crud.create_threat_model(
+        title="Node Service",
+        description="A Node.js service with npm dependencies for threat modeling",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+    )
+    await crud.create_threat(
+        model_id=model_id,
+        name="Compromise Software Supply Chain",
+        description=(
+            "A tarball-only file in evil-pkg@1.0.0 ships code not present in its "
+            "public source repository, indicating possible supply-chain tampering"
+        ),
+        target="evil-pkg@1.0.0",
+        impact="High",
+        likelihood="Medium",
+        mitigations=["Pin the exact version", "Review the capability diff"],
+        stride_category="Tampering",
+        attack_techniques=[
+            {
+                "id": "T1195.002",
+                "name": "Compromise Software Supply Chain",
+                "url": "https://attack.mitre.org/techniques/T1195/002",
+                "confidence": 0.9,
+            }
+        ],
+    )
+
+    resp = await client.get(f"/api/export/{model_id}?format=sarif")
+    assert resp.status_code == 200
+    data = json.loads(resp.content)
+    results = data["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["tags"] == ["attack/T1195.002"]
+
+
+@pytest.mark.asyncio
 async def test_export_sarif_maestro_only_produces_empty_runs(client, test_db):
     """MAESTRO-only threats produce a valid but empty SARIF result."""
     model_id = await crud.create_threat_model(

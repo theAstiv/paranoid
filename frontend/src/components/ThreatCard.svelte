@@ -138,6 +138,17 @@
     return label
   })
 
+  const attackTechniques = $derived.by(() => {
+    const raw = threat.attack_techniques
+    const list = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? [])
+    return Array.isArray(list) ? list : []
+  })
+  function techniqueUrl(tech) {
+    return tech.url || (tech.id?.startsWith('AML.')
+      ? `https://atlas.mitre.org/techniques/${tech.id}`
+      : `https://attack.mitre.org/techniques/${tech.id}`)
+  }
+
   const confidencePct = $derived(threat.confidence != null ? Math.round(threat.confidence * 100) : null)
   const confidenceColor = $derived(confidencePct == null ? ''
     : confidencePct >= 70 ? 'text-c-green'
@@ -171,6 +182,11 @@
         {#if dependencyLabel}
           <span class="font-mono text-[11px] text-c-faint">{dependencyLabel}</span>
         {/if}
+        {#each attackTechniques as tech (tech.id)}
+          <a href={techniqueUrl(tech)} target="_blank" rel="noopener"
+            class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-blue"
+            title={tech.name}>{tech.id}</a>
+        {/each}
         <DreadBadge {threat} />
         {#if confidencePct != null}
           <span class="font-mono text-[11px] font-medium {confidenceColor}" title="Confidence: how well-grounded in the system description">{confidencePct}%</span>
