@@ -561,6 +561,7 @@ def _make_technique_mapped_threats() -> ThreatsList:
                         name="Compromise Software Supply Chain",
                         url="https://attack.mitre.org/techniques/T1195/002",
                         confidence=0.9,
+                        method="table",
                     )
                 ],
             ),
@@ -591,6 +592,7 @@ async def test_persist_saves_threat_attack_techniques(test_db):
             "name": "Compromise Software Supply Chain",
             "url": "https://attack.mitre.org/techniques/T1195/002",
             "confidence": 0.9,
+            "method": "table",
         }
     ]
 

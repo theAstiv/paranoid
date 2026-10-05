@@ -86,13 +86,28 @@ def dependency_display_name(package: str, version: str) -> str:
 
 
 def attack_techniques_display(threat: dict[str, Any]) -> str | None:
-    """Comma-separated "T1078.004, T1059" label for a threat's technique
-    matches, or None if it has none. Shared by markdown.py and pdf.py.
+    """ "T1078.004, T1059 (suggested: AML.T0020)" label for a threat's
+    technique matches, or None if it has none. Shared by markdown.py and
+    pdf.py. Confirmed (table/seed) and suggested (embedding) matches are
+    kept visually separate — an embedding match is a similarity guess the
+    golden-set test measures well below the project's accuracy bar (see
+    tests/live/test_attack_mapping_golden.py), not a confirmed lookup.
     """
     techniques = threat.get("attack_techniques") or []
     if not techniques:
         return None
-    return ", ".join(t["id"] for t in techniques if t.get("id"))
+    confirmed = [
+        t["id"] for t in techniques if t.get("id") and t.get("method", "embedding") != "embedding"
+    ]
+    suggested = [
+        t["id"] for t in techniques if t.get("id") and t.get("method", "embedding") == "embedding"
+    ]
+    parts = []
+    if confirmed:
+        parts.append(", ".join(confirmed))
+    if suggested:
+        parts.append(f"(suggested: {', '.join(suggested)})")
+    return " ".join(parts) if parts else None
 
 
 def dependency_findings_rows(

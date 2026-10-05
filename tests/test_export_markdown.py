@@ -512,12 +512,26 @@ def test_markdown_attack_techniques_line_rendered() -> None:
     threat = {
         **_STRIDE_THREAT_FLAT,
         "attack_techniques": [
-            {"id": "T1195.002", "name": "Compromise Software Supply Chain"},
-            {"id": "T1059", "name": "Command and Scripting Interpreter"},
+            {"id": "T1195.002", "name": "Compromise Software Supply Chain", "method": "table"},
+            {"id": "T1059", "name": "Command and Scripting Interpreter", "method": "table"},
         ],
     }
     md = export_markdown([threat], "tech", "STRIDE")
     assert "**ATT&CK/ATLAS:** T1195.002, T1059" in md
+
+
+def test_markdown_embedding_matches_shown_as_suggested() -> None:
+    """An embedding-sourced match (unconfirmed guess) is kept visually
+    separate from a trusted table/seed match in the same line."""
+    threat = {
+        **_STRIDE_THREAT_FLAT,
+        "attack_techniques": [
+            {"id": "T1195.002", "name": "Compromise Software Supply Chain", "method": "table"},
+            {"id": "AML.T0020", "name": "ML Training Data Poisoning", "method": "embedding"},
+        ],
+    }
+    md = export_markdown([threat], "tech", "STRIDE")
+    assert "**ATT&CK/ATLAS:** T1195.002 (suggested: AML.T0020)" in md
 
 
 def test_markdown_no_attack_techniques_line_when_absent() -> None:

@@ -237,6 +237,7 @@ async def test_export_sarif_with_persisted_attack_techniques(client, test_db):
                 "name": "Compromise Software Supply Chain",
                 "url": "https://attack.mitre.org/techniques/T1195/002",
                 "confidence": 0.9,
+                "method": "table",
             }
         ],
     )

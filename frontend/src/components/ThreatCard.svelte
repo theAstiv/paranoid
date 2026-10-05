@@ -148,6 +148,18 @@
       ? `https://atlas.mitre.org/techniques/${tech.id}`
       : `https://attack.mitre.org/techniques/${tech.id}`)
   }
+  // "embedding" matches are similarity guesses the golden-set test measures
+  // well below the project's accuracy bar (see tests/live/test_attack_mapping_golden.py) —
+  // shown distinctly from "table"/"seed" matches, which are deterministic lookups.
+  function isSuggested(tech) {
+    return tech.method === 'embedding' || tech.method == null
+  }
+  function techniqueTitle(tech) {
+    const base = tech.name ?? tech.id
+    return isSuggested(tech)
+      ? `${base} — suggested match (similarity guess, unconfirmed)`
+      : base
+  }
 
   const confidencePct = $derived(threat.confidence != null ? Math.round(threat.confidence * 100) : null)
   const confidenceColor = $derived(confidencePct == null ? ''
@@ -184,8 +196,8 @@
         {/if}
         {#each attackTechniques as tech (tech.id)}
           <a href={techniqueUrl(tech)} target="_blank" rel="noopener"
-            class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-blue"
-            title={tech.name}>{tech.id}</a>
+            class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {isSuggested(tech) ? 'chip-gray border-dashed' : 'chip-blue'}"
+            title={techniqueTitle(tech)}>{tech.id}{isSuggested(tech) ? ' (suggested)' : ''}</a>
         {/each}
         <DreadBadge {threat} />
         {#if confidencePct != null}

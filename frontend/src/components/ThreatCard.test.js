@@ -87,11 +87,11 @@ describe('ThreatCard', () => {
     expect(screen.queryByText(/@.*·/)).toBeNull()
   })
 
-  it('renders a technique chip linking to MITRE ATT&CK for each matched technique', () => {
+  it('renders a plain technique chip for a trusted (table) match', () => {
     const threat = {
       ...baseThreat,
       attack_techniques: [
-        { id: 'T1195.002', name: 'Compromise Software Supply Chain', url: 'https://attack.mitre.org/techniques/T1195/002', confidence: 0.9 },
+        { id: 'T1195.002', name: 'Compromise Software Supply Chain', url: 'https://attack.mitre.org/techniques/T1195/002', confidence: 0.9, method: 'table' },
       ],
     }
     render(ThreatCard, { props: { threat } })
@@ -100,14 +100,35 @@ describe('ThreatCard', () => {
     expect(link).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1195/002')
   })
 
-  it('links an ATLAS technique id to atlas.mitre.org when no url is given', () => {
+  it('renders a plain technique chip for a trusted (seed) match', () => {
+    const threat = {
+      ...baseThreat,
+      attack_techniques: [
+        { id: 'T1078.004', name: 'Cloud Accounts', url: 'https://attack.mitre.org/techniques/T1078/004', confidence: 0.95, method: 'seed' },
+      ],
+    }
+    render(ThreatCard, { props: { threat } })
+    expect(screen.getByRole('link', { name: 'T1078.004' })).toBeInTheDocument()
+  })
+
+  it('marks an embedding-sourced match as suggested, not confirmed', () => {
+    const threat = {
+      ...baseThreat,
+      attack_techniques: [{ id: 'AML.T0020', name: 'ML Training Data Poisoning', confidence: 0.6, method: 'embedding' }],
+    }
+    render(ThreatCard, { props: { threat } })
+    const link = screen.getByRole('link', { name: 'AML.T0020 (suggested)' })
+    expect(link).toHaveAttribute('href', 'https://atlas.mitre.org/techniques/AML.T0020')
+    expect(link).toHaveAttribute('title', expect.stringContaining('suggested match'))
+  })
+
+  it('treats a missing method as suggested, not confirmed', () => {
     const threat = {
       ...baseThreat,
       attack_techniques: [{ id: 'AML.T0020', name: 'ML Training Data Poisoning', confidence: 0.6 }],
     }
     render(ThreatCard, { props: { threat } })
-    const link = screen.getByRole('link', { name: 'AML.T0020' })
-    expect(link).toHaveAttribute('href', 'https://atlas.mitre.org/techniques/AML.T0020')
+    expect(screen.getByRole('link', { name: 'AML.T0020 (suggested)' })).toBeInTheDocument()
   })
 
   it('renders no technique chip when attack_techniques is empty', () => {
