@@ -18,9 +18,11 @@ from backend.deps.analyze import (
 from backend.export.sarif import export_sarif, to_sarif_uri
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
+from backend.models.api import AnalyzeBundleResponse
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.models.usage import StepRun
 from backend.pipeline.pre_flight import analyze_bundle
 from backend.pipeline.runner import (
     PipelineConfig,
@@ -36,6 +38,7 @@ from backend.providers import (
     create_provider,
 )
 from backend.providers.base import LLMProvider
+from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
@@ -245,6 +248,74 @@ async def _extract_code_context(
             )
             click.secho("Continuing without code context.", fg="yellow")
         return None
+
+
+async def _run_pre_flight(
+    description: str, assumptions: list[str] | None, provider: LLMProvider
+) -> tuple[AnalyzeBundleResponse, StepRun | None]:
+    """Run the pre-flight gap check, capturing any usage it incurs.
+
+    Deterministic checks skip the LLM call entirely whenever they already
+    found enough signal (see backend/pipeline/pre_flight.py), so this is
+    often zero calls — but when it isn't, record_usage() is a no-op outside
+    an open collect_usage() scope, and this call happens before the
+    runner's own per-step scopes open. Wrap it here so that spend isn't
+    silently dropped from the run's usage_summary. analyze_bundle() runs its
+    description and assumptions checks as two concurrent tasks that can each
+    call the LLM; both record into this same scope.
+
+    Returns the bundle plus a StepRun to fold in via _merge_pre_flight_usage(),
+    or None for the step when no LLM call was actually made.
+    """
+    start = asyncio.get_running_loop().time()
+    with collect_usage() as records:
+        bundle = await analyze_bundle(
+            description=description,
+            assumptions=assumptions or [],
+            provider=provider,
+        )
+    if not records:
+        return bundle, None
+    step = StepRun(
+        step="pre_flight",
+        iteration=0,
+        # Usage is counted even if the LLM check later falls back to
+        # deterministic-only gaps (e.g. a truncated response followed by a
+        # failed retry): providers record usage per API response, so those
+        # tokens were really spent regardless of how analyze_bundle()'s own
+        # try/except resolves. "completed" describes this pre-flight step
+        # succeeding at capturing that usage, not that every call inside it
+        # succeeded.
+        status="completed",
+        provider=provider.name,
+        model=provider.model,
+        duration_ms=int((asyncio.get_running_loop().time() - start) * 1000),
+        input_hash="",
+        output_hash="",
+        usage=summarize_usage(records),
+    )
+    return bundle, step
+
+
+def _merge_pre_flight_usage(run_usage: dict | None, pre_flight_step: StepRun | None) -> dict | None:
+    """Fold the pre-flight gap check's usage (if any) into a run's usage summary.
+
+    ``run_usage`` is the COMPLETE event's serialized ``RunUsage`` dict (or None
+    if the run never reached completion). Rebuilding via ``build_run_usage()``
+    recomputes ``by_model``/``total_tokens``/``fast_model_share`` so they
+    account for every call the run actually made, not just the pipeline's own
+    steps; ``build_run_usage()`` doesn't set ``fast_routing_disabled``, so it's
+    carried over explicitly. A no-op when there was no pre-flight usage to add,
+    or no completed run to attach it to.
+    """
+    if pre_flight_step is None or run_usage is None:
+        return run_usage
+    rebuilt = build_run_usage(
+        [pre_flight_step, *(StepRun(**s) for s in run_usage["steps"])],
+        fast_model=run_usage.get("fast_model"),
+    )
+    rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False)
+    return rebuilt.model_dump()
 
 
 def _parse_step_models(
@@ -938,11 +1009,7 @@ async def _run_pipeline_inside_provider(
 ) -> None:
     # Pre-flight gap analysis (description + assumptions) — always runs;
     # --strict enforces blocking on error-severity gaps in either section.
-    bundle = await analyze_bundle(
-        description=description,
-        assumptions=assumptions or [],
-        provider=provider,
-    )
+    bundle, pre_flight_step = await _run_pre_flight(description, assumptions, provider)
 
     def _print_gaps(label: str, gaps: list) -> None:
         if not gaps:
@@ -1115,6 +1182,9 @@ async def _run_pipeline_inside_provider(
 
     # Calculate duration
     duration = asyncio.get_running_loop().time() - start_time
+
+    # Fold the pre-flight call's usage (if any) into the run's usage summary.
+    run_usage = _merge_pre_flight_usage(run_usage, pre_flight_step)
 
     # Enrichment — generate attack trees + test cases for all threats when --enrich
     # is set and the output format is not sarif (SARIF has no enrichment schema).

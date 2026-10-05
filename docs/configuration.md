@@ -37,7 +37,7 @@ A step routed to the fast model that fails with a non-transient error (anything 
 - **CLI, per run:** `--fast-model <id>` overrides the active provider's fast model; `--fast-model=` (the `=` form — an empty value after a bare space is swallowed by PowerShell before it reaches the program) runs every step on the main model. `--step-model STEP=fast|main` (repeatable) replaces `STEP_MODELS` for that run. See the [CLI reference](cli-reference.md).
 - **Settings page:** the *Fast model* field edits the fast model of the provider selected above it (`FAST_MODEL`, `FAST_MODEL_OPENAI`, `FAST_MODEL_BEDROCK` or `FAST_MODEL_OLLAMA`). Leave it empty to turn routing off for that provider. Like the other non-key settings it is held in memory and resets to the environment value on restart.
 
-The Run Summary on the Results page lists each step's model and its input / output / cache-read / cache-write tokens, so you can see what the fast model actually served.
+The Run Summary on the Results page lists each step's model and its input / output / cache-read / cache-write tokens, so you can see what the fast model actually served. For CLI runs, the usage summary also includes a `pre_flight` row when the description/assumptions gap check made an LLM call (it often doesn't — deterministic checks skip it when they already found enough signal), so pre-flight spend isn't dropped from the run's totals.
 
 **Recommended models by provider:**
 
