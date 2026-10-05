@@ -20,8 +20,9 @@ import logging
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from backend.config import settings
 from backend.db.vectors import embed_text
 from backend.dedup import cosine_similarity
 from backend.models.enums import MaestroCategory, StrideCategory
@@ -35,7 +36,13 @@ _CATALOG_DIR = Path(__file__).parent.parent.parent / "seeds" / "techniques"
 _CATALOG_FILES = ("attack_enterprise.json", "atlas.json")
 
 TOP_K = 3
-MIN_CONFIDENCE = 0.35  # starting point; tune against the golden-set precision test
+# A weak noise filter, not a correctness signal: the golden-set test shows
+# wrong candidates score as high as right ones (0.37-0.85 observed across
+# both), so this cannot distinguish a good match from a bad one. It only
+# trims the very weakest tail. Trustworthiness is communicated by
+# TechniqueRef.method ("embedding" is always presented as a suggestion,
+# never as confirmed), not by this threshold.
+MIN_CONFIDENCE = 0.45
 
 # Seed-pattern technique IDs embedded in a pattern's name, e.g.
 # "Cloud Account Takeover ... (T1078.004)" or "ML Training Data Poisoning
@@ -114,7 +121,16 @@ _MAESTRO_TACTIC_PRIOR: dict[MaestroCategory, list[str]] = {
 
 @lru_cache(maxsize=1)
 def _load_catalog() -> list[dict[str, Any]]:
-    """Load and flatten both technique catalog files, once per process."""
+    """Load and flatten both technique catalog files, once per process.
+
+    Each technique is tagged with its source file's `embedding_model`
+    header (None if the file predates that header, e.g. a hand-edited
+    catalog) — `_embedded_catalog()` only trusts a precomputed `embedding`
+    vector when that tag matches the currently configured embedding
+    model, so switching EMBEDDING_MODEL can't silently produce either a
+    dimension-mismatch crash or (same dimension, different model)
+    meaningless matches with no warning at all.
+    """
     techniques: list[dict[str, Any]] = []
     for filename in _CATALOG_FILES:
         path = _CATALOG_DIR / filename
@@ -123,7 +139,16 @@ def _load_catalog() -> list[dict[str, Any]]:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to load technique catalog {path}: {e}")
             continue
-        techniques.extend(payload.get("techniques", []))
+        catalog_model = payload.get("embedding_model")
+        if catalog_model is not None and catalog_model != settings.embedding_model:
+            logger.warning(
+                f"{path.name}'s precomputed embeddings were built with {catalog_model!r}, "
+                f"not the configured {settings.embedding_model!r} — recomputing its "
+                f"{len(payload.get('techniques', []))} techniques instead of using them."
+            )
+        for tech in payload.get("techniques", []):
+            tech["_catalog_embedding_model"] = catalog_model
+            techniques.append(tech)
     return techniques
 
 
@@ -134,12 +159,26 @@ def _catalog_by_id() -> dict[str, dict[str, Any]]:
 
 @lru_cache(maxsize=1)
 def _embedded_catalog() -> list[tuple[dict[str, Any], tuple[float, ...], frozenset[str]]]:
-    """Catalog entries paired with their embedding and keyword set, computed once."""
+    """Catalog entries paired with their embedding and keyword set, computed once.
+
+    Prefers a precomputed `embedding` field (written by
+    scripts/build_techniques.py) so a fresh process doesn't pay the cost of
+    embedding the full catalog (~340 entries, ~9s) on its first pipeline
+    run or CLI invocation — but only when the catalog file's recorded
+    `embedding_model` matches the currently configured one; otherwise a
+    stale/foreign vector would either crash cosine_similarity (different
+    dimension) or silently produce meaningless matches (same dimension,
+    different model). Falls back to embedding on the fly for catalog
+    entries with no precomputed vector or a model mismatch — the offline
+    fallback catalog, a hand-edited one, or a changed EMBEDDING_MODEL.
+    """
     result = []
     for tech in _load_catalog():
         text = f"{tech['name']}. {tech.get('description', '')}"
+        precomputed = tech.get("embedding")
+        usable = precomputed and tech.get("_catalog_embedding_model") == settings.embedding_model
         try:
-            embedding = tuple(embed_text(text))
+            embedding = tuple(precomputed) if usable else tuple(embed_text(text))
         except (ValueError, RuntimeError) as e:
             logger.warning(f"Failed to embed technique {tech.get('id')}: {e}")
             continue
@@ -172,12 +211,15 @@ def _hybrid_score(
     return 0.6 * cos + 0.4 * overlap
 
 
-def _technique_ref(tech: dict[str, Any], confidence: float) -> TechniqueRef:
+def _technique_ref(
+    tech: dict[str, Any], confidence: float, method: Literal["table", "seed", "embedding"]
+) -> TechniqueRef:
     return TechniqueRef(
         id=tech["id"],
         name=tech["name"],
         url=tech.get("url", ""),
         confidence=round(min(max(confidence, 0.0), 1.0), 2),
+        method=method,
     )
 
 
@@ -190,7 +232,7 @@ def _dependency_techniques(threat: Threat) -> list[TechniqueRef]:
     for tech_id, confidence in DEPENDENCY_RULE_TECHNIQUES.get(rule_id, []):
         tech = by_id.get(tech_id)
         if tech is not None:
-            refs.append(_technique_ref(tech, confidence))
+            refs.append(_technique_ref(tech, confidence, "table"))
     return refs
 
 
@@ -203,7 +245,7 @@ def _rule_engine_techniques(threat: Threat) -> list[TechniqueRef]:
     if tech is None:
         logger.info(f"Seed pattern references unresolved technique id {tech_id}")
         return []
-    return [_technique_ref(tech, 0.95)]
+    return [_technique_ref(tech, 0.95, "seed")]
 
 
 def _tactic_prior(threat: Threat) -> list[str]:
@@ -241,7 +283,9 @@ def _embedding_match(threat: Threat) -> list[TechniqueRef]:
     scored.sort(key=lambda pair: pair[1], reverse=True)
 
     return [
-        _technique_ref(tech, score) for tech, score in scored[:TOP_K] if score >= MIN_CONFIDENCE
+        _technique_ref(tech, score, "embedding")
+        for tech, score in scored[:TOP_K]
+        if score >= MIN_CONFIDENCE
     ]
 
 

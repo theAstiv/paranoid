@@ -177,3 +177,63 @@ class TestEmbeddingMatch:
             techniques._embedded_catalog.cache_clear()
             threat = _threat(source="llm")
             assert techniques.match_techniques(threat) == []
+
+
+class TestEmbeddingModelMismatch:
+    """A catalog file's precomputed vectors are only trusted when its
+    recorded embedding_model matches the currently configured one — a
+    silent mismatch would otherwise crash cosine_similarity (different
+    dimension) or produce meaningless matches with no warning (same
+    dimension, different model)."""
+
+    def _write_catalog(self, tmp_path: Path, embedding_model: str) -> None:
+        payload = {
+            "embedding_model": embedding_model,
+            "embedding_dim": 3,
+            "techniques": [
+                {
+                    "id": "T0001",
+                    "name": "Fake Technique",
+                    "tactics": ["Impact"],
+                    "description": "A fake technique for testing.",
+                    "url": "https://example.invalid/T0001",
+                    "embedding": [1.0, 0.0, 0.0],
+                }
+            ],
+        }
+        (tmp_path / "attack_enterprise.json").write_text(json.dumps(payload), encoding="utf-8")
+        (tmp_path / "atlas.json").write_text(json.dumps({"techniques": []}), encoding="utf-8")
+
+    def test_matching_model_uses_precomputed_vector_without_embedding(self, tmp_path):
+        self._write_catalog(tmp_path, "BAAI/bge-small-en-v1.5")
+        with (
+            patch("backend.rules.techniques._CATALOG_DIR", tmp_path),
+            patch("backend.rules.techniques.settings.embedding_model", "BAAI/bge-small-en-v1.5"),
+            patch("backend.rules.techniques.embed_text") as mock_embed,
+        ):
+            techniques._load_catalog.cache_clear()
+            techniques._embedded_catalog.cache_clear()
+            embedded = techniques._embedded_catalog()
+            assert embedded[0][1] == (1.0, 0.0, 0.0)
+            mock_embed.assert_not_called()
+
+    def test_mismatched_model_recomputes_instead_of_using_stale_vector(self, tmp_path, caplog):
+        caplog.set_level("WARNING", logger="backend.rules.techniques")
+        self._write_catalog(tmp_path, "some-other-model")
+        with (
+            patch("backend.rules.techniques._CATALOG_DIR", tmp_path),
+            patch("backend.rules.techniques.settings.embedding_model", "BAAI/bge-small-en-v1.5"),
+            patch(
+                "backend.rules.techniques.embed_text", return_value=[0.0, 1.0, 0.0]
+            ) as mock_embed,
+        ):
+            techniques._load_catalog.cache_clear()
+            techniques._embedded_catalog.cache_clear()
+            embedded = techniques._embedded_catalog()
+            # Recomputed, not the stale [1.0, 0.0, 0.0] from the mismatched file —
+            # and not silently dropped either (the entry is still present).
+            assert len(embedded) == 1
+            assert embedded[0][1] == (0.0, 1.0, 0.0)
+            mock_embed.assert_called_once()
+        assert "some-other-model" in caplog.text
+        assert "recomputing" in caplog.text.lower()
