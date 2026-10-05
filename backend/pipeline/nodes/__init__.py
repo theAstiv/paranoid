@@ -11,9 +11,13 @@ Internal module organization:
     - extraction: Asset and flow extraction
     - threats: Threat generation and gap analysis
     - enrichment: Attack trees and test cases
+    - attack_mapping: Deterministic ATT&CK/ATLAS technique matching
 """
 
 # Summary nodes
+# Attack-mapping node
+from backend.pipeline.nodes.attack_mapping import map_threat_techniques
+
 # Enrichment nodes
 from backend.pipeline.nodes.enrichment import generate_attack_tree, generate_test_cases
 
@@ -38,4 +42,6 @@ __all__ = [
     # Enrichment
     "generate_attack_tree",
     "generate_test_cases",
+    # Attack mapping
+    "map_threat_techniques",
 ]
