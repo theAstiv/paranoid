@@ -295,7 +295,48 @@ def build_atlas_catalog(data: dict[str, Any]) -> tuple[list[dict[str, Any]], str
     return results, str(data.get("version", "unknown"))
 
 
-def _write_catalog(path: Path, techniques: list[dict[str, Any]], source: str, version: str) -> None:
+def _embed_techniques(techniques: list[dict[str, Any]]) -> tuple[str, int] | None:
+    """Attach a precomputed, rounded `embedding` field to each technique, in place.
+
+    backend.rules.techniques embeds the whole catalog (~340 entries) on
+    first use in every process — about 9s per CLI invocation, measured in
+    review. Precomputing here at build time means a running process only
+    ever embeds the threats it matches, not the catalog.
+
+    Returns (model_name, dimension) for the caller to record in the
+    catalog header, or None if embedding was skipped (backend not
+    importable). backend.rules.techniques only trusts a precomputed vector
+    when the header's model name matches the running settings.embedding_model
+    — a silent model/dimension mismatch would otherwise either crash
+    cosine_similarity (different dimension) or produce meaningless matches
+    with no warning (same dimension, different model).
+    """
+    try:
+        from backend.config import settings
+        from backend.db.vectors import embed_text
+    except ImportError as e:
+        print(f"[warn] backend not importable ({e}); skipping embedding precompute", file=sys.stderr)
+        return None
+
+    dim = None
+    for tech in techniques:
+        text = f"{tech['name']}. {tech.get('description', '')}"
+        vector = embed_text(text)
+        # Rounding halves the on-disk/in-git size (343 techniques x 384
+        # floats x 2 files) with no meaningful precision loss for cosine
+        # similarity.
+        tech["embedding"] = [round(v, 5) for v in vector]
+        dim = dim or len(vector)
+    return settings.embedding_model, (dim or 0)
+
+
+def _write_catalog(
+    path: Path,
+    techniques: list[dict[str, Any]],
+    source: str,
+    version: str,
+    embedding_info: tuple[str, int] | None,
+) -> None:
     payload = {
         "generated": datetime.now(UTC).isoformat(timespec="seconds"),
         "source": source,
@@ -303,6 +344,8 @@ def _write_catalog(path: Path, techniques: list[dict[str, Any]], source: str, ve
         "attribution": "MITRE ATT&CK (c) 2025 MITRE Corporation, used under "
         "https://attack.mitre.org/resources/terms-of-use/; MITRE ATLAS (c) "
         "2025 MITRE Corporation, used under https://atlas.mitre.org terms.",
+        "embedding_model": embedding_info[0] if embedding_info else None,
+        "embedding_dim": embedding_info[1] if embedding_info else None,
         "techniques": techniques,
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -320,11 +363,13 @@ def main() -> None:
         print(f"[warn] ATT&CK live fetch failed ({e}); using offline fallback", file=sys.stderr)
         attack_techniques, attack_version = list(_ATTACK_FALLBACK), "offline-fallback"
 
+    attack_embedding_info = _embed_techniques(attack_techniques)
     _write_catalog(
         seeds_dir / "attack_enterprise.json",
         attack_techniques,
         "https://github.com/mitre-attack/attack-stix-data (enterprise-attack)",
         attack_version,
+        attack_embedding_info,
     )
 
     try:
@@ -340,11 +385,13 @@ def main() -> None:
         print(f"[warn] ATLAS live fetch failed ({e}); no offline fallback for ATLAS", file=sys.stderr)
         atlas_techniques, atlas_version = [], "offline-fallback"
 
+    atlas_embedding_info = _embed_techniques(atlas_techniques)
     _write_catalog(
         seeds_dir / "atlas.json",
         atlas_techniques,
         "https://github.com/mitre-atlas/atlas-data (ATLAS.yaml)",
         atlas_version,
+        atlas_embedding_info,
     )
 
 
