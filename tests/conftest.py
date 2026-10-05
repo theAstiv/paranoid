@@ -104,3 +104,25 @@ def mock_load_seeds():
     """
     with patch("backend.main.load_all_seeds", new=AsyncMock(return_value=None)):
         yield
+
+
+def _mock_technique_embed(text: str) -> list[float]:
+    """Deterministic hash-based embedding, mirrors tests/test_dedup.py's."""
+    import hashlib
+
+    h = hashlib.md5(text.encode()).hexdigest()
+    return [int(c, 16) / 15.0 for c in h]
+
+
+@pytest.fixture(autouse=True)
+def mock_technique_embeddings():
+    """Suppress fastembed model download from the map_techniques pipeline step.
+
+    PipelineRunner.run() calls map_threat_techniques() unconditionally on
+    every cumulative threat, which embeds any llm/seeded-sourced threat via
+    backend.rules.techniques.embed_text() → the same HuggingFace-download
+    hang mock_load_seeds exists to prevent. A test that wants to assert on
+    real match quality overrides this with its own patch.
+    """
+    with patch("backend.rules.techniques.embed_text", side_effect=_mock_technique_embed):
+        yield
