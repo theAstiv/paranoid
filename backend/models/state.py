@@ -133,6 +133,15 @@ class DependencyRef(BaseModel):
     rule_id: str | None = None
 
 
+class TechniqueRef(BaseModel):
+    """A MITRE ATT&CK / ATLAS technique matched to a threat by map_techniques."""
+
+    id: str
+    name: str
+    url: str
+    confidence: Annotated[float, Field(ge=0, le=1)]
+
+
 class Threat(BaseModel):
     """Model representing an identified security threat."""
 
@@ -176,6 +185,11 @@ class Threat(BaseModel):
     # Provenance when source == "dependency" — which package/file/rule this
     # threat came from. None for llm/rule_engine/seeded threats.
     dependency_ref: SkipJsonSchema[DependencyRef | None] = None
+    # MITRE ATT&CK / ATLAS techniques matched by the deterministic
+    # map_techniques pipeline step. Hidden from providers for the same
+    # reason as source/dependency_ref: an LLM must never invent technique
+    # IDs. generate_threats() force-resets this to [] on every response.
+    attack_techniques: SkipJsonSchema[list[TechniqueRef]] = []
 
 
 class ThreatsList(BaseModel):

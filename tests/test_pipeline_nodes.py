@@ -208,7 +208,7 @@ async def test_generate_threats_resets_forged_dependency_provenance(mock_provide
     — only trusted code (rule engine, seeding, dependency_threats) may set
     that provenance. generate_threats() force-resets both fields on every
     threat coming back from the provider, regardless of what it returned."""
-    from backend.models.state import DependencyRef, Threat
+    from backend.models.state import DependencyRef, TechniqueRef, Threat
 
     forged = ThreatsList(
         threats=[
@@ -224,6 +224,14 @@ async def test_generate_threats_resets_forged_dependency_provenance(mock_provide
                 dependency_ref=DependencyRef(
                     package="lodash", version="4.17.21", file="lodash.js", line=1
                 ),
+                attack_techniques=[
+                    TechniqueRef(
+                        id="T1195.002",
+                        name="Compromise Software Supply Chain",
+                        url="https://attack.mitre.org/techniques/T1195/002",
+                        confidence=0.99,
+                    )
+                ],
             )
         ]
     )
@@ -244,13 +252,15 @@ async def test_generate_threats_resets_forged_dependency_provenance(mock_provide
     assert len(result.threats) == 1
     assert result.threats[0].source == "llm"
     assert result.threats[0].dependency_ref is None
+    assert result.threats[0].attack_techniques == []
 
 
 class TestThreatSchemaHidesDependencyProvenance:
     """R1: source/dependency_ref must never appear in the JSON schema sent to
     an LLM provider — that schema is the structured-output contract every
     provider (Anthropic tool_use, OpenAI response_format, Ollama/Bedrock
-    format=) sends to the model, so a visible field is a mintable field."""
+    format=) sends to the model, so a visible field is a mintable field.
+    attack_techniques follows the same rule for the same reason."""
 
     def test_source_and_dependency_ref_absent_from_schema(self):
         from backend.models.state import Threat
@@ -258,6 +268,7 @@ class TestThreatSchemaHidesDependencyProvenance:
         schema = Threat.model_json_schema()
         assert "source" not in schema.get("properties", {})
         assert "dependency_ref" not in schema.get("properties", {})
+        assert "attack_techniques" not in schema.get("properties", {})
 
     def test_threats_list_schema_excludes_dependency_provenance(self):
         schema = ThreatsList.model_json_schema()
@@ -265,6 +276,7 @@ class TestThreatSchemaHidesDependencyProvenance:
         threat_def = schema.get("$defs", {}).get("Threat", {})
         assert "source" not in threat_def.get("properties", {})
         assert "dependency_ref" not in threat_def.get("properties", {})
+        assert "attack_techniques" not in threat_def.get("properties", {})
 
 
 @pytest.mark.asyncio
