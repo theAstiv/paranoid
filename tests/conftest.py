@@ -107,22 +107,37 @@ def mock_load_seeds():
 
 
 def _mock_technique_embed(text: str) -> list[float]:
-    """Deterministic hash-based embedding, mirrors tests/test_dedup.py's."""
+    """Deterministic hash-based embedding, mirrors tests/test_dedup.py's.
+
+    Must match bge-small's 384 dimensions: seeds/techniques/*.json carries
+    real precomputed 384-dim embeddings (scripts/build_techniques.py), and
+    cosine_similarity's zip(..., strict=True) raises ValueError on a
+    length mismatch against a mocked threat embedding of any other size.
+    """
     import hashlib
 
     h = hashlib.md5(text.encode()).hexdigest()
-    return [int(c, 16) / 15.0 for c in h]
+    base = [int(c, 16) / 15.0 for c in h]
+    return (base * 12)[:384]
 
 
 @pytest.fixture(autouse=True)
-def mock_technique_embeddings():
+def mock_technique_embeddings(request):
     """Suppress fastembed model download from the map_techniques pipeline step.
 
     PipelineRunner.run() calls map_threat_techniques() unconditionally on
     every cumulative threat, which embeds any llm/seeded-sourced threat via
     backend.rules.techniques.embed_text() → the same HuggingFace-download
-    hang mock_load_seeds exists to prevent. A test that wants to assert on
-    real match quality overrides this with its own patch.
+    hang mock_load_seeds exists to prevent.
+
+    Skipped for tests marked `live` (tests/live/test_attack_mapping_golden.py)
+    — those explicitly want the real model to measure real precision, and
+    mocking it there silently produced an empty result instead of a
+    meaningful (if noisy) one, since the mocked threat vector has nothing in
+    common with the catalog's real precomputed embeddings.
     """
+    if request.node.get_closest_marker("live"):
+        yield
+        return
     with patch("backend.rules.techniques.embed_text", side_effect=_mock_technique_embed):
         yield
