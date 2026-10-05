@@ -1,0 +1,1604 @@
+{
+  "generated": "2026-10-05T12:53:59+00:00",
+  "source": "https://github.com/mitre-attack/attack-stix-data (enterprise-attack)",
+  "source_version": "19.2",
+  "attribution": "MITRE ATT&CK (c) 2025 MITRE Corporation, used under https://attack.mitre.org/resources/terms-of-use/; MITRE ATLAS (c) 2025 MITRE Corporation, used under https://atlas.mitre.org terms.",
+  "techniques": [
+    {
+      "id": "T1020.001",
+      "name": "Traffic Duplication",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "description": "Adversaries may leverage traffic mirroring in order to automate data exfiltration over compromised infrastructure. Traffic mirroring is a native feature for some devices, often used for network analysis. For example, devices may be configured to forward network traffic to one or more destinations for analysis by a network analyzer or other monitoring device. Adversaries may abuse traffic mirroring to mirror or redirect network traffic through other infrastructure they control.",
+      "url": "https://attack.mitre.org/techniques/T1020/001"
+    },
+    {
+      "id": "T1021",
+      "name": "Remote Services",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may use Valid Accounts to log into a service that accepts remote connections, such as telnet, SSH, and VNC. The adversary may then perform actions as the logged-on user. In an enterprise environment, servers and workstations can be organized into domains. Domains provide centralized identity management, allowing users to login using one set of credentials across the entire network. If an adversary is able to obtain a set of valid domain credentials, they could login to many different machines using remote access protocols such as secure shell (SSH) or remote desktop protocol (RDP).",
+      "url": "https://attack.mitre.org/techniques/T1021"
+    },
+    {
+      "id": "T1021.007",
+      "name": "Cloud Services",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may log into accessible cloud services within a compromised environment using Valid Accounts that are synchronized with or federated to on-premises user identities. The adversary may then perform management actions or access cloud-hosted resources as the logged-on user. Many enterprises federate centrally managed user identities to cloud services, allowing users to login with their domain credentials in order to access the cloud control plane.",
+      "url": "https://attack.mitre.org/techniques/T1021/007"
+    },
+    {
+      "id": "T1021.008",
+      "name": "Direct Cloud VM Connections",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may leverage Valid Accounts to log directly into accessible cloud hosted compute infrastructure through cloud native methods. Many cloud providers offer interactive connections to virtual infrastructure that can be accessed through the Cloud API, such as Azure Serial Console, AWS EC2 Instance Connect, and AWS System Manager.. Methods of authentication for these connections can include passwords, application access tokens, or SSH keys. These cloud native methods may, by default, allow for privileged access on the host with SYSTEM or root level access.",
+      "url": "https://attack.mitre.org/techniques/T1021/008"
+    },
+    {
+      "id": "T1027",
+      "name": "Obfuscated Files or Information",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may attempt to make an executable or file difficult to discover or analyze by encrypting, encoding, or otherwise obfuscating its contents on the system or in transit. This is common behavior that can be used across different platforms and the network to evade defenses. Payloads may be compressed, archived, or encrypted in order to avoid detection. These payloads may be used during Initial Access or later to mitigate detection. Sometimes a user's action may be required to open and Deobfuscate/Decode Files or Information for User Execution.",
+      "url": "https://attack.mitre.org/techniques/T1027"
+    },
+    {
+      "id": "T1036",
+      "name": "Masquerading",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may attempt to manipulate features of their artifacts to make them appear legitimate or benign to users and/or security tools. Masquerading occurs when the name or location of an object, legitimate or malicious, is manipulated or abused for the sake of evading defenses and observation. This may include manipulating file metadata, tricking users into misidentifying the file type, and giving legitimate task or service names. Renaming abusable system utilities to evade security monitoring is also a form of Masquerading.",
+      "url": "https://attack.mitre.org/techniques/T1036"
+    },
+    {
+      "id": "T1036.005",
+      "name": "Match Legitimate Resource Name or Location",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may match or approximate the name or location of legitimate files, Registry keys, or other resources when naming/placing them. This is done for the sake of evading defenses and observation. This may be done by placing an executable in a commonly trusted directory (ex: under System32) or giving it the name of a legitimate, trusted program (ex: `svchost.exe`). Alternatively, a Windows Registry key may be given a close approximation to a key used by a legitimate program.",
+      "url": "https://attack.mitre.org/techniques/T1036/005"
+    },
+    {
+      "id": "T1036.010",
+      "name": "Masquerade Account Name",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may match or approximate the names of legitimate accounts to make newly created ones appear benign. This will typically occur during Create Account, although accounts may also be renamed at a later date. This may also coincide with Account Access Removal if the actor first deletes an account before re-creating one with the same name. Often, adversaries will attempt to masquerade as service accounts, such as those associated with legitimate software, data backups, or container cluster management.",
+      "url": "https://attack.mitre.org/techniques/T1036/010"
+    },
+    {
+      "id": "T1040",
+      "name": "Network Sniffing",
+      "tactics": [
+        "Credential Access",
+        "Discovery"
+      ],
+      "description": "Adversaries may passively sniff network traffic to capture information about an environment, including authentication material passed over the network. Network sniffing refers to using the network interface on a system to monitor or capture information sent over a wired or wireless connection. An adversary may place a network interface into promiscuous mode to passively access data in transit over the network, or use span ports to capture a larger amount of data. Data captured via this technique may include user credentials, especially those sent over an insecure, unencrypted protocol.",
+      "url": "https://attack.mitre.org/techniques/T1040"
+    },
+    {
+      "id": "T1046",
+      "name": "Network Service Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of services running on remote hosts and local network infrastructure devices, including those that may be vulnerable to remote software exploitation. Common methods to acquire this information include port, vulnerability, and/or wordlist scans using tools that are brought onto a system. Within cloud environments, adversaries may attempt to discover services running on other cloud hosts. Additionally, if the cloud environment is connected to a on-premises environment, adversaries may be able to identify services running on non-cloud systems as well.",
+      "url": "https://attack.mitre.org/techniques/T1046"
+    },
+    {
+      "id": "T1048",
+      "name": "Exfiltration Over Alternative Protocol",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "description": "Adversaries may steal data by exfiltrating it over a different protocol than that of the existing command and control channel. The data may also be sent to an alternate network location from the main command and control server. Alternate protocols include FTP, SMTP, HTTP/S, DNS, SMB, or any other network protocol not being used as the main command and control channel. Adversaries may also opt to encrypt and/or obfuscate these alternate channels. Exfiltration Over Alternative Protocol can be done using various common operating system utilities such as Net/SMB or FTP.",
+      "url": "https://attack.mitre.org/techniques/T1048"
+    },
+    {
+      "id": "T1049",
+      "name": "System Network Connections Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of network connections to or from the compromised system they are currently accessing or from remote systems by querying for information over the network. An adversary who gains access to a system that is part of a cloud-based environment may map out Virtual Private Clouds or Virtual Networks in order to determine what systems and services are connected.",
+      "url": "https://attack.mitre.org/techniques/T1049"
+    },
+    {
+      "id": "T1053",
+      "name": "Scheduled Task/Job",
+      "tactics": [
+        "Execution",
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may abuse task scheduling functionality to facilitate initial or recurring execution of malicious code. Utilities exist within all major operating systems to schedule programs or scripts to be executed at a specified date and time. A task can also be scheduled on a remote system, provided the proper authentication is met (ex: RPC and file and printer sharing in Windows environments). Scheduling a task on a remote system typically may require being a member of an admin or otherwise privileged group on the remote system.",
+      "url": "https://attack.mitre.org/techniques/T1053"
+    },
+    {
+      "id": "T1053.007",
+      "name": "Container Orchestration Job",
+      "tactics": [
+        "Execution",
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may abuse task scheduling functionality provided by container orchestration tools such as Kubernetes to schedule deployment of containers configured to execute malicious code. Container orchestration jobs run these automated tasks at a specific date and time, similar to cron jobs on a Linux system. Deployments of this type can also be configured to maintain a quantity of containers over time, automating the process of maintaining persistence within a cluster. In Kubernetes, a CronJob may be used to schedule a Job that runs one or more containers to perform specific tasks.",
+      "url": "https://attack.mitre.org/techniques/T1053/007"
+    },
+    {
+      "id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse command and script interpreters to execute commands, scripts, or binaries. These interfaces and languages provide ways of interacting with computer systems and are a common feature across many different platforms. Most systems come with some built-in command-line interface and scripting capabilities, for example, macOS and Linux distributions include some flavor of Unix Shell while Windows installations include the Windows Command Shell and PowerShell.",
+      "url": "https://attack.mitre.org/techniques/T1059"
+    },
+    {
+      "id": "T1059.009",
+      "name": "Cloud API",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse cloud APIs to execute malicious commands. APIs available in cloud environments provide various functionalities and are a feature-rich method for programmatic access to nearly all aspects of a tenant. These APIs may be utilized through various methods such as command line interpreters (CLIs), in-browser Cloud Shells, PowerShell modules like Azure for PowerShell, or software developer kits (SDKs) available for languages such as Python.",
+      "url": "https://attack.mitre.org/techniques/T1059/009"
+    },
+    {
+      "id": "T1059.013",
+      "name": "Container CLI/API",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse built-in CLI tools or API calls to execute malicious commands in containerized environments. The Docker CLI is used for managing containers via an exposed API point from the `dockerd` daemon. Some common examples of Docker CLI include Docker Desktop CLI and Docker Compose, but users are also able to use SDKs to interact with the API. For example, Docker SDK for Python can be used to run commands within a Python application.",
+      "url": "https://attack.mitre.org/techniques/T1059/013"
+    },
+    {
+      "id": "T1068",
+      "name": "Exploitation for Privilege Escalation",
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may exploit software vulnerabilities in an attempt to elevate privileges. Exploitation of a software vulnerability occurs when an adversary takes advantage of a programming error in a program, service, or within the operating system software or kernel itself to execute adversary-controlled code. Security constructs such as permission levels will often hinder access to information and use of certain techniques, so adversaries will likely need to perform privilege escalation to include use of software exploitation to circumvent those restrictions.",
+      "url": "https://attack.mitre.org/techniques/T1068"
+    },
+    {
+      "id": "T1069",
+      "name": "Permission Groups Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to discover group and permission settings. This information can help adversaries determine which user accounts and groups are available, the membership of users in particular groups, and which users and groups have elevated permissions. Adversaries may attempt to discover group permission settings in many different ways. This data may provide the adversary with information about the compromised environment that can be used in follow-on activity and targeting.",
+      "url": "https://attack.mitre.org/techniques/T1069"
+    },
+    {
+      "id": "T1069.003",
+      "name": "Cloud Groups",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to find cloud groups and permission settings. The knowledge of cloud permission groups can help adversaries determine the particular roles of users and groups within an environment, as well as which users are associated with a particular group. With authenticated access there are several tools that can be used to find permissions groups. The <code>Get-MsolRole</code> PowerShell cmdlet can be used to obtain roles and permissions groups for Exchange and Office 365 accounts .",
+      "url": "https://attack.mitre.org/techniques/T1069/003"
+    },
+    {
+      "id": "T1070",
+      "name": "Indicator Removal",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may selectively delete or modify artifacts generated to reduce indications of their presence and blend in with legitimate activity. Rather than broadly removing evidence, adversaries may target specific artifacts that appear anomalous or are likely to draw scrutiny, while leaving sufficient data intact to maintain the appearance of normal system behavior. Artifacts such as command histories, log entries, or file metadata may be altered in ways that align with expected user or system activity.",
+      "url": "https://attack.mitre.org/techniques/T1070"
+    },
+    {
+      "id": "T1070.008",
+      "name": "Clear Mailbox Data",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may modify mail and mail application data to remove evidence of their activity. Email applications allow users and other programs to export and delete mailbox data via command line tools or use of APIs. Mail application data can be emails, email metadata, or logs generated by the application or operating system, such as export requests.",
+      "url": "https://attack.mitre.org/techniques/T1070/008"
+    },
+    {
+      "id": "T1072",
+      "name": "Software Deployment Tools",
+      "tactics": [
+        "Execution",
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may gain access to and use centralized software suites installed within an enterprise to execute commands and move laterally through the network. Configuration management and software deployment applications may be used in an enterprise network or cloud environment for routine administration purposes. These systems may also be integrated into CI/CD pipelines. Examples of such solutions include: SCCM, HBSS, Altiris, AWS Systems Manager, Microsoft Intune, Azure Arc, and GCP Deployment Manager.",
+      "url": "https://attack.mitre.org/techniques/T1072"
+    },
+    {
+      "id": "T1074",
+      "name": "Data Staged",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may stage collected data in a central location or directory prior to Exfiltration. Data may be kept in separate files or combined into one file through techniques such as Archive Collected Data. Interactive command shells may be used, and common functionality within cmd and bash may be used to copy data into a staging location. In cloud environments, adversaries may stage data within a particular instance or virtual machine before exfiltration. An adversary may Create Cloud Instance and stage data in that instance.",
+      "url": "https://attack.mitre.org/techniques/T1074"
+    },
+    {
+      "id": "T1074.002",
+      "name": "Remote Data Staging",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may stage data collected from multiple systems in a central location or directory on one system prior to Exfiltration. Data may be kept in separate files or combined into one file through techniques such as Archive Collected Data. Interactive command shells may be used, and common functionality within cmd and bash may be used to copy data into a staging location. In cloud environments, adversaries may stage data within a particular instance or virtual machine before exfiltration. An adversary may Create Cloud Instance and stage data in that instance.",
+      "url": "https://attack.mitre.org/techniques/T1074/002"
+    },
+    {
+      "id": "T1078",
+      "name": "Valid Accounts",
+      "tactics": [
+        "Stealth",
+        "Persistence",
+        "Privilege Escalation",
+        "Initial Access"
+      ],
+      "description": "Adversaries may obtain and abuse credentials of existing accounts as a means of gaining Initial Access, Persistence, Privilege Escalation, or Defense Evasion. Compromised credentials may be used to bypass access controls placed on various resources on systems within the network and may even be used for persistent access to remote systems and externally available services, such as VPNs, Outlook Web Access, network devices, and remote desktop. Compromised credentials may also grant an adversary increased privilege to specific systems or access to restricted areas of the network.",
+      "url": "https://attack.mitre.org/techniques/T1078"
+    },
+    {
+      "id": "T1078.001",
+      "name": "Default Accounts",
+      "tactics": [
+        "Stealth",
+        "Persistence",
+        "Privilege Escalation",
+        "Initial Access"
+      ],
+      "description": "Adversaries may obtain and abuse credentials of a default account as a means of gaining Initial Access, Persistence, Privilege Escalation, or Defense Evasion. Default accounts are those that are built-into an OS, such as the Guest or Administrator accounts on Windows systems. Default accounts also include default factory/provider set accounts on other types of systems, software, or devices, including the root user account in AWS, the root user account in ESXi, and the default service account in Kubernetes.",
+      "url": "https://attack.mitre.org/techniques/T1078/001"
+    },
+    {
+      "id": "T1078.003",
+      "name": "Local Accounts",
+      "tactics": [
+        "Stealth",
+        "Persistence",
+        "Privilege Escalation",
+        "Initial Access"
+      ],
+      "description": "Adversaries may obtain and abuse credentials of a local account as a means of gaining Initial Access, Persistence, Privilege Escalation, or Defense Evasion. Local accounts are those configured by an organization for use by users, remote support, services, or for administration on a single system or service. Local Accounts may also be abused to elevate privileges and harvest credentials through OS Credential Dumping. Password reuse may allow the abuse of local accounts across a set of machines on a network for the purposes of Privilege Escalation and Lateral Movement.",
+      "url": "https://attack.mitre.org/techniques/T1078/003"
+    },
+    {
+      "id": "T1078.004",
+      "name": "Cloud Accounts",
+      "tactics": [
+        "Stealth",
+        "Persistence",
+        "Privilege Escalation",
+        "Initial Access"
+      ],
+      "description": "Valid accounts in cloud environments may allow adversaries to perform actions to achieve Initial Access, Persistence, Privilege Escalation, or Defense Evasion. Cloud accounts are those created and configured by an organization for use by users, remote support, services, or for administration of resources within a cloud service provider or SaaS application. Cloud Accounts can exist solely in the cloud; alternatively, they may be hybrid-joined between on-premises systems and the cloud through syncing or federation with other identity sources such as Windows Active Directory.",
+      "url": "https://attack.mitre.org/techniques/T1078/004"
+    },
+    {
+      "id": "T1080",
+      "name": "Taint Shared Content",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may deliver payloads to remote systems by adding content to shared storage locations, such as network drives or internal code repositories. Content stored on network drives or in other shared locations may be tainted by adding malicious programs, scripts, or exploit code to otherwise valid files. Once a user opens the shared tainted content, the malicious portion can be executed to run the adversary's code on a remote system. Adversaries may use tainted shared content to move laterally.",
+      "url": "https://attack.mitre.org/techniques/T1080"
+    },
+    {
+      "id": "T1082",
+      "name": "System Information Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "An adversary may attempt to get detailed information about the operating system and hardware, including version, patches, hotfixes, service packs, and architecture. Adversaries may use this information to shape follow-on behaviors, including whether or not the adversary fully infects the target and/or attempts specific actions. This behavior is distinct from Local Storage Discovery which is an adversary's discovery of local drive, disks and/or volumes. Tools such as Systeminfo can be used to gather detailed system information.",
+      "url": "https://attack.mitre.org/techniques/T1082"
+    },
+    {
+      "id": "T1087",
+      "name": "Account Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of valid accounts, usernames, or email addresses on a system or within a compromised environment. This information can help adversaries determine which accounts exist, which can aid in follow-on behavior such as brute-forcing, spear-phishing attacks, or account takeovers (e.g., Valid Accounts). Adversaries may use several methods to enumerate accounts, including abuse of existing tools, built-in commands, and potential misconfigurations that leak account names and roles or permissions in the targeted environment.",
+      "url": "https://attack.mitre.org/techniques/T1087"
+    },
+    {
+      "id": "T1087.003",
+      "name": "Email Account",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of email addresses and accounts. Adversaries may try to dump Exchange address lists such as global address lists (GALs). In on-premises Exchange and Exchange Online, the <code>Get-GlobalAddressList</code> PowerShell cmdlet can be used to obtain email addresses and accounts from a domain using an authenticated session. In Google Workspace, the GAL is shared with Microsoft Outlook users through the Google Workspace Sync for Microsoft Outlook (GWSMO) service.",
+      "url": "https://attack.mitre.org/techniques/T1087/003"
+    },
+    {
+      "id": "T1087.004",
+      "name": "Cloud Account",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of cloud accounts. Cloud accounts are those created and configured by an organization for use by users, remote support, services, or for administration of resources within a cloud service provider or SaaS application. With authenticated access there are several tools that can be used to find accounts. The <code>Get-MsolRoleMember</code> PowerShell cmdlet can be used to obtain account names given a role or permissions group in Office 365. The Azure CLI (AZ CLI) also provides an interface to obtain user accounts with authenticated access to a domain.",
+      "url": "https://attack.mitre.org/techniques/T1087/004"
+    },
+    {
+      "id": "T1098",
+      "name": "Account Manipulation",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may manipulate accounts to maintain and/or elevate access to victim systems. Account manipulation may consist of any action that preserves or modifies adversary access to a compromised account, such as modifying credentials or permission groups. These actions could also include account activity designed to subvert security policies, such as performing iterative password updates to bypass password duration policies and preserve the life of compromised credentials. In order to create or manipulate accounts, the adversary must already have sufficient permissions on systems or the domain.",
+      "url": "https://attack.mitre.org/techniques/T1098"
+    },
+    {
+      "id": "T1098.001",
+      "name": "Additional Cloud Credentials",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may add adversary-controlled credentials to a cloud account to maintain persistent access to victim accounts and instances within the environment. For example, adversaries may add credentials for Service Principals and Applications in addition to existing legitimate credentials in Azure / Entra ID. These credentials include both x509 keys and passwords. With sufficient permissions, there are a variety of ways to add credentials including the Azure Portal, Azure command line interface, and Azure or Az PowerShell modules.",
+      "url": "https://attack.mitre.org/techniques/T1098/001"
+    },
+    {
+      "id": "T1098.002",
+      "name": "Additional Email Delegate Permissions",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may grant additional permission levels to maintain persistent access to an adversary-controlled email account. For example, the <code>Add-MailboxPermission</code> PowerShell cmdlet, available in on-premises Exchange and in the cloud-based service Office 365, adds permissions to a mailbox. In Google Workspace, delegation can be enabled via the Google Admin console and users can delegate accounts via their Gmail settings. Adversaries may also assign mailbox folder permissions through individual folder permissions or roles.",
+      "url": "https://attack.mitre.org/techniques/T1098/002"
+    },
+    {
+      "id": "T1098.003",
+      "name": "Additional Cloud Roles",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "An adversary may add additional roles or permissions to an adversary-controlled cloud account to maintain persistent access to a tenant. For example, adversaries may update IAM policies in cloud-based environments or add a new global administrator in Office 365 environments. With sufficient permissions, a compromised account can gain almost unlimited access to data and settings (including the ability to reset the passwords of other admins). This account modification may immediately follow Create Account or other malicious account activity.",
+      "url": "https://attack.mitre.org/techniques/T1098/003"
+    },
+    {
+      "id": "T1098.004",
+      "name": "SSH Authorized Keys",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may modify the SSH <code>authorized_keys</code> file to maintain persistence on a victim host. Linux distributions, macOS, and ESXi hypervisors commonly use key-based authentication to secure the authentication process of SSH sessions for remote management. The <code>authorized_keys</code> file in SSH specifies the SSH keys that can be used for logging into the user account for which the file is configured. This file is usually found in the user's home directory under <code>&lt;user-home&gt;/.ssh/authorized_keys</code> (or, on ESXi, `/etc/ssh/keys-<username>/authorized_keys`).",
+      "url": "https://attack.mitre.org/techniques/T1098/004"
+    },
+    {
+      "id": "T1098.005",
+      "name": "Device Registration",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may register a device to an adversary-controlled account. Devices may be registered in a multifactor authentication (MFA) system, which handles authentication to the network, or in a device management system, which handles device access and compliance. MFA systems, such as Duo or Okta, allow users to associate devices with their accounts in order to complete MFA requirements. An adversary that compromises a user’s credentials may enroll a new device in order to bypass initial MFA requirements and gain persistent access to a network.",
+      "url": "https://attack.mitre.org/techniques/T1098/005"
+    },
+    {
+      "id": "T1098.006",
+      "name": "Additional Container Cluster Roles",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "An adversary may add additional roles or permissions to an adversary-controlled user or service account to maintain persistent access to a container orchestration system. For example, an adversary with sufficient permissions may create a RoleBinding or a ClusterRoleBinding to bind a Role or ClusterRole to a Kubernetes account. Where attribute-based access control (ABAC) is in use, an adversary with sufficient permissions may modify a Kubernetes ABAC policy to give the target account additional permissions.",
+      "url": "https://attack.mitre.org/techniques/T1098/006"
+    },
+    {
+      "id": "T1110",
+      "name": "Brute Force",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may use brute force techniques to gain access to accounts when passwords are unknown or when password hashes are obtained. Without knowledge of the password for an account or set of accounts, an adversary may systematically guess the password using a repetitive or iterative mechanism. Brute forcing passwords can take place via interaction with a service that will check the validity of those credentials or offline against previously acquired credential data, such as password hashes. Brute forcing credentials may take place at various points during a breach.",
+      "url": "https://attack.mitre.org/techniques/T1110"
+    },
+    {
+      "id": "T1110.001",
+      "name": "Password Guessing",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries with no prior knowledge of legitimate credentials within the system or environment may guess passwords to attempt access to accounts. Without knowledge of the password for an account, an adversary may opt to systematically guess the password using a repetitive or iterative mechanism. An adversary may guess login credentials without prior knowledge of system or environment passwords during an operation by using a list of common passwords.",
+      "url": "https://attack.mitre.org/techniques/T1110/001"
+    },
+    {
+      "id": "T1110.002",
+      "name": "Password Cracking",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may use password cracking to attempt to recover usable credentials, such as plaintext passwords, when credential material such as password hashes are obtained. OS Credential Dumping can be used to obtain password hashes, this may only get an adversary so far when Pass the Hash is not an option. Further, adversaries may leverage Data from Configuration Repository in order to obtain hashed credentials for network devices. Techniques to systematically guess the passwords used to compute hashes are available, or the adversary may use a pre-computed rainbow table to crack hashes.",
+      "url": "https://attack.mitre.org/techniques/T1110/002"
+    },
+    {
+      "id": "T1110.003",
+      "name": "Password Spraying",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may use a single or small list of commonly used passwords against many different accounts to attempt to acquire valid account credentials. Password spraying uses one password (e.g. 'Password01'), or a small list of commonly used passwords, that may match the complexity policy of the domain. Logins are attempted with that password against many different accounts on a network to avoid account lockouts that would normally occur when brute forcing a single account with many passwords. Typically, management services over commonly used ports are used when password spraying.",
+      "url": "https://attack.mitre.org/techniques/T1110/003"
+    },
+    {
+      "id": "T1110.004",
+      "name": "Credential Stuffing",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may use credentials obtained from breach dumps of unrelated accounts to gain access to target accounts through credential overlap. Occasionally, large numbers of username and password pairs are dumped online when a website or service is compromised and the user account credentials accessed. The information may be useful to an adversary attempting to compromise accounts by taking advantage of the tendency for users to use the same passwords across personal and business accounts.",
+      "url": "https://attack.mitre.org/techniques/T1110/004"
+    },
+    {
+      "id": "T1114",
+      "name": "Email Collection",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may target user email to collect sensitive information. Emails may contain sensitive data, including trade secrets or personal information, that can prove valuable to adversaries. Emails may also contain details of ongoing incident response operations, which may allow adversaries to adjust their techniques in order to maintain persistence or evade defenses. Adversaries can collect or forward email from mail servers or clients.",
+      "url": "https://attack.mitre.org/techniques/T1114"
+    },
+    {
+      "id": "T1114.002",
+      "name": "Remote Email Collection",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may target an Exchange server, Office 365, or Google Workspace to collect sensitive information. Adversaries may leverage a user's credentials and interact directly with the Exchange server to acquire information from within a network. Adversaries may also access externally facing Exchange services, Office 365, or Google Workspace to access email using credentials or access tokens. Tools such as MailSniper can be used to automate searches for specific keywords.",
+      "url": "https://attack.mitre.org/techniques/T1114/002"
+    },
+    {
+      "id": "T1114.003",
+      "name": "Email Forwarding Rule",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may setup email forwarding rules to collect sensitive information. Adversaries may abuse email forwarding rules to monitor the activities of a victim, steal information, and further gain intelligence on the victim or the victim’s organization to use as part of further exploits or operations. Furthermore, email forwarding rules can allow adversaries to maintain persistent access to victim's emails even after compromised credentials are reset by administrators.",
+      "url": "https://attack.mitre.org/techniques/T1114/003"
+    },
+    {
+      "id": "T1119",
+      "name": "Automated Collection",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Once established within a system or network, an adversary may use automated techniques for collecting internal data. Methods for performing this technique could include use of a Command and Scripting Interpreter to search for and copy information fitting set criteria such as file type, location, or name at specific time intervals. In cloud-based environments, adversaries may also use cloud APIs, data pipelines, command line interfaces, or extract, transform, and load (ETL) services to automatically collect data. This functionality could also be built into remote access tools.",
+      "url": "https://attack.mitre.org/techniques/T1119"
+    },
+    {
+      "id": "T1133",
+      "name": "External Remote Services",
+      "tactics": [
+        "Persistence",
+        "Initial Access"
+      ],
+      "description": "Adversaries may leverage external-facing remote services to initially access and/or persist within a network. Remote services such as VPNs, Citrix, and other access mechanisms allow users to connect to internal enterprise network resources from external locations. There are often remote service gateways that manage connections and credential authentication for these services. Services such as Windows Remote Management and VNC can also be used externally.",
+      "url": "https://attack.mitre.org/techniques/T1133"
+    },
+    {
+      "id": "T1136",
+      "name": "Create Account",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may create an account to maintain access to victim systems. With a sufficient level of access, creating such accounts may be used to establish secondary credentialed access that do not require persistent remote access tools to be deployed on the system. Accounts may be created on the local system or within a domain or cloud tenant. In cloud environments, adversaries may create accounts that only have access to specific services, which can reduce the chance of detection.",
+      "url": "https://attack.mitre.org/techniques/T1136"
+    },
+    {
+      "id": "T1136.001",
+      "name": "Local Account",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may create a local account to maintain access to victim systems. Local accounts are those configured by an organization for use by users, remote support, services, or for administration on a single system or service. For example, with a sufficient level of access, the Windows <code>net user /add</code> command can be used to create a local account. In Linux, the `useradd` command can be used, while on macOS systems, the <code>dscl -create</code> command can be used.",
+      "url": "https://attack.mitre.org/techniques/T1136/001"
+    },
+    {
+      "id": "T1136.003",
+      "name": "Cloud Account",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may create a cloud account to maintain access to victim systems. With a sufficient level of access, such accounts may be used to establish secondary credentialed access that does not require persistent remote access tools to be deployed on the system. In addition to user accounts, cloud accounts may be associated with services. Cloud providers handle the concept of service accounts in different ways.",
+      "url": "https://attack.mitre.org/techniques/T1136/003"
+    },
+    {
+      "id": "T1137",
+      "name": "Office Application Startup",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may leverage Microsoft Office-based applications for persistence between startups. Microsoft Office is a fairly common application suite on Windows-based operating systems within an enterprise network. There are multiple mechanisms that can be used with Office for persistence when an Office-based application is started; this can include the use of Office Template Macros and add-ins. A variety of features have been discovered in Outlook that can be abused to obtain persistence, such as Outlook rules, forms, and Home Page.",
+      "url": "https://attack.mitre.org/techniques/T1137"
+    },
+    {
+      "id": "T1137.001",
+      "name": "Office Template Macros",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse Microsoft Office templates to obtain persistence on a compromised system. Microsoft Office contains templates that are part of common Office applications and are used to customize styles. The base templates within the application are used each time an application starts. Office Visual Basic for Applications (VBA) macros can be inserted into the base template and used to execute code when the respective Office application starts in order to obtain persistence. Examples for both Word and Excel have been discovered and published.",
+      "url": "https://attack.mitre.org/techniques/T1137/001"
+    },
+    {
+      "id": "T1137.002",
+      "name": "Office Test",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse the Microsoft Office \"Office Test\" Registry key to obtain persistence on a compromised system. An Office Test Registry location exists that allows a user to specify an arbitrary DLL that will be executed every time an Office application is started. This Registry key is thought to be used by Microsoft to load DLLs for testing and debugging purposes while developing Office applications. This Registry key is not created by default during an Office installation.",
+      "url": "https://attack.mitre.org/techniques/T1137/002"
+    },
+    {
+      "id": "T1137.003",
+      "name": "Outlook Forms",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse Microsoft Outlook forms to obtain persistence on a compromised system. Outlook forms are used as templates for presentation and functionality in Outlook messages. Custom Outlook forms can be created that will execute code when a specifically crafted email is sent by an adversary utilizing the same custom Outlook form. Once malicious forms have been added to the user’s mailbox, they will be loaded when Outlook is started. Malicious forms will execute when an adversary sends a specifically crafted email to the user.",
+      "url": "https://attack.mitre.org/techniques/T1137/003"
+    },
+    {
+      "id": "T1137.004",
+      "name": "Outlook Home Page",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse Microsoft Outlook's Home Page feature to obtain persistence on a compromised system. Outlook Home Page is a legacy feature used to customize the presentation of Outlook folders. This feature allows for an internal or external URL to be loaded and presented whenever a folder is opened. A malicious HTML page can be crafted that will execute code when loaded by Outlook Home Page. Once malicious home pages have been added to the user’s mailbox, they will be loaded when Outlook is started. Malicious Home Pages will execute when the right Outlook folder is loaded/reloaded.",
+      "url": "https://attack.mitre.org/techniques/T1137/004"
+    },
+    {
+      "id": "T1137.005",
+      "name": "Outlook Rules",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse Microsoft Outlook rules to obtain persistence on a compromised system. Outlook rules allow a user to define automated behavior to manage email messages. A benign rule might, for example, automatically move an email to a particular folder in Outlook if it contains specific words from a specific sender. Malicious Outlook rules can be created that can trigger code execution when an adversary sends a specifically crafted email to that user. Once malicious rules have been added to the user’s mailbox, they will be loaded when Outlook is started.",
+      "url": "https://attack.mitre.org/techniques/T1137/005"
+    },
+    {
+      "id": "T1137.006",
+      "name": "Add-ins",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may abuse Microsoft Office add-ins to obtain persistence on a compromised system. Office add-ins can be used to add functionality to Office programs. There are different types of add-ins that can be used by the various Office products; including Word/Excel add-in Libraries (WLL/XLL), VBA add-ins, Office Component Object Model (COM) add-ins, automation add-ins, VBA Editor (VBE), Visual Studio Tools for Office (VSTO) add-ins, and Outlook add-ins. Add-ins can be used to obtain persistence because they can be set to execute code when an Office application starts.",
+      "url": "https://attack.mitre.org/techniques/T1137/006"
+    },
+    {
+      "id": "T1189",
+      "name": "Drive-by Compromise",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may gain access to a system through a user visiting a website over the normal course of browsing.",
+      "url": "https://attack.mitre.org/techniques/T1189"
+    },
+    {
+      "id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may attempt to exploit a weakness in an Internet-facing host or system to initially access a network. The weakness in the system can be a software bug, a temporary glitch, or a misconfiguration. Exploited applications are often websites/web servers, but can also include databases (like SQL), standard services (like SMB or SSH), network device administration and management protocols (like SNMP and Smart Install), and any other system with Internet-accessible open sockets.",
+      "url": "https://attack.mitre.org/techniques/T1190"
+    },
+    {
+      "id": "T1195",
+      "name": "Supply Chain Compromise",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may manipulate products or product delivery mechanisms prior to receipt by a final consumer for the purpose of data or system compromise.",
+      "url": "https://attack.mitre.org/techniques/T1195"
+    },
+    {
+      "id": "T1195.002",
+      "name": "Compromise Software Supply Chain",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may manipulate application software prior to receipt by a final consumer for the purpose of data or system compromise. Supply chain compromise of software can take place in a number of ways, including manipulation of the application source code, manipulation of the update/distribution mechanism for that software, or replacing compiled releases with a modified version. Targeting may be specific to a desired victim set or may be distributed to a broad set of consumers but only move on to additional tactics on specific victims.",
+      "url": "https://attack.mitre.org/techniques/T1195/002"
+    },
+    {
+      "id": "T1199",
+      "name": "Trusted Relationship",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may breach or otherwise leverage organizations who have access to intended victims. Access through trusted third party relationship abuses an existing connection that may not be protected or receives less scrutiny than standard mechanisms of gaining access to a network. Organizations often grant elevated access to second or third-party external providers in order to allow them to manage internal systems as well as cloud-based environments. Some examples of these relationships include IT services contractors, managed security providers, infrastructure contractors (e.g.",
+      "url": "https://attack.mitre.org/techniques/T1199"
+    },
+    {
+      "id": "T1201",
+      "name": "Password Policy Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to access detailed information about the password policy used within an enterprise network or cloud environment. Password policies are a way to enforce complex passwords that are difficult to guess or crack through Brute Force. This information may help the adversary to create a list of common passwords and launch dictionary and/or brute force attacks which adheres to the policy (e.g.",
+      "url": "https://attack.mitre.org/techniques/T1201"
+    },
+    {
+      "id": "T1204",
+      "name": "User Execution",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "An adversary may rely upon specific actions by a user in order to gain execution. Users may be subjected to social engineering to get them to execute malicious code by, for example, opening a malicious document file or link. These user actions will typically be observed as follow-on behavior from forms of Phishing. While User Execution frequently occurs shortly after Initial Access it may occur at other phases of an intrusion, such as when an adversary places a file in a shared directory or on a user's desktop hoping that a user will click on it.",
+      "url": "https://attack.mitre.org/techniques/T1204"
+    },
+    {
+      "id": "T1204.003",
+      "name": "Malicious Image",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may rely on a user running a malicious image to facilitate execution. Amazon Web Services (AWS) Amazon Machine Images (AMIs), Google Cloud Platform (GCP) Images, and Azure Images as well as popular container runtimes such as Docker can be backdoored. Backdoored images may be uploaded to a public repository via Upload Malware, and users may then download and deploy an instance or container from the image without realizing the image is malicious, thus bypassing techniques that specifically achieve Initial Access.",
+      "url": "https://attack.mitre.org/techniques/T1204/003"
+    },
+    {
+      "id": "T1211",
+      "name": "Exploitation for Stealth",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may exploit vulnerabilities to evade detection by hiding activity, suppressing logging, or operating within trusted or unmonitored components. Adversaries may exploit a system or application vulnerability to avoid detection while maintaining access within an environment. Exploitation occurs when an adversary leverages a programming flaw to execute code in a manner that minimizes visibility or blends in with legitimate activity. Rather than directly disabling defenses, adversaries may use exploitation to circumvent monitoring and logging mechanisms.",
+      "url": "https://attack.mitre.org/techniques/T1211"
+    },
+    {
+      "id": "T1212",
+      "name": "Exploitation for Credential Access",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may exploit software vulnerabilities in an attempt to collect credentials. Exploitation of a software vulnerability occurs when an adversary takes advantage of a programming error in a program, service, or within the operating system software or kernel itself to execute adversary-controlled code. Credentialing and authentication mechanisms may be targeted for exploitation by adversaries as a means to gain access to useful credentials or circumvent the process to gain authenticated access to systems.",
+      "url": "https://attack.mitre.org/techniques/T1212"
+    },
+    {
+      "id": "T1213",
+      "name": "Data from Information Repositories",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage information repositories to mine valuable information. Information repositories are tools that allow for storage of information, typically to facilitate collaboration or information sharing between users, and can store a wide variety of data that may aid adversaries in further objectives, such as Credential Access, Lateral Movement, or Defense Evasion, or direct access to the target information. Adversaries may also abuse external sharing features to share sensitive documents with recipients outside of the organization (i.e., Transfer Data to Cloud Account).",
+      "url": "https://attack.mitre.org/techniques/T1213"
+    },
+    {
+      "id": "T1213.001",
+      "name": "Confluence",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage Confluence repositories to mine valuable information.",
+      "url": "https://attack.mitre.org/techniques/T1213/001"
+    },
+    {
+      "id": "T1213.002",
+      "name": "Sharepoint",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage the SharePoint repository as a source to mine valuable information. SharePoint will often contain useful information for an adversary to learn about the structure and functionality of the internal network and systems.",
+      "url": "https://attack.mitre.org/techniques/T1213/002"
+    },
+    {
+      "id": "T1213.003",
+      "name": "Code Repositories",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage code repositories to collect valuable information. Code repositories are tools/services that store source code and automate software builds. They may be hosted internally or privately on third party sites such as Github, GitLab, SourceForge, and BitBucket. Users typically interact with code repositories through a web application or command-line utilities such as git.",
+      "url": "https://attack.mitre.org/techniques/T1213/003"
+    },
+    {
+      "id": "T1213.004",
+      "name": "Customer Relationship Management Software",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage Customer Relationship Management (CRM) software to mine valuable information. CRM software is used to assist organizations in tracking and managing customer interactions, as well as storing customer data. Once adversaries gain access to a victim organization, they may mine CRM software for customer data. This may include personally identifiable information (PII) such as full names, emails, phone numbers, and addresses, as well as additional details such as purchase histories and IT support interactions.",
+      "url": "https://attack.mitre.org/techniques/T1213/004"
+    },
+    {
+      "id": "T1213.005",
+      "name": "Messaging Applications",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage chat and messaging applications, such as Microsoft Teams, Google Chat, and Slack, to mine valuable information.",
+      "url": "https://attack.mitre.org/techniques/T1213/005"
+    },
+    {
+      "id": "T1213.006",
+      "name": "Databases",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may leverage databases to mine valuable information. These databases may be hosted on-premises or in the cloud (both in platform-as-a-service and software-as-a-service environments). Examples of databases from which information may be collected include MySQL, PostgreSQL, MongoDB, Amazon Relational Database Service, Azure SQL Database, Google Firebase, and Snowflake. Databases may include a variety of information of interest to adversaries, such as usernames, hashed passwords, personally identifiable information, and financial data.",
+      "url": "https://attack.mitre.org/techniques/T1213/006"
+    },
+    {
+      "id": "T1484",
+      "name": "Domain or Tenant Policy Modification",
+      "tactics": [
+        "Defense Impairment",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may modify the configuration settings of a domain or identity tenant to evade defenses and/or escalate privileges in centrally managed environments. Such services provide a centralized means of managing identity resources such as devices and accounts, and often include configuration settings that may apply between domains or tenants such as trust relationships, identity syncing, or identity federation.",
+      "url": "https://attack.mitre.org/techniques/T1484"
+    },
+    {
+      "id": "T1484.002",
+      "name": "Trust Modification",
+      "tactics": [
+        "Defense Impairment",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may add new domain trusts, modify the properties of existing domain trusts, or otherwise change the configuration of trust relationships between domains and tenants to evade defenses and/or elevate privileges.Trust details, such as whether or not user identities are federated, allow authentication and authorization properties to apply between domains or tenants for the purpose of accessing shared resources. These trust objects may include accounts, credentials, and other authentication material applied to servers, tokens, and domains.",
+      "url": "https://attack.mitre.org/techniques/T1484/002"
+    },
+    {
+      "id": "T1485",
+      "name": "Data Destruction",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may destroy data and files on specific systems or in large numbers on a network to interrupt availability to systems, services, and network resources. Data destruction is likely to render stored data irrecoverable by forensic techniques through overwriting files or data on local and remote drives. Common operating system file deletion commands such as <code>del</code> and <code>rm</code> often only remove pointers to files without wiping the contents of the files themselves, making the files recoverable by proper forensic methodology.",
+      "url": "https://attack.mitre.org/techniques/T1485"
+    },
+    {
+      "id": "T1485.001",
+      "name": "Lifecycle-Triggered Deletion",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may modify the lifecycle policies of a cloud storage bucket to destroy all objects stored within. Cloud storage buckets often allow users to set lifecycle policies to automate the migration, archival, or deletion of objects after a set period of time. If a threat actor has sufficient permissions to modify these policies, they may be able to delete all objects at once.",
+      "url": "https://attack.mitre.org/techniques/T1485/001"
+    },
+    {
+      "id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may encrypt data on target systems or on large numbers of systems in a network to interrupt availability to system and network resources. They can attempt to render stored data inaccessible by encrypting files or data on local and remote drives and withholding access to a decryption key. This may be done in order to extract monetary compensation from a victim in exchange for decryption or a decryption key (ransomware) or to render data permanently inaccessible in cases where the key is not saved or transmitted.",
+      "url": "https://attack.mitre.org/techniques/T1486"
+    },
+    {
+      "id": "T1489",
+      "name": "Service Stop",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may stop or disable services on a system to render those services unavailable to legitimate users. Stopping critical services or processes can inhibit or stop response to an incident or aid in the adversary's overall objectives to cause damage to the environment. Adversaries may accomplish this by disabling individual services of high importance to an organization, such as <code>MSExchangeIS</code>, which will make Exchange content inaccessible. In some cases, adversaries may stop or disable many or all services to render systems unusable.",
+      "url": "https://attack.mitre.org/techniques/T1489"
+    },
+    {
+      "id": "T1490",
+      "name": "Inhibit System Recovery",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may delete or remove built-in data and turn off services designed to aid in the recovery of a corrupted system to prevent recovery. This may deny access to available backups and recovery options. Operating systems may contain features that can help fix corrupted systems, such as a backup catalog, volume shadow copies, and automatic repair features. Adversaries may disable or delete system recovery features to augment the effects of Data Destruction and Data Encrypted for Impact. Furthermore, adversaries may disable recovery notifications, then corrupt backups.",
+      "url": "https://attack.mitre.org/techniques/T1490"
+    },
+    {
+      "id": "T1491",
+      "name": "Defacement",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may modify visual content available internally or externally to an enterprise network, thus affecting the integrity of the original content. Reasons for Defacement include delivering messaging, intimidation, or claiming (possibly false) credit for an intrusion. Disturbing or offensive images may be used as a part of Defacement in order to cause user discomfort, or to pressure compliance with accompanying messages.",
+      "url": "https://attack.mitre.org/techniques/T1491"
+    },
+    {
+      "id": "T1491.002",
+      "name": "External Defacement",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "An adversary may deface systems external to an organization in an attempt to deliver messaging, intimidate, or otherwise mislead an organization or users. External Defacement may ultimately cause users to distrust the systems and to question/discredit the system’s integrity. Externally-facing websites are a common victim of defacement; often targeted by adversary and hacktivist groups in order to push a political message or spread propaganda. External Defacement may be used as a catalyst to trigger events, or as a response to actions taken by an organization or government.",
+      "url": "https://attack.mitre.org/techniques/T1491/002"
+    },
+    {
+      "id": "T1496",
+      "name": "Resource Hijacking",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may leverage the resources of co-opted systems to complete resource-intensive tasks, which may impact system and/or hosted service availability. Resource hijacking may take a number of different forms. For example, adversaries may: * Leverage compute resources in order to mine cryptocurrency * Sell network bandwidth to proxy networks * Generate SMS traffic for profit * Abuse cloud-based messaging services to send large quantities of spam messages In some cases, adversaries may leverage multiple types of Resource Hijacking at once.",
+      "url": "https://attack.mitre.org/techniques/T1496"
+    },
+    {
+      "id": "T1496.001",
+      "name": "Compute Hijacking",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may leverage the compute resources of co-opted systems to complete resource-intensive tasks, which may impact system and/or hosted service availability. One common purpose for Compute Hijacking is to validate transactions of cryptocurrency networks and earn virtual currency. Adversaries may consume enough system resources to negatively impact and/or cause affected machines to become unresponsive.",
+      "url": "https://attack.mitre.org/techniques/T1496/001"
+    },
+    {
+      "id": "T1496.002",
+      "name": "Bandwidth Hijacking",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may leverage the network bandwidth resources of co-opted systems to complete resource-intensive tasks, which may impact system and/or hosted service availability. Adversaries may also use malware that leverages a system's network bandwidth as part of a botnet in order to facilitate Network Denial of Service campaigns and/or to seed malicious torrents. Alternatively, they may engage in proxyjacking by selling use of the victims' network bandwidth and IP address to proxyware services.",
+      "url": "https://attack.mitre.org/techniques/T1496/002"
+    },
+    {
+      "id": "T1496.003",
+      "name": "SMS Pumping",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may leverage messaging services for SMS pumping, which may impact system and/or hosted service availability. SMS pumping is a type of telecommunications fraud whereby a threat actor first obtains a set of phone numbers from a telecommunications provider, then leverages a victim’s messaging infrastructure to send large amounts of SMS messages to numbers in that set. By generating SMS traffic to their phone number set, a threat actor may earn payments from the telecommunications provider.",
+      "url": "https://attack.mitre.org/techniques/T1496/003"
+    },
+    {
+      "id": "T1496.004",
+      "name": "Cloud Service Hijacking",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may leverage compromised software-as-a-service (SaaS) applications to complete resource-intensive tasks, which may impact hosted service availability. For example, adversaries may leverage email and messaging services, such as AWS Simple Email Service (SES), AWS Simple Notification Service (SNS), SendGrid, and Twilio, in order to send large quantities of spam / Phishing emails and SMS messages. Alternatively, they may engage in LLMJacking by leveraging reverse proxies to hijack the power of cloud-hosted AI models.",
+      "url": "https://attack.mitre.org/techniques/T1496/004"
+    },
+    {
+      "id": "T1498",
+      "name": "Network Denial of Service",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may perform Network Denial of Service (DoS) attacks to degrade or block the availability of targeted resources to users. Network DoS can be performed by exhausting the network bandwidth services rely on. Example resources include specific websites, email services, DNS, and web-based applications. Adversaries have been observed conducting network DoS attacks for political purposes and to support other malicious activities, including distraction, hacktivism, and extortion.",
+      "url": "https://attack.mitre.org/techniques/T1498"
+    },
+    {
+      "id": "T1498.001",
+      "name": "Direct Network Flood",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may attempt to cause a denial of service (DoS) by directly sending a high-volume of network traffic to a target. This DoS attack may also reduce the availability and functionality of the targeted system(s) and network. Direct Network Floods are when one or more systems are used to send a high-volume of network packets towards the targeted service's network. Almost any network protocol may be used for flooding. Stateless protocols such as UDP or ICMP are commonly used but stateful protocols such as TCP can be used as well.",
+      "url": "https://attack.mitre.org/techniques/T1498/001"
+    },
+    {
+      "id": "T1498.002",
+      "name": "Reflection Amplification",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may attempt to cause a denial of service (DoS) by reflecting a high-volume of network traffic to a target. This type of Network DoS takes advantage of a third-party server intermediary that hosts and will respond to a given spoofed source IP address. This third-party server is commonly termed a reflector. An adversary accomplishes a reflection attack by sending packets to reflectors with the spoofed address of the victim. Similar to Direct Network Floods, more than one system may be used to conduct the attack, or a botnet may be used.",
+      "url": "https://attack.mitre.org/techniques/T1498/002"
+    },
+    {
+      "id": "T1499",
+      "name": "Endpoint Denial of Service",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may perform Endpoint Denial of Service (DoS) attacks to degrade or block the availability of services to users. Endpoint DoS can be performed by exhausting the system resources those services are hosted on or exploiting the system to cause a persistent crash condition. Example services include websites, email services, DNS, and web-based applications. Adversaries have been observed conducting DoS attacks for political purposes and to support other malicious activities, including distraction, hacktivism, and extortion.",
+      "url": "https://attack.mitre.org/techniques/T1499"
+    },
+    {
+      "id": "T1499.002",
+      "name": "Service Exhaustion Flood",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may target the different network services provided by systems to conduct a denial of service (DoS). Adversaries often target the availability of DNS and web services, however others have been targeted as well. Web server software can be attacked through a variety of means, some of which apply generally while others are specific to the software being used to provide the service. One example of this type of attack is known as a simple HTTP flood, where an adversary sends a large number of HTTP requests to a web server to overwhelm it and/or an application that runs on top of it.",
+      "url": "https://attack.mitre.org/techniques/T1499/002"
+    },
+    {
+      "id": "T1499.003",
+      "name": "Application Exhaustion Flood",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may target resource intensive features of applications to cause a denial of service (DoS), denying availability to those applications. For example, specific features in web applications may be highly resource intensive. Repeated requests to those features may be able to exhaust system resources and deny access to the application or the server itself.",
+      "url": "https://attack.mitre.org/techniques/T1499/003"
+    },
+    {
+      "id": "T1499.004",
+      "name": "Application or System Exploitation",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may exploit software vulnerabilities that can cause an application or system to crash and deny availability to users. Some systems may automatically restart critical applications and services when crashes occur, but they can likely be re-exploited to cause a persistent denial of service (DoS) condition. Adversaries may exploit known or zero-day vulnerabilities to crash applications and/or systems, which may also lead to dependent applications and/or systems to be in a DoS condition.",
+      "url": "https://attack.mitre.org/techniques/T1499/004"
+    },
+    {
+      "id": "T1518",
+      "name": "Software Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of software and software versions that are installed on a system or in a cloud environment. Adversaries may use the information from Software Discovery during automated discovery to shape follow-on behaviors, including whether or not the adversary fully infects the target and/or attempts specific actions. Such software may be deployed widely across the environment for configuration management or security reasons, such as Software Deployment Tools, and may allow adversaries broad access to infect devices or move laterally.",
+      "url": "https://attack.mitre.org/techniques/T1518"
+    },
+    {
+      "id": "T1518.001",
+      "name": "Security Software Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to get a listing of security software, configurations, defensive tools, and sensors that are installed on a system or in a cloud environment. This may include things such as cloud monitoring agents and anti-virus. Adversaries may use the information from Security Software Discovery during automated discovery to shape follow-on behaviors, including whether or not the adversary fully infects the target and/or attempts specific actions.",
+      "url": "https://attack.mitre.org/techniques/T1518/001"
+    },
+    {
+      "id": "T1525",
+      "name": "Implant Internal Image",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may implant cloud or container images with malicious code to establish persistence after gaining access to an environment. Amazon Web Services (AWS) Amazon Machine Images (AMIs), Google Cloud Platform (GCP) Images, and Azure Images as well as popular container runtimes such as Docker can be implanted or backdoored. Unlike Upload Malware, this technique focuses on adversaries implanting an image in a registry within a victim’s environment.",
+      "url": "https://attack.mitre.org/techniques/T1525"
+    },
+    {
+      "id": "T1526",
+      "name": "Cloud Service Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "An adversary may attempt to enumerate the cloud services running on a system after gaining access. These methods can differ from platform-as-a-service (PaaS), to infrastructure-as-a-service (IaaS), or software-as-a-service (SaaS). Many services exist throughout the various cloud providers and can include Continuous Integration and Continuous Delivery (CI/CD), Lambda Functions, Entra ID, etc. They may also include security services, such as AWS GuardDuty and Microsoft Defender for Cloud, and logging services, such as AWS CloudTrail and Google Cloud Audit Logs.",
+      "url": "https://attack.mitre.org/techniques/T1526"
+    },
+    {
+      "id": "T1528",
+      "name": "Steal Application Access Token",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries can steal application access tokens as a means of acquiring credentials to access remote systems and resources. Application access tokens are used to make authorized API requests on behalf of a user or service and are commonly used as a way to access resources in cloud and container-based applications and software-as-a-service (SaaS). Adversaries who steal account API tokens in cloud and containerized environments may be able to access data and perform actions with the permissions of these accounts, which can lead to privilege escalation and further compromise of the environment.",
+      "url": "https://attack.mitre.org/techniques/T1528"
+    },
+    {
+      "id": "T1530",
+      "name": "Data from Cloud Storage",
+      "tactics": [
+        "Collection"
+      ],
+      "description": "Adversaries may access data from cloud storage. Many IaaS providers offer solutions for online data object storage such as Amazon S3, Azure Storage, and Google Cloud Storage. Similarly, SaaS enterprise platforms such as Office 365 and Google Workspace provide cloud-based document storage to users through services such as OneDrive and Google Drive, while SaaS application providers such as Slack, Confluence, Salesforce, and Dropbox may provide cloud storage solutions as a peripheral or primary use case of their platform.",
+      "url": "https://attack.mitre.org/techniques/T1530"
+    },
+    {
+      "id": "T1531",
+      "name": "Account Access Removal",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may interrupt availability of system and network resources by inhibiting access to accounts utilized by legitimate users. Accounts may be deleted, locked, or manipulated (ex: changed credentials, revoked permissions for SaaS platforms such as Sharepoint) to remove access to accounts. Adversaries may also subsequently log off and/or perform a System Shutdown/Reboot to set malicious changes into place. In Windows, Net utility, <code>Set-LocalUser</code> and <code>Set-ADAccountPassword</code> PowerShell cmdlets may be used by adversaries to modify user accounts.",
+      "url": "https://attack.mitre.org/techniques/T1531"
+    },
+    {
+      "id": "T1534",
+      "name": "Internal Spearphishing",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "After they already have access to accounts or systems within the environment, adversaries may use internal spearphishing to gain access to additional information or compromise other users within the same organization. Internal spearphishing is multi-staged campaign where a legitimate account is initially compromised either by controlling the user's device or by compromising the account credentials of the user.",
+      "url": "https://attack.mitre.org/techniques/T1534"
+    },
+    {
+      "id": "T1535",
+      "name": "Unused/Unsupported Cloud Regions",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may create cloud instances in unused geographic service regions in order to evade detection. Access is usually obtained through compromising accounts used to manage cloud infrastructure. Cloud service providers often provide infrastructure throughout the world in order to improve performance, provide redundancy, and allow customers to meet compliance requirements. Oftentimes, a customer will only use a subset of the available regions and may not actively monitor other regions. If an adversary creates resources in an unused region, they may be able to operate undetected.",
+      "url": "https://attack.mitre.org/techniques/T1535"
+    },
+    {
+      "id": "T1537",
+      "name": "Transfer Data to Cloud Account",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "description": "Adversaries may exfiltrate data by transferring the data, including through sharing/syncing and creating backups of cloud environments, to another cloud account they control on the same service. A defender who is monitoring for large transfers to outside the cloud environment through normal file transfers or over command and control channels may not be watching for data transfers to another account within the same cloud provider.",
+      "url": "https://attack.mitre.org/techniques/T1537"
+    },
+    {
+      "id": "T1538",
+      "name": "Cloud Service Dashboard",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "An adversary may use a cloud service dashboard GUI with stolen credentials to gain useful information from an operational cloud environment, such as specific services, resources, and features. For example, the GCP Command Center can be used to view all assets, review findings of potential security risks, and run additional queries, such as finding public IP addresses and open ports. Depending on the configuration of the environment, an adversary may be able to enumerate more information via the graphical dashboard than an API.",
+      "url": "https://attack.mitre.org/techniques/T1538"
+    },
+    {
+      "id": "T1539",
+      "name": "Steal Web Session Cookie",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "An adversary may steal web application or service session cookies and use them to gain access to web applications or Internet services as an authenticated user without needing credentials. Web applications and services often use session cookies as an authentication token after a user has authenticated to a website. Cookies are often valid for an extended period of time, even if the web application is not actively used. Cookies can be found on disk, in the process memory of the browser, and in network traffic to remote systems.",
+      "url": "https://attack.mitre.org/techniques/T1539"
+    },
+    {
+      "id": "T1543",
+      "name": "Create or Modify System Process",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may create or modify system-level processes to repeatedly execute malicious payloads as part of persistence. When operating systems boot up, they can start processes that perform background system functions. On Windows and Linux, these system processes are referred to as services. On macOS, launchd processes known as Launch Daemon and Launch Agent are run to finish system initialization and load user specific parameters. Adversaries may install new services, daemons, or agents that can be configured to execute at startup or a repeatable interval in order to establish persistence.",
+      "url": "https://attack.mitre.org/techniques/T1543"
+    },
+    {
+      "id": "T1543.005",
+      "name": "Container Service",
+      "tactics": [
+        "Persistence",
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may create or modify container or container cluster management tools that run as daemons, agents, or services on individual hosts. These include software for creating and managing individual containers, such as Docker and Podman, as well as container cluster node-level agents such as kubelet. By modifying these services, an adversary may be able to achieve persistence or escalate their privileges on a host. For example, by using the `docker run` or `podman run` command with the `restart=always` directive, a container can be configured to persistently restart on the host.",
+      "url": "https://attack.mitre.org/techniques/T1543/005"
+    },
+    {
+      "id": "T1546",
+      "name": "Event Triggered Execution",
+      "tactics": [
+        "Privilege Escalation",
+        "Persistence"
+      ],
+      "description": "Adversaries may establish persistence and/or elevate privileges using system mechanisms that trigger execution based on specific events. Various operating systems have means to monitor and subscribe to events such as logons or other user activity such as running specific applications/binaries. Cloud environments may also support various functions and services that monitor and can be invoked in response to specific cloud events. Adversaries may abuse these mechanisms as a means of maintaining persistent access to a victim via repeatedly executing malicious code.",
+      "url": "https://attack.mitre.org/techniques/T1546"
+    },
+    {
+      "id": "T1548",
+      "name": "Abuse Elevation Control Mechanism",
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may circumvent mechanisms designed to control privilege elevation to gain higher-level permissions. Most modern systems contain native elevation control mechanisms that are intended to limit privileges that a user can perform on a machine. Authorization has to be granted to specific users in order to perform tasks that can be considered of higher risk. An adversary can perform several methods to take advantage of built-in control mechanisms in order to escalate privileges on a system.",
+      "url": "https://attack.mitre.org/techniques/T1548"
+    },
+    {
+      "id": "T1548.005",
+      "name": "Temporary Elevated Cloud Access",
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may abuse permission configurations that allow them to gain temporarily elevated access to cloud resources. Many cloud environments allow administrators to grant user or service accounts permission to request just-in-time access to roles, impersonate other accounts, pass roles onto resources and services, or otherwise gain short-term access to a set of privileges that may be distinct from their own. Just-in-time access is a mechanism for granting additional roles to cloud accounts in a granular, temporary manner.",
+      "url": "https://attack.mitre.org/techniques/T1548/005"
+    },
+    {
+      "id": "T1550",
+      "name": "Use Alternate Authentication Material",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may use alternate authentication material, such as password hashes, Kerberos tickets, and application access tokens, in order to move laterally within an environment and bypass normal system access controls. Authentication processes generally require a valid identity (e.g., username) along with one or more authentication factors (e.g., password, pin, physical smart card, token generator, etc.).",
+      "url": "https://attack.mitre.org/techniques/T1550"
+    },
+    {
+      "id": "T1550.001",
+      "name": "Application Access Token",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries may use stolen application access tokens to bypass the typical authentication process and access restricted accounts, information, or services on remote systems. These tokens are typically stolen from users or services and used in lieu of login credentials. Application access tokens are used to make authorized API requests on behalf of a user or service and are commonly used to access resources in cloud, container-based applications, and software-as-a-service (SaaS). OAuth is one commonly implemented framework that issues tokens to users for access to systems.",
+      "url": "https://attack.mitre.org/techniques/T1550/001"
+    },
+    {
+      "id": "T1550.004",
+      "name": "Web Session Cookie",
+      "tactics": [
+        "Lateral Movement"
+      ],
+      "description": "Adversaries can use stolen session cookies to authenticate to web applications and services. This technique bypasses some multi-factor authentication protocols since the session is already authenticated. Authentication cookies are commonly used in web applications, including cloud-based services, after a user has authenticated to the service so credentials are not passed and re-authentication does not need to occur as frequently. Cookies are often valid for an extended period of time, even if the web application is not actively used.",
+      "url": "https://attack.mitre.org/techniques/T1550/004"
+    },
+    {
+      "id": "T1552",
+      "name": "Unsecured Credentials",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may search compromised systems to find and obtain insecurely stored credentials. These credentials can be stored and/or misplaced in many locations on a system, including plaintext files (e.g. Shell History), operating system or application-specific repositories (e.g. Credentials in Registry), or other specialized files/artifacts (e.g. Private Keys).",
+      "url": "https://attack.mitre.org/techniques/T1552"
+    },
+    {
+      "id": "T1552.001",
+      "name": "Credentials In Files",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may search local file systems and remote file shares for files containing insecurely stored credentials. These can be files created by users to store their own credentials, shared credential stores for a group of individuals, configuration files containing passwords for a system or service, or source code/binary files containing embedded passwords. It is possible to extract passwords from backups or saved virtual machines through OS Credential Dumping. Passwords may also be obtained from Group Policy Preferences stored on the Windows Domain Controller.",
+      "url": "https://attack.mitre.org/techniques/T1552/001"
+    },
+    {
+      "id": "T1552.005",
+      "name": "Cloud Instance Metadata API",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may attempt to access the Cloud Instance Metadata API to collect credentials and other sensitive data. Most cloud service providers support a Cloud Instance Metadata API which is a service provided to running virtual instances that allows applications to access information about the running virtual instance. Available information generally includes name, security group, and additional metadata including sensitive data such as credentials and UserData scripts that may contain additional secrets.",
+      "url": "https://attack.mitre.org/techniques/T1552/005"
+    },
+    {
+      "id": "T1552.007",
+      "name": "Container API",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may gather credentials via APIs within a containers environment. APIs in these environments, such as the Docker API and Kubernetes APIs, allow a user to remotely manage their container resources and cluster components. An adversary may access the Docker API to collect logs that contain credentials to cloud, container, and various other resources in the environment. An adversary with sufficient permissions, such as via a pod's service account, may also use the Kubernetes API to retrieve credentials from the Kubernetes API server.",
+      "url": "https://attack.mitre.org/techniques/T1552/007"
+    },
+    {
+      "id": "T1552.008",
+      "name": "Chat Messages",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may directly collect unsecured credentials stored or passed through user communication services. Credentials may be sent and stored in user chat communication applications such as email, chat services like Slack or Teams, collaboration tools like Jira or Trello, and any other services that support user communication. Users may share various forms of credentials (such as usernames and passwords, API keys, or authentication tokens) on private or public corporate internal communications channels.",
+      "url": "https://attack.mitre.org/techniques/T1552/008"
+    },
+    {
+      "id": "T1555",
+      "name": "Credentials from Password Stores",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may search for common password storage locations to obtain user credentials. Passwords are stored in several places on a system, depending on the operating system or application holding the credentials. There are also specific applications and services that store passwords to make them easier for users to manage and maintain, such as password managers and cloud secrets vaults. Once credentials are obtained, they can be used to perform lateral movement and access restricted information.",
+      "url": "https://attack.mitre.org/techniques/T1555"
+    },
+    {
+      "id": "T1555.006",
+      "name": "Cloud Secrets Management Stores",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may acquire credentials from cloud-native secret management solutions such as AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, and Terraform Vault. Secrets managers support the secure centralized management of passwords, API keys, and other credential material. Where secrets managers are in use, cloud services can dynamically acquire credentials via API requests rather than accessing secrets insecurely stored in plain text files or environment variables.",
+      "url": "https://attack.mitre.org/techniques/T1555/006"
+    },
+    {
+      "id": "T1556",
+      "name": "Modify Authentication Process",
+      "tactics": [
+        "Defense Impairment",
+        "Persistence",
+        "Credential Access"
+      ],
+      "description": "Adversaries may modify authentication mechanisms and processes to access user credentials or enable otherwise unwarranted access to accounts. The authentication process is handled by mechanisms, such as the Local Security Authentication Server (LSASS) process and the Security Accounts Manager (SAM) on Windows, pluggable authentication modules (PAM) on Unix-based systems, and authorization plugins on MacOS systems, responsible for gathering, storing, and validating credentials.",
+      "url": "https://attack.mitre.org/techniques/T1556"
+    },
+    {
+      "id": "T1556.006",
+      "name": "Multi-Factor Authentication",
+      "tactics": [
+        "Defense Impairment",
+        "Persistence",
+        "Credential Access"
+      ],
+      "description": "Adversaries may disable or modify multi-factor authentication (MFA) mechanisms to enable persistent access to compromised accounts. Once adversaries have gained access to a network by either compromising an account lacking MFA or by employing an MFA bypass method such as Multi-Factor Authentication Request Generation, adversaries may leverage their access to modify or completely disable MFA defenses.",
+      "url": "https://attack.mitre.org/techniques/T1556/006"
+    },
+    {
+      "id": "T1556.007",
+      "name": "Hybrid Identity",
+      "tactics": [
+        "Defense Impairment",
+        "Persistence",
+        "Credential Access"
+      ],
+      "description": "Adversaries may patch, modify, or otherwise backdoor cloud authentication processes that are tied to on-premises user identities in order to bypass typical authentication mechanisms, access credentials, and enable persistent access to accounts. Many organizations maintain hybrid user and device identities that are shared between on-premises and cloud-based environments. These can be maintained in a number of ways.",
+      "url": "https://attack.mitre.org/techniques/T1556/007"
+    },
+    {
+      "id": "T1556.009",
+      "name": "Conditional Access Policies",
+      "tactics": [
+        "Defense Impairment",
+        "Persistence",
+        "Credential Access"
+      ],
+      "description": "Adversaries may disable or modify conditional access policies to enable persistent access to compromised accounts. Conditional access policies are additional verifications used by identity providers and identity and access management systems to determine whether a user should be granted access to a resource. For example, in Entra ID, Okta, and JumpCloud, users can be denied access to applications based on their IP address, device enrollment status, and use of multi-factor authentication.",
+      "url": "https://attack.mitre.org/techniques/T1556/009"
+    },
+    {
+      "id": "T1564",
+      "name": "Hide Artifacts",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may attempt to hide artifacts associated with their behaviors to evade detection. Operating systems may have features to hide various artifacts, such as important system files and administrative task execution, to avoid disrupting user work environments and prevent users from changing files or features on the system. Adversaries may abuse these features to hide artifacts such as files, directories, user accounts, or other system activity to evade detection.",
+      "url": "https://attack.mitre.org/techniques/T1564"
+    },
+    {
+      "id": "T1564.008",
+      "name": "Email Hiding Rules",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may use email rules to hide inbound emails in a compromised user's mailbox. Many email clients allow users to create inbox rules for various email functions, including moving emails to other folders, marking emails as read, or deleting emails. Rules may be created or modified within email clients or through external features such as the <code>New-InboxRule</code> or <code>Set-InboxRule</code> PowerShell cmdlets on Windows systems. Adversaries may utilize email rules within a compromised user's mailbox to delete and/or move emails to less noticeable folders.",
+      "url": "https://attack.mitre.org/techniques/T1564/008"
+    },
+    {
+      "id": "T1566",
+      "name": "Phishing",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may send phishing messages to gain access to victim systems. All forms of phishing are electronically delivered social engineering. Phishing can be targeted, known as spearphishing. In spearphishing, a specific individual, company, or industry will be targeted by the adversary. More generally, adversaries can conduct non-targeted phishing, such as in mass malware spam campaigns. Adversaries may send victims emails containing malicious attachments or links, typically to execute malicious code on victim systems.",
+      "url": "https://attack.mitre.org/techniques/T1566"
+    },
+    {
+      "id": "T1566.002",
+      "name": "Spearphishing Link",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may send spearphishing emails with a malicious link in an attempt to gain access to victim systems. Spearphishing with a link is a specific variant of spearphishing. It is different from other forms of spearphishing in that it employs the use of links to download malware contained in email, instead of attaching malicious files to the email itself, to avoid defenses that may inspect email attachments. Spearphishing may also involve social engineering techniques, such as posing as a trusted source.",
+      "url": "https://attack.mitre.org/techniques/T1566/002"
+    },
+    {
+      "id": "T1566.004",
+      "name": "Spearphishing Voice",
+      "tactics": [
+        "Initial Access"
+      ],
+      "description": "Adversaries may use voice communications to ultimately gain access to victim systems. Spearphishing voice is a specific variant of spearphishing. It is different from other forms of spearphishing in that it employs the use of manipulating a user into providing access to systems through a phone call or other forms of voice communications. Spearphishing frequently involves social engineering techniques, such as posing as a trusted source (ex: Impersonation) and/or creating a sense of urgency or alarm for the recipient. All forms of phishing are electronically delivered social engineering.",
+      "url": "https://attack.mitre.org/techniques/T1566/004"
+    },
+    {
+      "id": "T1567",
+      "name": "Exfiltration Over Web Service",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "description": "Adversaries may use an existing, legitimate external Web service to exfiltrate data rather than their primary command and control channel. Popular Web services acting as an exfiltration mechanism may give a significant amount of cover due to the likelihood that hosts within a network are already communicating with them prior to compromise. Firewall rules may also already exist to permit traffic to these services. Web service providers also commonly use SSL/TLS encryption, giving adversaries an added level of protection.",
+      "url": "https://attack.mitre.org/techniques/T1567"
+    },
+    {
+      "id": "T1567.004",
+      "name": "Exfiltration Over Webhook",
+      "tactics": [
+        "Exfiltration"
+      ],
+      "description": "Adversaries may exfiltrate data to a webhook endpoint rather than over their primary command and control channel. Webhooks are simple mechanisms for allowing a server to push data over HTTP/S to a client without the need for the client to continuously poll the server. Many public and commercial services, such as Discord, Slack, and `webhook.site`, support the creation of webhook endpoints that can be used by other services, such as Github, Jira, or Trello.",
+      "url": "https://attack.mitre.org/techniques/T1567/004"
+    },
+    {
+      "id": "T1578",
+      "name": "Modify Cloud Compute Infrastructure",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may attempt to modify a cloud account's compute service infrastructure to evade defenses. A modification to the compute service infrastructure can include the creation, deletion, or modification of one or more components such as compute instances, virtual machines, and snapshots. Permissions gained from the modification of infrastructure components may bypass restrictions that prevent access to existing infrastructure. Modifying infrastructure components may also allow an adversary to evade detection and remove evidence of their presence.",
+      "url": "https://attack.mitre.org/techniques/T1578"
+    },
+    {
+      "id": "T1578.001",
+      "name": "Create Snapshot",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may create a snapshot or data backup within a cloud account to evade defenses. A snapshot is a point-in-time copy of an existing cloud compute component such as a virtual machine (VM), virtual hard drive, or volume. An adversary may leverage permissions to create a snapshot in order to bypass restrictions that prevent access to existing compute service infrastructure, unlike in Revert Cloud Instance where an adversary may revert to a snapshot to evade detection and remove evidence of their presence.",
+      "url": "https://attack.mitre.org/techniques/T1578/001"
+    },
+    {
+      "id": "T1578.002",
+      "name": "Create Cloud Instance",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may create a new instance or virtual machine (VM) within the compute service of a cloud account to evade defenses. Creating a new instance may allow an adversary to bypass firewall rules and permissions that exist on instances currently residing within an account. An adversary may Create Snapshot of one or more volumes in an account, create a new instance, mount the snapshots, and then apply a less restrictive security policy to collect Data from Local System or for Remote Data Staging.",
+      "url": "https://attack.mitre.org/techniques/T1578/002"
+    },
+    {
+      "id": "T1578.003",
+      "name": "Delete Cloud Instance",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may delete a cloud instance after they have performed malicious activities in an attempt to evade detection and remove evidence of their presence. Deleting an instance or virtual machine can remove valuable forensic artifacts and other evidence of suspicious behavior if the instance is not recoverable. An adversary may also Create Cloud Instance and later terminate the instance after achieving their objectives.",
+      "url": "https://attack.mitre.org/techniques/T1578/003"
+    },
+    {
+      "id": "T1578.004",
+      "name": "Revert Cloud Instance",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may revert changes made to a cloud instance after they have performed malicious activities in attempt to evade detection and remove evidence of their presence. In highly virtualized environments, such as cloud-based infrastructure, this may be accomplished by restoring virtual machine (VM) or data storage snapshots through the cloud management dashboard or cloud APIs. Another variation of this technique is to utilize temporary storage attached to the compute instance.",
+      "url": "https://attack.mitre.org/techniques/T1578/004"
+    },
+    {
+      "id": "T1578.005",
+      "name": "Modify Cloud Compute Configurations",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "Adversaries may modify settings that directly affect the size, locations, and resources available to cloud compute infrastructure in order to evade defenses. These settings may include service quotas, subscription associations, tenant-wide policies, or other configurations that impact available compute. Such modifications may allow adversaries to abuse the victim’s compute resources to achieve their goals, potentially without affecting the execution of running instances and/or revealing their activities to the victim.",
+      "url": "https://attack.mitre.org/techniques/T1578/005"
+    },
+    {
+      "id": "T1580",
+      "name": "Cloud Infrastructure Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "An adversary may attempt to discover infrastructure and resources that are available within an infrastructure-as-a-service (IaaS) environment. This includes compute service resources such as instances, virtual machines, and snapshots as well as resources of other services including the storage and database services. Cloud providers offer methods such as APIs and commands issued through CLIs to serve information about infrastructure.",
+      "url": "https://attack.mitre.org/techniques/T1580"
+    },
+    {
+      "id": "T1606",
+      "name": "Forge Web Credentials",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may forge credential materials that can be used to gain access to web applications or Internet services. Web applications and services (hosted in cloud SaaS environments or on-premise servers) often use session cookies, tokens, or other materials to authenticate and authorize user access. Adversaries may generate these credential materials in order to gain access to web resources.",
+      "url": "https://attack.mitre.org/techniques/T1606"
+    },
+    {
+      "id": "T1606.001",
+      "name": "Web Cookies",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may forge web cookies that can be used to gain access to web applications or Internet services. Web applications and services (hosted in cloud SaaS environments or on-premise servers) often use session cookies to authenticate and authorize user access. Adversaries may generate these cookies in order to gain access to web resources. This differs from Steal Web Session Cookie and other similar behaviors in that the cookies are new and forged by the adversary, rather than stolen or intercepted from legitimate users.",
+      "url": "https://attack.mitre.org/techniques/T1606/001"
+    },
+    {
+      "id": "T1606.002",
+      "name": "SAML Tokens",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "An adversary may forge SAML tokens with any permissions claims and lifetimes if they possess a valid SAML token-signing certificate. The default lifetime of a SAML token is one hour, but the validity period can be specified in the <code>NotOnOrAfter</code> value of the <code>conditions ...</code> element in a token. This value can be changed using the <code>AccessTokenLifetime</code> in a <code>LifetimeTokenPolicy</code>. Forged SAML tokens enable adversaries to authenticate across services that use SAML 2.0 as an SSO (single sign-on) mechanism.",
+      "url": "https://attack.mitre.org/techniques/T1606/002"
+    },
+    {
+      "id": "T1609",
+      "name": "Container Administration Command",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse a container administration service to execute commands within a container. A container administration service such as the Docker daemon, the Kubernetes API server, or the kubelet may allow remote management of containers within an environment. In Docker, adversaries may specify an entrypoint during container deployment that executes a script or command, or they may use a command such as <code>docker exec</code> to execute a command within a running container.",
+      "url": "https://attack.mitre.org/techniques/T1609"
+    },
+    {
+      "id": "T1610",
+      "name": "Deploy Container",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may deploy a container into an environment to facilitate execution or evade defenses. In some cases, adversaries may deploy a new container to execute processes associated with a particular image or deployment, such as processes that execute or download malware. In others, an adversary may deploy a new container configured without network rules, user limitations, etc. to bypass existing defenses within the environment.",
+      "url": "https://attack.mitre.org/techniques/T1610"
+    },
+    {
+      "id": "T1611",
+      "name": "Escape to Host",
+      "tactics": [
+        "Privilege Escalation"
+      ],
+      "description": "Adversaries may break out of a container or virtualized environment to gain access to the underlying host. This can allow an adversary access to other containerized or virtualized resources from the host level or to the host itself. In principle, containerized / virtualized resources should provide a clear separation of application functionality and be isolated from the host environment. There are multiple ways an adversary may escape from a container to a host environment.",
+      "url": "https://attack.mitre.org/techniques/T1611"
+    },
+    {
+      "id": "T1612",
+      "name": "Build Image on Host",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may build a container image directly on a host to bypass defenses that monitor for the retrieval of malicious images from a public registry. A remote <code>build</code> request may be sent to the Docker API that includes a Dockerfile that pulls a vanilla base image, such as alpine, from a public or local registry and then builds a custom image upon it. An adversary may take advantage of that <code>build</code> API to build a custom image on the host that includes malware downloaded from their C2 server, and then they may utilize Deploy Container using that custom image.",
+      "url": "https://attack.mitre.org/techniques/T1612"
+    },
+    {
+      "id": "T1613",
+      "name": "Container and Resource Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may attempt to discover containers and other resources that are available within a containers environment. Other resources may include images, deployments, pods, nodes, and other information such as the status of a cluster. These resources can be viewed within web applications such as the Kubernetes dashboard or can be queried via the Docker and Kubernetes APIs. In Docker, logs may leak information about the environment, such as the environment’s configuration, which services are available, and what cloud provider the victim may be utilizing.",
+      "url": "https://attack.mitre.org/techniques/T1613"
+    },
+    {
+      "id": "T1614",
+      "name": "System Location Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may gather information in an attempt to calculate the geographical location of a victim host. Adversaries may use the information from System Location Discovery during automated discovery to shape follow-on behaviors, including whether or not the adversary fully infects the target and/or attempts specific actions. Adversaries may attempt to infer the location of a system using various system checks, such as time zone, keyboard layout, and/or language settings. Windows API functions such as <code>GetLocaleInfoW</code> can also be used to determine the locale of the host.",
+      "url": "https://attack.mitre.org/techniques/T1614"
+    },
+    {
+      "id": "T1619",
+      "name": "Cloud Storage Object Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may enumerate objects in cloud storage infrastructure. Adversaries may use this information during automated discovery to shape follow-on behaviors, including requesting all or specific objects from cloud storage. Similar to File and Directory Discovery on a local host, after identifying available storage services (i.e. Cloud Infrastructure Discovery) adversaries may access the contents/objects stored in cloud infrastructure. Cloud service providers offer APIs allowing users to enumerate objects stored within cloud storage. Examples include ListObjectsV2 in AWS and List Blobs in Azure .",
+      "url": "https://attack.mitre.org/techniques/T1619"
+    },
+    {
+      "id": "T1620",
+      "name": "Reflective Code Loading",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may reflectively load code into a process in order to conceal the execution of malicious payloads. Reflective loading involves allocating then executing payloads directly within the memory of the process, vice creating a thread or process backed by a file path on disk (e.g., Shared Modules). Reflectively loaded payloads may be compiled binaries, anonymous files (only present in RAM), or just snubs of fileless executable code (ex: position-independent shellcode). For example, the `Assembly.Load()` method executed by PowerShell may be abused to load raw code into the running process.",
+      "url": "https://attack.mitre.org/techniques/T1620"
+    },
+    {
+      "id": "T1621",
+      "name": "Multi-Factor Authentication Request Generation",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may attempt to bypass multi-factor authentication (MFA) mechanisms and gain access to accounts by generating MFA requests sent to users. Adversaries in possession of credentials to Valid Accounts may be unable to complete the login process if they lack access to the 2FA or MFA mechanisms required as an additional credential and security control. To circumvent this, adversaries may abuse the automatic generation of push notifications to MFA services such as Duo Push, Microsoft Authenticator, Okta, or similar services to have the user grant access to their account.",
+      "url": "https://attack.mitre.org/techniques/T1621"
+    },
+    {
+      "id": "T1648",
+      "name": "Serverless Execution",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse serverless computing, integration, and automation services to execute arbitrary code in cloud environments. Many cloud providers offer a variety of serverless resources, including compute engines, application integration services, and web servers. Adversaries may abuse these resources in various ways as a means of executing arbitrary commands. For example, adversaries may use serverless functions to execute malicious code, such as crypto-mining malware (i.e. Resource Hijacking). Adversaries may also create functions that enable further compromise of the cloud environment.",
+      "url": "https://attack.mitre.org/techniques/T1648"
+    },
+    {
+      "id": "T1649",
+      "name": "Steal or Forge Authentication Certificates",
+      "tactics": [
+        "Credential Access"
+      ],
+      "description": "Adversaries may steal or forge certificates used for authentication to access remote systems or resources. Digital certificates are often used to sign and encrypt messages and/or files. Certificates are also used as authentication material. For example, Entra ID device certificates and Active Directory Certificate Services (AD CS) certificates bind to an identity and can be used as credentials for domain accounts. Authentication certificates can be both stolen and forged.",
+      "url": "https://attack.mitre.org/techniques/T1649"
+    },
+    {
+      "id": "T1651",
+      "name": "Cloud Administration Command",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may abuse cloud management services to execute commands within virtual machines. Resources such as AWS Systems Manager, Azure RunCommand, and Runbooks allow users to remotely run scripts in virtual machines by leveraging installed virtual machine agents. If an adversary gains administrative access to a cloud environment, they may be able to abuse cloud management services to execute commands in the environment’s virtual machines.",
+      "url": "https://attack.mitre.org/techniques/T1651"
+    },
+    {
+      "id": "T1654",
+      "name": "Log Enumeration",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may enumerate system and service logs to find useful data. These logs may highlight various types of valuable insights for an adversary, such as user authentication records (Account Discovery), security or vulnerable software (Software Discovery), or hosts within a compromised network (Remote System Discovery). Host binaries may be leveraged to collect system logs. Examples include using `wevtutil.exe` or PowerShell on Windows to access and/or export security event information.",
+      "url": "https://attack.mitre.org/techniques/T1654"
+    },
+    {
+      "id": "T1657",
+      "name": "Financial Theft",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may steal monetary resources from targets through extortion, social engineering, technical theft, or other methods aimed at their own financial gain at the expense of the availability of these resources for victims. Financial theft is the ultimate objective of several popular campaign types including extortion by ransomware, business email compromise (BEC) and fraud, \"pig butchering,\" bank hacking, and exploiting cryptocurrency networks. Adversaries may Compromise Accounts to conduct unauthorized transfers of funds.",
+      "url": "https://attack.mitre.org/techniques/T1657"
+    },
+    {
+      "id": "T1666",
+      "name": "Modify Cloud Resource Hierarchy",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "Adversaries may attempt to modify hierarchical structures in infrastructure-as-a-service (IaaS) environments in order to evade defenses. IaaS environments often group resources into a hierarchy, enabling improved resource management and application of policies to relevant groups. Hierarchical structures differ among cloud providers. For example, in AWS environments, multiple accounts can be grouped under a single organization, while in Azure environments, multiple subscriptions can be grouped under a single management group.",
+      "url": "https://attack.mitre.org/techniques/T1666"
+    },
+    {
+      "id": "T1667",
+      "name": "Email Bombing",
+      "tactics": [
+        "Impact"
+      ],
+      "description": "Adversaries may flood targeted email addresses with an overwhelming volume of messages. This may bury legitimate emails in a flood of spam and disrupt business operations. An adversary may accomplish email bombing by leveraging an automated bot to register a targeted address for e-mail lists that do not validate new signups, such as online newsletters. The result can be a wave of thousands of e-mails that effectively overloads the victim’s inbox.",
+      "url": "https://attack.mitre.org/techniques/T1667"
+    },
+    {
+      "id": "T1671",
+      "name": "Cloud Application Integration",
+      "tactics": [
+        "Persistence"
+      ],
+      "description": "Adversaries may achieve persistence by leveraging OAuth application integrations in a software-as-a-service environment. Adversaries may create a custom application, add a legitimate application into the environment, or even co-opt an existing integration to achieve malicious ends. OAuth is an open standard that allows users to authorize applications to access their information on their behalf. In a SaaS environment such as Microsoft 365 or Google Workspace, users may integrate applications to improve their workflow and achieve tasks.",
+      "url": "https://attack.mitre.org/techniques/T1671"
+    },
+    {
+      "id": "T1677",
+      "name": "Poisoned Pipeline Execution",
+      "tactics": [
+        "Execution"
+      ],
+      "description": "Adversaries may manipulate continuous integration / continuous development (CI/CD) processes by injecting malicious code into the build process. There are several mechanisms for poisoning pipelines: * In a <b>Direct Pipeline Execution</b> scenario, the threat actor directly modifies the CI configuration file (e.g., `gitlab-ci.yml` in GitLab). They may include a command to exfiltrate credentials leveraged in the build process to a remote server, or to export them as a workflow artifact.",
+      "url": "https://attack.mitre.org/techniques/T1677"
+    },
+    {
+      "id": "T1680",
+      "name": "Local Storage Discovery",
+      "tactics": [
+        "Discovery"
+      ],
+      "description": "Adversaries may enumerate local drives, disks, and/or volumes and their attributes like total or free space and volume serial number. This can be done to prepare for ransomware-related encryption, to perform Lateral Movement, or as a precursor to Direct Volume Access. On ESXi systems, adversaries may use Hypervisor CLI commands such as `esxcli` to list storage connected to the host as well as `.vmdk` files. On Windows systems, adversaries can use `wmic logicaldisk get` to find information about local network drives.",
+      "url": "https://attack.mitre.org/techniques/T1680"
+    },
+    {
+      "id": "T1684",
+      "name": "Social Engineering",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may use social engineering techniques to influence users to take actions that result in unauthorized access, approval of changes, disclosure of sensitive information, or execution of adversary-supplied instructions (i.e., introduction of malicious payloads or software), while minimizing technical indicators.",
+      "url": "https://attack.mitre.org/techniques/T1684"
+    },
+    {
+      "id": "T1684.001",
+      "name": "Impersonation",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may impersonate a trusted person or organization in order to persuade and trick a target into performing some action on their behalf. For example, adversaries may communicate with victims (via Phishing for Information, Phishing, or Internal Spearphishing) while impersonating a known sender such as an executive, colleague, or third-party vendor. Established trust can then be leveraged to accomplish an adversary’s ultimate goals, possibly against multiple victims.",
+      "url": "https://attack.mitre.org/techniques/T1684/001"
+    },
+    {
+      "id": "T1684.002",
+      "name": "Email Spoofing",
+      "tactics": [
+        "Stealth"
+      ],
+      "description": "Adversaries may fake, or spoof, a sender’s identity by modifying the value of relevant email headers in order to establish contact with victims under false pretenses. In addition to actual email content, email headers (such as the FROM header, which contains the email address of the sender) may also be modified. Email clients display these headers when emails appear in a victim's inbox, which may cause modified emails to appear as if they were from the spoofed entity.",
+      "url": "https://attack.mitre.org/techniques/T1684/002"
+    },
+    {
+      "id": "T1685",
+      "name": "Disable or Modify Tools",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "Adversaries may disable, degrade, or tamper with security tools or applications (e.g., endpoint detection and response (EDR) tools, intrusion detection systems (IDS), antivirus, logging agents, sensors, etc.) to impair or reduce visibility of defensive capabilities. This may include stopping specific services, killing processes, modifying or deleting tool configuration files and Registry keys, or preventing tools from updating. This may also include impairing defenses more broadly by disrupting preventative, detection, and response mechanisms across host, network, and cloud environments.",
+      "url": "https://attack.mitre.org/techniques/T1685"
+    },
+    {
+      "id": "T1685.002",
+      "name": "Disable or Modify Cloud Log",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "An adversary may disable or modify cloud logging capabilities and integrations to limit what data is collected on their activities and avoid detection. Cloud environments allow for collection and analysis of audit and application logs that provide insight into what activities a user does within the environment. If an adversary has sufficient permissions, they can disable or modify logging to avoid detection of their activities. For example, in AWS an adversary may disable CloudWatch/CloudTrail integrations prior to conducting further malicious activity.",
+      "url": "https://attack.mitre.org/techniques/T1685/002"
+    },
+    {
+      "id": "T1686.001",
+      "name": "Cloud Firewall",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "Adversaries may disable or modify a firewall within a cloud environment to bypass controls that limit access to cloud resources. Cloud environments typically utilize restrictive security groups and firewall rules that only allow network activity from trusted IP addresses via expected ports and protocols. An adversary with appropriate permissions may introduce new firewall rules or policies to allow access into a victim cloud environment and/or move laterally from the cloud control plane to the data plane.",
+      "url": "https://attack.mitre.org/techniques/T1686/001"
+    },
+    {
+      "id": "T1687",
+      "name": "Exploitation for Defense Impairment",
+      "tactics": [
+        "Defense Impairment"
+      ],
+      "description": "Adversaries may exploit vulnerabilities in security software, infrastructure, or defensive components to degrade, disable, or otherwise continue to impair their ability to prevent, detect, or respond to malicious activity. Adversaries may exploit a system or application vulnerability to directly interfere with defensive mechanisms. Exploitation occurs when an adversary takes advantage of a programming error in software, services, or the operating system to execute adversary-controlled code, often with the goal of weakening or disabling protections.",
+      "url": "https://attack.mitre.org/techniques/T1687"
+    }
+  ]
+}
