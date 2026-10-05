@@ -400,7 +400,7 @@ async def _export_model_async(
 
     elif output_format == "sarif":
         from backend.export.sarif import export_sarif
-        from backend.models.state import DependencyRef, Threat, ThreatsList
+        from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
 
         stride_rows = [r for r in threats if r.get("stride_category")]
         skipped = len(threats) - len(stride_rows)
@@ -423,6 +423,12 @@ async def _export_model_async(
                     fields["dependency_ref"] = DependencyRef.model_validate(
                         fields["dependency_ref"]
                     )
+                # Same conversion for attack_techniques — export_sarif reads
+                # t.id per technique, which crashes on a plain dict.
+                if fields.get("attack_techniques"):
+                    fields["attack_techniques"] = [
+                        TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
+                    ]
                 built.append(Threat.model_construct(**fields))
             except Exception as exc:
                 click.secho(f"  ⚠ Skipping threat '{r.get('name', '?')}': {exc}", fg="yellow")

@@ -1,6 +1,6 @@
 """Core Pydantic models for state management."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
@@ -133,6 +133,30 @@ class DependencyRef(BaseModel):
     rule_id: str | None = None
 
 
+class TechniqueRef(BaseModel):
+    """A MITRE ATT&CK / ATLAS technique matched to a threat by map_techniques.
+
+    `method` records how the match was made and is what the UI and exports
+    use to decide whether to present it as confirmed or as a guess:
+    - "table": a dependency-engine rule_id resolved deterministically via a
+      fixed lookup table. Trusted.
+    - "seed": extracted from a parenthesized ID already embedded in a
+      rule-engine seed pattern's name. Trusted (the ID was curated by hand
+      into the seed, not matched by similarity).
+    - "embedding": ranked by cosine+keyword similarity against the
+      catalog. The measured golden-set precision@3 is well below the
+      project's target bar — see tests/live/test_attack_mapping_golden.py —
+      so these are guesses, not confirmed matches, regardless of their
+      confidence score.
+    """
+
+    id: str
+    name: str
+    url: str
+    confidence: Annotated[float, Field(ge=0, le=1)]
+    method: Literal["table", "seed", "embedding"] = "embedding"
+
+
 class Threat(BaseModel):
     """Model representing an identified security threat."""
 
@@ -176,6 +200,11 @@ class Threat(BaseModel):
     # Provenance when source == "dependency" — which package/file/rule this
     # threat came from. None for llm/rule_engine/seeded threats.
     dependency_ref: SkipJsonSchema[DependencyRef | None] = None
+    # MITRE ATT&CK / ATLAS techniques matched by the deterministic
+    # map_techniques pipeline step. Hidden from providers for the same
+    # reason as source/dependency_ref: an LLM must never invent technique
+    # IDs. generate_threats() force-resets this to [] on every response.
+    attack_techniques: SkipJsonSchema[list[TechniqueRef]] = []
 
 
 class ThreatsList(BaseModel):

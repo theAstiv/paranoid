@@ -287,3 +287,71 @@ def test_sarif_locations_normalize_windows_style_paths():
         "uri"
     ]
     assert uri == "apps/web/package.json"
+
+
+def test_sarif_attack_techniques_rendered_as_tags():
+    """A trusted (table/seed) technique match gets properties.tags, formatted
+    as "attack/<id>" for GitHub Code Scanning's tag taxonomy."""
+    from backend.models.state import TechniqueRef, Threat
+
+    threat = Threat(
+        name="Compromise Software Supply Chain",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="evil-pkg",
+        impact="high",
+        likelihood="medium",
+        mitigations=["pin version", "audit"],
+        attack_techniques=[
+            TechniqueRef(
+                id="T1195.002",
+                name="Compromise Software Supply Chain",
+                url="https://attack.mitre.org/techniques/T1195/002",
+                confidence=0.9,
+                method="table",
+            )
+        ],
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]), model_id="tag-test", framework="STRIDE"
+    )
+    result = output["runs"][0]["results"][0]
+    assert result["properties"]["tags"] == ["attack/T1195.002"]
+
+
+def test_sarif_embedding_match_tagged_as_suggested():
+    """An embedding-sourced match (a similarity guess, not a confirmed
+    lookup) gets a /suggested tag suffix so GitHub code scanning doesn't
+    present it with the same confidence as a table/seed match."""
+    from backend.models.state import TechniqueRef, Threat
+
+    threat = Threat(
+        name="Some LLM-authored threat",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A service",
+        impact="high",
+        likelihood="medium",
+        mitigations=["pin version", "audit"],
+        attack_techniques=[
+            TechniqueRef(
+                id="AML.T0020",
+                name="ML Training Data Poisoning",
+                url="https://atlas.mitre.org/techniques/AML.T0020",
+                confidence=0.5,
+                method="embedding",
+            )
+        ],
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]), model_id="suggested-test", framework="STRIDE"
+    )
+    result = output["runs"][0]["results"][0]
+    assert result["properties"]["tags"] == ["attack/AML.T0020/suggested"]
+
+
+def test_sarif_no_tags_property_when_no_techniques_matched():
+    threats = make_stride_threats()
+    output = export_sarif(threats=threats, model_id="no-tags", framework="STRIDE")
+    for result in output["runs"][0]["results"]:
+        assert "tags" not in result["properties"]

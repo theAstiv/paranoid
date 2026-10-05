@@ -493,3 +493,16 @@ async def test_export_model_async_pdf_default_path(test_db, tmp_path: Path, monk
     expected = tmp_path / f"{model_id[:8]}_pdf.pdf"
     assert expected.exists()
     assert expected.read_bytes()[:4] == b"%PDF"
+
+
+def test_pdf_attack_techniques_adds_content() -> None:
+    """A PDF with matched ATT&CK techniques is larger than one without."""
+    threat = {
+        **_STRIDE_FLAT,
+        "attack_techniques": [
+            {"id": "T1195.002", "name": "Compromise Software Supply Chain", "method": "table"}
+        ],
+    }
+    pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
+    pdf_with = export_pdf([threat], "mid", "STRIDE")
+    assert len(pdf_with) > len(pdf_without)

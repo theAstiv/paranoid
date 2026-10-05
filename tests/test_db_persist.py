@@ -539,6 +539,83 @@ async def test_persist_llm_threat_has_no_dependency_ref(test_db):
     assert all(not t.get("dependency_ref") for t in threats)
 
 
+def _make_technique_mapped_threats() -> ThreatsList:
+    from backend.models.state import TechniqueRef
+
+    return ThreatsList(
+        threats=[
+            Threat(
+                name="Compromise Software Supply Chain",
+                stride_category=StrideCategory.TAMPERING,
+                description=(
+                    "A tarball-only file in evil-pkg@1.0.0 ships code not present in its "
+                    "public source repository, indicating possible supply-chain tampering."
+                ),
+                target="evil-pkg@1.0.0",
+                impact="High",
+                likelihood="Medium",
+                mitigations=["Pin the exact version", "Review the capability diff"],
+                attack_techniques=[
+                    TechniqueRef(
+                        id="T1195.002",
+                        name="Compromise Software Supply Chain",
+                        url="https://attack.mitre.org/techniques/T1195/002",
+                        confidence=0.9,
+                        method="table",
+                    )
+                ],
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_threat_attack_techniques(test_db):
+    """A threat's attack_techniques round-trips through persistence as JSON."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_technique_mapped_threats(),
+    )
+
+    threats = await crud.list_threats(model_id)
+    assert len(threats) == 1
+    assert threats[0]["attack_techniques"] == [
+        {
+            "id": "T1195.002",
+            "name": "Compromise Software Supply Chain",
+            "url": "https://attack.mitre.org/techniques/T1195/002",
+            "confidence": 0.9,
+            "method": "table",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persist_threat_with_no_techniques_matched(test_db):
+    """A threat with no technique matches stores an empty/absent column, not a crash."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+    )
+
+    threats = await crud.list_threats(model_id)
+    assert all(not t.get("attack_techniques") for t in threats)
+
+
 @pytest.mark.asyncio
 async def test_persist_saves_dependency_scans(test_db):
     """dependency_context packages are persisted to dependency_scans."""

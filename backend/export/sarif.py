@@ -190,6 +190,20 @@ def _generate_results(
                 "ruleId": dependency_ref.rule_id,
             }
 
+        attack_techniques = getattr(threat, "attack_techniques", None)
+        if attack_techniques:
+            # "embedding" matches are similarity guesses measured well below
+            # the project's accuracy bar (tests/live/test_attack_mapping_golden.py)
+            # — tagged /suggested so a consumer (e.g. GitHub code scanning)
+            # doesn't present them with the same confidence as a table/seed
+            # match, which are deterministic lookups.
+            result["properties"]["tags"] = [
+                f"attack/{t.id}"
+                if getattr(t, "method", "embedding") != "embedding"
+                else f"attack/{t.id}/suggested"
+                for t in attack_techniques
+            ]
+
         # Add DREAD score if available
         if hasattr(threat, "dread") and threat.dread:
             result["properties"]["dread"] = {

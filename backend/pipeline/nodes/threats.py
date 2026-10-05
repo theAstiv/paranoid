@@ -195,6 +195,7 @@ async def generate_threats(
     for threat in response.threats:
         threat.source = "llm"
         threat.dependency_ref = None
+        threat.attack_techniques = []
 
     return response
 

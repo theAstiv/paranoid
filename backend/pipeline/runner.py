@@ -112,6 +112,7 @@ class PipelineStep(str, Enum):
     GENERATE_ATTACK_TREE = "generate_attack_tree"
     GENERATE_TEST_CASES = "generate_test_cases"
     RULE_ENGINE = "rule_engine"
+    MAP_TECHNIQUES = "map_techniques"
     COMPLETE = "complete"
 
 
@@ -1515,6 +1516,32 @@ class PipelineRunner:
                             "total_threats": len(cumulative_threats.threats),
                         },
                     )
+
+            # Technique mapping pass: deterministic ATT&CK/ATLAS matching over
+            # the final cumulative threat list. No LLM call, so it runs
+            # regardless of LLM success and after every other merge so it
+            # sees the complete set.
+            yield PipelineEvent(
+                step=PipelineStep.MAP_TECHNIQUES,
+                status="started",
+                message="Matching threats to ATT&CK/ATLAS techniques...",
+            )
+            # map_threat_techniques is synchronous CPU-bound work (embeds the
+            # full technique catalog on first use, then each new threat) —
+            # run it off the event loop so it can't block other requests,
+            # SSE streams, or auth calls on this process while it runs.
+            cumulative_threats, techniques_matched = await asyncio.to_thread(
+                nodes.map_threat_techniques, cumulative_threats
+            )
+            yield PipelineEvent(
+                step=PipelineStep.MAP_TECHNIQUES,
+                status="completed",
+                message=f"Technique mapping: {techniques_matched} technique matches across {len(cumulative_threats.threats)} threats",
+                data={
+                    "threats_mapped": len(cumulative_threats.threats),
+                    "techniques_matched": techniques_matched,
+                },
+            )
 
             # Step 5: Complete
             total_duration = (datetime.now() - self.start_time).total_seconds()

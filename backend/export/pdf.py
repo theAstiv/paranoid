@@ -23,7 +23,11 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from backend.export._common import MERMAID_DIAGRAM_PREFIXES, dependency_findings_rows
+from backend.export._common import (
+    MERMAID_DIAGRAM_PREFIXES,
+    attack_techniques_display,
+    dependency_findings_rows,
+)
 
 
 def export_pdf(
@@ -542,6 +546,11 @@ def _threat_flowables(
     dread_line = _dread_display(t)
     if dread_line:
         meta_line += f"&nbsp;&nbsp;|&nbsp;&nbsp;{dread_line}"
+    techniques_line = attack_techniques_display(t)
+    if techniques_line:
+        meta_line += (
+            f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>ATT&amp;CK/ATLAS:</b> {_escape_pdf_text(techniques_line)}"
+        )
     parts.append(Paragraph(meta_line, styles["body"]))
 
     if description:

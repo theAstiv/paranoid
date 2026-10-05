@@ -225,6 +225,11 @@ async def _persist(
                 dependency_ref=(
                     threat.dependency_ref.model_dump() if threat.dependency_ref else None
                 ),
+                attack_techniques=(
+                    [t.model_dump() for t in threat.attack_techniques]
+                    if threat.attack_techniques
+                    else None
+                ),
             )
             threat_db_ids.append(threat_db_id)
 

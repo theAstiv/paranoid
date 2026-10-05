@@ -176,7 +176,7 @@ def _threat_to_text(threat: Threat) -> str:
     return f"{threat.target}: {threat.description}"
 
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
+def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors."""
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
@@ -184,6 +184,10 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+# Backward-compatible alias for in-module callers.
+_cosine_similarity = cosine_similarity
 
 
 def _select_preferred_threat(a: Threat, b: Threat) -> Threat:
