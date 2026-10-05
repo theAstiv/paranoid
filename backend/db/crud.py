@@ -269,12 +269,16 @@ async def create_threat(
     source: str = "llm",
     confidence: float | None = None,
     dependency_ref: dict[str, Any] | None = None,
+    attack_techniques: list[dict[str, Any]] | None = None,
 ) -> str:
     """Create a new threat."""
     threat_id = generate_id()
     now = now_iso()
     mitigations_json = json.dumps(mitigations)
     dependency_ref_json = json.dumps(dependency_ref) if dependency_ref is not None else None
+    attack_techniques_json = (
+        json.dumps(attack_techniques) if attack_techniques is not None else None
+    )
 
     conn = await db.get()
     await conn.execute(
@@ -285,8 +289,8 @@ async def create_threat(
             dread_damage, dread_reproducibility, dread_exploitability,
             dread_affected_users, dread_discoverability, dread_score,
             mitigations, status, iteration_number, source, confidence,
-            dependency_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            dependency_ref, attack_techniques, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             threat_id,
@@ -310,6 +314,7 @@ async def create_threat(
             source,
             confidence,
             dependency_ref_json,
+            attack_techniques_json,
             now,
             now,
         ),
@@ -330,6 +335,8 @@ async def get_threat(threat_id: str) -> dict[str, Any] | None:
             threat["mitigations"] = json.loads(threat["mitigations"])
             if threat.get("dependency_ref"):
                 threat["dependency_ref"] = json.loads(threat["dependency_ref"])
+            if threat.get("attack_techniques"):
+                threat["attack_techniques"] = json.loads(threat["attack_techniques"])
             return threat
         return None
 
@@ -353,6 +360,8 @@ async def list_threats(model_id: str, status: str | None = None) -> list[dict[st
             threat["mitigations"] = json.loads(threat["mitigations"])
             if threat.get("dependency_ref"):
                 threat["dependency_ref"] = json.loads(threat["dependency_ref"])
+            if threat.get("attack_techniques"):
+                threat["attack_techniques"] = json.loads(threat["attack_techniques"])
             threats.append(threat)
         return threats
 
