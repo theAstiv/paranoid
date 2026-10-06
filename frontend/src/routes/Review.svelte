@@ -4,7 +4,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
-  import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+  import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
   import { threats, currentModel, notify } from '../lib/stores.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
@@ -19,6 +19,8 @@
   let selectedCategories = $state([])
   let dreadMin = $state(0)
   let dreadMax = $state(10)
+  let cvssMin = $state(0)
+  let cvssMax = $state(10)
   let confMin = $state(0)
   let confMax = $state(100)
   let showFilters = $state(false)
@@ -73,6 +75,16 @@
     return s == null || (s >= dreadMin && s <= dreadMax)
   }
 
+  function cvssScoreOf(t) {
+    return t.cvss_score != null ? Number(t.cvss_score) : null
+  }
+
+  /** A threat with no CVSS score is never hidden by the range filter. */
+  function cvssInRange(t) {
+    const s = cvssScoreOf(t)
+    return s == null || (s >= cvssMin && s <= cvssMax)
+  }
+
   /** A threat with no confidence value is never hidden by the range filter. */
   function confInRange(t) {
     if (t.confidence == null) return true
@@ -86,6 +98,7 @@
       (selectedCategories.length === 0 || selectedCategories.includes(t.stride_category)) &&
       (sourceFilter === 'all' || t.source === sourceFilter) &&
       dreadInRange(t) &&
+      cvssInRange(t) &&
       confInRange(t)
     )
     return sortThreats(matched, sortBy)
@@ -96,6 +109,8 @@
     const copy = [...list]
     if (by === 'dread') {
       copy.sort((a, b) => (dreadScoreOf(b) ?? -1) - (dreadScoreOf(a) ?? -1))
+    } else if (by === 'cvss') {
+      copy.sort((a, b) => (cvssScoreOf(b) ?? -1) - (cvssScoreOf(a) ?? -1))
     } else if (by === 'confidence') {
       copy.sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1))
     } else if (by === 'category') {
@@ -116,9 +131,16 @@
 
   onMount(async () => {
     try {
+      // scoring_method (which badges to show per threat) lives on the model.
+      // $currentModel is usually already set by whoever navigated here
+      // (Results.svelte), but a direct/refreshed load of this route wouldn't
+      // have it — fetch it ourselves rather than silently defaulting to
+      // "show everything".
+      const needsModel = !$currentModel || $currentModel.id !== params.id
       const [data, rawCounts] = await Promise.all([
         getModelThreats(params.id),
         getCommentCounts(params.id).catch(() => []),
+        needsModel ? getModel(params.id).then(m => currentModel.set(m)) : Promise.resolve(),
       ])
       threats.set(data)
       for (const row of rawCounts) {
@@ -132,6 +154,8 @@
       loading = false
     }
   })
+
+  const scoringMethod = $derived($currentModel?.scoring_method ?? 'dread')
 
   async function handleApprove(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'approved' } : t))
@@ -325,6 +349,7 @@
             class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
             <option value="default">Default</option>
             <option value="dread">DREAD score</option>
+            <option value="cvss">CVSS score</option>
             <option value="confidence">Confidence</option>
             <option value="category">Category</option>
           </select>
@@ -352,6 +377,18 @@
               class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
             <span class="text-c-faint text-xs">–</span>
             <input type="number" min="0" max="100" step="5" bind:value={confMax}
+              class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+          </div>
+        </div>
+
+        <!-- CVSS range -->
+        <div class="space-y-1">
+          <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">CVSS range</p>
+          <div class="flex items-center gap-2">
+            <input type="number" min="0" max="10" step="0.1" bind:value={cvssMin}
+              class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+            <span class="text-c-faint text-xs">–</span>
+            <input type="number" min="0" max="10" step="0.1" bind:value={cvssMax}
               class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
           </div>
         </div>
@@ -405,10 +442,12 @@
           selected={selectedIds.has(threat.id)}
           modelId={params.id}
           commentCount={commentCounts[threat.id] || 0}
+          {scoringMethod}
           onapprove={handleApprove}
           onreject={handleReject}
           ontoggleSelect={handleToggleSelect}
           ondreadUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
+          oncvssUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
           oncommentChange={detail => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + detail.delta }} />
       {/each}
     </div>

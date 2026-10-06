@@ -8,6 +8,7 @@ vi.mock('svelte-spa-router', () => ({
 }))
 
 vi.mock('../lib/api.js', () => ({
+  getModel: vi.fn(),
   getModelThreats: vi.fn(),
   updateThreat: vi.fn(),
   bulkUpdateThreatStatus: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
 import { notify, threats, currentModel } from '../lib/stores.js'
 
 function threat(overrides = {}) {
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   threats.set([])
   currentModel.set(null)
+  getModel.mockResolvedValue({ id: 'm1', title: 'Fetched Model', scoring_method: 'dread' })
   getModelThreats.mockResolvedValue([])
   updateThreat.mockResolvedValue({})
   bulkUpdateThreatStatus.mockResolvedValue({ updated: 0 })
@@ -65,6 +67,61 @@ describe('Review — loading', () => {
     currentModel.set({ id: 'm1', title: 'Payments Service' })
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+  })
+
+  it('fetches the model when currentModel is unset (e.g. a direct page load)', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
+    await waitFor(() => expect(screen.getByText('Fetched Model')).toBeInTheDocument())
+  })
+
+  it('fetches the model when currentModel is for a different model', async () => {
+    currentModel.set({ id: 'other-model', title: 'Stale' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
+  })
+
+  it('does not re-fetch the model when currentModel already matches', async () => {
+    currentModel.set({ id: 'm1', title: 'Payments Service' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    expect(getModel).not.toHaveBeenCalled()
+  })
+})
+
+describe('Review — scoring method gating', () => {
+  it('passes the model scoring_method through to ThreatCard (dread-only hides CVSS)', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'dread' })
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical', cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /CVSS/ })).toBeNull()
+  })
+
+  it('passes the model scoring_method through to ThreatCard (cvss-only hides DREAD)', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical', cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+
+    expect(screen.queryByRole('button', { name: /DREAD/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
   })
 })
 
@@ -277,6 +334,38 @@ describe('Review — DREAD and confidence ranges', () => {
 
     expect(screen.getByText('No confidence')).toBeInTheDocument()
     expect(screen.queryByText('Unsure')).toBeNull()
+  })
+
+  it('filters out threats whose CVSS score falls outside the range', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Critical CVSS', cvss_score: 9.8 }),
+      threat({ id: 't2', name: 'Low CVSS', cvss_score: 2.0 }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Critical CVSS')).toBeInTheDocument())
+
+    await openFilters()
+    const cvssMin = screen.getAllByRole('spinbutton')[4]
+    await fireEvent.input(cvssMin, { target: { value: '8' } })
+
+    expect(screen.getByText('Critical CVSS')).toBeInTheDocument()
+    expect(screen.queryByText('Low CVSS')).toBeNull()
+  })
+
+  it('keeps threats that have no CVSS score at all', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Scored', cvss_score: 2.0 }),
+      threat({ id: 't2', name: 'No CVSS' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('No CVSS')).toBeInTheDocument())
+
+    await openFilters()
+    const cvssMin = screen.getAllByRole('spinbutton')[4]
+    await fireEvent.input(cvssMin, { target: { value: '8' } })
+
+    expect(screen.getByText('No CVSS')).toBeInTheDocument()
+    expect(screen.queryByText('Scored')).toBeNull()
   })
 })
 
