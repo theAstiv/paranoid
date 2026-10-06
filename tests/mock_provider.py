@@ -15,6 +15,7 @@ from backend.models.state import (
     GapAnalysis,
     SummaryState,
     ThreatsList,
+    ThreatsListDreadOnly,
 )
 from backend.providers.base import ProviderError
 from tests.fixtures.pipeline import (
@@ -85,16 +86,23 @@ class MockProvider:
             }
         )
 
-        if response_model in self.error_types:
+        # ThreatsListDreadOnly (the dread-only run's schema, see
+        # backend/models/state.py's _ThreatDreadOnly) is a distinct class
+        # from ThreatsList, but tests configure error_types/response_overrides
+        # against ThreatsList regardless of which scoring_method triggered the
+        # call — resolve to the canonical key so both dispatch the same way.
+        canonical_model = ThreatsList if response_model is ThreatsListDreadOnly else response_model
+
+        if canonical_model in self.error_types:
             raise ProviderError(
                 provider="mock",
-                message=f"Mock error for {response_model.__name__}",
+                message=f"Mock error for {canonical_model.__name__}",
             )
 
-        if response_model in self.response_overrides:
-            return self.response_overrides[response_model]
+        if canonical_model in self.response_overrides:
+            return self.response_overrides[canonical_model]
 
-        return self._dispatch(response_model)
+        return self._dispatch(canonical_model)
 
     async def generate(
         self,

@@ -7,7 +7,13 @@ Collects events from the async generator and asserts step ordering and data.
 import pytest
 
 from backend.models.enums import Framework, StrideCategory
-from backend.models.state import GapAnalysis, SummaryState, Threat, ThreatsList
+from backend.models.state import (
+    GapAnalysis,
+    SummaryState,
+    Threat,
+    ThreatsList,
+    ThreatsListDreadOnly,
+)
 from backend.pipeline.runner import (
     PipelineConfig,
     PipelineEvent,
@@ -251,7 +257,9 @@ async def test_runner_provider_error_mid_iterations_preserves_completed_threats(
     class _FailOnSecondThreatCall(MockProvider):
         async def generate_structured(self, prompt, response_model, **kwargs):
             nonlocal call_count
-            if response_model is ThreatsList:
+            # Default scoring_method ("dread") requests ThreatsListDreadOnly,
+            # not ThreatsList — see backend/models/state.py's _ThreatDreadOnly.
+            if response_model in (ThreatsList, ThreatsListDreadOnly):
                 call_count += 1
                 if call_count >= 2:
                     raise ProviderError("mock", "Rate limit on call 2")

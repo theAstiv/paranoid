@@ -2,6 +2,7 @@
 
 from backend.pipeline.prompts.attack_tree import attack_tree_prompt
 from backend.pipeline.prompts.code_summary import code_summary_prompt
+from backend.pipeline.prompts.cvss import cvss_scoring_section
 from backend.pipeline.prompts.maestro import (
     maestro_asset_prompt,
     maestro_gap_prompt,
@@ -38,4 +39,6 @@ __all__ = [
     "attack_tree_prompt",
     # Test case prompts
     "test_case_prompt",
+    # CVSS scoring
+    "cvss_scoring_section",
 ]

@@ -240,6 +240,35 @@ class ThreatsList(BaseModel):
         return ThreatsList(threats=combined_threats)
 
 
+# Response model for dread-only generate_threats() calls, so the schema sent
+# to the provider doesn't carry the CVSS metrics object at all (unlike
+# Threat, where `cvss` is present but cvss_score/cvss_severity are hidden).
+# Measured (see test_dread_only_schema_hides_cvss_entirely, which fails if
+# this drifts): ThreatsList.model_json_schema() is 4,689 chars vs.
+# ThreatsListDreadOnly's 2,788 — dropping the Cvss31Metrics $defs entry and
+# its 8 enum-constrained properties. Paid on every provider call for every
+# scoring_method, including a dread-only run that never asks the LLM to fill
+# `cvss` (see generate_threats()'s force-clear in
+# backend/pipeline/nodes/threats.py). Under OpenAI strict mode it's not just
+# a one-time schema-definition cost either: a required-but-nullable `cvss`
+# means the model writes "cvss": null on every threat, every iteration,
+# every dread-only call — this variant removes that too.
+#
+# IMPORTANT: keep both classes' docstrings to one line. Pydantic embeds a
+# model's docstring verbatim as its JSON-schema "description", so a long one
+# here would eat back the size saving this class exists for.
+class _ThreatDreadOnly(Threat):
+    """Same as Threat, with `cvss` also hidden from the provider schema."""
+
+    cvss: SkipJsonSchema[CvssVector | None] = None
+
+
+class ThreatsListDreadOnly(BaseModel):
+    """Response model for a dread-only generate_threats() call."""
+
+    threats: Annotated[list[_ThreatDreadOnly], Field(description="The list of threats")]
+
+
 class GapAnalysis(BaseModel):
     """Model representing gap analysis for iterative threat modeling."""
 
