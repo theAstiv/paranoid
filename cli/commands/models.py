@@ -399,9 +399,8 @@ async def _export_model_async(
         output_path.write_bytes(pdf_bytes)
 
     elif output_format == "sarif":
-        from backend.export.sarif import export_sarif
-        from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
-        from backend.scoring.cvss31 import Cvss31Error, parse_vector
+        from backend.export.sarif import export_sarif, threat_from_row
+        from backend.models.state import ThreatsList
 
         stride_rows = [r for r in threats if r.get("stride_category")]
         skipped = len(threats) - len(stride_rows)
@@ -414,32 +413,7 @@ async def _export_model_async(
         built = []
         for r in stride_rows:
             try:
-                # model_construct skips Pydantic validation — persisted descriptions may
-                # not meet the 35-50 word constraint enforced at generation time. But
-                # dependency_ref comes back from the DB as a plain dict, and
-                # export_sarif reads dependency_ref.package — it must still be
-                # converted to a DependencyRef or that attribute access crashes.
-                fields = dict(r)
-                if fields.get("dependency_ref") is not None:
-                    fields["dependency_ref"] = DependencyRef.model_validate(
-                        fields["dependency_ref"]
-                    )
-                # Same conversion for attack_techniques — export_sarif reads
-                # t.id per technique, which crashes on a plain dict.
-                if fields.get("attack_techniques"):
-                    fields["attack_techniques"] = [
-                        TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
-                    ]
-                # cvss_vector is a DB column, not a Threat field —
-                # model_construct silently drops unknown keys. Parse it back
-                # into `cvss` (the field export_sarif reads) or the vector
-                # string is lost even though cvss_score/cvss_severity survive.
-                if fields.get("cvss_vector"):
-                    try:
-                        fields["cvss"] = parse_vector(fields["cvss_vector"])
-                    except Cvss31Error:
-                        pass
-                built.append(Threat.model_construct(**fields))
+                built.append(threat_from_row(r))
             except Exception as exc:
                 click.secho(f"  ⚠ Skipping threat '{r.get('name', '?')}': {exc}", fg="yellow")
 

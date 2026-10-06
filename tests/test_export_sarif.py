@@ -8,6 +8,7 @@ import pytest
 from backend.export.sarif import (
     _severity_to_level,
     export_sarif,
+    threat_from_row,
 )
 from backend.models.state import ThreatsList
 from tests.fixtures.pipeline import make_stride_threats
@@ -624,3 +625,58 @@ def test_sarif_severity_mapping_prefers_cvss_over_dread():
 
     assert _severity_to_level(MockThreat(cvss_score=2.0, dread=MockDread())) == "note"
     assert _severity_to_level(MockThreat(cvss_score=9.0, dread=MockLowDread())) == "error"
+
+
+# --- threat_from_row(): flat DB row -> Threat for SARIF ---------------------
+
+
+def _row(**overrides) -> dict:
+    row = {
+        "name": "Token Forgery",
+        "description": "An attacker forges a session token",
+        "target": "Auth Service",
+        "impact": "High",
+        "likelihood": "Low",
+        "mitigations": ["Sign tokens"],
+        "stride_category": "Spoofing",
+    }
+    row.update(overrides)
+    return row
+
+
+_FULL_DREAD = {
+    "dread_damage": 9.0,
+    "dread_reproducibility": 8.0,
+    "dread_exploitability": 7.0,
+    "dread_affected_users": 8.0,
+    "dread_discoverability": 8.0,
+}
+
+
+def test_threat_from_row_rebuilds_dread_from_flat_columns():
+    threat = threat_from_row(_row(**_FULL_DREAD))
+    assert threat.dread is not None
+    assert threat.dread.score == 8.0
+
+
+def test_threat_from_row_leaves_dread_none_when_a_column_is_missing():
+    """A partial DREAD has no meaningful average — don't invent one."""
+    partial = dict(_FULL_DREAD, dread_discoverability=None)
+    assert getattr(threat_from_row(_row(**partial)), "dread", None) is None
+
+
+def test_threat_from_row_keeps_threat_when_dread_is_out_of_bounds():
+    """A legacy row outside DreadScore's 0-10 bounds is exported without
+    DREAD rather than raising (which would drop the whole threat)."""
+    bad = dict(_FULL_DREAD, dread_damage=42.0)
+    threat = threat_from_row(_row(**bad))
+    assert threat.name == "Token Forgery"
+    assert getattr(threat, "dread", None) is None
+
+
+def test_threat_from_row_parses_cvss_vector_and_ignores_malformed():
+    good = threat_from_row(_row(cvss_vector="AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"))
+    assert good.cvss is not None
+    assert good.cvss.attack_vector == "N"
+    bad = threat_from_row(_row(cvss_vector="not-a-vector"))
+    assert getattr(bad, "cvss", None) is None

@@ -216,6 +216,38 @@ async def test_sarif_export_with_persisted_cvss_score(test_db, tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_sarif_export_with_persisted_dread(test_db, tmp_path: Path) -> None:
+    """Persisted DREAD (five flat dread_* columns) must reach
+    `paranoid models export --format sarif` as properties.dread, and drive
+    `level` instead of the likelihood fallback."""
+    model_id = await _make_stride_model("DREAD Model")
+    await crud.create_threat(
+        model_id=model_id,
+        name="Token Forgery",
+        description="An attacker forges a session token to impersonate an administrator.",
+        target="Auth Service",
+        impact="High",
+        likelihood="Low",
+        mitigations=["Sign tokens with a rotated key"],
+        stride_category="Spoofing",
+        dread_damage=9.0,
+        dread_reproducibility=8.0,
+        dread_exploitability=7.0,
+        dread_affected_users=8.0,
+        dread_discoverability=8.0,
+        dread_score=8.0,
+    )
+
+    out = tmp_path / "dread.sarif"
+    await _export_model_async(model_id=model_id, output_format="sarif", output=out)
+
+    results = json.loads(out.read_text(encoding="utf-8"))["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["dread"]["score"] == 8.0
+    assert results[0]["level"] == "error"
+
+
+@pytest.mark.asyncio
 async def test_sarif_export_maestro_only_model(test_db, tmp_path: Path, capsys) -> None:
     """MAESTRO-only model: SARIF skips all threats and writes a valid empty SARIF."""
     model_id = await _make_maestro_model()

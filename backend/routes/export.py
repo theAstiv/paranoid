@@ -13,10 +13,9 @@ from backend.db import crud
 from backend.db.gap_utils import decode_gap_summaries
 from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
-from backend.export.sarif import export_sarif
+from backend.export.sarif import export_sarif, threat_from_row
 from backend.models.api import ExportFormat
-from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
-from backend.scoring.cvss31 import Cvss31Error, parse_vector
+from backend.models.state import ThreatsList
 
 
 logger = logging.getLogger(__name__)
@@ -27,8 +26,8 @@ router = APIRouter(prefix="/export", tags=["export"])
 def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
     """Reconstruct a ThreatsList from flat DB rows for SARIF export.
 
-    Uses model_construct to skip Pydantic validation — persisted descriptions
-    may not satisfy the 35-50 word constraint enforced at generation time.
+    Each row goes through sarif.threat_from_row() (shared with the CLI's
+    SARIF export), which rebuilds the nested fields export_sarif reads.
     MAESTRO-only threats (no stride_category) are filtered out because the SARIF
     exporter only handles STRIDE categories; a per-threat warning is logged.
     """
@@ -40,32 +39,7 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
     built = []
     for row in stride_rows:
         try:
-            # crud.list_threats() decodes dependency_ref from its stored JSON
-            # into a plain dict — model_construct() skips validation entirely,
-            # so it would stay a dict instead of becoming a DependencyRef, and
-            # sarif.py's `dependency_ref.package` attribute access would crash
-            # with AttributeError on any model that has dependency threats.
-            fields = dict(row)
-            if fields.get("dependency_ref") is not None:
-                fields["dependency_ref"] = DependencyRef.model_validate(fields["dependency_ref"])
-            # Same issue as dependency_ref above: attack_techniques comes back
-            # from crud.list_threats() as plain dicts, and sarif.py's
-            # `t.id` attribute access on each technique would crash with
-            # AttributeError on any model that has technique matches.
-            if fields.get("attack_techniques"):
-                fields["attack_techniques"] = [
-                    TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
-                ]
-            # cvss_vector is a DB column, not a Threat field — model_construct
-            # silently drops unknown keys, so without this sarif.py would see
-            # cvss_score/cvss_severity but no way to recover the vector
-            # string. Parse it back into `cvss` (the field sarif.py reads).
-            if fields.get("cvss_vector"):
-                try:
-                    fields["cvss"] = parse_vector(fields["cvss_vector"])
-                except Cvss31Error:
-                    pass
-            built.append(Threat.model_construct(**fields))
+            built.append(threat_from_row(row))
         except Exception as exc:
             logger.warning("Skipping threat '%s' during SARIF build: %s", row.get("name"), exc)
 

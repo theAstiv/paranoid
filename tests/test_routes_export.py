@@ -300,6 +300,52 @@ async def test_export_sarif_with_persisted_cvss_score(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_export_sarif_with_persisted_dread(client, test_db):
+    """A threat's persisted DREAD must reach SARIF. DREAD is stored as five
+    flat dread_* columns, but sarif.py reads a nested `dread` — before
+    threat_from_row() rebuilt it, every web SARIF export carried no DREAD at
+    all and `level` silently fell back to likelihood."""
+    model_id = await crud.create_threat_model(
+        title="API Service",
+        description="A REST API service",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+    )
+    await crud.create_threat(
+        model_id=model_id,
+        name="Token Forgery",
+        description="An attacker forges a session token to impersonate an administrator",
+        target="Auth Service",
+        impact="High",
+        # Likelihood "Low" would map to `note`; DREAD 8.0 must win and map to `error`.
+        likelihood="Low",
+        mitigations=["Sign tokens with a rotated key"],
+        stride_category="Spoofing",
+        dread_damage=9.0,
+        dread_reproducibility=8.0,
+        dread_exploitability=7.0,
+        dread_affected_users=8.0,
+        dread_discoverability=8.0,
+        dread_score=8.0,
+    )
+
+    resp = await client.get(f"/api/export/{model_id}?format=sarif")
+    assert resp.status_code == 200
+    results = json.loads(resp.content)["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["dread"] == {
+        "damage": 9.0,
+        "reproducibility": 8.0,
+        "exploitability": 7.0,
+        "affected_users": 8.0,
+        "discoverability": 8.0,
+        "score": 8.0,
+    }
+    assert results[0]["level"] == "error"
+
+
+@pytest.mark.asyncio
 async def test_export_sarif_maestro_only_produces_empty_runs(client, test_db):
     """MAESTRO-only threats produce a valid but empty SARIF result."""
     model_id = await crud.create_threat_model(
