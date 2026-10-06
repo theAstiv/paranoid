@@ -208,6 +208,43 @@ async def test_patch_threat_dread_out_of_range(client, saved_threat):
 
 
 @pytest.mark.asyncio
+async def test_patch_threat_cvss_vector_computes_score_server_side(client, saved_threat):
+    """The score/severity in the response come from the server's
+    calculator, not anything the client could have sent (UpdateThreatRequest
+    has no cvss_score/cvss_severity fields at all)."""
+    resp = await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cvss_vector"] == "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert data["cvss_score"] == pytest.approx(9.8)
+    assert data["cvss_severity"] == "critical"
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_cvss_vector_canonicalized(client, saved_threat):
+    """A client-supplied vector with a CVSS:3.1/ prefix and out-of-order
+    metrics is stored in canonical order, not verbatim."""
+    resp = await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": "CVSS:3.1/A:H/I:H/C:H/S:U/UI:N/PR:N/AC:L/AV:N"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["cvss_vector"] == "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_cvss_vector_malformed_rejected(client, saved_threat):
+    resp = await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": "not a vector"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_patch_threat_invalid_status(client, saved_threat):
     resp = await client.patch(
         f"/api/threats/{saved_threat['id']}",

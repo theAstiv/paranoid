@@ -501,6 +501,13 @@ def _parse_step_models(
     default="npm",
     help="Dependency analysis source: npm (fast, default) or both (adds GitHub drift).",
 )
+@click.option(
+    "--scoring-method",
+    "scoring_method",
+    type=click.Choice(["dread", "cvss", "both"], case_sensitive=False),
+    default="dread",
+    help="Risk scoring scheme: dread (default), cvss (CVSS v3.1 base score instead), or both.",
+)
 def run(
     input_file: Path,
     output: Path | None,
@@ -526,6 +533,7 @@ def run(
     manifest: Path | None,
     lockfile: Path | None,
     deps_source_mode: str,
+    scoring_method: str,
 ) -> None:
     """Execute threat modeling on INPUT_FILE.
 
@@ -866,6 +874,7 @@ def run(
                 dependency_lockfile=lockfile_data,
                 dependency_source_mode=deps_source_mode,
                 dependency_manifest_path=dependency_manifest_path,
+                scoring_method=scoring_method,
             )
         )
 
@@ -920,6 +929,7 @@ async def _run_pipeline_async(
     dependency_lockfile: dict | None = None,
     dependency_source_mode: str = "npm",
     dependency_manifest_path: str | None = None,
+    scoring_method: str = "dread",
 ) -> None:
     """Run pipeline asynchronously and render events.
 
@@ -976,6 +986,7 @@ async def _run_pipeline_async(
             dependency_lockfile=dependency_lockfile,
             dependency_source_mode=dependency_source_mode,
             dependency_manifest_path=dependency_manifest_path,
+            scoring_method=scoring_method,
         )
 
 
@@ -1006,6 +1017,7 @@ async def _run_pipeline_inside_provider(
     dependency_lockfile: dict | None = None,
     dependency_source_mode: str = "npm",
     dependency_manifest_path: str | None = None,
+    scoring_method: str = "dread",
 ) -> None:
     # Pre-flight gap analysis (description + assumptions) — always runs;
     # --strict enforces blocking on error-severity gaps in either section.
@@ -1108,6 +1120,7 @@ async def _run_pipeline_inside_provider(
             # --step-model and any STEP_MODELS env var — the config file has
             # no field for it, only default_provider/model/iterations).
             step_models=step_models_override_from_settings(None, settings.step_models),
+            scoring_method=scoring_method,
         ):
             # Render event (unless quiet mode)
             if renderer:
@@ -1195,7 +1208,8 @@ async def _run_pipeline_inside_provider(
             provider=provider,
             fast_provider=fast_provider,
             config=PipelineConfig(
-                step_models=step_models_override_from_settings(None, settings.step_models)
+                step_models=step_models_override_from_settings(None, settings.step_models),
+                scoring_method=scoring_method,
             ),
             model_id=model_id,
         )
@@ -1415,6 +1429,7 @@ async def _run_pipeline_inside_provider(
             gap_summaries=json_writer.gap_summaries or None,
             dependency_context=json_writer.dependency_context,
             usage_summary=run_usage,
+            scoring_method=scoring_method,
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")

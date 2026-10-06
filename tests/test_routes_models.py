@@ -59,6 +59,46 @@ async def test_create_model_returns_201(client):
 
 
 @pytest.mark.asyncio
+async def test_create_model_defaults_scoring_method_to_dread(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["scoring_method"] == "dread"
+
+
+@pytest.mark.asyncio
+async def test_create_model_honors_explicit_scoring_method(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+            "scoring_method": "both",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["scoring_method"] == "both"
+
+
+@pytest.mark.asyncio
+async def test_create_model_rejects_invalid_scoring_method(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+            "scoring_method": "not-a-method",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_create_model_defaults_provider_from_settings(client):
     resp = await client.post(
         "/api/models/",

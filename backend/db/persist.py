@@ -33,6 +33,7 @@ from backend.models.enums import Framework
 from backend.models.extended import AttackTree, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.confidence import score_threat_confidence
+from backend.scoring.cvss31 import to_vector_string
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ async def persist_pipeline_result(
     gap_summaries: list[str] | None = None,
     dependency_context: DependencyContext | None = None,
     usage_summary: dict | None = None,
+    scoring_method: str = "dread",
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
@@ -82,6 +84,10 @@ async def persist_pipeline_result(
             never get written; this is the one summary field that still
             reaches the model once it's saved, for the Results page's "Run
             summary" card.
+        scoring_method: "dread" | "cvss" | "both" — the scheme this run was
+            configured with (see PipelineConfig.scoring_method). Only
+            affects which score the pipeline computed; persisted here so
+            Results/exports know which badge(s) to show.
 
     Returns:
         model_id string on success, None on failure
@@ -102,6 +108,7 @@ async def persist_pipeline_result(
             gap_summaries=gap_summaries,
             dependency_context=dependency_context,
             usage_summary=usage_summary,
+            scoring_method=scoring_method,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -125,6 +132,7 @@ async def _persist(
     gap_summaries: list[str] | None = None,
     dependency_context: DependencyContext | None = None,
     usage_summary: dict | None = None,
+    scoring_method: str = "dread",
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -134,6 +142,7 @@ async def _persist(
         model=model_name,
         framework=framework.value,
         iteration_count=iterations_completed,
+        scoring_method=scoring_method,
     )
 
     if assets:
@@ -205,6 +214,8 @@ async def _persist(
 
             confidence = score_threat_confidence(threat, assets_dicts, flows_dicts, description)
 
+            cvss_vector = to_vector_string(threat.cvss) if threat.cvss else None
+
             threat_db_id = await create_threat(
                 model_id=model_id,
                 name=threat.name,
@@ -230,6 +241,9 @@ async def _persist(
                     if threat.attack_techniques
                     else None
                 ),
+                cvss_vector=cvss_vector,
+                cvss_score=threat.cvss_score,
+                cvss_severity=threat.cvss_severity,
             )
             threat_db_ids.append(threat_db_id)
 

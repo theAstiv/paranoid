@@ -51,6 +51,7 @@ from backend.routes._helpers import (
     model_assignee_ids,
     resolve_provider,
 )
+from backend.scoring.cvss31 import to_vector_string
 from backend.security.rate_limit import pipeline_rate_limit, write_rate_limit
 from backend.sources.paths import clone_dir_for, index_db_for
 
@@ -279,6 +280,7 @@ async def create_model(
         framework=body.framework.value,
         iteration_count=iteration_count,
         project_id=body.project_id,
+        scoring_method=body.scoring_method,
     )
 
     record = await crud.get_threat_model(model_id)
@@ -482,6 +484,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                 try:
                     confidence = score_threat_confidence(threat, assets, flows, sys_description)
                     dread = threat.dread
+                    cvss_vector = to_vector_string(threat.cvss) if threat.cvss else None
                     await crud.create_threat(
                         model_id=model_id,
                         name=threat.name,
@@ -505,6 +508,9 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dependency_ref=(
                             threat.dependency_ref.model_dump() if threat.dependency_ref else None
                         ),
+                        cvss_vector=cvss_vector,
+                        cvss_score=threat.cvss_score,
+                        cvss_severity=threat.cvss_severity,
                     )
                 except Exception:
                     logger.warning(
@@ -769,6 +775,7 @@ async def run_pipeline(
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,
                     persist_usage=True,  # model_id already names a saved threat_models row
+                    scoring_method=record.get("scoring_method") or "dread",
                 ):
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
