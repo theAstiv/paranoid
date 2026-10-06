@@ -80,6 +80,7 @@ class MockProvider:
                 "method": "generate_structured",
                 "response_model": response_model,
                 "temperature": temperature,
+                "max_tokens": max_tokens,
                 "prompt_length": len(prompt),
                 "images": images,
                 "shared_context": shared_context,
