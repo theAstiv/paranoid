@@ -87,6 +87,26 @@ describe('Review — loading', () => {
     await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
     expect(getModel).not.toHaveBeenCalled()
   })
+
+  it('still loads the threat list when the model fetch fails, falling back to dread gating', async () => {
+    getModel.mockRejectedValue(new Error('model fetch boom'))
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+
+    // The threat list load must not be dragged down by the failed model fetch.
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+    expect(notify).not.toHaveBeenCalledWith('error', expect.stringContaining('model fetch boom'))
+    // No scoring_method known -> falls back to 'dread', not "show everything".
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /CVSS/ })).toBeNull()
+  })
 })
 
 describe('Review — scoring method gating', () => {
@@ -122,6 +142,40 @@ describe('Review — scoring method gating', () => {
 
     expect(screen.queryByRole('button', { name: /DREAD/ })).toBeNull()
     expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
+  })
+
+  it('hides the CVSS range filter and sort option on a dread-only model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'dread' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.queryByText('CVSS range')).toBeNull()
+    expect(screen.getByText('DREAD range')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'CVSS score' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'DREAD score' })).toBeInTheDocument()
+  })
+
+  it('hides the DREAD range filter and sort option on a cvss-only model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.queryByText('DREAD range')).toBeNull()
+    expect(screen.getByText('CVSS range')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'DREAD score' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'CVSS score' })).toBeInTheDocument()
+  })
+
+  it('shows both range filters and sort options on a both model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.getByText('DREAD range')).toBeInTheDocument()
+    expect(screen.getByText('CVSS range')).toBeInTheDocument()
   })
 })
 
@@ -337,6 +391,7 @@ describe('Review — DREAD and confidence ranges', () => {
   })
 
   it('filters out threats whose CVSS score falls outside the range', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'Critical CVSS', cvss_score: 9.8 }),
       threat({ id: 't2', name: 'Low CVSS', cvss_score: 2.0 }),
@@ -353,6 +408,7 @@ describe('Review — DREAD and confidence ranges', () => {
   })
 
   it('keeps threats that have no CVSS score at all', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'Scored', cvss_score: 2.0 }),
       threat({ id: 't2', name: 'No CVSS' }),
@@ -659,6 +715,39 @@ describe('Review — bulk actions', () => {
 
     await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t2'], 'rejected'))
     expect(get(threats).find(t => t.id === 't1').status).toBe('pending')
+  })
+
+  it('on a cvss model, "Approve Critical+High" includes a CVSS-critical threat with no DREAD score', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'CVSS critical', cvss_score: 9.1, cvss_severity: 'critical' }),
+      threat({ id: 't2', name: 'Low one', cvss_score: 2.0, cvss_severity: 'low' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText(/Approve Critical\+High/)).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
+  })
+
+  it('on a both model, "Approve Critical+High" uses the higher-ranked of DREAD and CVSS', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([
+      // DREAD says medium, CVSS says critical -> must count as critical.
+      threat({ id: 't1', name: 'Mixed severity', dread_score: 5.5, cvss_score: 9.1, cvss_severity: 'critical' }),
+      threat({ id: 't2', name: 'Low one', dread_score: 2, cvss_score: 2.0, cvss_severity: 'low' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText(/Approve Critical\+High/)).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
   })
 
   it('hides bulk-action buttons when there are no pending threats', async () => {
