@@ -858,6 +858,45 @@ async def test_persist_pipeline_event_saves_threat_dependency_ref(saved_model, t
 
 
 @pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_threat_cvss_fields(saved_model, test_db):
+    """A COMPLETE event's threat with cvss metrics persists cvss_vector/
+    cvss_score/cvss_severity through the web SSE path — this is the path
+    that had no CVSS columns at all before PR #117's last commit."""
+    from backend.models.state import StrideCategory, Threat, ThreatsList
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+    from backend.scoring.cvss31 import parse_vector
+
+    vector = "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    threat = Threat(
+        name="SQL Injection",
+        stride_category=StrideCategory.TAMPERING,
+        description="x" * 60,
+        target="PostgreSQL DB",
+        impact="High",
+        likelihood="Medium",
+        mitigations=["Use parameterized queries", "Apply input validation"],
+        cvss=parse_vector(vector),
+        cvss_score=9.8,
+        cvss_severity="critical",
+    )
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": ThreatsList(threats=[threat])},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    threats = await crud.list_threats(saved_model["id"])
+    assert len(threats) == 1
+    assert threats[0]["cvss_vector"] == vector
+    assert threats[0]["cvss_score"] == pytest.approx(9.8)
+    assert threats[0]["cvss_severity"] == "critical"
+
+
+@pytest.mark.asyncio
 async def test_persist_pipeline_event_saves_dependency_scans(saved_model, test_db):
     """A COMPLETE event's dependency_context persists to dependency_scans."""
     from backend.models.dependencies import (
