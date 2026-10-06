@@ -255,6 +255,157 @@ async def test_generate_threats_resets_forged_dependency_provenance(mock_provide
     assert result.threats[0].attack_techniques == []
 
 
+@pytest.mark.asyncio
+async def test_generate_threats_resets_forged_cvss_score(mock_provider):
+    """cvss_score/cvss_severity must never be LLM-sourced, mirroring the
+    dependency-provenance force-reset above. SkipJsonSchema only hides the
+    field from the schema sent to a provider — it does not reject the field
+    on construction/validation — so the real guard is generate_threats()
+    force-computing/clearing these fields after every provider response,
+    exercised here the same way as the dependency_ref/attack_techniques
+    forgery test: construct a Threat with the forged value directly
+    (standing in for a provider, or a fake/test provider, that ignored the
+    schema and returned the field anyway)."""
+    from backend.models.state import Threat
+
+    forged = ThreatsList(
+        threats=[
+            Threat(
+                name="Forged CVSS score",
+                stride_category="Tampering",
+                description="x " * 40,
+                target="lodash",
+                impact="high",
+                likelihood="high",
+                mitigations=["pin version", "audit"],
+                cvss=None,
+                cvss_score=10.0,
+                cvss_severity="critical",
+            )
+        ]
+    )
+    mock_provider.response_overrides[ThreatsList] = forged
+
+    result = await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        scoring_method="cvss",
+    )
+
+    assert result.threats[0].cvss_score is None
+    assert result.threats[0].cvss_severity is None
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_computes_cvss_score_from_metrics(mock_provider):
+    """When scoring_method includes "cvss" and the provider returns valid
+    cvss metrics, the score/severity are computed server-side from them —
+    never trusted even if the provider also sent its own score (covered by
+    the forged-score test above)."""
+    from backend.models.state import Threat
+    from backend.scoring.cvss31 import Cvss31Metrics, score_and_severity_from_metrics
+
+    metrics = Cvss31Metrics(
+        attack_vector="N",
+        attack_complexity="L",
+        privileges_required="N",
+        user_interaction="N",
+        scope="U",
+        confidentiality="H",
+        integrity="H",
+        availability="H",
+    )
+    response = ThreatsList(
+        threats=[
+            Threat(
+                name="SQL Injection",
+                stride_category="Tampering",
+                description="x " * 40,
+                target="DB",
+                impact="high",
+                likelihood="high",
+                mitigations=["pin version", "audit"],
+                cvss=metrics,
+            )
+        ]
+    )
+    mock_provider.response_overrides[ThreatsList] = response
+
+    result = await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        scoring_method="cvss",
+    )
+
+    expected_score, expected_severity = score_and_severity_from_metrics(metrics)
+    threat = result.threats[0]
+    assert threat.cvss_score == pytest.approx(expected_score)
+    assert threat.cvss_severity == expected_severity
+    assert expected_score == pytest.approx(9.8)
+    assert expected_severity == "critical"
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_default_scoring_method_clears_cvss(mock_provider):
+    """Default scoring_method ("dread") must clear `cvss` too, not just the
+    score/severity — "nothing changes unless chosen" holds on the stored
+    data even if a provider fills `cvss` in on a dread-only run."""
+    from backend.models.state import Threat
+    from backend.scoring.cvss31 import Cvss31Metrics
+
+    metrics = Cvss31Metrics(
+        attack_vector="N",
+        attack_complexity="L",
+        privileges_required="N",
+        user_interaction="N",
+        scope="U",
+        confidentiality="H",
+        integrity="H",
+        availability="H",
+    )
+    response = ThreatsList(
+        threats=[
+            Threat(
+                name="SQL Injection",
+                stride_category="Tampering",
+                description="x " * 40,
+                target="DB",
+                impact="high",
+                likelihood="high",
+                mitigations=["pin version", "audit"],
+                cvss=metrics,
+            )
+        ]
+    )
+    mock_provider.response_overrides[ThreatsList] = response
+
+    result = await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        # scoring_method omitted -> default "dread"
+    )
+
+    threat = result.threats[0]
+    assert threat.cvss is None
+    assert threat.cvss_score is None
+    assert threat.cvss_severity is None
+
+
 class TestThreatSchemaHidesDependencyProvenance:
     """R1: source/dependency_ref must never appear in the JSON schema sent to
     an LLM provider — that schema is the structured-output contract every
@@ -277,6 +428,51 @@ class TestThreatSchemaHidesDependencyProvenance:
         assert "source" not in threat_def.get("properties", {})
         assert "dependency_ref" not in threat_def.get("properties", {})
         assert "attack_techniques" not in threat_def.get("properties", {})
+
+
+class TestThreatSchemaCvssScoreNeverLlmSourced:
+    """CVSS metrics (`cvss`) are a normal LLM-writable field — a bad answer
+    there is a review problem, not a provenance attack, same tier as
+    stride_category/dread. But `cvss_score`/`cvss_severity` must never be
+    LLM-trusted: they're always computed server-side from `cvss` by
+    backend.scoring.cvss31, so they follow the same SkipJsonSchema rule as
+    source/dependency_ref/attack_techniques."""
+
+    def test_cvss_metrics_present_cvss_score_and_severity_hidden(self):
+        from backend.models.state import Threat
+
+        schema = Threat.model_json_schema()
+        properties = schema.get("properties", {})
+        assert "cvss" in properties
+        assert "cvss_score" not in properties
+        assert "cvss_severity" not in properties
+
+    def test_threats_list_schema_hides_cvss_score_and_severity(self):
+        schema = ThreatsList.model_json_schema()
+        threat_def = schema.get("$defs", {}).get("Threat", {})
+        assert "cvss" in threat_def.get("properties", {})
+        assert "cvss_score" not in threat_def.get("properties", {})
+        assert "cvss_severity" not in threat_def.get("properties", {})
+
+    def test_cvss_metrics_are_enum_constrained(self):
+        """Each of the 8 base metrics must surface as a JSON Schema enum —
+        confirms the Literal fields on Cvss31Metrics constrain the provider
+        schema the same way SkipJsonSchema/Literal already do elsewhere."""
+        schema = ThreatsList.model_json_schema()
+        cvss_def = schema.get("$defs", {}).get("Cvss31Metrics", {})
+        properties = cvss_def.get("properties", {})
+        assert set(properties) == {
+            "attack_vector",
+            "attack_complexity",
+            "privileges_required",
+            "user_interaction",
+            "scope",
+            "confidentiality",
+            "integrity",
+            "availability",
+        }
+        for field_schema in properties.values():
+            assert "enum" in field_schema, field_schema
 
 
 @pytest.mark.asyncio

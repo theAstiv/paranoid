@@ -387,6 +387,94 @@ class TestDependencyThreats:
 
 
 # ---------------------------------------------------------------------------
+# backend.rules.cvss_defaults — deterministic default CVSS vectors
+# ---------------------------------------------------------------------------
+
+
+class TestDependencyThreatsCvssScoring:
+    def _dynamic_code_package(self):
+        profile = _profile("pkg", "1.0.0", categories=[CapabilityCategory.DYNAMIC_CODE])
+        return PackageAnalysis(
+            ref=PackageRef(name="pkg", version="1.0.0"),
+            resolved=_resolved("pkg", "1.0.0"),
+            npm_profile=profile,
+        )
+
+    def test_scoring_method_dread_leaves_cvss_fields_unset(self):
+        """Default scoring_method ("dread") must not change behaviour for
+        existing callers — dependency threats carry no CVSS data."""
+        result = dependency_threats(
+            DependencyContext(packages=[self._dynamic_code_package()]), Framework.STRIDE
+        )
+        assert result.threats
+        for t in result.threats:
+            assert t.cvss is None
+            assert t.cvss_score is None
+            assert t.cvss_severity is None
+
+    def test_scoring_method_cvss_attaches_table_vector_and_computed_score(self):
+        from backend.rules.cvss_defaults import DEPENDENCY_RULE_CVSS_VECTORS
+        from backend.scoring.cvss31 import score_and_severity, to_vector_string
+
+        result = dependency_threats(
+            DependencyContext(packages=[self._dynamic_code_package()]),
+            Framework.STRIDE,
+            scoring_method="cvss",
+        )
+        assert result.threats
+        threat = result.threats[0]
+        assert threat.dependency_ref.rule_id == "dynamic_code"
+        assert threat.cvss is not None
+
+        expected_vector = DEPENDENCY_RULE_CVSS_VECTORS["dynamic_code"]
+        expected_score, expected_severity = score_and_severity(expected_vector)
+        assert to_vector_string(threat.cvss) == expected_vector
+        assert threat.cvss_score == pytest.approx(expected_score)
+        assert threat.cvss_severity == expected_severity
+
+    def test_scoring_method_both_also_attaches_cvss(self):
+        result = dependency_threats(
+            DependencyContext(packages=[self._dynamic_code_package()]),
+            Framework.STRIDE,
+            scoring_method="both",
+        )
+        assert result.threats[0].cvss_score is not None
+
+    def test_every_table_vector_scores_cleanly(self):
+        """Every rule_id -> vector entry in DEPENDENCY_RULE_CVSS_VECTORS must
+        parse and score without raising, independent of any pipeline call —
+        a bad entry here would otherwise only surface at threat-generation
+        time, in production."""
+        from backend.rules.cvss_defaults import DEPENDENCY_RULE_CVSS_VECTORS
+        from backend.scoring.cvss31 import score_and_severity
+
+        for rule_id, vector in DEPENDENCY_RULE_CVSS_VECTORS.items():
+            score, severity = score_and_severity(vector)
+            assert 0.0 <= score <= 10.0, f"{rule_id}: score {score} out of range"
+            assert severity in {"none", "low", "medium", "high", "critical"}, rule_id
+
+    def test_network_environment_finding_scored_end_to_end(self):
+        """A second rule_id, exercised through the real dependency_threats()
+        call path rather than the table dict directly."""
+        profile = _profile(
+            "pkg", "1.0.0", categories=[CapabilityCategory.NETWORK, CapabilityCategory.ENVIRONMENT]
+        )
+        pa = PackageAnalysis(
+            ref=PackageRef(name="pkg", version="1.0.0"),
+            resolved=_resolved("pkg", "1.0.0"),
+            npm_profile=profile,
+        )
+        result = dependency_threats(
+            DependencyContext(packages=[pa]), Framework.STRIDE, scoring_method="cvss"
+        )
+        threat = next(
+            t for t in result.threats if t.dependency_ref.rule_id == "network_environment"
+        )
+        assert threat.cvss_score is not None
+        assert threat.cvss_severity is not None
+
+
+# ---------------------------------------------------------------------------
 # backend.pipeline.runner — ANALYZE_DEPENDENCIES step wiring
 # ---------------------------------------------------------------------------
 

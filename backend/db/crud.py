@@ -33,6 +33,7 @@ async def create_threat_model(
     framework: str = "STRIDE",
     iteration_count: int = 1,
     project_id: str | None = None,
+    scoring_method: str = "dread",
 ) -> str:
     """Create a new threat model.
 
@@ -50,8 +51,9 @@ async def create_threat_model(
         """
         INSERT INTO threat_models (
             id, title, description, framework, provider, model,
-            status, iteration_count, created_at, updated_at, project_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            status, iteration_count, created_at, updated_at, project_id,
+            scoring_method
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             model_id,
@@ -65,6 +67,7 @@ async def create_threat_model(
             now,
             now,
             project_id or DEFAULT_PROJECT_ID,
+            scoring_method,
         ),
     )
     await conn.commit()
@@ -107,6 +110,7 @@ async def update_threat_model(
     code_summary: str | None = None,
     assumptions: str | None = None,
     usage_summary: str | None = None,
+    scoring_method: str | None = None,
 ) -> None:
     """
     Update threat model details. Only provided fields will be updated.
@@ -122,6 +126,7 @@ async def update_threat_model(
         assumptions: JSON-encoded list of assumption strings
         usage_summary: JSON-encoded RunUsage dict (backend/models/usage.py) from
             the COMPLETE event's data.usage
+        scoring_method: "dread" | "cvss" | "both"
     """
     update_fields = []
     params = []
@@ -157,6 +162,10 @@ async def update_threat_model(
     if usage_summary is not None:
         update_fields.append("usage_summary = ?")
         params.append(usage_summary)
+
+    if scoring_method is not None:
+        update_fields.append("scoring_method = ?")
+        params.append(scoring_method)
 
     # Always update timestamp
     update_fields.append("updated_at = ?")
@@ -270,6 +279,9 @@ async def create_threat(
     confidence: float | None = None,
     dependency_ref: dict[str, Any] | None = None,
     attack_techniques: list[dict[str, Any]] | None = None,
+    cvss_vector: str | None = None,
+    cvss_score: float | None = None,
+    cvss_severity: str | None = None,
 ) -> str:
     """Create a new threat."""
     threat_id = generate_id()
@@ -289,8 +301,9 @@ async def create_threat(
             dread_damage, dread_reproducibility, dread_exploitability,
             dread_affected_users, dread_discoverability, dread_score,
             mitigations, status, iteration_number, source, confidence,
-            dependency_ref, attack_techniques, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            dependency_ref, attack_techniques, cvss_vector, cvss_score,
+            cvss_severity, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             threat_id,
@@ -315,6 +328,9 @@ async def create_threat(
             confidence,
             dependency_ref_json,
             attack_techniques_json,
+            cvss_vector,
+            cvss_score,
+            cvss_severity,
             now,
             now,
         ),
@@ -429,6 +445,10 @@ async def update_threat(
     dread_affected_users: int | None = None,
     dread_discoverability: int | None = None,
     dread_score: float | None = None,
+    cvss_vector: str | None = None,
+    cvss_score: float | None = None,
+    cvss_severity: str | None = None,
+    clear_cvss: bool = False,
 ) -> None:
     """
     Update threat details. Only provided fields will be updated.
@@ -449,6 +469,16 @@ async def update_threat(
         dread_affected_users: DREAD affected users score (0-10)
         dread_discoverability: DREAD discoverability score (0-10)
         dread_score: Overall DREAD score
+        cvss_vector: CVSS v3.1 base vector string, e.g. "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        cvss_score: CVSS base score — always computed server-side from cvss_vector
+            by the caller (backend.scoring.cvss31.score_and_severity), never
+            accepted from a client directly
+        cvss_severity: CVSS severity rating — computed the same way as cvss_score
+        clear_cvss: explicitly NULL all three cvss_* columns, distinct from
+            simply omitting cvss_vector/cvss_score/cvss_severity (which, like
+            every other field here, means "leave unchanged") — needed because
+            None is otherwise indistinguishable from "not provided" for this
+            function's "only provided fields updated" convention
     """
     # Build dynamic UPDATE query for only provided fields
     update_fields = []
@@ -509,6 +539,26 @@ async def update_threat(
     if dread_score is not None:
         update_fields.append("dread_score = ?")
         params.append(dread_score)
+
+    if clear_cvss:
+        update_fields.append("cvss_vector = ?")
+        params.append(None)
+        update_fields.append("cvss_score = ?")
+        params.append(None)
+        update_fields.append("cvss_severity = ?")
+        params.append(None)
+    else:
+        if cvss_vector is not None:
+            update_fields.append("cvss_vector = ?")
+            params.append(cvss_vector)
+
+        if cvss_score is not None:
+            update_fields.append("cvss_score = ?")
+            params.append(cvss_score)
+
+        if cvss_severity is not None:
+            update_fields.append("cvss_severity = ?")
+            params.append(cvss_severity)
 
     # Always update the updated_at timestamp
     update_fields.append("updated_at = ?")

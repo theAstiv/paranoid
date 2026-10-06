@@ -18,6 +18,7 @@ from backend.routes._helpers import (
     get_api_key,
     model_assignee_ids,
 )
+from backend.scoring.cvss31 import score_and_severity
 from backend.security.rate_limit import enrichment_rate_limit
 
 
@@ -76,6 +77,27 @@ async def update_threat(
     if threat is None:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
 
+    # CVSS score/severity are never accepted from the client — UpdateThreatRequest
+    # doesn't even have those fields, only cvss_vector (already parsed and
+    # canonicalized by its validator). Recompute both here, server-side, the
+    # same way backend.deps.threats and generate_threats() do.
+    #
+    # cvss_vector needs a three-way distinction UpdateThreatRequest's other
+    # fields don't: omitted (no change), explicit null (clear the stored
+    # vector), or a value (set it). `is not None` alone can't tell "omitted"
+    # apart from "explicit null", so this checks model_fields_set first —
+    # the same pattern UpdateConfigRequest uses for API keys.
+    cvss_vector = None
+    cvss_score = None
+    cvss_severity = None
+    clear_cvss = False
+    if "cvss_vector" in body.model_fields_set:
+        if body.cvss_vector is None:
+            clear_cvss = True
+        else:
+            cvss_vector = body.cvss_vector
+            cvss_score, cvss_severity = score_and_severity(body.cvss_vector)
+
     await crud.update_threat(
         threat_id,
         name=body.name,
@@ -90,6 +112,10 @@ async def update_threat(
         dread_affected_users=body.dread_affected_users,
         dread_discoverability=body.dread_discoverability,
         dread_score=None,  # recomputed client-side; not patched directly
+        cvss_vector=cvss_vector,
+        cvss_score=cvss_score,
+        cvss_severity=cvss_severity,
+        clear_cvss=clear_cvss,
     )
 
     # Handle status separately (uses dedicated update function)

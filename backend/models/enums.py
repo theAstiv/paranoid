@@ -1,6 +1,15 @@
 """Enums for threat modeling system."""
 
 from enum import Enum
+from typing import Literal
+
+
+# Which risk-scoring scheme a model run uses. "dread" is the default (no
+# behaviour change for existing models/runs); "cvss" asks the LLM for CVSS
+# v3.1 base metrics instead; "both" asks for and shows both. A type alias
+# rather than a formal Enum, matching the lightweight `Literal` pattern
+# already used for small closed vocabularies (e.g. TechniqueRef.method).
+ScoringMethod = Literal["dread", "cvss", "both"]
 
 
 class StrideCategory(str, Enum):

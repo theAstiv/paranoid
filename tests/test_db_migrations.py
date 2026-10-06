@@ -434,3 +434,70 @@ async def test_0005_is_idempotent_on_v2_db(tmp_path):
         await run_migrations(conn)
     finally:
         await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 0010 — CVSS v3.1 columns on threats + threat_models.scoring_method
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_0010_adds_cvss_and_scoring_method_columns(tmp_path):
+    """0010 adds threats.cvss_vector/cvss_score/cvss_severity and
+    threat_models.scoring_method."""
+    conn = await _make_conn(tmp_path)
+    try:
+        await run_migrations(conn)
+
+        async with conn.execute("PRAGMA table_info(threats)") as cur:
+            threat_columns = {row[1] for row in await cur.fetchall()}
+        assert {"cvss_vector", "cvss_score", "cvss_severity"} <= threat_columns
+
+        async with conn.execute("PRAGMA table_info(threat_models)") as cur:
+            model_columns = {row[1] for row in await cur.fetchall()}
+        assert "scoring_method" in model_columns
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_0010_scoring_method_null_on_existing_rows(tmp_path):
+    """Pre-existing threat_models rows read back scoring_method=NULL — the
+    'nothing changes unless chosen' contract is enforced by application
+    code treating NULL as 'dread', not by a DB default."""
+    conn = await _make_v2_db(tmp_path)
+    try:
+        await conn.execute(
+            "INSERT INTO threat_models (id, title, provider, model, status, "
+            "created_at, updated_at, project_id) VALUES "
+            "('tm-cvss', 'Test', 'anthropic', 'claude', 'pending', "
+            "'2024-01-01', '2024-01-01', '00000000-0000-0000-0000-000000000000')"
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        async with conn.execute(
+            "SELECT scoring_method FROM threat_models WHERE id = 'tm-cvss'"
+        ) as cur:
+            row = await cur.fetchone()
+        assert row is not None
+        assert row[0] is None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_0010_is_idempotent_on_v2_db(tmp_path):
+    """0010 applies cleanly to a DB that already has the full v2 schema
+    (ALTER TABLE re-add path), and running it twice does not raise."""
+    conn = await _make_v2_db(tmp_path)
+    try:
+        await run_migrations(conn)
+        async with conn.execute("PRAGMA table_info(threats)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        assert {"cvss_vector", "cvss_score", "cvss_severity"} <= columns
+
+        await run_migrations(conn)
+    finally:
+        await conn.close()

@@ -21,6 +21,8 @@ from backend.models.dependencies import (
 )
 from backend.models.enums import CapabilityCategory, Framework, PathClass, StrideCategory
 from backend.models.state import DependencyRef, Threat, ThreatsList
+from backend.rules.cvss_defaults import DEPENDENCY_RULE_CVSS_VECTORS
+from backend.scoring.cvss31 import parse_vector, score_and_severity
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,17 @@ def _threat(
     rule_id: str,
     file: str | None = None,
     line: int | None = None,
+    scoring_method: str = "dread",
 ) -> Threat:
+    cvss_metrics = None
+    cvss_score = None
+    cvss_severity = None
+    if scoring_method in ("cvss", "both"):
+        default_vector = DEPENDENCY_RULE_CVSS_VECTORS.get(rule_id)
+        if default_vector is not None:
+            cvss_metrics = parse_vector(default_vector)
+            cvss_score, cvss_severity = score_and_severity(default_vector)
+
     threat = Threat(
         name=name,
         stride_category=stride_category,
@@ -61,6 +73,9 @@ def _threat(
         dependency_ref=DependencyRef(
             package=package, version=version, file=file, line=line, rule_id=rule_id
         ),
+        cvss=cvss_metrics,
+        cvss_score=cvss_score,
+        cvss_severity=cvss_severity,
     )
     return threat
 
@@ -77,7 +92,7 @@ def _first_evidence(
     return None
 
 
-def _package_findings(pa: PackageAnalysis) -> list[Threat]:
+def _package_findings(pa: PackageAnalysis, scoring_method: str = "dread") -> list[Threat]:
     """Deterministic threats for a single analyzed package."""
     if pa.error or pa.resolved is None:
         return []
@@ -108,6 +123,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 package=name,
                 version=version,
                 rule_id="drift_signal",
+                scoring_method=scoring_method,
             )
         )
 
@@ -130,6 +146,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 version=version,
                 rule_id="install_hook_added",
                 file="package.json",
+                scoring_method=scoring_method,
             )
         )
     elif profile.install_hooks:
@@ -148,6 +165,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 version=version,
                 rule_id="install_hook_present",
                 file="package.json",
+                scoring_method=scoring_method,
             )
         )
 
@@ -170,6 +188,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 rule_id="dynamic_code",
                 file=evidence.file if evidence else None,
                 line=evidence.line if evidence else None,
+                scoring_method=scoring_method,
             )
         )
 
@@ -195,6 +214,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 rule_id="network_environment",
                 file=evidence.file if evidence else None,
                 line=evidence.line if evidence else None,
+                scoring_method=scoring_method,
             )
         )
 
@@ -216,6 +236,7 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
                 rule_id="native_ffi",
                 file=evidence.file if evidence else None,
                 line=evidence.line if evidence else None,
+                scoring_method=scoring_method,
             )
         )
 
@@ -225,7 +246,9 @@ def _package_findings(pa: PackageAnalysis) -> list[Threat]:
 _MAESTRO_SUFFIX = " This falls under the MAESTRO Supply Chain layer."
 
 
-def dependency_threats(context: DependencyContext, framework: Framework) -> ThreatsList:
+def dependency_threats(
+    context: DependencyContext, framework: Framework, scoring_method: str = "dread"
+) -> ThreatsList:
     """Deterministic threats for every analyzed package in `context`.
 
     Threat only carries a single `stride_category` field (MAESTRO seed
@@ -233,10 +256,15 @@ def dependency_threats(context: DependencyContext, framework: Framework) -> Thre
     `backend.rules.engine`), so `framework` doesn't change the categorization
     — every dependency finding is inherently a supply-chain concern, so for
     Framework.MAESTRO the description is annotated with that layer instead.
+
+    scoring_method: "dread" | "cvss" | "both" — only when it includes "cvss"
+    does each finding get a default vector from
+    backend.rules.cvss_defaults.DEPENDENCY_RULE_CVSS_VECTORS (looked up by
+    rule_id) and a score computed through backend.scoring.cvss31.
     """
     threats: list[Threat] = []
     for pa in context.packages:
-        threats.extend(_package_findings(pa))
+        threats.extend(_package_findings(pa, scoring_method=scoring_method))
     if framework == Framework.MAESTRO:
         for t in threats:
             t.description += _MAESTRO_SUFFIX

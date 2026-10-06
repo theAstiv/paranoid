@@ -750,3 +750,93 @@ async def test_persist_caps_skipped_dependency_rows(test_db):
     summary = [s for s in scans if s["package"] == "+10 more skipped"]
     assert len(summary) == 1
     assert "10 additional" in summary[0]["analysis"]["skip_reason"]
+
+
+# ---------------------------------------------------------------------------
+# CVSS v3.1 (Week 4b-3)
+# ---------------------------------------------------------------------------
+
+
+def _make_cvss_threats() -> ThreatsList:
+    from backend.scoring.cvss31 import parse_vector
+
+    vector = "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    return ThreatsList(
+        threats=[
+            Threat(
+                name="SQL Injection",
+                stride_category=StrideCategory.TAMPERING,
+                description="An attacker with access to user input fields can inject malicious SQL bypassing authentication and exfiltrating database records.",
+                target="PostgreSQL DB",
+                impact="High",
+                likelihood="Medium",
+                cvss=parse_vector(vector),
+                cvss_score=9.8,
+                cvss_severity="critical",
+                mitigations=["Use parameterized queries", "Apply input validation"],
+            ),
+            Threat(
+                name="Session Hijacking",
+                stride_category=StrideCategory.SPOOFING,
+                description="An attacker who intercepts a session token can impersonate the victim user without needing their credentials, gaining full account access.",
+                target="Admin User",
+                impact="High",
+                likelihood="Low",
+                mitigations=["Use secure, HttpOnly cookies", "Rotate session tokens"],
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_threat_cvss_fields(test_db):
+    """A threat's cvss_vector/cvss_score/cvss_severity round-trip through
+    persistence as plain scalar columns (no JSON decode needed, unlike
+    dependency_ref/attack_techniques)."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_cvss_threats(),
+        scoring_method="cvss",
+    )
+
+    threats = await crud.list_threats(model_id)
+    scored = next(t for t in threats if t["name"] == "SQL Injection")
+    assert scored["cvss_vector"] == "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert scored["cvss_score"] == pytest.approx(9.8)
+    assert scored["cvss_severity"] == "critical"
+
+    unscored = next(t for t in threats if t["name"] == "Session Hijacking")
+    assert unscored["cvss_vector"] is None
+    assert unscored["cvss_score"] is None
+    assert unscored["cvss_severity"] is None
+
+    model = await crud.get_threat_model(model_id)
+    assert model["scoring_method"] == "cvss"
+
+
+@pytest.mark.asyncio
+async def test_persist_defaults_scoring_method_to_dread(test_db):
+    """Not passing scoring_method (the common case today) persists "dread" —
+    the explicit default, not NULL, so a freshly created model always reads
+    back a scoring_method even though old rows (pre-migration) read NULL."""
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+    )
+
+    model = await crud.get_threat_model(model_id)
+    assert model["scoring_method"] == "dread"

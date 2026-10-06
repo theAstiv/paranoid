@@ -315,6 +315,67 @@ async def test_run_passes_parsed_manifest_to_pipeline(client, model_id):
 
 
 @pytest.mark.asyncio
+async def test_run_passes_saved_scoring_method_to_pipeline(client, test_db):
+    """The run route reads the model's own stored scoring_method (not a
+    hardcoded default) and threads it into run_pipeline_for_model — the
+    other half of PR #117's end-to-end wiring, previously untested."""
+    mid = await crud.create_threat_model(
+        title="Test Service",
+        description="A microservice that handles user authentication with JWT tokens and Redis sessions.",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
+        scoring_method="cvss",
+    )
+
+    runner, captured = _noop_runner_factory()
+    p1, p2 = _patched()
+    with (
+        p1,
+        p2,
+        patch("backend.routes.models.run_pipeline_for_model", runner),
+    ):
+        resp = await client.post(f"/api/models/{mid}/run", data=_MINIMAL_FORM)
+
+    assert resp.status_code == 200
+    assert captured["scoring_method"] == "cvss"
+
+
+@pytest.mark.asyncio
+async def test_run_defaults_scoring_method_to_dread_for_legacy_rows(client, test_db):
+    """A pre-0010 row (scoring_method is NULL/missing) must still resolve
+    to "dread" when passed to the pipeline, not None or a KeyError."""
+    mid = await crud.create_threat_model(
+        title="Legacy Model",
+        description="A model row created before scoring_method existed.",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    # Simulate a pre-migration row: explicitly null out the column rather
+    # than relying on create_threat_model's own "dread" default.
+    from backend.db.connection import db
+
+    conn = await db.get()
+    await conn.execute("UPDATE threat_models SET scoring_method = NULL WHERE id = ?", (mid,))
+    await conn.commit()
+
+    runner, captured = _noop_runner_factory()
+    p1, p2 = _patched()
+    with (
+        p1,
+        p2,
+        patch("backend.routes.models.run_pipeline_for_model", runner),
+    ):
+        resp = await client.post(f"/api/models/{mid}/run", data=_MINIMAL_FORM)
+
+    assert resp.status_code == 200
+    assert captured["scoring_method"] == "dread"
+
+
+@pytest.mark.asyncio
 async def test_run_auto_detects_manifest_from_ready_code_source(client, model_id, ready_source_id):
     manifest = {"dependencies": {"lodash": "^4.17.21"}}
     lockfile = {"lockfileVersion": 3, "packages": {"node_modules/lodash": {"version": "4.17.21"}}}

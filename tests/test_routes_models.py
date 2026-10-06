@@ -59,6 +59,46 @@ async def test_create_model_returns_201(client):
 
 
 @pytest.mark.asyncio
+async def test_create_model_defaults_scoring_method_to_dread(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["scoring_method"] == "dread"
+
+
+@pytest.mark.asyncio
+async def test_create_model_honors_explicit_scoring_method(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+            "scoring_method": "both",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["scoring_method"] == "both"
+
+
+@pytest.mark.asyncio
+async def test_create_model_rejects_invalid_scoring_method(client):
+    resp = await client.post(
+        "/api/models/",
+        json={
+            "title": "Payment Gateway",
+            "description": "Stripe-backed payment processing service with PCI-DSS scope",
+            "scoring_method": "not-a-method",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_create_model_defaults_provider_from_settings(client):
     resp = await client.post(
         "/api/models/",
@@ -815,6 +855,45 @@ async def test_persist_pipeline_event_saves_threat_dependency_ref(saved_model, t
         "line": 12,
         "rule_id": "dynamic_code",
     }
+
+
+@pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_threat_cvss_fields(saved_model, test_db):
+    """A COMPLETE event's threat with cvss metrics persists cvss_vector/
+    cvss_score/cvss_severity through the web SSE path — this is the path
+    that had no CVSS columns at all before PR #117's last commit."""
+    from backend.models.state import StrideCategory, Threat, ThreatsList
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+    from backend.scoring.cvss31 import parse_vector
+
+    vector = "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    threat = Threat(
+        name="SQL Injection",
+        stride_category=StrideCategory.TAMPERING,
+        description="x" * 60,
+        target="PostgreSQL DB",
+        impact="High",
+        likelihood="Medium",
+        mitigations=["Use parameterized queries", "Apply input validation"],
+        cvss=parse_vector(vector),
+        cvss_score=9.8,
+        cvss_severity="critical",
+    )
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": ThreatsList(threats=[threat])},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    threats = await crud.list_threats(saved_model["id"])
+    assert len(threats) == 1
+    assert threats[0]["cvss_vector"] == vector
+    assert threats[0]["cvss_score"] == pytest.approx(9.8)
+    assert threats[0]["cvss_severity"] == "critical"
 
 
 @pytest.mark.asyncio
