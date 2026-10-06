@@ -8,8 +8,64 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
 
-from backend.models.state import ThreatsList
-from backend.scoring.cvss31 import to_vector_string
+from pydantic import ValidationError
+
+from backend.models.state import DependencyRef, DreadScore, TechniqueRef, Threat, ThreatsList
+from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
+
+
+_DREAD_COLUMNS = (
+    "dread_damage",
+    "dread_reproducibility",
+    "dread_exploitability",
+    "dread_affected_users",
+    "dread_discoverability",
+)
+
+
+def threat_from_row(row: dict[str, Any]) -> Threat:
+    """Rebuild a Threat from a flat DB row (crud.list_threats()) for SARIF.
+
+    Shared by the web export route and `paranoid models export` so the two
+    can't drift. Uses model_construct to skip validation — persisted
+    descriptions may not meet the word-count constraint enforced at
+    generation time — which also means nested fields stay whatever the row
+    holds and unknown keys are silently dropped. Each nested field export_sarif
+    reads is therefore converted here:
+
+    - dependency_ref / attack_techniques come back as plain dicts; sarif.py's
+      attribute access (`.package`, `.id`) would raise AttributeError.
+    - cvss_vector is a DB column, not a Threat field: parsed back into `cvss`
+      or the vector string is lost while cvss_score/cvss_severity survive.
+    - DREAD is stored as five flat dread_* columns, not a nested `dread`:
+      rebuilt only when all five are present, otherwise left None (a partial
+      DREAD has no meaningful average). A row whose values fail DreadScore's
+      0-10 bounds is exported without DREAD rather than dropped.
+    """
+    fields = dict(row)
+    if fields.get("dependency_ref") is not None:
+        fields["dependency_ref"] = DependencyRef.model_validate(fields["dependency_ref"])
+    if fields.get("attack_techniques"):
+        fields["attack_techniques"] = [
+            TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
+        ]
+    if fields.get("cvss_vector"):
+        try:
+            fields["cvss"] = parse_vector(fields["cvss_vector"])
+        except Cvss31Error:
+            pass
+    if all(fields.get(col) is not None for col in _DREAD_COLUMNS):
+        try:
+            fields["dread"] = DreadScore(
+                damage=fields["dread_damage"],
+                reproducibility=fields["dread_reproducibility"],
+                exploitability=fields["dread_exploitability"],
+                affected_users=fields["dread_affected_users"],
+                discoverability=fields["dread_discoverability"],
+            )
+        except ValidationError:
+            pass
+    return Threat.model_construct(**fields)
 
 
 def export_sarif(
