@@ -4,6 +4,7 @@ import ThreatCard from './ThreatCard.svelte'
 
 vi.mock('../lib/api.js', () => ({
   updateThreat: vi.fn().mockResolvedValue({}),
+  scoreCvss: vi.fn().mockResolvedValue({ score: 9.8, severity: 'critical' }),
 }))
 
 // link action from svelte-spa-router is a DOM action — stub it so tests
@@ -229,5 +230,137 @@ describe('ThreatCard', () => {
     await fireEvent.click(screen.getByText('DREAD'))
     await fireEvent.click(screen.getByText('Cancel'))
     expect(screen.queryByText('Edit DREAD scores')).toBeNull()
+  })
+
+  it('hides CVSS edit button in readonly mode', () => {
+    render(ThreatCard, { props: { threat: baseThreat, readonly: true } })
+    expect(screen.queryByText('CVSS')).toBeNull()
+  })
+
+  it('opens CVSS edit form when CVSS button is clicked', async () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    expect(screen.getByText('Edit CVSS v3.1 vector')).toBeInTheDocument()
+  })
+
+  it('closes CVSS edit form on Cancel', async () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    await fireEvent.click(screen.getByText('Cancel'))
+    expect(screen.queryByText('Edit CVSS v3.1 vector')).toBeNull()
+  })
+
+  it('previews a score immediately when the CVSS edit form opens', async () => {
+    const { scoreCvss } = await import('../lib/api.js')
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+
+    await waitFor(() => expect(scoreCvss).toHaveBeenCalledOnce())
+    expect(await screen.findByText(/Score preview:/)).toBeInTheDocument()
+  })
+
+  it('calls scoreCvss again for a live preview when a dropdown changes', async () => {
+    const { scoreCvss } = await import('../lib/api.js')
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    await waitFor(() => expect(scoreCvss).toHaveBeenCalledOnce())
+
+    const [attackVector] = screen.getAllByRole('combobox')
+    await fireEvent.change(attackVector, { target: { value: 'N' } })
+
+    await waitFor(() => expect(scoreCvss).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(/Score preview:/)).toBeInTheDocument()
+  })
+
+  const scoredThreat = {
+    ...baseThreat,
+    dread_damage: 8,
+    dread_reproducibility: 6,
+    dread_exploitability: 7,
+    dread_affected_users: 5,
+    dread_discoverability: 4,
+    cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+    cvss_score: 9.8,
+    cvss_severity: 'critical',
+  }
+
+  it('shows only the DREAD badge/edit button when scoringMethod is dread', () => {
+    render(ThreatCard, { props: { threat: scoredThreat, scoringMethod: 'dread' } })
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /CVSS/ })).toBeNull()
+    expect(screen.getByText('DREAD', { selector: 'button' })).toBeInTheDocument()
+    expect(screen.queryByText('CVSS', { selector: 'button' })).toBeNull()
+  })
+
+  it('shows only the CVSS badge/edit button when scoringMethod is cvss', () => {
+    render(ThreatCard, { props: { threat: scoredThreat, scoringMethod: 'cvss' } })
+    expect(screen.queryByRole('button', { name: /DREAD 6/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
+    expect(screen.queryByText('DREAD', { selector: 'button' })).toBeNull()
+    expect(screen.getByText('CVSS', { selector: 'button' })).toBeInTheDocument()
+  })
+
+  it('shows both badges/edit buttons when scoringMethod is both', () => {
+    render(ThreatCard, { props: { threat: scoredThreat, scoringMethod: 'both' } })
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
+  })
+
+  it('defaults to showing both when scoringMethod is not passed', () => {
+    render(ThreatCard, { props: { threat: scoredThreat } })
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
+  })
+
+  it('calls oncvssUpdated with the merged threat after saving a CVSS vector', async () => {
+    const { updateThreat } = await import('../lib/api.js')
+    updateThreat.mockResolvedValueOnce({
+      id: 'threat-1',
+      cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      cvss_score: 9.8,
+      cvss_severity: 'critical',
+    })
+    const handler = vi.fn()
+    render(ThreatCard, { props: { threat: baseThreat, oncvssUpdated: handler } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    await fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(handler).toHaveBeenCalledOnce())
+    expect(handler.mock.calls[0][0]).toMatchObject({ id: 'threat-1', cvss_score: 9.8 })
+  })
+
+  it('shows no Clear button when the threat has no CVSS vector yet', async () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    expect(screen.queryByText('Clear')).toBeNull()
+  })
+
+  it('shows a Clear button for a threat that already has a CVSS vector', async () => {
+    const existing = { ...baseThreat, cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', cvss_score: 9.8, cvss_severity: 'critical' }
+    render(ThreatCard, { props: { threat: existing } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    expect(screen.getByText('Clear')).toBeInTheDocument()
+  })
+
+  it('calls oncvssUpdated with a cleared threat when Clear is clicked', async () => {
+    const { updateThreat } = await import('../lib/api.js')
+    updateThreat.mockResolvedValueOnce({ id: 'threat-1', cvss_vector: null, cvss_score: null, cvss_severity: null })
+    const existing = { ...baseThreat, cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', cvss_score: 9.8, cvss_severity: 'critical' }
+    const handler = vi.fn()
+    render(ThreatCard, { props: { threat: existing, oncvssUpdated: handler } })
+    await fireEvent.click(screen.getByText('CVSS'))
+    await fireEvent.click(screen.getByText('Clear'))
+
+    await waitFor(() => expect(updateThreat).toHaveBeenCalledWith('threat-1', { cvss_vector: null }))
+    expect(handler.mock.calls[0][0]).toMatchObject({ id: 'threat-1', cvss_vector: null })
+  })
+
+  it('formats a whole-number score preview with one decimal place', async () => {
+    const { scoreCvss } = await import('../lib/api.js')
+    scoreCvss.mockResolvedValueOnce({ score: 7, severity: 'high' })
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS'))
+
+    expect(await screen.findByText('7.0')).toBeInTheDocument()
   })
 })

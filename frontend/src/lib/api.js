@@ -363,6 +363,16 @@ export function bulkUpdateThreatStatus(threatIds, status) {
   return request('POST', '/threats/bulk-status', { threat_ids: threatIds, status })
 }
 
+/** Recompute CVSS v3.1 score+severity from a draft vector string — the
+ * live-preview call ThreatCard makes as a reviewer edits the 8 dropdowns,
+ * so the formula never needs porting to JS.
+ * @param {string} vector
+ * @returns {Promise<{score: number, severity: string}>}
+ */
+export function scoreCvss(vector) {
+  return request('POST', '/cvss/score', { vector })
+}
+
 /** @param {string} id */
 export function deleteThreat(id) {
   return request('DELETE', `/threats/${id}`)

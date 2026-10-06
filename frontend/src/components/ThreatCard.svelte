@@ -3,8 +3,10 @@
 <script>
   import { link } from 'svelte-spa-router'
   import DreadBadge from './DreadBadge.svelte'
+  import CvssBadge from './CvssBadge.svelte'
   import Comments from './Comments.svelte'
-  import { updateThreat } from '../lib/api.js'
+  import { scoreCvss, updateThreat } from '../lib/api.js'
+  import { CVSS_METRICS, cvssVectorFromMetrics, cvssScoreLabel, normalizeCvssMetrics } from '../lib/utils.js'
 
   /**
    * @type {{
@@ -14,10 +16,12 @@
    *   selected?: boolean,
    *   modelId?: string,
    *   commentCount?: number,
+   *   scoringMethod?: 'dread'|'cvss'|'both',
    *   onapprove?: (threat: object) => void,
    *   onreject?: (threat: object) => void,
    *   ontoggleSelect?: (threat: object) => void,
    *   ondreadUpdated?: (threat: object) => void,
+   *   oncvssUpdated?: (threat: object) => void,
    *   oncommentChange?: (detail: { delta: number }) => void,
    * }}
    */
@@ -28,12 +32,25 @@
     selected = false,
     modelId = '',
     commentCount = 0,
+    // 'both' is the default so call sites that don't know a model's
+    // scoring_method (e.g. Library.svelte, which lists threats across
+    // several models) keep today's behavior: show whichever badge has data.
+    scoringMethod = 'both',
     onapprove,
     onreject,
     ontoggleSelect,
     ondreadUpdated,
+    oncvssUpdated,
     oncommentChange,
   } = $props()
+
+  // Plan: dread -> DREAD only, cvss -> CVSS only, both -> both. Gates the
+  // badge AND its edit button together — on a dread-only model the LLM was
+  // never asked for CVSS, so exposing a CVSS edit control there would be a
+  // manual-override feature nobody asked for; same reasoning the other way
+  // for DREAD on a cvss-only model.
+  const showDread = $derived(scoringMethod === 'dread' || scoringMethod === 'both')
+  const showCvss = $derived(scoringMethod === 'cvss' || scoringMethod === 'both')
 
   let showComments = $state(false)
 
@@ -41,6 +58,60 @@
   let savingDread = $state(false)
   let dreadError = $state('')
   let draftDread = $state({})
+
+  let editingCvss = $state(false)
+  let savingCvss = $state(false)
+  let cvssError = $state('')
+  let draftCvss = $state({})
+  let cvssPreview = $state(null)
+
+  function startEditCvss() {
+    const defaults = Object.fromEntries(CVSS_METRICS.map(([, , key, labels]) => [key, Object.keys(labels)[0]]))
+    // normalizeCvssMetrics() already resolves the dual-shape precedence
+    // (cvss_vector over nested cvss — see its docstring in utils.js).
+    draftCvss = { ...defaults, ...(normalizeCvssMetrics(threat) ?? {}) }
+    cvssError = ''
+    previewCvss()
+    editingCvss = true
+  }
+
+  async function previewCvss() {
+    try {
+      cvssPreview = await scoreCvss(cvssVectorFromMetrics(draftCvss))
+      cvssError = ''
+    } catch (e) {
+      cvssError = e.message
+    }
+  }
+
+  async function saveCvss() {
+    cvssError = ''
+    savingCvss = true
+    try {
+      const vector = cvssVectorFromMetrics(draftCvss)
+      const updated = await updateThreat(threat.id, { cvss_vector: vector })
+      oncvssUpdated?.({ ...threat, ...updated })
+      editingCvss = false
+    } catch (e) {
+      cvssError = e.message
+    } finally {
+      savingCvss = false
+    }
+  }
+
+  async function clearCvss() {
+    cvssError = ''
+    savingCvss = true
+    try {
+      const updated = await updateThreat(threat.id, { cvss_vector: null })
+      oncvssUpdated?.({ ...threat, ...updated })
+      editingCvss = false
+    } catch (e) {
+      cvssError = e.message
+    } finally {
+      savingCvss = false
+    }
+  }
 
   const DREAD_DIMS = [
     ['Damage', 'dread_damage'],
@@ -199,7 +270,8 @@
             class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {isSuggested(tech) ? 'chip-gray border-dashed' : 'chip-blue'}"
             title={techniqueTitle(tech)}>{tech.id}{isSuggested(tech) ? ' (suggested)' : ''}</a>
         {/each}
-        <DreadBadge {threat} />
+        {#if showDread}<DreadBadge {threat} />{/if}
+        {#if showCvss}<CvssBadge {threat} />{/if}
         {#if confidencePct != null}
           <span class="font-mono text-[11px] font-medium {confidenceColor}" title="Confidence: how well-grounded in the system description">{confidencePct}%</span>
         {/if}
@@ -211,7 +283,7 @@
             {commentCount}
           </button>
         {/if}
-        {#if !readonly && threat.id && !editingDread}
+        {#if !readonly && threat.id && !editingDread && showDread}
           <button
             type="button"
             onclick={startEditDread}
@@ -219,6 +291,16 @@
             class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 text-c-faint hover:text-c-accent hover:bg-c-accent/10 rounded transition-colors">
             <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
             DREAD
+          </button>
+        {/if}
+        {#if !readonly && threat.id && !editingCvss && showCvss}
+          <button
+            type="button"
+            onclick={startEditCvss}
+            title="Edit CVSS vector"
+            class="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 text-c-faint hover:text-c-accent hover:bg-c-accent/10 rounded transition-colors">
+            <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+            CVSS
           </button>
         {/if}
       </div>
@@ -257,6 +339,59 @@
         <button
           type="button"
           onclick={() => { editingDread = false; dreadError = '' }}
+          class="btn-ghost text-xs px-3 py-1">
+          Cancel
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- CVSS edit form -->
+  {#if editingCvss}
+    <div class="bg-c-well border border-c-border rounded-panel p-3 space-y-2">
+      <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Edit CVSS v3.1 vector</p>
+      <div class="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {#each CVSS_METRICS as [, label, key, valueLabels]}
+          <label class="flex items-center justify-between gap-2 text-xs">
+            <span class="text-c-muted">{label}</span>
+            <select
+              bind:value={draftCvss[key]}
+              onchange={previewCvss}
+              class="bg-c-input border border-c-border-strong rounded px-1.5 py-0.5 text-xs font-mono text-c-text focus:outline-none focus:border-c-accent">
+              {#each Object.entries(valueLabels) as [code, codeLabel]}
+                <option value={code}>{codeLabel}</option>
+              {/each}
+            </select>
+          </label>
+        {/each}
+      </div>
+      {#if cvssPreview}
+        <p class="text-xs text-c-muted">Score preview: <span class="font-mono font-semibold text-c-text">{cvssScoreLabel(cvssPreview.score)}</span> ({cvssPreview.severity})</p>
+      {/if}
+      {#if cvssError}
+        <p class="text-xs text-c-critical">{cvssError}</p>
+      {/if}
+      <div class="flex gap-2 pt-1">
+        <button
+          type="button"
+          onclick={saveCvss}
+          disabled={savingCvss}
+          class="btn-primary text-xs px-3 py-1 disabled:opacity-50">
+          {savingCvss ? 'Saving…' : 'Save'}
+        </button>
+        {#if threat.cvss_vector || threat.cvss_score != null}
+          <button
+            type="button"
+            onclick={clearCvss}
+            disabled={savingCvss}
+            title="Remove the CVSS vector from this threat"
+            class="btn-ghost text-xs px-3 py-1 disabled:opacity-50">
+            Clear
+          </button>
+        {/if}
+        <button
+          type="button"
+          onclick={() => { editingCvss = false; cvssError = '' }}
           class="btn-ghost text-xs px-3 py-1">
           Cancel
         </button>

@@ -21,6 +21,7 @@
   let iterationCount = 3
   let hasAiComponents = false
   let strictMode = false
+  let scoringMethod = 'dread'
 
   let llmAnalysisLoading = false
   let llmDescriptionGaps = []
@@ -189,6 +190,7 @@
         framework,
         iteration_count: iterationCount,
         project_id: $currentProject?.id,
+        scoring_method: scoringMethod,
       })
       const fd = new FormData()
       fd.append('assumptions', JSON.stringify(assumptions))
@@ -510,6 +512,20 @@
             </div>
           </label>
         {/if}
+
+        <div class="pt-2 border-t border-c-border space-y-2">
+          <p class="text-sm font-medium text-c-text2">Severity scoring</p>
+          <p class="text-xs text-c-muted">DREAD stays the default. CVSS v3.1 adds an industry-standard score exports (SARIF/GitHub code scanning) can consume directly — the LLM only proposes the 8 base metrics; the score is always computed server-side.</p>
+          <div class="flex gap-2">
+            {#each [['dread', 'DREAD only'], ['cvss', 'CVSS only'], ['both', 'Both']] as [val, label]}
+              <button type="button" on:click={() => scoringMethod = val}
+                class="px-3 py-1.5 text-xs font-mono rounded-chip border transition-colors
+                  {scoringMethod === val ? 'chip-accent' : 'chip-gray'}">
+                {label}
+              </button>
+            {/each}
+          </div>
+        </div>
       </div>
 
     {:else if step === 8}
@@ -538,6 +554,8 @@
           <dd class="font-mono text-c-text2">{iterationCount}</dd>
           <dt class="text-c-muted">AI components</dt>
           <dd class="text-c-text2">{hasAiComponents ? 'Yes (MAESTRO enabled)' : 'No'}</dd>
+          <dt class="text-c-muted">Scoring</dt>
+          <dd class="text-c-text2 uppercase">{scoringMethod}</dd>
           <dt class="text-c-muted">Diagram</dt>
           <dd class="text-c-text2">{diagramFile ? diagramFile.name : '—'}</dd>
           <dt class="text-c-muted">Code source</dt>
