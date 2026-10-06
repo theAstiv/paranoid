@@ -30,6 +30,7 @@ from backend.routes.export import router as export_router
 from backend.routes.models import router as models_router
 from backend.routes.notifications import router as notifications_router
 from backend.routes.projects import router as projects_router
+from backend.routes.scoring import router as scoring_router
 from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
 from backend.security.csrf import CSRFMiddleware, parse_allowed_origins
@@ -268,6 +269,7 @@ app.include_router(projects_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(comments_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
+app.include_router(scoring_router, prefix="/api")
 
 
 @app.get("/")
