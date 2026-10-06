@@ -272,6 +272,29 @@ describe('ThreatCard', () => {
     expect(await screen.findByText(/Score preview:/)).toBeInTheDocument()
   })
 
+  it('ignores an out-of-order scoreCvss response from an earlier request', async () => {
+    const { scoreCvss } = await import('../lib/api.js')
+    let resolveFirst
+    scoreCvss
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ score: 2.0, severity: 'low' })
+
+    render(ThreatCard, { props: { threat: baseThreat } })
+    await fireEvent.click(screen.getByText('CVSS')) // request #1 (slow, unresolved)
+
+    const [attackVector] = screen.getAllByRole('combobox')
+    await fireEvent.change(attackVector, { target: { value: 'N' } }) // request #2 (fast)
+    await waitFor(() => expect(scoreCvss).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('2.0', { exact: false })).toBeInTheDocument()
+
+    // Request #1 finally resolves — its (now stale) result must not
+    // overwrite request #2's preview.
+    resolveFirst({ score: 9.8, severity: 'critical' })
+    await Promise.resolve()
+    expect(screen.queryByText('9.8', { exact: false })).toBeNull()
+    expect(screen.getByText('2.0', { exact: false })).toBeInTheDocument()
+  })
+
   const scoredThreat = {
     ...baseThreat,
     dread_damage: 8,

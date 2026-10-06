@@ -64,6 +64,7 @@
   let cvssError = $state('')
   let draftCvss = $state({})
   let cvssPreview = $state(null)
+  let cvssPreviewRequestId = 0
 
   function startEditCvss() {
     const defaults = Object.fromEntries(CVSS_METRICS.map(([, , key, labels]) => [key, Object.keys(labels)[0]]))
@@ -76,10 +77,18 @@
   }
 
   async function previewCvss() {
+    // A later dropdown change can start a request that resolves before an
+    // earlier one — drop any response that isn't for the most recent
+    // request, so a slow/out-of-order response never overwrites a newer
+    // preview with a stale score.
+    const requestId = ++cvssPreviewRequestId
     try {
-      cvssPreview = await scoreCvss(cvssVectorFromMetrics(draftCvss))
+      const result = await scoreCvss(cvssVectorFromMetrics(draftCvss))
+      if (requestId !== cvssPreviewRequestId) return
+      cvssPreview = result
       cvssError = ''
     } catch (e) {
+      if (requestId !== cvssPreviewRequestId) return
       cvssError = e.message
     }
   }

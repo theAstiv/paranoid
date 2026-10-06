@@ -33,7 +33,10 @@
     {#if expanded}
       <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
       <div class="fixed inset-0 z-10" on:click={() => expanded = false}></div>
-      <div class="absolute bottom-full left-0 mb-2 z-20 bg-c-panel border border-c-border rounded-panel shadow-xl p-3 w-56 animate-pop-in">
+      <!-- Opens downward (top-full), not upward like DreadBadge — on the
+           first threat card near the top of the page, an upward popover
+           has nowhere to go and gets clipped above the viewport. -->
+      <div class="absolute top-full left-0 mt-2 z-20 bg-c-panel border border-c-border rounded-panel shadow-xl p-3 w-56 animate-pop-in">
         <p class="font-mono text-[10px] font-semibold text-c-muted mb-2 uppercase tracking-wide">CVSS v3.1 breakdown</p>
         {#if severity}
           <p class="text-xs mb-2">
