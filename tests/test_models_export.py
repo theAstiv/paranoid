@@ -182,6 +182,40 @@ async def test_sarif_export_with_persisted_dependency_threat(test_db, tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_sarif_export_with_persisted_cvss_score(test_db, tmp_path: Path) -> None:
+    """A threat with a persisted cvss_vector must not lose the vector string
+    in `paranoid models export --format sarif`. Same bug class as the
+    dependency_ref test above: cvss_vector is a DB column, not a Threat
+    field, so model_construct() silently drops it unless re-parsed into
+    `cvss` first."""
+    model_id = await _make_stride_model("CVSS Model")
+    await crud.create_threat(
+        model_id=model_id,
+        name="Remote Code Execution",
+        description="An attacker exploits unauthenticated deserialization to execute arbitrary code.",
+        target="API Gateway",
+        impact="High",
+        likelihood="High",
+        mitigations=["Disable unsafe deserialization"],
+        stride_category="Tampering",
+        cvss_vector="AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        cvss_score=9.8,
+        cvss_severity="critical",
+    )
+
+    out = tmp_path / "cvss.sarif"
+    await _export_model_async(model_id=model_id, output_format="sarif", output=out)
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    results = sarif["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["cvss"]["vector"] == "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    rules = sarif["runs"][0]["tool"]["driver"]["rules"]
+    tampering_rule = next(r for r in rules if r["id"] == results[0]["ruleId"])
+    assert tampering_rule["properties"]["security-severity"] == "9.8"
+
+
+@pytest.mark.asyncio
 async def test_sarif_export_maestro_only_model(test_db, tmp_path: Path, capsys) -> None:
     """MAESTRO-only model: SARIF skips all threats and writes a valid empty SARIF."""
     model_id = await _make_maestro_model()

@@ -508,6 +508,11 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dependency_ref=(
                             threat.dependency_ref.model_dump() if threat.dependency_ref else None
                         ),
+                        attack_techniques=(
+                            [t.model_dump() for t in threat.attack_techniques]
+                            if threat.attack_techniques
+                            else None
+                        ),
                         cvss_vector=cvss_vector,
                         cvss_score=threat.cvss_score,
                         cvss_severity=threat.cvss_severity,

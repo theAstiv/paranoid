@@ -116,6 +116,68 @@ def test_pdf_without_dread() -> None:
     assert len(result) > 0
 
 
+_WITH_CVSS = {
+    "name": "Remote Code Execution",
+    "stride_category": "Tampering",
+    "maestro_category": None,
+    "target": "API Gateway",
+    "likelihood": "High",
+    "impact": "Full system compromise",
+    "description": "An attacker exploits unauthenticated deserialization to execute arbitrary code.",
+    "mitigations": ["[P] Disable unsafe deserialization"],
+    "dread_score": None,
+    "cvss_score": 9.8,
+    "cvss_severity": "critical",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+}
+
+
+def test_pdf_with_cvss() -> None:
+    """export_pdf() completes without error for a threat with a CVSS score,
+    and the summary table/detail line both render it."""
+    result = export_pdf([_WITH_CVSS], "test-model-id", "STRIDE", title="CVSS Test")
+
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+    assert len(result) > 500
+
+
+def test_pdf_without_cvss() -> None:
+    """export_pdf() completes without error for a threat with no CVSS score."""
+    result = export_pdf([_MAESTRO_NO_DREAD], "test-model-id", "MAESTRO")
+
+    assert isinstance(result, bytes)
+    assert len(result) > 0
+
+
+def test_pdf_summary_table_omits_cvss_column_when_absent() -> None:
+    """Direct unit test of _build_summary_table(): a dread-only threat set
+    must not grow an all-dash CVSS column just because the field exists on
+    the model."""
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    table = _build_summary_table([_STRIDE_FLAT], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "DREAD"]
+
+
+def test_pdf_summary_table_omits_dread_column_when_absent() -> None:
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    table = _build_summary_table([_WITH_CVSS], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "CVSS"]
+
+
+def test_pdf_summary_table_shows_both_columns_when_both_present() -> None:
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    both = {**_STRIDE_FLAT, "cvss_score": 9.8, "cvss_severity": "critical"}
+    table = _build_summary_table([both], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "DREAD", "CVSS"]
+
+
 def test_pdf_with_source_file() -> None:
     """export_pdf() accepts an optional source_file parameter without error."""
     result = export_pdf(

@@ -1,6 +1,7 @@
 """Tests for backend/export/_common.py — dependency findings helpers."""
 
 from backend.export._common import (
+    cvss_display,
     dependency_category_set,
     dependency_findings_rows,
     dependency_flags,
@@ -98,6 +99,44 @@ def test_dependency_flags_skipped_is_distinct_from_error() -> None:
     flags = dependency_flags({"skip_reason": "exceeds_direct_dependency_cap"})
     assert "skipped" in flags
     assert "error" not in flags
+
+
+def test_cvss_display_none_when_no_score() -> None:
+    assert cvss_display({}) is None
+    assert cvss_display({"cvss_score": None}) is None
+
+
+def test_cvss_display_flat_db_row_shape() -> None:
+    row = {
+        "cvss_score": 9.8,
+        "cvss_severity": "critical",
+        "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    }
+    assert cvss_display(row) == "9.8 (Critical) AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+
+def test_cvss_display_nested_model_dump_shape() -> None:
+    """model_dump() has no `cvss_vector` string — only the nested `cvss`
+    metrics dict — so the vector must be re-rendered from it."""
+    row = {
+        "cvss_score": 9.8,
+        "cvss_severity": "critical",
+        "cvss": {
+            "attack_vector": "N",
+            "attack_complexity": "L",
+            "privileges_required": "N",
+            "user_interaction": "N",
+            "scope": "U",
+            "confidentiality": "H",
+            "integrity": "H",
+            "availability": "H",
+        },
+    }
+    assert cvss_display(row) == "9.8 (Critical) AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+
+def test_cvss_display_without_severity_or_vector() -> None:
+    assert cvss_display({"cvss_score": 5.0}) == "5.0"
 
 
 def test_dependency_findings_rows_sorted_case_insensitively() -> None:

@@ -47,6 +47,134 @@ export function dreadLabel(score) {
 }
 
 /**
+ * Maps a CVSS v3.1 base score to its Tailwind text-color class, using
+ * CVSS's own published severity cut points (4.0/7.0/9.0) — distinct from
+ * dreadColor's bands (4/6/8), which average 5 independent 0-10 dimensions
+ * rather than scoring one combined 0-10 scale.
+ * @param {number} score
+ * @returns {string} Tailwind class
+ */
+export function cvssColor(score) {
+  if (score >= 9.0) return 'text-c-critical'
+  if (score >= 7.0) return 'text-c-high'
+  if (score >= 4.0) return 'text-c-medium'
+  return 'text-c-low'
+}
+
+/**
+ * Maps a CVSS v3.1 base score to its hex color for inline uses (e.g. SVG fill).
+ * @param {number} score
+ * @returns {string} hex color
+ */
+export function cvssHex(score) {
+  if (score >= 9.0) return '#FB6F84'
+  if (score >= 7.0) return '#FFA552'
+  if (score >= 4.0) return '#F5D04E'
+  return '#3FD0A8'
+}
+
+/**
+ * Maps a CVSS v3.1 base score to its chip CSS class.
+ * @param {number} score
+ * @returns {string}
+ */
+export function cvssChip(score) {
+  if (score >= 9.0) return 'chip-red'
+  if (score >= 7.0) return 'chip-orange'
+  if (score >= 4.0) return 'chip-amber'
+  return 'chip-green'
+}
+
+/**
+ * Returns the CVSS v3.1 qualitative severity rating for a score, matching
+ * backend.scoring.cvss31.severity_for_score's bands.
+ * @param {number} score
+ * @returns {'Critical'|'High'|'Medium'|'Low'|'None'}
+ */
+export function cvssLabel(score) {
+  if (score >= 9.0) return 'Critical'
+  if (score >= 7.0) return 'High'
+  if (score >= 4.0) return 'Medium'
+  if (score > 0) return 'Low'
+  return 'None'
+}
+
+/**
+ * Formats a CVSS score to one decimal place for display — a raw score
+ * round-trips through JSON as a bare number (7.0 becomes JS `7`), which
+ * would otherwise render as "CVSS 7" instead of "CVSS 7.0".
+ * @param {number} score
+ * @returns {string}
+ */
+export function cvssScoreLabel(score) {
+  return Number(score).toFixed(1)
+}
+
+/**
+ * The 8 CVSS v3.1 base metrics: [vectorCode, displayLabel, fieldName, valueLabelsByCode].
+ * Shared by CvssBadge (read-only breakdown) and ThreatCard (edit form) so
+ * the metric list/labels/vector-string parsing live in exactly one place.
+ */
+export const CVSS_METRICS = [
+  ['AV', 'Attack Vector', 'attack_vector', { N: 'Network', A: 'Adjacent', L: 'Local', P: 'Physical' }],
+  ['AC', 'Attack Complexity', 'attack_complexity', { L: 'Low', H: 'High' }],
+  ['PR', 'Privileges Required', 'privileges_required', { N: 'None', L: 'Low', H: 'High' }],
+  ['UI', 'User Interaction', 'user_interaction', { N: 'None', R: 'Required' }],
+  ['S', 'Scope', 'scope', { U: 'Unchanged', C: 'Changed' }],
+  ['C', 'Confidentiality', 'confidentiality', { N: 'None', L: 'Low', H: 'High' }],
+  ['I', 'Integrity', 'integrity', { N: 'None', L: 'Low', H: 'High' }],
+  ['A', 'Availability', 'availability', { N: 'None', L: 'Low', H: 'High' }],
+]
+
+/**
+ * Parses a CVSS v3.1 vector string ("AV:N/AC:L/...", optional "CVSS:3.1/"
+ * prefix) into a {field_name: code} metrics object. Unknown metric codes
+ * are ignored rather than raising — this only feeds UI display/editing, and
+ * the server is the one source of truth that validates the vector.
+ * @param {string} vector
+ * @returns {Record<string, string>}
+ */
+export function parseCvssVector(vector) {
+  const out = {}
+  if (!vector) return out
+  for (const part of vector.replace(/^CVSS:3\.1\//, '').split('/')) {
+    const [code, value] = part.split(':')
+    const metric = CVSS_METRICS.find(([metricCode]) => metricCode === code)
+    if (metric) out[metric[2]] = value
+  }
+  return out
+}
+
+/**
+ * Renders a {field_name: code} metrics object back to the canonical
+ * "AV:N/AC:L/..." vector string, in CVSS_METRICS' fixed order.
+ * @param {Record<string, string>} metrics
+ * @returns {string}
+ */
+export function cvssVectorFromMetrics(metrics) {
+  return CVSS_METRICS.map(([code, , field]) => `${code}:${metrics[field]}`).join('/')
+}
+
+/**
+ * Normalizes a threat's CVSS metrics regardless of shape.
+ *
+ * `cvss_vector` (flat, from the DB/API) is checked first: it's what was
+ * actually persisted. The nested `cvss` object (from a live SSE event, the
+ * LLM's raw per-threat output) is only used as a fallback — if a threat
+ * object ever carried both (e.g. a stale prop after an edit), preferring
+ * the flat field avoids showing metrics that no longer match the saved
+ * vector/score.
+ * @param {object|null} threat
+ * @returns {Record<string, string>|null}
+ */
+export function normalizeCvssMetrics(threat) {
+  if (!threat) return null
+  if (threat.cvss_vector) return parseCvssVector(threat.cvss_vector)
+  if (threat.cvss && typeof threat.cvss === 'object') return threat.cvss
+  return null
+}
+
+/**
  * Truncates a UUID-like id to its first 8 chars for display.
  * @param {string} id
  * @returns {string}

@@ -897,6 +897,58 @@ async def test_persist_pipeline_event_saves_threat_cvss_fields(saved_model, test
 
 
 @pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_threat_attack_techniques(saved_model, test_db):
+    """A COMPLETE event's threat with matched ATT&CK/ATLAS techniques
+    persists attack_techniques through the web SSE path. Before this fix,
+    _persist_pipeline_event() never passed attack_techniques to
+    crud.create_threat() at all (backend/db/persist.py's CLI/API-run path
+    did), so every web-created model lost its technique matches regardless
+    of whether map_techniques found any — a pre-existing gap from #115."""
+    from backend.models.state import StrideCategory, TechniqueRef, Threat, ThreatsList
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    threat = Threat(
+        name="Compromise Software Supply Chain",
+        stride_category=StrideCategory.TAMPERING,
+        description="x" * 60,
+        target="evil-pkg@1.0.0",
+        impact="High",
+        likelihood="Medium",
+        mitigations=["Pin the exact version", "Review the capability diff"],
+        attack_techniques=[
+            TechniqueRef(
+                id="T1195.002",
+                name="Compromise Software Supply Chain",
+                url="https://attack.mitre.org/techniques/T1195/002",
+                confidence=0.9,
+                method="table",
+            )
+        ],
+    )
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": ThreatsList(threats=[threat])},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    threats = await crud.list_threats(saved_model["id"])
+    assert len(threats) == 1
+    assert threats[0]["attack_techniques"] == [
+        {
+            "id": "T1195.002",
+            "name": "Compromise Software Supply Chain",
+            "url": "https://attack.mitre.org/techniques/T1195/002",
+            "confidence": 0.9,
+            "method": "table",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_persist_pipeline_event_saves_dependency_scans(saved_model, test_db):
     """A COMPLETE event's dependency_context persists to dependency_scans."""
     from backend.models.dependencies import (

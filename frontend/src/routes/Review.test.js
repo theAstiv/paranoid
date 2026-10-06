@@ -8,6 +8,7 @@ vi.mock('svelte-spa-router', () => ({
 }))
 
 vi.mock('../lib/api.js', () => ({
+  getModel: vi.fn(),
   getModelThreats: vi.fn(),
   updateThreat: vi.fn(),
   bulkUpdateThreatStatus: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
 import { notify, threats, currentModel } from '../lib/stores.js'
 
 function threat(overrides = {}) {
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   threats.set([])
   currentModel.set(null)
+  getModel.mockResolvedValue({ id: 'm1', title: 'Fetched Model', scoring_method: 'dread' })
   getModelThreats.mockResolvedValue([])
   updateThreat.mockResolvedValue({})
   bulkUpdateThreatStatus.mockResolvedValue({ updated: 0 })
@@ -65,6 +67,115 @@ describe('Review — loading', () => {
     currentModel.set({ id: 'm1', title: 'Payments Service' })
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+  })
+
+  it('fetches the model when currentModel is unset (e.g. a direct page load)', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
+    await waitFor(() => expect(screen.getByText('Fetched Model')).toBeInTheDocument())
+  })
+
+  it('fetches the model when currentModel is for a different model', async () => {
+    currentModel.set({ id: 'other-model', title: 'Stale' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
+  })
+
+  it('does not re-fetch the model when currentModel already matches', async () => {
+    currentModel.set({ id: 'm1', title: 'Payments Service' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    expect(getModel).not.toHaveBeenCalled()
+  })
+
+  it('still loads the threat list when the model fetch fails, falling back to dread gating', async () => {
+    getModel.mockRejectedValue(new Error('model fetch boom'))
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+
+    // The threat list load must not be dragged down by the failed model fetch.
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+    expect(notify).not.toHaveBeenCalledWith('error', expect.stringContaining('model fetch boom'))
+    // No scoring_method known -> falls back to 'dread', not "show everything".
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /CVSS/ })).toBeNull()
+  })
+})
+
+describe('Review — scoring method gating', () => {
+  it('passes the model scoring_method through to ThreatCard (dread-only hides CVSS)', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'dread' })
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical', cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+
+    expect(screen.getByRole('button', { name: /DREAD 6/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /CVSS/ })).toBeNull()
+  })
+
+  it('passes the model scoring_method through to ThreatCard (cvss-only hides DREAD)', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    getModelThreats.mockResolvedValue([
+      threat({
+        id: 't1', name: 'Scored',
+        dread_damage: 8, dread_reproducibility: 6, dread_exploitability: 7,
+        dread_affected_users: 5, dread_discoverability: 4,
+        cvss_score: 9.8, cvss_severity: 'critical', cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Scored')).toBeInTheDocument())
+
+    expect(screen.queryByRole('button', { name: /DREAD/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /CVSS 9.8/ })).toBeInTheDocument()
+  })
+
+  it('hides the CVSS range filter and sort option on a dread-only model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'dread' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.queryByText('CVSS range')).toBeNull()
+    expect(screen.getByText('DREAD range')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'CVSS score' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'DREAD score' })).toBeInTheDocument()
+  })
+
+  it('hides the DREAD range filter and sort option on a cvss-only model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.queryByText('DREAD range')).toBeNull()
+    expect(screen.getByText('CVSS range')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'DREAD score' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'CVSS score' })).toBeInTheDocument()
+  })
+
+  it('shows both range filters and sort options on a both model', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModelThreats).toHaveBeenCalled())
+    await openFilters()
+
+    expect(screen.getByText('DREAD range')).toBeInTheDocument()
+    expect(screen.getByText('CVSS range')).toBeInTheDocument()
   })
 })
 
@@ -277,6 +388,40 @@ describe('Review — DREAD and confidence ranges', () => {
 
     expect(screen.getByText('No confidence')).toBeInTheDocument()
     expect(screen.queryByText('Unsure')).toBeNull()
+  })
+
+  it('filters out threats whose CVSS score falls outside the range', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Critical CVSS', cvss_score: 9.8 }),
+      threat({ id: 't2', name: 'Low CVSS', cvss_score: 2.0 }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Critical CVSS')).toBeInTheDocument())
+
+    await openFilters()
+    const cvssMin = screen.getAllByRole('spinbutton')[4]
+    await fireEvent.input(cvssMin, { target: { value: '8' } })
+
+    expect(screen.getByText('Critical CVSS')).toBeInTheDocument()
+    expect(screen.queryByText('Low CVSS')).toBeNull()
+  })
+
+  it('keeps threats that have no CVSS score at all', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Scored', cvss_score: 2.0 }),
+      threat({ id: 't2', name: 'No CVSS' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('No CVSS')).toBeInTheDocument())
+
+    await openFilters()
+    const cvssMin = screen.getAllByRole('spinbutton')[4]
+    await fireEvent.input(cvssMin, { target: { value: '8' } })
+
+    expect(screen.getByText('No CVSS')).toBeInTheDocument()
+    expect(screen.queryByText('Scored')).toBeNull()
   })
 })
 
@@ -570,6 +715,39 @@ describe('Review — bulk actions', () => {
 
     await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t2'], 'rejected'))
     expect(get(threats).find(t => t.id === 't1').status).toBe('pending')
+  })
+
+  it('on a cvss model, "Approve Critical+High" includes a CVSS-critical threat with no DREAD score', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'cvss' })
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'CVSS critical', cvss_score: 9.1, cvss_severity: 'critical' }),
+      threat({ id: 't2', name: 'Low one', cvss_score: 2.0, cvss_severity: 'low' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText(/Approve Critical\+High/)).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
+  })
+
+  it('on a both model, "Approve Critical+High" uses the higher-ranked of DREAD and CVSS', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([
+      // DREAD says medium, CVSS says critical -> must count as critical.
+      threat({ id: 't1', name: 'Mixed severity', dread_score: 5.5, cvss_score: 9.1, cvss_severity: 'critical' }),
+      threat({ id: 't2', name: 'Low one', dread_score: 2, cvss_score: 2.0, cvss_severity: 'low' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText(/Approve Critical\+High/)).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
   })
 
   it('hides bulk-action buttons when there are no pending threats', async () => {

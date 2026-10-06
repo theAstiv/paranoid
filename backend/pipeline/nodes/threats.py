@@ -6,7 +6,13 @@ gap_analysis() for identifying coverage gaps across STRIDE/MAESTRO categories.
 
 from backend.models.enums import DiagramFormat, Framework
 from backend.models.extended import CodeSummary, DiagramData, ImageContent
-from backend.models.state import AssetsList, FlowsList, GapAnalysis, ThreatsList
+from backend.models.state import (
+    AssetsList,
+    FlowsList,
+    GapAnalysis,
+    ThreatsList,
+    ThreatsListDreadOnly,
+)
 from backend.pipeline.nodes.helpers import (
     build_assumptions_section,
     build_xml_tag,
@@ -15,6 +21,7 @@ from backend.pipeline.nodes.helpers import (
     parse_structured_input,
 )
 from backend.pipeline.prompts import (
+    cvss_scoring_section,
     maestro_gap_prompt,
     maestro_improve_prompt,
     maestro_threats_prompt,
@@ -24,6 +31,18 @@ from backend.pipeline.prompts import (
 )
 from backend.providers.base import LLMProvider
 from backend.scoring.cvss31 import score_and_severity_from_metrics
+
+
+def _insert_before_closing_instructions(prompt: str, section: str) -> str:
+    """Splice `section` just before the prompt's closing </instructions>
+    tag, so it stays inside the instructions block instead of trailing
+    after it. Falls back to a plain append if the tag isn't found (keeps
+    this safe against a future prompt rewrite that drops the tag)."""
+    tag = "</instructions>"
+    idx = prompt.rfind(tag)
+    if idx == -1:
+        return prompt + section
+    return prompt[:idx] + section + "\n" + prompt[idx:]
 
 
 async def generate_threats(
@@ -62,11 +81,12 @@ async def generate_threats(
         shared_context: Pre-built stable context from build_shared_context(). When
             provided, the stable parts (diagram/description/assets/flows/code_summary)
             are skipped in the prompt and sent as a cacheable prefix instead.
-        scoring_method: "dread" | "cvss" | "both". Controls only what the
-            *returned* threats carry — the prompt doesn't change yet (that
-            lands with the CVSS instruction block). When "dread", any `cvss`
-            metrics a provider returns anyway are force-cleared below, same
-            as cvss_score/cvss_severity.
+        scoring_method: "dread" | "cvss" | "both". Controls the prompt (the
+            CVSS instruction block is appended only when this is not
+            "dread") and the response schema (dread-only runs use
+            ThreatsListDreadOnly, which hides `cvss`). When "dread", any
+            `cvss` metrics a provider returns anyway are force-cleared
+            below, same as cvss_score/cvss_severity.
 
     Returns:
         ThreatsList with generated threats
@@ -88,6 +108,20 @@ async def generate_threats(
         system_prompt = maestro_threats_prompt()
     else:
         system_prompt = stride_threats_prompt()
+
+    # CVSS instruction block is spliced in only when requested — mirrors the
+    # "append only if relevant" pattern helpers.py uses for
+    # dependency_capabilities. `Threat.cvss` is also absent from the schema
+    # on a dread-only call (ThreatsListDreadOnly, selected below), so this
+    # prompt text is what makes a cvss/both run's LLM fill the field in; the
+    # force-clear further down is what enforces "nothing changes unless
+    # chosen" even if a provider ignores both and returns it anyway.
+    # Spliced before the closing </instructions> tag, not appended after it —
+    # all four prompt templates wrap their numbered sections in a single
+    # <instructions>...</instructions> block, and appending after it would
+    # put this section outside that block entirely.
+    if scoring_method != "dread":
+        system_prompt = _insert_before_closing_instructions(system_prompt, cvss_scoring_section())
 
     # Build prompt parts.
     # When shared_context is provided, stable parts (diagram, description, assets,
@@ -183,14 +217,25 @@ async def generate_threats(
             )
         ]
 
-    # Generate structured output
-    response = await provider.generate_structured(
+    # Generate structured output. Dread-only runs use ThreatsListDreadOnly,
+    # whose schema hides `cvss` entirely (2,788 chars vs. 4,689 measured) —
+    # see the comment above _ThreatDreadOnly in backend/models/state.py (not
+    # its docstring, which is kept to one line on purpose — see that
+    # comment). The returned threats are normalized back to plain
+    # ThreatsList/Threat right after the call so every downstream caller
+    # (force-compute below, the runner, persistence) sees one consistent
+    # shape regardless of scoring_method.
+    response_model = ThreatsListDreadOnly if scoring_method == "dread" else ThreatsList
+    raw_response = await provider.generate_structured(
         prompt=full_prompt,
-        response_model=ThreatsList,
+        response_model=response_model,
         temperature=temperature,
         max_tokens=4096,
         images=images,
         shared_context=shared_context,
+    )
+    response = (
+        raw_response if scoring_method != "dread" else ThreatsList(threats=raw_response.threats)
     )
 
     # Defense in depth: source/dependency_ref are hidden from the schema sent

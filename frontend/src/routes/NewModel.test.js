@@ -242,6 +242,23 @@ describe('NewModel — step 7 (AI components)', () => {
     expect(screen.getByText(/MAESTRO framework already generates/)).toBeInTheDocument()
     expect(screen.queryByText('System includes AI/ML components')).toBeNull()
   })
+
+  it('defaults scoring method to DREAD only', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(7)
+    const btn = screen.getByRole('button', { name: 'DREAD only' })
+    expect(btn.className).toContain('chip-accent')
+  })
+
+  it('switches the selected scoring method chip on click', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(7)
+    await fireEvent.click(screen.getByRole('button', { name: 'Both' }))
+    expect(screen.getByRole('button', { name: 'Both' }).className).toContain('chip-accent')
+    expect(screen.getByRole('button', { name: 'DREAD only' }).className).not.toContain('chip-accent')
+  })
 })
 
 describe('NewModel — step 8 (review & submit)', () => {
@@ -276,6 +293,32 @@ describe('NewModel — step 8 (review & submit)', () => {
     await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
     expect(subscribeToRun.mock.calls[0][0]).toBe('model-123')
     await waitFor(() => expect(push).toHaveBeenCalledWith('/models/model-123'))
+  })
+
+  it('defaults scoring_method to dread when creating the model', async () => {
+    createModel.mockResolvedValue({ id: 'model-123' })
+    await toReview()
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(createModel).toHaveBeenCalledWith(
+      expect.objectContaining({ scoring_method: 'dread' })
+    ))
+  })
+
+  it('passes the chosen scoring_method when creating the model', async () => {
+    createModel.mockResolvedValue({ id: 'model-123' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'My System' } })
+    await goToStep(7)
+    await fireEvent.click(screen.getByRole('button', { name: 'Both' }))
+    await goToStep(1)
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(createModel).toHaveBeenCalledWith(
+      expect.objectContaining({ scoring_method: 'both' })
+    ))
   })
 
   it('notifies and stops submitting when model creation fails', async () => {

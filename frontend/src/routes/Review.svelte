@@ -4,7 +4,7 @@
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
-  import { getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+  import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
   import { threats, currentModel, notify } from '../lib/stores.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
@@ -19,6 +19,8 @@
   let selectedCategories = $state([])
   let dreadMin = $state(0)
   let dreadMax = $state(10)
+  let cvssMin = $state(0)
+  let cvssMax = $state(10)
   let confMin = $state(0)
   let confMax = $state(100)
   let showFilters = $state(false)
@@ -35,20 +37,49 @@
     'Information Disclosure', 'Denial of Service', 'Elevation of Privilege'
   ]
 
-  function severityOf(t) {
+  const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 }
+
+  function dreadSeverityOf(t) {
     const score = dreadScoreOf(t)
-    if (score != null) {
-      if (score >= 8) return 'critical'
-      if (score > 6) return 'high'
-      if (score >= 4) return 'medium'
-      return 'low'
-    }
+    if (score == null) return null
+    if (score >= 8) return 'critical'
+    if (score > 6) return 'high'
+    if (score >= 4) return 'medium'
+    return 'low'
+  }
+
+  function cvssSeverityOf(t) {
+    const score = cvssScoreOf(t)
+    if (score == null) return null
+    if (score >= 9.0) return 'critical'
+    if (score >= 7.0) return 'high'
+    if (score >= 4.0) return 'medium'
+    if (score > 0) return 'low'
+    return null
+  }
+
+  function likelihoodSeverityOf(t) {
     const l = String(t.likelihood ?? '').toLowerCase()
     if (l === 'critical') return 'critical'
     if (l === 'high') return 'high'
     if (l === 'medium' || l === 'med') return 'medium'
     if (l === 'low') return 'low'
     return 'unknown'
+  }
+
+  /** The band bulk actions and the severity chip key off. Reads the score(s)
+   * that actually match the model's scoring_method — using DREAD alone on
+   * a cvss-only model would silently skip a CVSS-only threat from "Approve
+   * Critical+High" since it has no dread_score. On "both", takes the
+   * higher-ranked of the two bands. */
+  function severityOf(t) {
+    if (scoringMethod === 'cvss') return cvssSeverityOf(t) ?? likelihoodSeverityOf(t)
+    if (scoringMethod === 'both') {
+      const bands = [dreadSeverityOf(t), cvssSeverityOf(t)].filter(Boolean)
+      if (bands.length === 0) return likelihoodSeverityOf(t)
+      return bands.reduce((best, b) => (SEVERITY_RANK[b] > SEVERITY_RANK[best] ? b : best))
+    }
+    return dreadSeverityOf(t) ?? likelihoodSeverityOf(t)
   }
 
   function dreadScoreOf(t) {
@@ -73,6 +104,16 @@
     return s == null || (s >= dreadMin && s <= dreadMax)
   }
 
+  function cvssScoreOf(t) {
+    return t.cvss_score != null ? Number(t.cvss_score) : null
+  }
+
+  /** A threat with no CVSS score is never hidden by the range filter. */
+  function cvssInRange(t) {
+    const s = cvssScoreOf(t)
+    return s == null || (s >= cvssMin && s <= cvssMax)
+  }
+
   /** A threat with no confidence value is never hidden by the range filter. */
   function confInRange(t) {
     if (t.confidence == null) return true
@@ -86,6 +127,7 @@
       (selectedCategories.length === 0 || selectedCategories.includes(t.stride_category)) &&
       (sourceFilter === 'all' || t.source === sourceFilter) &&
       dreadInRange(t) &&
+      cvssInRange(t) &&
       confInRange(t)
     )
     return sortThreats(matched, sortBy)
@@ -96,6 +138,8 @@
     const copy = [...list]
     if (by === 'dread') {
       copy.sort((a, b) => (dreadScoreOf(b) ?? -1) - (dreadScoreOf(a) ?? -1))
+    } else if (by === 'cvss') {
+      copy.sort((a, b) => (cvssScoreOf(b) ?? -1) - (cvssScoreOf(a) ?? -1))
     } else if (by === 'confidence') {
       copy.sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1))
     } else if (by === 'category') {
@@ -116,9 +160,23 @@
 
   onMount(async () => {
     try {
+      // scoring_method (which badges to show per threat) lives on the model.
+      // $currentModel is usually already set by whoever navigated here
+      // (Results.svelte), but a direct/refreshed load of this route wouldn't
+      // have it — fetch it ourselves rather than silently falling back to
+      // 'dread' (scoringMethod's default when $currentModel is unset).
+      // .catch() here, not the outer try/catch: a failed model fetch must
+      // not fail the whole threat list load — it only means the fallback
+      // 'dread' gating applies instead of the real scoring_method.
+      const needsModel = !$currentModel || $currentModel.id !== params.id
       const [data, rawCounts] = await Promise.all([
         getModelThreats(params.id),
         getCommentCounts(params.id).catch(() => []),
+        needsModel
+          ? getModel(params.id)
+              .then(m => currentModel.set(m))
+              .catch(err => console.warn('Failed to load model for scoring_method gating:', err.message))
+          : Promise.resolve(),
       ])
       threats.set(data)
       for (const row of rawCounts) {
@@ -132,6 +190,10 @@
       loading = false
     }
   })
+
+  const scoringMethod = $derived($currentModel?.scoring_method ?? 'dread')
+  const showDread = $derived(scoringMethod === 'dread' || scoringMethod === 'both')
+  const showCvss = $derived(scoringMethod === 'cvss' || scoringMethod === 'both')
 
   async function handleApprove(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'approved' } : t))
@@ -324,7 +386,8 @@
           <select bind:value={sortBy}
             class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
             <option value="default">Default</option>
-            <option value="dread">DREAD score</option>
+            {#if showDread}<option value="dread">DREAD score</option>{/if}
+            {#if showCvss}<option value="cvss">CVSS score</option>{/if}
             <option value="confidence">Confidence</option>
             <option value="category">Category</option>
           </select>
@@ -332,17 +395,19 @@
       </div>
 
       <div class="flex flex-wrap gap-6">
-        <!-- DREAD range -->
-        <div class="space-y-1">
-          <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">DREAD range</p>
-          <div class="flex items-center gap-2">
-            <input type="number" min="0" max="10" step="0.5" bind:value={dreadMin}
-              class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
-            <span class="text-c-faint text-xs">–</span>
-            <input type="number" min="0" max="10" step="0.5" bind:value={dreadMax}
-              class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+        {#if showDread}
+          <!-- DREAD range -->
+          <div class="space-y-1">
+            <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">DREAD range</p>
+            <div class="flex items-center gap-2">
+              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMin}
+                class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+              <span class="text-c-faint text-xs">–</span>
+              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMax}
+                class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+            </div>
           </div>
-        </div>
+        {/if}
 
         <!-- Confidence range -->
         <div class="space-y-1">
@@ -355,6 +420,20 @@
               class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
           </div>
         </div>
+
+        {#if showCvss}
+          <!-- CVSS range -->
+          <div class="space-y-1">
+            <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">CVSS range</p>
+            <div class="flex items-center gap-2">
+              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMin}
+                class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+              <span class="text-c-faint text-xs">–</span>
+              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMax}
+                class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -405,10 +484,12 @@
           selected={selectedIds.has(threat.id)}
           modelId={params.id}
           commentCount={commentCounts[threat.id] || 0}
+          {scoringMethod}
           onapprove={handleApprove}
           onreject={handleReject}
           ontoggleSelect={handleToggleSelect}
           ondreadUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
+          oncvssUpdated={updated => threats.update(ts => ts.map(t => t.id === updated.id ? { ...t, ...updated } : t))}
           oncommentChange={detail => { commentCounts[threat.id] = (commentCounts[threat.id] || 0) + detail.delta }} />
       {/each}
     </div>

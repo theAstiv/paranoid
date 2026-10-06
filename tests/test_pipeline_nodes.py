@@ -14,6 +14,7 @@ from backend.models.state import (
     GapAnalysis,
     SummaryState,
     ThreatsList,
+    ThreatsListDreadOnly,
 )
 from backend.pipeline import nodes
 from backend.pipeline.nodes import helpers
@@ -406,6 +407,167 @@ async def test_generate_threats_default_scoring_method_clears_cvss(mock_provider
     assert threat.cvss_severity is None
 
 
+@pytest.mark.asyncio
+async def test_generate_threats_dread_only_prompt_has_no_cvss_section(mock_provider):
+    """The CVSS instruction block is appended only when scoring_method !=
+    "dread" — mirrors the dependency_capabilities "append only if relevant"
+    pattern in helpers.py. A dread-only run's prompt must not mention CVSS
+    at all, so a dread-only demo/screenshot never shows the new section."""
+    await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        scoring_method="dread",
+    )
+
+    assert "CVSS" not in mock_provider.last_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scoring_method", "expected_model"),
+    [("dread", ThreatsListDreadOnly), ("cvss", ThreatsList), ("both", ThreatsList)],
+)
+async def test_generate_threats_requests_schema_matching_scoring_method(
+    mock_provider, scoring_method, expected_model
+):
+    """A dread-only run must request ThreatsListDreadOnly (the schema
+    without `cvss`) from the provider — not just avoid showing it in the
+    prompt. cvss/both runs still need the full ThreatsList schema."""
+    await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        scoring_method=scoring_method,
+    )
+
+    threat_calls = [
+        c for c in mock_provider.calls if c["response_model"] in (ThreatsList, ThreatsListDreadOnly)
+    ]
+    assert len(threat_calls) == 1
+    assert threat_calls[0]["response_model"] is expected_model
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_normalizes_real_threatslistdreadonly_response(mock_provider):
+    """MockProvider canonicalizes ThreatsListDreadOnly -> ThreatsList before
+    returning (so other tests can share fixtures/overrides across both), so
+    nothing above exercises what a *real* provider does: validate the raw
+    response directly against the schema it was asked for, producing actual
+    _ThreatDreadOnly instances. Use a bare-bones fake that skips the
+    canonicalization and returns a real ThreatsListDreadOnly, to confirm
+    `ThreatsList(threats=raw_response.threats)` in generate_threats()
+    normalizes those subclass instances without error and that the
+    force-clear still nulls cvss/cvss_score/cvss_severity on them."""
+    from backend.models.state import ThreatsListDreadOnly
+
+    class _RealSchemaProvider(MockProvider):
+        async def generate_structured(self, prompt, response_model, **kwargs):
+            self.last_prompt = prompt
+            if response_model is ThreatsListDreadOnly:
+                return ThreatsListDreadOnly.model_validate(
+                    {
+                        "threats": [
+                            {
+                                "name": "SQL Injection",
+                                "stride_category": "Tampering",
+                                "description": "x " * 40,
+                                "target": "DB",
+                                "impact": "high",
+                                "likelihood": "high",
+                                "mitigations": ["pin version", "audit"],
+                            }
+                        ]
+                    }
+                )
+            return await super().generate_structured(prompt, response_model, **kwargs)
+
+    provider = _RealSchemaProvider()
+    result = await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=provider,
+        scoring_method="dread",
+    )
+
+    assert isinstance(result, ThreatsList)
+    threat = result.threats[0]
+    # Confirms the subclass instance round-trips cleanly through
+    # ThreatsList(threats=raw_response.threats) and model_dump().
+    threat.model_dump()
+    assert threat.cvss is None
+    assert threat.cvss_score is None
+    assert threat.cvss_severity is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scoring_method", ["cvss", "both"])
+@pytest.mark.parametrize("framework", [Framework.STRIDE, Framework.MAESTRO])
+async def test_generate_threats_cvss_prompt_has_scoring_section(
+    mock_provider, scoring_method, framework
+):
+    """Both STRIDE and MAESTRO prompts get the CVSS section when
+    scoring_method is "cvss" or "both", for both the initial and
+    improve-iteration templates."""
+    mock_provider._framework = framework
+
+    await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=framework,
+        provider=mock_provider,
+        scoring_method=scoring_method,
+    )
+
+    assert "CVSS v3.1 Base Scoring" in mock_provider.last_prompt
+    assert "Attack Vector (AV)" in mock_provider.last_prompt
+
+    # Must land *inside* the <instructions> block, not appended after its
+    # closing tag — all four prompt templates wrap their numbered sections
+    # in one <instructions>...</instructions> block.
+    prompt = mock_provider.last_prompt
+    cvss_idx = prompt.index("CVSS v3.1 Base Scoring")
+    closing_idx = prompt.rindex("</instructions>")
+    assert cvss_idx < closing_idx
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_cvss_prompt_improve_iteration_has_scoring_section(
+    mock_provider,
+):
+    """The improve-iteration prompt (existing_threats + gap_analysis set)
+    also gets the CVSS section when requested."""
+    await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+        existing_threats=make_stride_threats(),
+        gap_analysis="Missing coverage for X",
+        scoring_method="cvss",
+    )
+
+    assert "CVSS v3.1 Base Scoring" in mock_provider.last_prompt
+
+
 class TestThreatSchemaHidesDependencyProvenance:
     """R1: source/dependency_ref must never appear in the JSON schema sent to
     an LLM provider — that schema is the structured-output contract every
@@ -473,6 +635,31 @@ class TestThreatSchemaCvssScoreNeverLlmSourced:
         }
         for field_schema in properties.values():
             assert "enum" in field_schema, field_schema
+
+    def test_dread_only_schema_hides_cvss_entirely(self):
+        """ThreatsListDreadOnly (the response model generate_threats() uses
+        for scoring_method="dread") must not mention `cvss` at all — unlike
+        ThreatsList, where `cvss` is present but score/severity are hidden.
+        This is what actually avoids paying for the field on a dread-only
+        call, not just a comment claiming the cost is accepted."""
+        import json
+
+        from backend.models.state import ThreatsListDreadOnly
+
+        schema = ThreatsListDreadOnly.model_json_schema()
+        threat_def = schema.get("$defs", {}).get("_ThreatDreadOnly", {})
+        assert "cvss" not in threat_def.get("properties", {})
+        assert "cvss_score" not in threat_def.get("properties", {})
+        assert "cvss_severity" not in threat_def.get("properties", {})
+        assert "Cvss31Metrics" not in schema.get("$defs", {})
+
+        # Measured, not asserted-to-be-smaller-by-magic: confirms the schema
+        # sent on a dread-only call is substantially smaller than the
+        # cvss/both schema (full ThreatsList), which is what the #117 review
+        # flagged as an unmeasured ~72% schema growth.
+        full_chars = len(json.dumps(ThreatsList.model_json_schema()))
+        dread_only_chars = len(json.dumps(schema))
+        assert dread_only_chars < full_chars * 0.7
 
 
 @pytest.mark.asyncio

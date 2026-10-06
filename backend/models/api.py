@@ -84,6 +84,23 @@ class UpdateThreatRequest(BaseModel):
             raise ValueError(str(exc)) from exc
 
 
+class CvssScoreRequest(BaseModel):
+    """Request body for POST /api/cvss/score — recompute score+severity
+    from a draft vector as the reviewer edits the 8 dropdowns, so the
+    frontend never needs to port the CVSS v3.1 formula to JS."""
+
+    vector: str
+
+    @field_validator("vector")
+    @classmethod
+    def _validate_vector(cls, value: str) -> str:
+        """Same parse-and-re-render as UpdateThreatRequest.cvss_vector."""
+        try:
+            return to_vector_string(parse_vector(value))
+        except Cvss31Error as exc:
+            raise ValueError(str(exc)) from exc
+
+
 class BulkStatusRequest(BaseModel):
     """Request body for POST /api/threats/bulk-status."""
 

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials,
   dependencyCategorySet, dependencyFlags, dependencyDisplayName,
+  cvssColor, cvssHex, cvssChip, cvssLabel, cvssScoreLabel,
+  CVSS_METRICS, parseCvssVector, cvssVectorFromMetrics, normalizeCvssMetrics,
 } from './utils.js'
 
 describe('dreadColor', () => {
@@ -47,6 +49,122 @@ describe('dreadLabel', () => {
     expect(dreadLabel(6)).toBe('High')
     expect(dreadLabel(4)).toBe('Medium')
     expect(dreadLabel(0)).toBe('Low')
+  })
+})
+
+describe('cvssColor', () => {
+  it('returns critical color for score >= 9.0', () => {
+    expect(cvssColor(9.0)).toBe('text-c-critical')
+    expect(cvssColor(10)).toBe('text-c-critical')
+  })
+  it('returns high color for score >= 7.0 and < 9.0', () => {
+    expect(cvssColor(7.0)).toBe('text-c-high')
+    expect(cvssColor(8.9)).toBe('text-c-high')
+  })
+  it('returns medium color for score >= 4.0 and < 7.0', () => {
+    expect(cvssColor(4.0)).toBe('text-c-medium')
+    expect(cvssColor(6.9)).toBe('text-c-medium')
+  })
+  it('returns low color for score < 4.0', () => {
+    expect(cvssColor(0)).toBe('text-c-low')
+    expect(cvssColor(3.9)).toBe('text-c-low')
+  })
+})
+
+describe('cvssHex', () => {
+  it('maps score thresholds to hex colors', () => {
+    expect(cvssHex(9.5)).toBe('#FB6F84')
+    expect(cvssHex(7.5)).toBe('#FFA552')
+    expect(cvssHex(5.0)).toBe('#F5D04E')
+    expect(cvssHex(1.0)).toBe('#3FD0A8')
+  })
+})
+
+describe('cvssChip', () => {
+  it('maps score thresholds to chip classes', () => {
+    expect(cvssChip(9.0)).toBe('chip-red')
+    expect(cvssChip(7.0)).toBe('chip-orange')
+    expect(cvssChip(4.0)).toBe('chip-amber')
+    expect(cvssChip(0)).toBe('chip-green')
+  })
+})
+
+describe('cvssLabel', () => {
+  it('maps score thresholds to CVSS severity ratings', () => {
+    expect(cvssLabel(9.5)).toBe('Critical')
+    expect(cvssLabel(7.5)).toBe('High')
+    expect(cvssLabel(5.0)).toBe('Medium')
+    expect(cvssLabel(1.0)).toBe('Low')
+    expect(cvssLabel(0)).toBe('None')
+  })
+})
+
+describe('cvssScoreLabel', () => {
+  it('formats a whole-number score with one decimal place', () => {
+    expect(cvssScoreLabel(7)).toBe('7.0')
+    expect(cvssScoreLabel(9)).toBe('9.0')
+  })
+  it('keeps an existing decimal score as-is', () => {
+    expect(cvssScoreLabel(9.8)).toBe('9.8')
+  })
+})
+
+describe('parseCvssVector', () => {
+  it('parses all 8 metrics from a canonical vector string', () => {
+    const metrics = parseCvssVector('AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H')
+    expect(metrics).toEqual({
+      attack_vector: 'N', attack_complexity: 'L', privileges_required: 'N',
+      user_interaction: 'N', scope: 'U', confidentiality: 'H', integrity: 'H', availability: 'H',
+    })
+  })
+  it('accepts the optional CVSS:3.1/ prefix', () => {
+    const metrics = parseCvssVector('CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H')
+    expect(metrics.attack_vector).toBe('N')
+  })
+  it('returns an empty object for a falsy vector', () => {
+    expect(parseCvssVector(null)).toEqual({})
+    expect(parseCvssVector('')).toEqual({})
+  })
+})
+
+describe('cvssVectorFromMetrics', () => {
+  it('renders metrics back to the canonical vector string, in fixed order', () => {
+    const metrics = {
+      availability: 'H', integrity: 'H', confidentiality: 'H', scope: 'U',
+      user_interaction: 'N', privileges_required: 'N', attack_complexity: 'L', attack_vector: 'N',
+    }
+    expect(cvssVectorFromMetrics(metrics)).toBe('AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H')
+  })
+  it('round-trips with parseCvssVector', () => {
+    const vector = 'AV:A/AC:H/PR:L/UI:R/S:C/C:L/I:N/A:H'
+    expect(cvssVectorFromMetrics(parseCvssVector(vector))).toBe(vector)
+  })
+  it('covers every metric in CVSS_METRICS', () => {
+    expect(CVSS_METRICS).toHaveLength(8)
+  })
+})
+
+describe('normalizeCvssMetrics', () => {
+  it('returns null for a null threat', () => {
+    expect(normalizeCvssMetrics(null)).toBeNull()
+  })
+  it('returns null when neither shape is present', () => {
+    expect(normalizeCvssMetrics({ name: 'x' })).toBeNull()
+  })
+  it('parses the flat cvss_vector shape', () => {
+    const metrics = normalizeCvssMetrics({ cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H' })
+    expect(metrics.attack_vector).toBe('N')
+  })
+  it('falls back to the nested cvss object when cvss_vector is absent', () => {
+    const metrics = normalizeCvssMetrics({ cvss: { attack_vector: 'L' } })
+    expect(metrics.attack_vector).toBe('L')
+  })
+  it('prefers cvss_vector over a stale nested cvss object when both are present', () => {
+    const metrics = normalizeCvssMetrics({
+      cvss_vector: 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+      cvss: { attack_vector: 'P' }, // stale — would say "Physical" if it won
+    })
+    expect(metrics.attack_vector).toBe('N')
   })
 })
 
