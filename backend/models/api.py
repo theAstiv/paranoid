@@ -15,8 +15,10 @@ from backend.models.enums import (
     LikelihoodLevel,
     ModelStatus,
     Provider,
+    ScoringMethod,
     ThreatStatus,
 )
+from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
 
 
 class CreateModelRequest(BaseModel):
@@ -30,6 +32,7 @@ class CreateModelRequest(BaseModel):
     # None → project default_iterations → settings.default_iterations
     iteration_count: int | None = Field(default=None, ge=1, le=15)
     project_id: str | None = None  # None → Default Project sentinel
+    scoring_method: ScoringMethod = "dread"
 
 
 class UpdateModelRequest(BaseModel):
@@ -56,6 +59,22 @@ class UpdateThreatRequest(BaseModel):
     dread_exploitability: float | None = Field(default=None, ge=0, le=10)
     dread_affected_users: float | None = Field(default=None, ge=0, le=10)
     dread_discoverability: float | None = Field(default=None, ge=0, le=10)
+    cvss_vector: str | None = None
+
+    @field_validator("cvss_vector")
+    @classmethod
+    def _validate_cvss_vector(cls, value: str | None) -> str | None:
+        """Parse-and-re-render rather than store the client's exact string —
+        parse_vector() is deliberately lenient about metric order and an
+        optional "CVSS:3.1/" prefix, so the stored/returned value must be
+        the canonical form, not whatever casing/order/prefix the client
+        happened to send."""
+        if value is None:
+            return None
+        try:
+            return to_vector_string(parse_vector(value))
+        except Cvss31Error as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class BulkStatusRequest(BaseModel):

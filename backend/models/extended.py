@@ -16,7 +16,7 @@ from backend.models.enums import (
     StrideCategory,
     ThreatStatus,
 )
-from backend.models.state import DreadScore
+from backend.models.state import CvssVector, DreadScore
 
 
 class MaestroThreat(BaseModel):
@@ -59,6 +59,10 @@ class HybridThreat(BaseModel):
     dread: Annotated[
         DreadScore | None,
         Field(description="Optional DREAD scoring"),
+    ] = None
+    cvss: Annotated[
+        CvssVector | None,
+        Field(description="Optional CVSS v3.1 base metrics"),
     ] = None
     mitigations: Annotated[
         list[str],

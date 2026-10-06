@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.models.enums import AssetType, StrideCategory
+from backend.scoring.cvss31 import Cvss31Metrics as CvssVector
 
 
 # Constants for validation
@@ -179,6 +180,19 @@ class Threat(BaseModel):
         DreadScore | None,
         Field(description="Optional DREAD risk assessment scoring"),
     ] = None
+    # CVSS v3.1 base metrics. The prompt only asks for this when the model's
+    # scoring_method includes "cvss" (day 2 — the CVSS instruction block is
+    # not yet wired into stride.py/maestro.py). Until then generate_threats()
+    # force-clears it on every "dread"-scored run regardless of what a
+    # provider returns. Like dread/stride_category, this is a plain
+    # LLM-writable field — a bad answer here is a review problem, not a
+    # provenance attack.
+    cvss: Annotated[
+        CvssVector | None,
+        Field(
+            description="Optional CVSS v3.1 base metrics (requested only when scoring_method includes cvss)"
+        ),
+    ] = None
     mitigations: Annotated[
         list[str],
         Field(
@@ -205,6 +219,14 @@ class Threat(BaseModel):
     # reason as source/dependency_ref: an LLM must never invent technique
     # IDs. generate_threats() force-resets this to [] on every response.
     attack_techniques: SkipJsonSchema[list[TechniqueRef]] = []
+    # The CVSS score/severity are NEVER LLM-sourced, even though `cvss`
+    # (the 8 base metrics) is: these two are hidden from providers and
+    # force-computed from `cvss` by generate_threats() (and the
+    # deterministic dependency-threat path) right after the provider call,
+    # so the number a reviewer sees always matches backend.scoring.cvss31's
+    # formula applied to the metrics, never a value a provider invented.
+    cvss_score: SkipJsonSchema[float | None] = None
+    cvss_severity: SkipJsonSchema[str | None] = None
 
 
 class ThreatsList(BaseModel):
