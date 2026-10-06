@@ -16,6 +16,7 @@ from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif
 from backend.models.api import ExportFormat
 from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
+from backend.scoring.cvss31 import Cvss31Error, parse_vector
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,15 @@ def _build_threats_list(threat_rows: list[dict]) -> ThreatsList:
                 fields["attack_techniques"] = [
                     TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
                 ]
+            # cvss_vector is a DB column, not a Threat field — model_construct
+            # silently drops unknown keys, so without this sarif.py would see
+            # cvss_score/cvss_severity but no way to recover the vector
+            # string. Parse it back into `cvss` (the field sarif.py reads).
+            if fields.get("cvss_vector"):
+                try:
+                    fields["cvss"] = parse_vector(fields["cvss_vector"])
+                except Cvss31Error:
+                    pass
             built.append(Threat.model_construct(**fields))
         except Exception as exc:
             logger.warning("Skipping threat '%s' during SARIF build: %s", row.get("name"), exc)

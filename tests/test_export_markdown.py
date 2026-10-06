@@ -147,6 +147,35 @@ def test_dread_nested_model_dump() -> None:
     assert "Di:6" in md
 
 
+_STRIDE_THREAT_WITH_CVSS = {
+    "name": "Remote Code Execution",
+    "stride_category": "Tampering",
+    "maestro_category": None,
+    "target": "API Gateway",
+    "likelihood": "High",
+    "impact": "Full system compromise",
+    "description": "An attacker exploits unauthenticated deserialization to execute arbitrary code.",
+    "mitigations": ["[P] Disable unsafe deserialization"],
+    "dread_score": None,
+    "cvss_score": 9.8,
+    "cvss_severity": "critical",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+}
+
+
+def test_cvss_summary_table_and_detail_line() -> None:
+    md = export_markdown([_STRIDE_THREAT_WITH_CVSS], "test-model-id", "STRIDE")
+
+    assert "| # | Threat | Category | Target | Likelihood | DREAD | CVSS |" in md
+    assert "**9.8**" in md  # CVSS summary cell
+    assert "**CVSS:** 9.8 (Critical) AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" in md
+
+
+def test_cvss_absent_shows_dash_and_omits_detail_line() -> None:
+    md = export_markdown([_MAESTRO_THREAT_NO_DREAD], "test-model-id", "MAESTRO")
+    assert "**CVSS:**" not in md
+
+
 def test_source_file_shown_when_provided() -> None:
     """Source file path appears in header when provided."""
     md = export_markdown(

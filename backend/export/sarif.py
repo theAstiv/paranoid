@@ -9,6 +9,7 @@ from pathlib import PurePath
 from typing import Any
 
 from backend.models.state import ThreatsList
+from backend.scoring.cvss31 import to_vector_string
 
 
 def export_sarif(
@@ -75,15 +76,32 @@ def export_sarif(
 def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]]:
     """Generate SARIF rules from unique threat categories.
 
-    Each STRIDE/MAESTRO category becomes a rule with metadata.
+    Each STRIDE/MAESTRO category becomes a rule with metadata. Dependency-
+    sourced threats carry a STRIDE/MAESTRO category too (see
+    backend/deps/threats.py's MAESTRO-layer mapping), so they fall into the
+    same per-category rules as any other threat — dependency_ref.rule_id is
+    a separate, purely informational field on the *result* and is never
+    itself a SARIF rule.
     """
-    # Collect unique categories
+    # Collect unique categories, and the highest CVSS score seen per category —
+    # GitHub code scanning reads security-severity only from a *rule's*
+    # properties, never from a result's, so this is computed here rather
+    # than per-result.
     categories = set()
+    max_cvss_by_category: dict[str, float] = {}
     for threat in threats.threats:
+        category = None
         if hasattr(threat, "stride_category"):
-            categories.add(threat.stride_category)
+            category = threat.stride_category
         elif hasattr(threat, "maestro_category"):
-            categories.add(threat.maestro_category)
+            category = threat.maestro_category
+        if category is None:
+            continue
+        categories.add(category)
+
+        score = getattr(threat, "cvss_score", None)
+        if score is not None:
+            max_cvss_by_category[category] = max(score, max_cvss_by_category.get(category, score))
 
     # Define category metadata
     category_metadata = _get_category_metadata(framework)
@@ -91,6 +109,12 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
     rules = []
     for category in sorted(categories):
         metadata = category_metadata.get(category, {})
+        properties = {
+            "category": category,
+            "framework": framework,
+        }
+        if category in max_cvss_by_category:
+            properties["security-severity"] = str(max_cvss_by_category[category])
         rule = {
             "id": f"{framework.lower()}/{_rule_id(category)}",
             "name": category,
@@ -111,10 +135,7 @@ def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]
             "defaultConfiguration": {
                 "level": "warning",  # All threats are warnings by default
             },
-            "properties": {
-                "category": category,
-                "framework": framework,
-            },
+            "properties": properties,
         }
         rules.append(rule)
 
@@ -213,6 +234,20 @@ def _generate_results(
                 "affected_users": threat.dread.affected_users,
                 "discoverability": threat.dread.discoverability,
                 "score": threat.dread.score,
+            }
+
+        # Add CVSS score if available. This is informational on the result —
+        # GitHub code scanning does NOT read a result-level security-severity;
+        # it only reads tool.driver.rules[].properties["security-severity"],
+        # set per-rule in _generate_rules() from the max score across that
+        # rule's threats.
+        cvss_score = getattr(threat, "cvss_score", None)
+        if cvss_score is not None:
+            cvss_metrics = getattr(threat, "cvss", None)
+            result["properties"]["cvss"] = {
+                "vector": to_vector_string(cvss_metrics) if cvss_metrics else None,
+                "score": cvss_score,
+                "severity": getattr(threat, "cvss_severity", None),
             }
 
         # Add mitigations as fixes
@@ -344,19 +379,32 @@ def _build_fixes(mitigations: list[str]) -> list[dict[str, Any]]:
     return fixes
 
 
+def _score_to_level(score: float) -> str:
+    """Map a 0-10 score (CVSS or DREAD average) to a SARIF level."""
+    if score >= 7:  # Critical/High
+        return "error"
+    if score >= 4:  # Medium
+        return "warning"
+    return "note"  # Low
+
+
 def _severity_to_level(threat: Any) -> str:
-    """Map DREAD severity or likelihood to SARIF level.
+    """Map CVSS score, DREAD severity, or likelihood to SARIF level.
 
     SARIF levels: error, warning, note, none
+
+    CVSS takes precedence when present (the thresholds in _score_to_level
+    are CVSS's own high/medium cut points, 7.0/4.0, not DREAD's 7/4
+    average-of-5 bands — they happen to share the same numbers but are
+    independent scales).
     """
-    # Try DREAD score first (average 0-10)
+    cvss_score = getattr(threat, "cvss_score", None)
+    if cvss_score is not None:
+        return _score_to_level(cvss_score)
+
+    # Try DREAD score next (average 0-10)
     if hasattr(threat, "dread") and threat.dread:
-        score = threat.dread.score
-        if score >= 7:  # Critical/High
-            return "error"
-        if score >= 4:  # Medium
-            return "warning"
-        return "note"  # Low
+        return _score_to_level(threat.dread.score)
 
     # Fall back to likelihood
     likelihood = getattr(threat, "likelihood", "").lower()

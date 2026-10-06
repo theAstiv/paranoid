@@ -26,6 +26,7 @@ from reportlab.platypus import (
 from backend.export._common import (
     MERMAID_DIAGRAM_PREFIXES,
     attack_techniques_display,
+    cvss_display,
     dependency_findings_rows,
 )
 
@@ -436,7 +437,7 @@ def _build_styles() -> dict[str, ParagraphStyle]:
 
 
 def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, ParagraphStyle]) -> Table:
-    header = ["#", "Threat", "Category", "Target", "Likelihood", "DREAD"]
+    header = ["#", "Threat", "Category", "Target", "Likelihood", "DREAD", "CVSS"]
     rows = [header]
 
     # cell_style is a tighter body variant used inside Paragraph-wrapped table
@@ -450,12 +451,14 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
         spaceAfter=0,
     )
 
-    # Per-row severity background colour for the DREAD cell. Critical/high
-    # threats jump out at a glance; absent DREAD gets the row-default.
+    # Per-row severity background colour for the DREAD/CVSS cells. Critical/
+    # high threats jump out at a glance; an absent score gets the row-default.
     dread_bg: list[tuple[int, Any]] = []
+    cvss_bg: list[tuple[int, Any]] = []
 
     for i, t in enumerate(threats, 1):
         dread = _extract_dread_score(t)
+        cvss_score = t.get("cvss_score")
         rows.append(
             [
                 str(i),
@@ -464,13 +467,25 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
                 Paragraph(_escape_pdf_text(t.get("target") or "—"), cell_style),
                 Paragraph(_escape_pdf_text(t.get("likelihood") or "—"), cell_style),
                 f"{dread:.1f}" if dread is not None else "—",
+                f"{cvss_score:.1f}" if cvss_score is not None else "—",
             ]
         )
         bg = _severity_background(dread)
         if bg is not None:
             dread_bg.append((i, bg))
+        cvss_bg_color = _cvss_severity_background(cvss_score)
+        if cvss_bg_color is not None:
+            cvss_bg.append((i, cvss_bg_color))
 
-    col_widths = [0.3 * inch, 1.8 * inch, 1.1 * inch, 1.6 * inch, 1.1 * inch, 0.5 * inch]
+    col_widths = [
+        0.3 * inch,
+        1.6 * inch,
+        1.0 * inch,
+        1.4 * inch,
+        1.0 * inch,
+        0.5 * inch,
+        0.5 * inch,
+    ]
 
     style_commands: list[Any] = [
         # Header row
@@ -489,15 +504,17 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
         # Grid
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        # Bold the DREAD score column so the severity tier reads at a glance
-        ("FONTNAME", (5, 1), (5, -1), "Helvetica-Bold"),
-        ("ALIGN", (5, 1), (5, -1), "CENTER"),
+        # Bold the DREAD/CVSS score columns so the severity tier reads at a glance
+        ("FONTNAME", (5, 1), (6, -1), "Helvetica-Bold"),
+        ("ALIGN", (5, 1), (6, -1), "CENTER"),
     ]
 
-    # Apply per-row DREAD severity backgrounds AFTER the zebra-stripe so the
-    # colour wins for the DREAD cell only.
+    # Apply per-row severity backgrounds AFTER the zebra-stripe so the
+    # colour wins for the DREAD/CVSS cells only.
     for row_idx, bg in dread_bg:
         style_commands.append(("BACKGROUND", (5, row_idx), (5, row_idx), bg))
+    for row_idx, bg in cvss_bg:
+        style_commands.append(("BACKGROUND", (6, row_idx), (6, row_idx), bg))
 
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(style_commands))
@@ -519,6 +536,24 @@ def _severity_background(score: float | None):
     if score >= 4:
         return colors.HexColor("#fef08a")  # yellow-200 — Medium
     return colors.HexColor("#e5e7eb")  # gray-200 — Low
+
+
+def _cvss_severity_background(score: float | None):
+    """CVSS v3.1 severity background colour for the score cell.
+
+    Distinct thresholds from _severity_background's DREAD bands (4/6/8) —
+    these match CVSS's own published severity cut points (4.0/7.0/9.0), the
+    same ones CvssBadge uses on the frontend.
+    """
+    if score is None:
+        return None
+    if score >= 9.0:
+        return colors.HexColor("#fecaca")  # red-200 — Critical
+    if score >= 7.0:
+        return colors.HexColor("#fed7aa")  # orange-200 — High
+    if score >= 4.0:
+        return colors.HexColor("#fef08a")  # yellow-200 — Medium
+    return colors.HexColor("#e5e7eb")  # gray-200 — Low/None
 
 
 def _threat_flowables(
@@ -546,6 +581,9 @@ def _threat_flowables(
     dread_line = _dread_display(t)
     if dread_line:
         meta_line += f"&nbsp;&nbsp;|&nbsp;&nbsp;{dread_line}"
+    cvss_value = cvss_display(t)
+    if cvss_value:
+        meta_line += f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>CVSS:</b> {_escape_pdf_text(cvss_value)}"
     techniques_line = attack_techniques_display(t)
     if techniques_line:
         meta_line += (

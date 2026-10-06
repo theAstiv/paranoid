@@ -116,6 +116,40 @@ def test_pdf_without_dread() -> None:
     assert len(result) > 0
 
 
+_WITH_CVSS = {
+    "name": "Remote Code Execution",
+    "stride_category": "Tampering",
+    "maestro_category": None,
+    "target": "API Gateway",
+    "likelihood": "High",
+    "impact": "Full system compromise",
+    "description": "An attacker exploits unauthenticated deserialization to execute arbitrary code.",
+    "mitigations": ["[P] Disable unsafe deserialization"],
+    "dread_score": None,
+    "cvss_score": 9.8,
+    "cvss_severity": "critical",
+    "cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+}
+
+
+def test_pdf_with_cvss() -> None:
+    """export_pdf() completes without error for a threat with a CVSS score,
+    and the summary table/detail line both render it."""
+    result = export_pdf([_WITH_CVSS], "test-model-id", "STRIDE", title="CVSS Test")
+
+    assert isinstance(result, bytes)
+    assert result[:4] == b"%PDF"
+    assert len(result) > 500
+
+
+def test_pdf_without_cvss() -> None:
+    """export_pdf() completes without error for a threat with no CVSS score."""
+    result = export_pdf([_MAESTRO_NO_DREAD], "test-model-id", "MAESTRO")
+
+    assert isinstance(result, bytes)
+    assert len(result) > 0
+
+
 def test_pdf_with_source_file() -> None:
     """export_pdf() accepts an optional source_file parameter without error."""
     result = export_pdf(

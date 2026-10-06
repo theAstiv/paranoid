@@ -401,6 +401,7 @@ async def _export_model_async(
     elif output_format == "sarif":
         from backend.export.sarif import export_sarif
         from backend.models.state import DependencyRef, TechniqueRef, Threat, ThreatsList
+        from backend.scoring.cvss31 import Cvss31Error, parse_vector
 
         stride_rows = [r for r in threats if r.get("stride_category")]
         skipped = len(threats) - len(stride_rows)
@@ -429,6 +430,15 @@ async def _export_model_async(
                     fields["attack_techniques"] = [
                         TechniqueRef.model_validate(t) for t in fields["attack_techniques"]
                     ]
+                # cvss_vector is a DB column, not a Threat field —
+                # model_construct silently drops unknown keys. Parse it back
+                # into `cvss` (the field export_sarif reads) or the vector
+                # string is lost even though cvss_score/cvss_severity survive.
+                if fields.get("cvss_vector"):
+                    try:
+                        fields["cvss"] = parse_vector(fields["cvss_vector"])
+                    except Cvss31Error:
+                        pass
                 built.append(Threat.model_construct(**fields))
             except Exception as exc:
                 click.secho(f"  ⚠ Skipping threat '{r.get('name', '?')}': {exc}", fg="yellow")

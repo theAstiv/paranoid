@@ -355,3 +355,114 @@ def test_sarif_no_tags_property_when_no_techniques_matched():
     output = export_sarif(threats=threats, model_id="no-tags", framework="STRIDE")
     for result in output["runs"][0]["results"]:
         assert "tags" not in result["properties"]
+
+
+def test_sarif_cvss_result_properties_and_rule_security_severity():
+    """properties.cvss on the result carries vector/score/severity (useful
+    for a human/tool reading the raw SARIF), but security-severity — the
+    literal property GitHub code scanning actually reads for its own
+    severity sort/badge — lives on the RULE (tool.driver.rules[].properties),
+    not the result. GitHub does not read a result-level security-severity."""
+    from backend.models.state import Threat
+    from backend.scoring.cvss31 import Cvss31Metrics
+
+    metrics = Cvss31Metrics(
+        attack_vector="N",
+        attack_complexity="L",
+        privileges_required="N",
+        user_interaction="N",
+        scope="U",
+        confidentiality="H",
+        integrity="H",
+        availability="H",
+    )
+    threat = Threat(
+        name="Remote Code Execution",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="API Gateway",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss=metrics,
+        cvss_score=9.8,
+        cvss_severity="critical",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]), model_id="cvss-test", framework="STRIDE"
+    )
+    result = output["runs"][0]["results"][0]
+    assert result["properties"]["cvss"] == {
+        "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "score": 9.8,
+        "severity": "critical",
+    }
+    assert "security-severity" not in result["properties"]
+    assert result["level"] == "error"  # CVSS >= 7 takes precedence
+
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    tampering_rule = next(r for r in rules if r["id"] == result["ruleId"])
+    assert tampering_rule["properties"]["security-severity"] == "9.8"
+
+
+def test_sarif_rule_security_severity_is_max_across_threats_in_category():
+    """Two threats share a STRIDE category; the rule's security-severity
+    must be the higher of the two scores, not the first or last one seen."""
+    from backend.models.state import Threat
+
+    low = Threat(
+        name="Low severity tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A",
+        impact="low",
+        likelihood="low",
+        mitigations=["pin version", "audit"],
+        cvss_score=3.0,
+        cvss_severity="low",
+    )
+    high = Threat(
+        name="High severity tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="B",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss_score=9.1,
+        cvss_severity="critical",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[low, high]), model_id="max-test", framework="STRIDE"
+    )
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    tampering_rule = next(r for r in rules if r["id"] == "stride/tampering")
+    assert tampering_rule["properties"]["security-severity"] == "9.1"
+
+
+def test_sarif_no_cvss_property_when_no_score():
+    threats = make_stride_threats()
+    output = export_sarif(threats=threats, model_id="no-cvss", framework="STRIDE")
+    for result in output["runs"][0]["results"]:
+        assert "cvss" not in result["properties"]
+    for rule in output["runs"][0]["tool"]["driver"]["rules"]:
+        assert "security-severity" not in rule["properties"]
+
+
+def test_sarif_severity_mapping_prefers_cvss_over_dread():
+    """When both CVSS and DREAD scores are present, CVSS wins for `level`."""
+
+    class MockThreat:
+        def __init__(self, cvss_score=None, dread=None, likelihood=""):
+            self.cvss_score = cvss_score
+            self.dread = dread
+            self.likelihood = likelihood
+
+    class MockDread:
+        score = 9.0  # would be "error" too, so use a low DREAD to prove CVSS wins
+
+    class MockLowDread:
+        score = 1.0
+
+    assert _severity_to_level(MockThreat(cvss_score=2.0, dread=MockDread())) == "note"
+    assert _severity_to_level(MockThreat(cvss_score=9.0, dread=MockLowDread())) == "error"

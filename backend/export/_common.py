@@ -2,6 +2,10 @@
 
 from typing import Any
 
+from pydantic import ValidationError
+
+from backend.scoring.cvss31 import Cvss31Metrics, to_vector_string
+
 
 # Mermaid diagram type prefixes used to distinguish diagram source from prose.
 # Both pdf.py and markdown.py use this tuple — keep it here to avoid drift.
@@ -108,6 +112,45 @@ def attack_techniques_display(threat: dict[str, Any]) -> str | None:
     if suggested:
         parts.append(f"(suggested: {', '.join(suggested)})")
     return " ".join(parts) if parts else None
+
+
+def cvss_display(row: dict[str, Any]) -> str | None:
+    """ "7.5 (High) AV:N/AC:L/..." plain-text value for a threat's CVSS
+    score, or None if it has none. Shared by markdown.py and pdf.py —
+    mirrors attack_techniques_display()'s dual-shape handling and, like it,
+    returns an unlabeled value; callers prepend their own format-specific
+    "**CVSS:**"/"<b>CVSS:</b>" label.
+
+    Handles two input shapes: a flat DB row (`cvss_score`, `cvss_severity`,
+    `cvss_vector` columns) and a nested model_dump (`cvss_score`/
+    `cvss_severity` are still flat Threat fields, but there's no
+    `cvss_vector` string — only the nested `cvss` metrics dict, rendered
+    back to the canonical vector string here).
+    """
+    score = row.get("cvss_score")
+    if score is None:
+        return None
+
+    vector = row.get("cvss_vector")
+    if not vector:
+        metrics = row.get("cvss")
+        if isinstance(metrics, dict) and metrics:
+            try:
+                vector = to_vector_string(Cvss31Metrics(**metrics))
+            except (TypeError, ValidationError):
+                vector = None
+
+    severity = row.get("cvss_severity")
+    label = f"{score:.1f}" + (f" ({severity.capitalize()})" if severity else "")
+    return f"{label} {vector}" if vector else label
+
+
+def cvss_security_severity(row: dict[str, Any]) -> str | None:
+    """The numeric string SARIF's `security-severity` property expects
+    (GitHub code scanning reads this for its own severity sort/badge), or
+    None if the threat has no computed CVSS score."""
+    score = row.get("cvss_score")
+    return str(score) if score is not None else None
 
 
 def dependency_findings_rows(

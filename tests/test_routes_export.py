@@ -251,6 +251,55 @@ async def test_export_sarif_with_persisted_attack_techniques(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_export_sarif_with_persisted_cvss_score(client, test_db):
+    """A threat with a persisted cvss_vector must not lose the vector string
+    in SARIF export. `cvss_vector` is a DB column, not a Threat model field
+    — _build_threats_list()'s model_construct() silently drops unknown
+    kwargs, so without re-parsing it into `cvss`, properties.cvss.vector
+    would be None even though cvss_score/cvss_severity survive."""
+    model_id = await crud.create_threat_model(
+        title="API Service",
+        description="A REST API service with unauthenticated deserialization",
+        provider="anthropic",
+        model="claude-sonnet-4",
+        framework="STRIDE",
+    )
+    await crud.create_threat(
+        model_id=model_id,
+        name="Remote Code Execution",
+        description=(
+            "An attacker sends a crafted payload to the deserialization endpoint "
+            "to execute arbitrary code on the server"
+        ),
+        target="API Gateway",
+        impact="High",
+        likelihood="High",
+        mitigations=["Disable unsafe deserialization", "Validate input schema"],
+        stride_category="Tampering",
+        cvss_vector="AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        cvss_score=9.8,
+        cvss_severity="critical",
+    )
+
+    resp = await client.get(f"/api/export/{model_id}?format=sarif")
+    assert resp.status_code == 200
+    data = json.loads(resp.content)
+    results = data["runs"][0]["results"]
+    assert len(results) == 1
+    assert results[0]["properties"]["cvss"] == {
+        "vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "score": 9.8,
+        "severity": "critical",
+    }
+    assert results[0]["level"] == "error"
+    # security-severity lives on the rule, not the result — GitHub code
+    # scanning only reads it from tool.driver.rules[].properties.
+    rules = data["runs"][0]["tool"]["driver"]["rules"]
+    tampering_rule = next(r for r in rules if r["id"] == results[0]["ruleId"])
+    assert tampering_rule["properties"]["security-severity"] == "9.8"
+
+
+@pytest.mark.asyncio
 async def test_export_sarif_maestro_only_produces_empty_runs(client, test_db):
     """MAESTRO-only threats produce a valid but empty SARIF result."""
     model_id = await crud.create_threat_model(

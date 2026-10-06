@@ -9,6 +9,7 @@ from typing import Any
 from backend.export._common import (
     MERMAID_DIAGRAM_PREFIXES,
     attack_techniques_display,
+    cvss_display,
     dependency_findings_rows,
 )
 
@@ -173,8 +174,8 @@ def export_markdown(
     # Summary table
     lines.append("## Summary")
     lines.append("")
-    lines.append("| # | Threat | Category | Target | Likelihood | DREAD |")
-    lines.append("|---|--------|----------|--------|------------|-------|")
+    lines.append("| # | Threat | Category | Target | Likelihood | DREAD | CVSS |")
+    lines.append("|---|--------|----------|--------|------------|-------|------|")
 
     if not threats:
         lines.append("")
@@ -190,7 +191,8 @@ def export_markdown(
         target = t.get("target") or "—"
         likelihood = t.get("likelihood") or "—"
         dread = _dread_score_cell(t)
-        lines.append(f"| {i} | {name} | {category} | {target} | {likelihood} | {dread} |")
+        cvss = _cvss_score_cell(t)
+        lines.append(f"| {i} | {name} | {category} | {target} | {likelihood} | {dread} | {cvss} |")
 
     lines.append("")
     lines.append("---")
@@ -228,6 +230,10 @@ def export_markdown(
             dread_line = _dread_display(t)
             if dread_line:
                 lines.append(dread_line)
+
+            cvss_value = cvss_display(t)
+            if cvss_value:
+                lines.append(f"**CVSS:** {cvss_value}")
 
             techniques_line = attack_techniques_display(t)
             if techniques_line:
@@ -314,6 +320,14 @@ def _group_by_category(
 def _dread_score_cell(row: dict[str, Any]) -> str:
     """Return DREAD score string for the summary table cell, or '—' if absent."""
     score = _extract_dread_score(row)
+    if score is None:
+        return "—"
+    return f"**{score:.1f}**"
+
+
+def _cvss_score_cell(row: dict[str, Any]) -> str:
+    """Return CVSS score string for the summary table cell, or '—' if absent."""
+    score = row.get("cvss_score")
     if score is None:
         return "—"
     return f"**{score:.1f}**"
