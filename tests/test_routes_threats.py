@@ -245,6 +245,43 @@ async def test_patch_threat_cvss_vector_malformed_rejected(client, saved_threat)
 
 
 @pytest.mark.asyncio
+async def test_patch_threat_cvss_vector_explicit_null_clears_it(client, saved_threat):
+    """Explicit null is a clear command, distinct from omitting the field
+    entirely (the next test) — model_fields_set is what tells them apart."""
+    await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+    )
+
+    resp = await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": None},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cvss_vector"] is None
+    assert data["cvss_score"] is None
+    assert data["cvss_severity"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_threat_omitted_cvss_vector_leaves_it_unchanged(client, saved_threat):
+    await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"cvss_vector": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+    )
+
+    resp = await client.patch(
+        f"/api/threats/{saved_threat['id']}",
+        json={"name": "Renamed, no CVSS field in this body"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cvss_vector"] == "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert data["cvss_score"] == pytest.approx(9.8)
+
+
+@pytest.mark.asyncio
 async def test_patch_threat_invalid_status(client, saved_threat):
     resp = await client.patch(
         f"/api/threats/{saved_threat['id']}",

@@ -448,6 +448,7 @@ async def update_threat(
     cvss_vector: str | None = None,
     cvss_score: float | None = None,
     cvss_severity: str | None = None,
+    clear_cvss: bool = False,
 ) -> None:
     """
     Update threat details. Only provided fields will be updated.
@@ -473,6 +474,11 @@ async def update_threat(
             by the caller (backend.scoring.cvss31.score_and_severity), never
             accepted from a client directly
         cvss_severity: CVSS severity rating — computed the same way as cvss_score
+        clear_cvss: explicitly NULL all three cvss_* columns, distinct from
+            simply omitting cvss_vector/cvss_score/cvss_severity (which, like
+            every other field here, means "leave unchanged") — needed because
+            None is otherwise indistinguishable from "not provided" for this
+            function's "only provided fields updated" convention
     """
     # Build dynamic UPDATE query for only provided fields
     update_fields = []
@@ -534,17 +540,25 @@ async def update_threat(
         update_fields.append("dread_score = ?")
         params.append(dread_score)
 
-    if cvss_vector is not None:
+    if clear_cvss:
         update_fields.append("cvss_vector = ?")
-        params.append(cvss_vector)
-
-    if cvss_score is not None:
+        params.append(None)
         update_fields.append("cvss_score = ?")
-        params.append(cvss_score)
-
-    if cvss_severity is not None:
+        params.append(None)
         update_fields.append("cvss_severity = ?")
-        params.append(cvss_severity)
+        params.append(None)
+    else:
+        if cvss_vector is not None:
+            update_fields.append("cvss_vector = ?")
+            params.append(cvss_vector)
+
+        if cvss_score is not None:
+            update_fields.append("cvss_score = ?")
+            params.append(cvss_score)
+
+        if cvss_severity is not None:
+            update_fields.append("cvss_severity = ?")
+            params.append(cvss_severity)
 
     # Always update the updated_at timestamp
     update_fields.append("updated_at = ?")

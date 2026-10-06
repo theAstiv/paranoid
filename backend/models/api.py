@@ -67,8 +67,15 @@ class UpdateThreatRequest(BaseModel):
         """Parse-and-re-render rather than store the client's exact string —
         parse_vector() is deliberately lenient about metric order and an
         optional "CVSS:3.1/" prefix, so the stored/returned value must be
-        the canonical form, not whatever casing/order/prefix the client
-        happened to send."""
+        the canonical form, not whatever order/prefix the client happened
+        to send (metric *values* are case-sensitive per the CVSS spec and
+        are rejected, not normalized, if sent lowercase).
+
+        A value of None passes through unchanged here — the route
+        distinguishes "omitted" (no change) from "explicit null" (clear
+        the stored vector) via model_fields_set, the same three-way
+        pattern UpdateConfigRequest uses for API keys.
+        """
         if value is None:
             return None
         try:
