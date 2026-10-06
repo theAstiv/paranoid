@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel
 
@@ -23,7 +23,7 @@ from backend.dedup import deduplicate_threats
 from backend.deps.analyze import analyze_manifest
 from backend.deps.threats import dependency_threats, merge_dependency_threats
 from backend.models.dependencies import DependencyContext
-from backend.models.enums import Framework, StrideCategory
+from backend.models.enums import Framework, ScoringMethod, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.models.usage import StepRun
@@ -243,10 +243,20 @@ class PipelineConfig:
     # PipelineRunner (see resolve_step_models) — a step left out here keeps
     # its provider default. None = pure provider defaults, no override.
     step_models: dict[PipelineStep, StepModelChoice] | None = None
+    # "dread" (default, no behaviour change) | "cvss" | "both". Drives the
+    # dependency-threats default-vector lookup (backend.deps.threats) and
+    # whether generate_threats() keeps/scores a provider's `cvss` metrics
+    # or force-clears them. The STRIDE/MAESTRO prompts don't yet ask for
+    # CVSS metrics (day 2 — the instruction block isn't wired in), so a
+    # provider has to volunteer `cvss` unprompted for "cvss"/"both" to have
+    # any effect on LLM-sourced threats today.
+    scoring_method: ScoringMethod = "dread"
 
     def __post_init__(self) -> None:
         if self.step_models is not None:
             validate_step_models(self.step_models)
+        if self.scoring_method not in get_args(ScoringMethod):
+            raise ValueError(f"Invalid scoring_method: {self.scoring_method!r}")
 
 
 @dataclass
@@ -996,6 +1006,7 @@ class PipelineRunner:
                                     code_summary=code_summary,
                                     diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
+                                    scoring_method=self.config.scoring_method,
                                 ),
                                 {
                                     "iteration": iteration,
@@ -1068,6 +1079,7 @@ class PipelineRunner:
                                     code_summary=code_summary,
                                     diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
+                                    scoring_method=self.config.scoring_method,
                                 ),
                                 {
                                     "iteration": iteration,
@@ -1172,6 +1184,7 @@ class PipelineRunner:
                                     code_summary=code_summary,
                                     diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
+                                    scoring_method=self.config.scoring_method,
                                 ),
                                 {
                                     "iteration": iteration,
@@ -1498,7 +1511,9 @@ class PipelineRunner:
             # same way as rule-engine matches. Runs regardless of LLM success —
             # dependency findings are table-derived, not LLM output.
             if dependency_context is not None and dependency_context.packages:
-                dep_threats = dependency_threats(dependency_context, framework)
+                dep_threats = dependency_threats(
+                    dependency_context, framework, scoring_method=self.config.scoring_method
+                )
                 if dep_threats.threats:
                     pre_merge_count = len(cumulative_threats.threats)
                     cumulative_threats = merge_dependency_threats(dep_threats, cumulative_threats)
@@ -1699,6 +1714,7 @@ async def run_pipeline_for_model(
     dependency_source_mode: str = "npm",
     persist_usage: bool = False,
     step_models: dict[PipelineStep, StepModelChoice] | None = None,
+    scoring_method: ScoringMethod = "dread",
 ) -> AsyncGenerator[PipelineEvent, None]:
     """Convenience function to run pipeline for a threat model.
 
@@ -1735,6 +1751,9 @@ async def run_pipeline_for_model(
         step_models: Per-step fast/main routing override. None (default)
             uses settings.step_models merged over the provider's default
             map (see PipelineRunner._step_models).
+        scoring_method: "dread" | "cvss" | "both". Default "dread" — no
+            behaviour change unless the caller passes the model's stored
+            scoring_method (see Threat Model record).
 
     Yields:
         PipelineEvent for progress tracking
@@ -1759,6 +1778,7 @@ async def run_pipeline_for_model(
         if seed_collections is not None
         else (settings.seed_collections or None),
         step_models=step_models_override,
+        scoring_method=scoring_method,
     )
 
     runner = PipelineRunner(

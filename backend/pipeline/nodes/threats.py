@@ -23,6 +23,7 @@ from backend.pipeline.prompts import (
     stride_threats_prompt,
 )
 from backend.providers.base import LLMProvider
+from backend.scoring.cvss31 import score_and_severity_from_metrics
 
 
 async def generate_threats(
@@ -40,6 +41,7 @@ async def generate_threats(
     code_summary: CodeSummary | None = None,
     diagram_data: DiagramData | None = None,
     shared_context: str | None = None,
+    scoring_method: str = "dread",
 ) -> ThreatsList:
     """Generate or improve threat catalog.
 
@@ -60,6 +62,11 @@ async def generate_threats(
         shared_context: Pre-built stable context from build_shared_context(). When
             provided, the stable parts (diagram/description/assets/flows/code_summary)
             are skipped in the prompt and sent as a cacheable prefix instead.
+        scoring_method: "dread" | "cvss" | "both". Controls only what the
+            *returned* threats carry — the prompt doesn't change yet (that
+            lands with the CVSS instruction block). When "dread", any `cvss`
+            metrics a provider returns anyway are force-cleared below, same
+            as cvss_score/cvss_severity.
 
     Returns:
         ThreatsList with generated threats
@@ -192,10 +199,22 @@ async def generate_threats(
     # Only trusted code (rule engine, seeding, dependency_threats) is allowed
     # to set dependency provenance, so every threat coming back from an LLM
     # call is force-reset here regardless of what the provider sent.
+    # CVSS score/severity are never LLM-sourced either way (same SkipJsonSchema
+    # mechanism), but here they're also never *present* to hide a forged value
+    # behind: when scoring_method is "dread", any `cvss` metrics a provider
+    # returned anyway (the schema doesn't vary per request) are wiped too, so
+    # a dread-only run's stored/returned threats carry no CVSS data at all —
+    # "nothing changes unless chosen" holds on the data, not just the prompt.
     for threat in response.threats:
         threat.source = "llm"
         threat.dependency_ref = None
         threat.attack_techniques = []
+        if scoring_method == "dread" or threat.cvss is None:
+            threat.cvss = None
+            threat.cvss_score = None
+            threat.cvss_severity = None
+        else:
+            threat.cvss_score, threat.cvss_severity = score_and_severity_from_metrics(threat.cvss)
 
     return response
 
