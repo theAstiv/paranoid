@@ -437,7 +437,18 @@ def _build_styles() -> dict[str, ParagraphStyle]:
 
 
 def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, ParagraphStyle]) -> Table:
-    header = ["#", "Threat", "Category", "Target", "Likelihood", "DREAD", "CVSS"]
+    # The DREAD/CVSS columns are each included only when at least one threat
+    # actually has that score — a dread-only export (today's default) must
+    # not grow an all-"—" CVSS column (and a narrower table overall) just
+    # because the field exists on the model, and vice versa.
+    show_dread = any(_extract_dread_score(t) is not None for t in threats)
+    show_cvss = any(t.get("cvss_score") is not None for t in threats)
+
+    header = ["#", "Threat", "Category", "Target", "Likelihood"]
+    if show_dread:
+        header.append("DREAD")
+    if show_cvss:
+        header.append("CVSS")
     rows = [header]
 
     # cell_style is a tighter body variant used inside Paragraph-wrapped table
@@ -457,35 +468,32 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
     cvss_bg: list[tuple[int, Any]] = []
 
     for i, t in enumerate(threats, 1):
-        dread = _extract_dread_score(t)
-        cvss_score = t.get("cvss_score")
-        rows.append(
-            [
-                str(i),
-                Paragraph(_escape_pdf_text(t.get("name") or "—"), cell_style),
-                Paragraph(_escape_pdf_text(_category_from_row(t)), cell_style),
-                Paragraph(_escape_pdf_text(t.get("target") or "—"), cell_style),
-                Paragraph(_escape_pdf_text(t.get("likelihood") or "—"), cell_style),
-                f"{dread:.1f}" if dread is not None else "—",
-                f"{cvss_score:.1f}" if cvss_score is not None else "—",
-            ]
-        )
-        bg = _severity_background(dread)
-        if bg is not None:
-            dread_bg.append((i, bg))
-        cvss_bg_color = _cvss_severity_background(cvss_score)
-        if cvss_bg_color is not None:
-            cvss_bg.append((i, cvss_bg_color))
+        row = [
+            str(i),
+            Paragraph(_escape_pdf_text(t.get("name") or "—"), cell_style),
+            Paragraph(_escape_pdf_text(_category_from_row(t)), cell_style),
+            Paragraph(_escape_pdf_text(t.get("target") or "—"), cell_style),
+            Paragraph(_escape_pdf_text(t.get("likelihood") or "—"), cell_style),
+        ]
+        if show_dread:
+            dread = _extract_dread_score(t)
+            row.append(f"{dread:.1f}" if dread is not None else "—")
+            bg = _severity_background(dread)
+            if bg is not None:
+                dread_bg.append((i, bg))
+        if show_cvss:
+            cvss_score = t.get("cvss_score")
+            row.append(f"{cvss_score:.1f}" if cvss_score is not None else "—")
+            cvss_bg_color = _cvss_severity_background(cvss_score)
+            if cvss_bg_color is not None:
+                cvss_bg.append((i, cvss_bg_color))
+        rows.append(row)
 
-    col_widths = [
-        0.3 * inch,
-        1.6 * inch,
-        1.0 * inch,
-        1.4 * inch,
-        1.0 * inch,
-        0.5 * inch,
-        0.5 * inch,
-    ]
+    col_widths = [0.3 * inch, 1.6 * inch, 1.0 * inch, 1.4 * inch, 1.0 * inch]
+    if show_dread:
+        col_widths.append(0.5 * inch)
+    if show_cvss:
+        col_widths.append(0.5 * inch)
 
     style_commands: list[Any] = [
         # Header row
@@ -504,17 +512,23 @@ def _build_summary_table(threats: list[dict[str, Any]], styles: dict[str, Paragr
         # Grid
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        # Bold the DREAD/CVSS score columns so the severity tier reads at a glance
-        ("FONTNAME", (5, 1), (6, -1), "Helvetica-Bold"),
-        ("ALIGN", (5, 1), (6, -1), "CENTER"),
     ]
 
-    # Apply per-row severity backgrounds AFTER the zebra-stripe so the
-    # colour wins for the DREAD/CVSS cells only.
-    for row_idx, bg in dread_bg:
-        style_commands.append(("BACKGROUND", (5, row_idx), (5, row_idx), bg))
-    for row_idx, bg in cvss_bg:
-        style_commands.append(("BACKGROUND", (6, row_idx), (6, row_idx), bg))
+    # Bold the DREAD/CVSS score columns (whichever are present) so the
+    # severity tier reads at a glance, and apply per-row severity
+    # backgrounds AFTER the zebra-stripe so the colour wins for those cells.
+    dread_col = 5 if show_dread else None
+    cvss_col = (6 if show_dread else 5) if show_cvss else None
+    for col in (dread_col, cvss_col):
+        if col is not None:
+            style_commands.append(("FONTNAME", (col, 1), (col, -1), "Helvetica-Bold"))
+            style_commands.append(("ALIGN", (col, 1), (col, -1), "CENTER"))
+    if dread_col is not None:
+        for row_idx, bg in dread_bg:
+            style_commands.append(("BACKGROUND", (dread_col, row_idx), (dread_col, row_idx), bg))
+    if cvss_col is not None:
+        for row_idx, bg in cvss_bg:
+            style_commands.append(("BACKGROUND", (cvss_col, row_idx), (cvss_col, row_idx), bg))
 
     table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle(style_commands))

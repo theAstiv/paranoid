@@ -95,7 +95,10 @@ def test_stride_with_dread_flat() -> None:
 
 
 def test_maestro_without_dread() -> None:
-    """MAESTRO threat with no DREAD data omits DREAD section entirely."""
+    """MAESTRO threat with no DREAD (and no CVSS) data omits both the
+    detail line AND the summary-table column entirely — a dread-only
+    export shouldn't grow an all-dash CVSS column just because the field
+    exists on the model, and this fixture has neither score at all."""
     md = export_markdown([_MAESTRO_THREAT_NO_DREAD], "test-model-id", "MAESTRO")
 
     assert "LLM Security" in md
@@ -104,7 +107,8 @@ def test_maestro_without_dread() -> None:
 
     # No DREAD detail line in threat body
     assert "**DREAD:**" not in md
-    assert "—" in md  # DREAD column in summary table shows dash
+    assert "| DREAD |" not in md
+    assert "| CVSS |" not in md
 
 
 def test_empty_threats() -> None:
@@ -164,9 +168,12 @@ _STRIDE_THREAT_WITH_CVSS = {
 
 
 def test_cvss_summary_table_and_detail_line() -> None:
+    """This fixture has a CVSS score but dread_score=None — the DREAD
+    column must not appear just because the model has the field."""
     md = export_markdown([_STRIDE_THREAT_WITH_CVSS], "test-model-id", "STRIDE")
 
-    assert "| # | Threat | Category | Target | Likelihood | DREAD | CVSS |" in md
+    assert "| # | Threat | Category | Target | Likelihood | CVSS |" in md
+    assert "| DREAD |" not in md
     assert "**9.8**" in md  # CVSS summary cell
     assert "**CVSS:** 9.8 (Critical) AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" in md
 
@@ -174,6 +181,24 @@ def test_cvss_summary_table_and_detail_line() -> None:
 def test_cvss_absent_shows_dash_and_omits_detail_line() -> None:
     md = export_markdown([_MAESTRO_THREAT_NO_DREAD], "test-model-id", "MAESTRO")
     assert "**CVSS:**" not in md
+
+
+def test_dread_only_export_omits_cvss_column() -> None:
+    """The default (dread-only) export must not grow an all-dash CVSS
+    column just because every threat has the cvss_score field."""
+    md = export_markdown([_STRIDE_THREAT_FLAT], "test-model-id", "STRIDE")
+
+    assert "| # | Threat | Category | Target | Likelihood | DREAD |" in md
+    assert "| CVSS |" not in md
+
+
+def test_both_scores_present_shows_both_columns() -> None:
+    both = {**_STRIDE_THREAT_FLAT, "cvss_score": 9.8, "cvss_severity": "critical"}
+    md = export_markdown([both], "test-model-id", "STRIDE")
+
+    assert "| # | Threat | Category | Target | Likelihood | DREAD | CVSS |" in md
+    assert "**7.5**" in md
+    assert "**9.8**" in md
 
 
 def test_source_file_shown_when_provided() -> None:

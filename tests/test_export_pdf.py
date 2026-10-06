@@ -150,6 +150,34 @@ def test_pdf_without_cvss() -> None:
     assert len(result) > 0
 
 
+def test_pdf_summary_table_omits_cvss_column_when_absent() -> None:
+    """Direct unit test of _build_summary_table(): a dread-only threat set
+    must not grow an all-dash CVSS column just because the field exists on
+    the model."""
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    table = _build_summary_table([_STRIDE_FLAT], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "DREAD"]
+
+
+def test_pdf_summary_table_omits_dread_column_when_absent() -> None:
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    table = _build_summary_table([_WITH_CVSS], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "CVSS"]
+
+
+def test_pdf_summary_table_shows_both_columns_when_both_present() -> None:
+    from backend.export.pdf import _build_styles, _build_summary_table
+
+    both = {**_STRIDE_FLAT, "cvss_score": 9.8, "cvss_severity": "critical"}
+    table = _build_summary_table([both], _build_styles())
+    header = table._cellvalues[0]
+    assert header == ["#", "Threat", "Category", "Target", "Likelihood", "DREAD", "CVSS"]
+
+
 def test_pdf_with_source_file() -> None:
     """export_pdf() accepts an optional source_file parameter without error."""
     result = export_pdf(

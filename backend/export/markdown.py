@@ -171,11 +171,22 @@ def export_markdown(
         lines.append("---")
         lines.append("")
 
-    # Summary table
+    # Summary table. The DREAD/CVSS columns are each shown only when at
+    # least one threat actually has that score — a dread-only export
+    # (today's default) must not grow an all-"—" CVSS column just because
+    # the field exists on the model, and vice versa for a cvss-only export.
+    show_dread = any(_extract_dread_score(t) is not None for t in threats)
+    show_cvss = any(t.get("cvss_score") is not None for t in threats)
+
     lines.append("## Summary")
     lines.append("")
-    lines.append("| # | Threat | Category | Target | Likelihood | DREAD | CVSS |")
-    lines.append("|---|--------|----------|--------|------------|-------|------|")
+    header = ["#", "Threat", "Category", "Target", "Likelihood"]
+    if show_dread:
+        header.append("DREAD")
+    if show_cvss:
+        header.append("CVSS")
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join("---" for _ in header) + "|")
 
     if not threats:
         lines.append("")
@@ -190,9 +201,12 @@ def export_markdown(
         category = _category_from_row(t)
         target = t.get("target") or "—"
         likelihood = t.get("likelihood") or "—"
-        dread = _dread_score_cell(t)
-        cvss = _cvss_score_cell(t)
-        lines.append(f"| {i} | {name} | {category} | {target} | {likelihood} | {dread} | {cvss} |")
+        row = [str(i), name, category, target, likelihood]
+        if show_dread:
+            row.append(_dread_score_cell(t))
+        if show_cvss:
+            row.append(_cvss_score_cell(t))
+        lines.append("| " + " | ".join(row) + " |")
 
     lines.append("")
     lines.append("---")
