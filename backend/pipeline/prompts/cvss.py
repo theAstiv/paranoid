@@ -15,8 +15,8 @@ computes them server-side from these metrics right after the provider call
 def cvss_scoring_section() -> str:
     """CVSS v3.1 Base Scoring instructions, spliced into a threat-generation
     or improve-iteration prompt (before its closing </instructions> tag —
-    see _insert_before_closing_tag in threats.py) when scoring_method !=
-    "dread". Deliberately unnumbered: it's spliced into four prompts whose
+    see _insert_before_closing_instructions in threats.py) when
+    scoring_method != "dread". Deliberately unnumbered: it's spliced into four prompts whose
     own numbered sections end at different numbers (7, 8, 9, 9), so a fixed
     number here would either skip one or collide with an existing section."""
     return """

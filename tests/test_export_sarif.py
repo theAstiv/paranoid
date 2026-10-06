@@ -405,9 +405,46 @@ def test_sarif_cvss_result_properties_and_rule_security_severity():
     assert tampering_rule["properties"]["security-severity"] == "9.8"
 
 
-def test_sarif_rule_security_severity_is_max_across_threats_in_category():
-    """Two threats share a STRIDE category; the rule's security-severity
-    must be the higher of the two scores, not the first or last one seen."""
+def test_sarif_rule_name_uses_enum_value_not_python_repr():
+    """threat.stride_category is a str-mixin Enum (StrideCategory), not a
+    plain string, on any Threat built directly (every Threat() call coerces
+    its stride_category input into the enum via Pydantic validation — this
+    isn't a special "fresh pipeline result" case, it's every Threat).
+    `.lower()`/`_rule_id()` work fine on it since the mixin's str value IS
+    the enum's value, but Enum's __str__ wins over str's in an f-string, so
+    f"{category}" bakes "StrideCategory.TAMPERING" into the rule name
+    instead of "Tampering". Unlike `properties["category"] = category`
+    (the raw enum, fixed up later by a JSON encoder when this dict is
+    serialized), a value already baked into an f-string never gets that
+    second chance."""
+    from backend.models.state import Threat
+
+    threat = Threat(
+        name="Tampering via crafted input",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss_score=9.5,
+        cvss_severity="critical",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[threat]), model_id="enum-name-test", framework="STRIDE"
+    )
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    rule = next(r for r in rules if r["id"] == "stride/tampering/critical")
+    assert rule["name"] == "Tampering (Critical)"
+    assert "StrideCategory" not in rule["name"]
+
+
+def test_sarif_rules_split_by_severity_band_within_a_category():
+    """A low-scoring threat must NOT inherit a high-scoring sibling's
+    security-severity just because they share a STRIDE category — one rule
+    per (category, band), not one rule per category. Before this fix, a
+    single stride/tampering rule carried the category's max score (9.1),
+    so GitHub would have shown the 3.0 threat as "High" too."""
     from backend.models.state import Threat
 
     low = Threat(
@@ -435,9 +472,130 @@ def test_sarif_rule_security_severity_is_max_across_threats_in_category():
     output = export_sarif(
         threats=ThreatsList(threats=[low, high]), model_id="max-test", framework="STRIDE"
     )
+    results = output["runs"][0]["results"]
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    rule_by_id = {r["id"]: r for r in rules}
+
+    low_result = next(
+        r for r in results if r["partialFingerprints"]["threatName"] == "Low severity tampering"
+    )
+    high_result = next(
+        r for r in results if r["partialFingerprints"]["threatName"] == "High severity tampering"
+    )
+
+    assert low_result["ruleId"] == "stride/tampering/low"
+    assert high_result["ruleId"] == "stride/tampering/critical"
+    assert rule_by_id["stride/tampering/low"]["properties"]["security-severity"] == "3.0"
+    assert rule_by_id["stride/tampering/critical"]["properties"]["security-severity"] == "9.1"
+    assert rule_by_id["stride/tampering/low"]["properties"]["tags"] == ["security"]
+
+
+def test_sarif_rule_security_severity_is_max_within_its_own_band():
+    """Two threats land in the SAME band (both "high") — the rule's
+    security-severity must be the higher of the two, not the first/last."""
+    from backend.models.state import Threat
+
+    lower_high = Threat(
+        name="Lower high tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss_score=7.2,
+        cvss_severity="high",
+    )
+    higher_high = Threat(
+        name="Higher high tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="B",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss_score=8.9,
+        cvss_severity="high",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[lower_high, higher_high]),
+        model_id="band-max-test",
+        framework="STRIDE",
+    )
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    tampering_high = next(r for r in rules if r["id"] == "stride/tampering/high")
+    assert tampering_high["properties"]["security-severity"] == "8.9"
+
+
+def test_sarif_no_scored_threat_never_emits_zero_security_severity():
+    """A 0.0 CVSS score is outside GitHub's allowed security-severity range
+    (above 0.0, up to 10.0) — such a threat must fall back to the plain
+    per-category rule with no security-severity property, same as a threat
+    with no CVSS score at all."""
+    from backend.models.state import Threat
+
+    zero = Threat(
+        name="Zero score tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A",
+        impact="low",
+        likelihood="low",
+        mitigations=["pin version", "audit"],
+        cvss_score=0.0,
+        cvss_severity="none",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[zero]), model_id="zero-test", framework="STRIDE"
+    )
+    result = output["runs"][0]["results"][0]
+    assert result["ruleId"] == "stride/tampering"
     rules = output["runs"][0]["tool"]["driver"]["rules"]
     tampering_rule = next(r for r in rules if r["id"] == "stride/tampering")
-    assert tampering_rule["properties"]["security-severity"] == "9.1"
+    assert "security-severity" not in tampering_rule["properties"]
+
+
+def test_sarif_rule_engine_threat_with_no_score_uses_plain_category_rule():
+    """A rule-engine/DREAD-only threat (no cvss_score) in the same category
+    as a scored threat must use the plain category rule, not inherit the
+    scored sibling's band."""
+    from backend.models.state import Threat
+
+    unscored = Threat(
+        name="Unscored tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="A",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+    )
+    scored = Threat(
+        name="Scored tampering",
+        stride_category="Tampering",
+        description="x " * 40,
+        target="B",
+        impact="high",
+        likelihood="high",
+        mitigations=["pin version", "audit"],
+        cvss_score=9.5,
+        cvss_severity="critical",
+    )
+    output = export_sarif(
+        threats=ThreatsList(threats=[unscored, scored]), model_id="mixed-test", framework="STRIDE"
+    )
+    results = output["runs"][0]["results"]
+    unscored_result = next(
+        r for r in results if r["partialFingerprints"]["threatName"] == "Unscored tampering"
+    )
+    assert unscored_result["ruleId"] == "stride/tampering"
+
+    rules = output["runs"][0]["tool"]["driver"]["rules"]
+    rule_ids = {r["id"] for r in rules}
+    assert "stride/tampering" in rule_ids
+    assert "stride/tampering/critical" in rule_ids
+    plain_rule = next(r for r in rules if r["id"] == "stride/tampering")
+    assert "security-severity" not in plain_rule["properties"]
 
 
 def test_sarif_no_cvss_property_when_no_score():

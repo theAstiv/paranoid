@@ -145,14 +145,6 @@ def cvss_display(row: dict[str, Any]) -> str | None:
     return f"{label} {vector}" if vector else label
 
 
-def cvss_security_severity(row: dict[str, Any]) -> str | None:
-    """The numeric string SARIF's `security-severity` property expects
-    (GitHub code scanning reads this for its own severity sort/badge), or
-    None if the threat has no computed CVSS score."""
-    score = row.get("cvss_score")
-    return str(score) if score is not None else None
-
-
 def dependency_findings_rows(
     dependency_scans: list[dict[str, Any]] | None,
 ) -> list[tuple[str, str, str]]:

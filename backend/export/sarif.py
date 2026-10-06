@@ -73,51 +73,111 @@ def export_sarif(
     return sarif
 
 
+def _threat_category(threat: Any) -> str | None:
+    """STRIDE or MAESTRO category for a threat, or None if neither is set."""
+    if hasattr(threat, "stride_category"):
+        return threat.stride_category
+    if hasattr(threat, "maestro_category"):
+        return threat.maestro_category
+    return None
+
+
+def _cvss_band(score: float) -> str | None:
+    """CVSS v3.1 qualitative band for a score, or None for a score GitHub's
+    security-severity doesn't accept (0.0, or no score at all — the two
+    are handled the same way by the caller: no band means "use the plain
+    per-category rule, no security-severity property")."""
+    if score >= 9.0:
+        return "critical"
+    if score >= 7.0:
+        return "high"
+    if score >= 4.0:
+        return "medium"
+    if score > 0.0:
+        return "low"
+    return None
+
+
+def _rule_key(threat: Any) -> tuple[str, str | None] | None:
+    """(category, band) for a threat's rule — band is None when the threat
+    has no CVSS score or a 0.0 one, routing it to the plain per-category
+    rule with no security-severity. Returns None if the threat has neither
+    a STRIDE nor MAESTRO category."""
+    category = _threat_category(threat)
+    if category is None:
+        return None
+    score = getattr(threat, "cvss_score", None)
+    band = _cvss_band(score) if score is not None else None
+    return (category, band)
+
+
+def _rule_id_for_key(framework: str, category: str, band: str | None) -> str:
+    """SARIF rule id for a (category, band) key — shared by _generate_rules
+    and _generate_results so they can never drift apart."""
+    base = f"{framework.lower()}/{_rule_id(category)}"
+    return f"{base}/{band}" if band else base
+
+
 def _generate_rules(threats: ThreatsList, framework: str) -> list[dict[str, Any]]:
-    """Generate SARIF rules from unique threat categories.
-
-    Each STRIDE/MAESTRO category becomes a rule with metadata. Dependency-
-    sourced threats carry a STRIDE/MAESTRO category too (see
-    backend/deps/threats.py's MAESTRO-layer mapping), so they fall into the
-    same per-category rules as any other threat — dependency_ref.rule_id is
-    a separate, purely informational field on the *result* and is never
-    itself a SARIF rule.
+    """Generate SARIF rules, one per (STRIDE/MAESTRO category, CVSS severity
+    band) pair actually present, plus a plain per-category rule for threats
+    with no CVSS score. A single rule per *category* (the original design)
+    meant a 3.1-scored Tampering threat inherited "Critical" security-
+    severity from an unrelated 9.8-scored Tampering threat, since GitHub
+    reads that property from the rule a result points at, not the result
+    itself, and every Tampering threat pointed at the same rule. Splitting
+    by band fixes that: a threat's rule now reflects only the threats in
+    its own band. Dependency-sourced threats carry a STRIDE/MAESTRO
+    category too (see backend/deps/threats.py's MAESTRO-layer mapping), so
+    they fall into the same per-category/band rules as any other threat —
+    dependency_ref.rule_id is a separate, purely informational field on the
+    *result* and is never itself a SARIF rule.
     """
-    # Collect unique categories, and the highest CVSS score seen per category —
-    # GitHub code scanning reads security-severity only from a *rule's*
-    # properties, never from a result's, so this is computed here rather
-    # than per-result.
-    categories = set()
-    max_cvss_by_category: dict[str, float] = {}
+    # (category, band) -> max score seen in that bucket. band is None for
+    # the plain per-category rule (no score, or a 0.0 one) and never has an
+    # entry here — only banded buckets carry a score.
+    max_score_by_key: dict[tuple[str, str | None], float] = {}
+    # Plain per-category keys that must get a rule even with no scored
+    # threats in them (e.g. every threat in Spoofing is DREAD-only).
+    plain_keys: set[tuple[str, str | None]] = set()
+
     for threat in threats.threats:
-        category = None
-        if hasattr(threat, "stride_category"):
-            category = threat.stride_category
-        elif hasattr(threat, "maestro_category"):
-            category = threat.maestro_category
-        if category is None:
+        key = _rule_key(threat)
+        if key is None:
             continue
-        categories.add(category)
+        category, band = key
+        if band is None:
+            plain_keys.add((category, None))
+        else:
+            score = threat.cvss_score
+            max_score_by_key[key] = max(score, max_score_by_key.get(key, score))
 
-        score = getattr(threat, "cvss_score", None)
-        if score is not None:
-            max_cvss_by_category[category] = max(score, max_cvss_by_category.get(category, score))
-
-    # Define category metadata
+    all_keys = set(max_score_by_key) | plain_keys
     category_metadata = _get_category_metadata(framework)
 
     rules = []
-    for category in sorted(categories):
+    for category, band in sorted(all_keys, key=lambda k: (k[0], k[1] or "")):
         metadata = category_metadata.get(category, {})
         properties = {
             "category": category,
             "framework": framework,
         }
-        if category in max_cvss_by_category:
-            properties["security-severity"] = str(max_cvss_by_category[category])
+        if band is not None:
+            properties["security-severity"] = str(max_score_by_key[(category, band)])
+            # Paired with security-severity per GitHub's code scanning docs.
+            properties["tags"] = ["security"]
+        # stride_category/maestro_category are str-mixin Enums on a threat
+        # straight from the pipeline (not yet round-tripped through the DB,
+        # where they'd already be plain strings). str() methods like
+        # .lower() work fine on them, but Enum's __str__ wins over str's in
+        # an f-string, so f"{category}" would bake "StrideCategory.SPOOFING"
+        # into this dict — which, unlike `category` embedded directly in a
+        # field a JSON encoder later serializes, never gets a second chance
+        # to resolve to the plain value.
+        category_name = getattr(category, "value", category)
         rule = {
-            "id": f"{framework.lower()}/{_rule_id(category)}",
-            "name": category,
+            "id": _rule_id_for_key(framework, category, band),
+            "name": f"{category_name} ({band.capitalize()})" if band else category_name,
             "shortDescription": {"text": metadata.get("short", f"{category} threat identified")},
             "fullDescription": {
                 "text": metadata.get(
@@ -152,7 +212,9 @@ def _generate_results(
     results = []
 
     for threat in threats.threats:
-        # Determine category and rule ID
+        # Determine category and rule ID. Mirrors _generate_rules()'s
+        # (category, band) key via the shared _rule_id_for_key() helper, so
+        # a result's ruleId always resolves to a rule that actually exists.
         if hasattr(threat, "stride_category"):
             category = threat.stride_category
             framework = "stride"
@@ -163,7 +225,9 @@ def _generate_results(
             category = "Unknown"
             framework = "unknown"
 
-        rule_id = f"{framework}/{_rule_id(category)}"
+        score = getattr(threat, "cvss_score", None)
+        band = _cvss_band(score) if score is not None else None
+        rule_id = _rule_id_for_key(framework, category, band)
 
         # Map DREAD severity to SARIF level
         level = _severity_to_level(threat)

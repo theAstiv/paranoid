@@ -2,7 +2,6 @@
 
 from backend.export._common import (
     cvss_display,
-    cvss_security_severity,
     dependency_category_set,
     dependency_findings_rows,
     dependency_flags,
@@ -138,14 +137,6 @@ def test_cvss_display_nested_model_dump_shape() -> None:
 
 def test_cvss_display_without_severity_or_vector() -> None:
     assert cvss_display({"cvss_score": 5.0}) == "5.0"
-
-
-def test_cvss_security_severity_none_when_no_score() -> None:
-    assert cvss_security_severity({}) is None
-
-
-def test_cvss_security_severity_returns_numeric_string() -> None:
-    assert cvss_security_severity({"cvss_score": 7.5}) == "7.5"
 
 
 def test_dependency_findings_rows_sorted_case_insensitively() -> None:
