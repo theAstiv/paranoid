@@ -33,6 +33,9 @@ from backend.providers.base import LLMProvider
 from backend.scoring.cvss31 import score_and_severity_from_metrics
 
 
+GENERATE_THREATS_MAX_TOKENS = 16384
+
+
 def _insert_before_closing_instructions(prompt: str, section: str) -> str:
     """Splice `section` just before the prompt's closing </instructions>
     tag, so it stays inside the instructions block instead of trailing
@@ -225,12 +228,20 @@ async def generate_threats(
     # ThreatsList/Threat right after the call so every downstream caller
     # (force-compute below, the runner, persistence) sees one consistent
     # shape regardless of scoring_method.
+    #
+    # max_tokens starts at the providers' auto-bump ceiling (Anthropic caps
+    # at 16,384, gpt-4o's hard output limit is 16,384), not 4,096: in the
+    # 10-06 live runs (claude-sonnet-5, default effort) every iteration-1 call
+    # truncated at 4,096 *and* at 8,192 before completing at 16,384, wasting
+    # ~20k output tokens and two round-trips per run. The final ceiling is
+    # unchanged; max_tokens is a cap, not a charge, so a call that finishes
+    # early costs the same as before.
     response_model = ThreatsListDreadOnly if scoring_method == "dread" else ThreatsList
     raw_response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=response_model,
         temperature=temperature,
-        max_tokens=4096,
+        max_tokens=GENERATE_THREATS_MAX_TOKENS,
         images=images,
         shared_context=shared_context,
     )

@@ -457,6 +457,27 @@ async def test_generate_threats_requests_schema_matching_scoring_method(
 
 
 @pytest.mark.asyncio
+async def test_generate_threats_starts_at_the_auto_bump_ceiling(mock_provider):
+    """generate_threats asks for 16,384 output tokens up front. Starting at
+    4,096 made every live iteration-1 call truncate twice (4,096 -> 8,192 ->
+    16,384) before completing; the ceiling itself is unchanged."""
+    await nodes.generate_threats(
+        description="Users upload and share documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.STRIDE,
+        provider=mock_provider,
+    )
+
+    threat_calls = [
+        c for c in mock_provider.calls if c["response_model"] in (ThreatsList, ThreatsListDreadOnly)
+    ]
+    assert [c["max_tokens"] for c in threat_calls] == [16384]
+
+
+@pytest.mark.asyncio
 async def test_generate_threats_normalizes_real_threatslistdreadonly_response(mock_provider):
     """MockProvider canonicalizes ThreatsListDreadOnly -> ThreatsList before
     returning (so other tests can share fixtures/overrides across both), so
