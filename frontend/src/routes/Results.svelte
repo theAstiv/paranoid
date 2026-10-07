@@ -35,7 +35,8 @@
   let diagrams = []
   let selectedDiagramId = null
   let diagramContentCache = {} // { [diagramId]: { content, media_type } }
-  let diagramContentLoading = false
+  let diagramContentLoading = {} // { [diagramId]: true } — per id, so switching tabs mid-fetch can't let one id's `finally` clear another's flag
+  let diagramContentError = {} // { [diagramId]: true } — a failed id is not retried automatically; see retryDiagram()
   let tabRefs = []
   $: selectedDiagram = diagrams.find(d => d.id === selectedDiagramId) ?? diagrams[0] ?? null
   $: selectedDiagramContent = selectedDiagram
@@ -44,8 +45,12 @@
         : (diagramContentCache[selectedDiagram.id]?.content ?? null))
     : null
   // The default-selected diagram (page load, or after a list reload) also needs
-  // its content lazily fetched, not just an explicit tab click.
-  $: if (selectedDiagram && selectedDiagram.kind !== 'mermaid' && !diagramContentCache[selectedDiagram.id] && !diagramContentLoading) {
+  // its content lazily fetched, not just an explicit tab click. A failed id is
+  // excluded so a lasting error (404/403/500) doesn't retry forever.
+  $: if (selectedDiagram && selectedDiagram.kind !== 'mermaid'
+      && !diagramContentCache[selectedDiagram.id]
+      && !diagramContentLoading[selectedDiagram.id]
+      && !diagramContentError[selectedDiagram.id]) {
     selectDiagram(selectedDiagram.id)
   }
   /** @type {any} */ let assetsList
@@ -138,6 +143,8 @@
     diagrams = dgs
     selectedDiagramId = null
     diagramContentCache = {}
+    diagramContentLoading = {}
+    diagramContentError = {}
     assetCommentCounts = {}
     flowCommentCounts = {}
     threatCommentCounts = {}
@@ -190,16 +197,24 @@
   async function selectDiagram(id) {
     selectedDiagramId = id
     const d = diagrams.find(x => x.id === id)
-    if (!d || d.kind === 'mermaid' || diagramContentCache[id]) return
-    diagramContentLoading = true
+    if (!d || d.kind === 'mermaid' || diagramContentCache[id] || diagramContentLoading[id] || diagramContentError[id]) return
+    diagramContentLoading = { ...diagramContentLoading, [id]: true }
     try {
       const full = await getModelDiagram(params.id, id)
       diagramContentCache = { ...diagramContentCache, [id]: full }
     } catch (err) {
       notify('error', `Failed to load diagram: ${err.message}`)
+      diagramContentError = { ...diagramContentError, [id]: true }
     } finally {
-      diagramContentLoading = false
+      const { [id]: _removed, ...rest } = diagramContentLoading
+      diagramContentLoading = rest
     }
+  }
+
+  function retryDiagram(id) {
+    const { [id]: _removed, ...rest } = diagramContentError
+    diagramContentError = rest
+    selectDiagram(id)
   }
 
   function onTabKeydown(event, index) {
@@ -498,10 +513,18 @@
         </div>
         <p class="text-xs text-c-faint mb-3">Re-runs reuse these diagrams. Upload new ones from a new run to replace them.</p>
         {#if selectedDiagram}
-          <div id="diagram-panel" role="tabpanel" aria-labelledby="diagram-tab-{selectedDiagram.id}">
-            {#if selectedDiagram.kind !== 'mermaid' && diagramContentLoading && !diagramContentCache[selectedDiagram.id]}
+          <div id="diagram-panel" role="tabpanel"
+            aria-labelledby={diagrams.length > 1 ? `diagram-tab-${selectedDiagram.id}` : undefined}>
+            {#if selectedDiagram.kind !== 'mermaid' && diagramContentLoading[selectedDiagram.id] && !diagramContentCache[selectedDiagram.id]}
               <div class="flex justify-center py-12">
                 <div class="w-5 h-5 border-2 border-c-accent border-t-transparent rounded-full animate-spin-slow"></div>
+              </div>
+            {:else if selectedDiagram.kind !== 'mermaid' && diagramContentError[selectedDiagram.id]}
+              <div class="flex flex-col items-center gap-2 py-12">
+                <p class="text-sm text-c-muted">Couldn't load diagram</p>
+                <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => retryDiagram(selectedDiagram.id)}>
+                  Retry
+                </button>
               </div>
             {:else}
               <DiagramView

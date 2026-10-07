@@ -162,6 +162,37 @@ describe('Results — diagram tabs', () => {
     await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
 
     await waitFor(() => expect(getModelDiagram).toHaveBeenCalledWith('m1', 'd2'))
+    await waitFor(() => {
+      const img = document.querySelector('img[alt="photo"]')
+      expect(img?.getAttribute('src')).toBe('data:image/png;base64,aGVsbG8=')
+    })
+  })
+
+  it('shows a retry state and does not keep retrying when the fetch fails', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    getModelDiagram.mockRejectedValue(new Error('404 Not Found'))
+
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+
+    await waitFor(() => expect(screen.getByText("Couldn't load diagram")).toBeInTheDocument())
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+
+    // Switching away and back must not re-trigger the fetch for the failed id.
+    await fireEvent.click(screen.getByRole('tab', { name: 'flow' }))
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+
+    // Retry clears the error and fetches again.
+    getModelDiagram.mockResolvedValue({ id: 'd2', content: 'aGVsbG8=', media_type: 'image/png' })
+    await fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(getModelDiagram).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('img[alt="photo"]')).not.toBeNull())
   })
 
   it('shows no tablist with only one diagram', async () => {

@@ -139,8 +139,11 @@ describe('DiagramView — fit to view', () => {
 
     await fireEvent.click(screen.getByLabelText('Fit to view'))
 
+    // 480x480 viewport, 1200x600 content at scale 1: the width ratio (0.4) is
+    // the binding constraint, so it scales to 0.4 and centers vertically —
+    // (480 - 600*0.4) / 2 = 120px of vertical letterboxing, 0px horizontal.
     const transform = container.querySelector('.absolute').style.transform
-    expect(transform).not.toBe('translate(0px, 0px) scale(1)')
+    expect(transform).toBe('translate(0px, 120px) scale(0.4)')
   })
 })
 

@@ -221,8 +221,10 @@
       if (entry.kind !== 'mermaid') {
         const reader = new FileReader()
         reader.onload = (ev) => {
-          entry.preview = ev.target.result
-          diagramFiles = diagramFiles // retrigger reactivity for the async preview
+          // Look up by File identity, not the captured `entry` object — a
+          // rename before this resolves would otherwise write the preview
+          // onto a now-discarded copy and the thumbnail would never appear.
+          diagramFiles = diagramFiles.map(d => d.file === entry.file ? { ...d, preview: ev.target.result } : d)
         }
         reader.readAsDataURL(entry.file)
       }
@@ -407,7 +409,7 @@
                 {#if entry.kind !== 'mermaid' && entry.preview}
                   <img src={entry.preview} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0 border border-c-border" />
                 {:else}
-                  <svg class="w-5 h-5 text-c-faint flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+                  <svg class="w-5 h-5 text-c-faint flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 2.5h5.5L14 5v10.5a1 1 0 01-1 1H6a1 1 0 01-1-1V3.5a1 1 0 011-1z"/><path stroke-linecap="round" stroke-linejoin="round" d="M11.5 2.5V5H14"/></svg>
                 {/if}
                 <input type="text" value={entry.name} on:change={(e) => renameDiagramFile(i, e.target.value)}
                   aria-label="Diagram name: {entry.name}"
@@ -415,7 +417,9 @@
                 <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border flex-shrink-0 {entry.kind === 'mermaid' ? 'chip-violet' : 'chip-blue'}">
                   {entry.kind === 'mermaid' ? 'mermaid' : entry.kind}
                 </span>
-                <span class="font-mono text-[11px] text-c-faint flex-shrink-0 w-16 text-right">{(entry.size / 1024).toFixed(0)} KB</span>
+                <span class="font-mono text-[11px] text-c-faint flex-shrink-0 w-16 text-right">
+                  {entry.size < 1024 ? `${entry.size} B` : `${(entry.size / 1024).toFixed(0)} KB`}
+                </span>
                 <button type="button" on:click={() => removeDiagramFile(i)}
                   aria-label="Remove diagram: {entry.name}"
                   class="text-c-faint hover:text-c-critical flex-shrink-0 transition-colors">
