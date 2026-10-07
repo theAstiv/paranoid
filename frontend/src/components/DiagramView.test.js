@@ -38,6 +38,26 @@ describe('DiagramView — mermaid', () => {
     expect(container.querySelector('.diagram-svg svg')).not.toBeNull()
   })
 
+  it('sets explicit width/height from the viewBox instead of the 100% mermaid emits', async () => {
+    // Mermaid's real output: width="100%" + a max-width style + a viewBox
+    // that carries the diagram's actual size. Inside this absolutely
+    // positioned, shrink-to-fit wrapper, width="100%" has no containing
+    // block to resolve against and silently falls back to the browser's
+    // 300x150 replaced-element default — this pins the fix for that.
+    mermaidRender.mockResolvedValue({
+      svg: '<svg width="100%" style="max-width: 909px;" viewBox="0 0 909 611"><g class="node"><rect/></g></svg>',
+    })
+    const { container } = render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },
+    })
+    await waitFor(() => expect(container.querySelector('.diagram-svg svg')).not.toBeNull())
+
+    const svg = container.querySelector('.diagram-svg svg')
+    expect(svg.getAttribute('width')).toBe('909')
+    expect(svg.getAttribute('height')).toBe('611')
+    expect(svg.style.maxWidth).toBe('none')
+  })
+
   it('shows a render-failure panel with a raw-source toggle when rendering throws', async () => {
     mermaidRender.mockRejectedValue(new Error('Parse error'))
     render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD; broken!!!', name: 'arch' } })
@@ -101,6 +121,69 @@ describe('DiagramView — mermaid', () => {
     await rerender({ kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' })
     await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(2))
     expect(container.querySelector('.diagram-svg svg')).not.toBeNull()
+  })
+})
+
+describe('DiagramView — ELK failure and retry', () => {
+  it('resets the cached ELK registration on any render failure so a retry can re-import and succeed', async () => {
+    // Force a failure first so the catch block resets the module-scope
+    // elkRegisterPromise back to null — otherwise a prior successful
+    // registration (from an earlier test in this file) would mask this
+    // scenario, since ensureElkRegistered only re-imports when it's null.
+    mermaidRender.mockRejectedValueOnce(new Error('boom'))
+    render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' } })
+    await waitFor(() => expect(screen.getByText('Diagram rendering failed')).toBeInTheDocument())
+
+    // ELK registration itself fails on the next attempt.
+    mermaidRegisterLayoutLoaders.mockImplementationOnce(() => { throw new Error('chunk load failed') })
+    await fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(screen.getByText('Diagram rendering failed')).toBeInTheDocument())
+
+    // ELK registration succeeds this time — Retry should now render normally.
+    await fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(screen.queryByText('Diagram rendering failed')).toBeNull())
+  })
+})
+
+describe('DiagramView — fit to view', () => {
+  it('scales and centers the content to fill the viewport', async () => {
+    const { container } = render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },
+    })
+    await waitFor(() => expect(container.querySelector('.diagram-svg svg')).not.toBeNull())
+
+    const viewport = container.querySelector('[role="application"]')
+    viewport.getBoundingClientRect = () => ({ width: 480, height: 480, top: 0, left: 0, right: 480, bottom: 480 })
+    const svg = container.querySelector('.diagram-svg svg')
+    svg.getBoundingClientRect = () => ({ width: 1200, height: 600, top: 0, left: 0, right: 1200, bottom: 600 })
+
+    await fireEvent.click(screen.getByLabelText('Fit to view'))
+
+    // 480x480 viewport, 1200x600 content at scale 1: the width ratio (0.4) is
+    // the binding constraint, so it scales to 0.4 and centers vertically —
+    // (480 - 600*0.4) / 2 = 120px of vertical letterboxing, 0px horizontal.
+    const transform = container.querySelector('.absolute').style.transform
+    expect(transform).toBe('translate(0px, 120px) scale(0.4)')
+  })
+})
+
+describe('DiagramView — wheel gating', () => {
+  it('does not preventDefault or zoom on a plain wheel event', async () => {
+    const { container } = render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' } })
+    await waitFor(() => expect(container.querySelector('.diagram-svg svg')).not.toBeNull())
+    const viewport = container.querySelector('[role="application"]')
+    const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
+    viewport.dispatchEvent(evt)
+    expect(evt.defaultPrevented).toBe(false)
+  })
+
+  it('zooms and preventDefaults when ctrlKey is held', async () => {
+    const { container } = render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' } })
+    await waitFor(() => expect(container.querySelector('.diagram-svg svg')).not.toBeNull())
+    const viewport = container.querySelector('[role="application"]')
+    const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true, ctrlKey: true })
+    viewport.dispatchEvent(evt)
+    expect(evt.defaultPrevented).toBe(true)
   })
 })
 

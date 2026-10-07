@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import Results from './Results.svelte'
 
 vi.mock('svelte-spa-router', () => ({
@@ -35,6 +36,7 @@ vi.mock('../lib/api.js', () => ({
   getCommentCounts: vi.fn().mockResolvedValue([]),
   getModelDependencies: vi.fn().mockResolvedValue([]),
   listModelDiagrams: vi.fn().mockResolvedValue([]),
+  getModelDiagram: vi.fn(),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -50,7 +52,7 @@ vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
-  getModelDependencies, listModelDiagrams,
+  getModelDependencies, listModelDiagrams, getModelDiagram,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -142,6 +144,115 @@ describe('Results — diagram', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Diagram')).toBeInTheDocument())
     await waitFor(() => expect(mermaidRender).toHaveBeenCalled())
+  })
+})
+
+describe('Results — diagram tabs', () => {
+  it('shows a tablist with multiple diagrams and lazily fetches a non-mermaid tab on click', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    getModelDiagram.mockResolvedValue({ id: 'd2', content: 'aGVsbG8=', media_type: 'image/png' })
+
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalled())
+    expect(getModelDiagram).not.toHaveBeenCalled()
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+
+    await waitFor(() => expect(getModelDiagram).toHaveBeenCalledWith('m1', 'd2'))
+    await waitFor(() => {
+      const img = document.querySelector('img[alt="photo"]')
+      expect(img?.getAttribute('src')).toBe('data:image/png;base64,aGVsbG8=')
+    })
+  })
+
+  it('shows a retry state and does not keep retrying when the fetch fails', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    getModelDiagram.mockRejectedValue(new Error('404 Not Found'))
+
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+
+    await waitFor(() => expect(screen.getByText("Couldn't load diagram")).toBeInTheDocument())
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+
+    // Switching away and back must not re-trigger the fetch for the failed id.
+    await fireEvent.click(screen.getByRole('tab', { name: 'flow' }))
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+
+    // Retry clears the error and fetches again.
+    getModelDiagram.mockResolvedValue({ id: 'd2', content: 'aGVsbG8=', media_type: 'image/png' })
+    await fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(getModelDiagram).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('img[alt="photo"]')).not.toBeNull())
+  })
+
+  it('does not start a duplicate fetch when the diagram list reloads mid-fetch', async () => {
+    // A re-run with no new upload reuses the same diagram ids — simulated
+    // here by listModelDiagrams returning the same ids again on a reload.
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    let resolveFetch
+    getModelDiagram.mockImplementation(() => new Promise((resolve) => { resolveFetch = resolve }))
+
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+    await waitFor(() => expect(getModelDiagram).toHaveBeenCalledTimes(1))
+
+    // Reload the list while that fetch is still in flight (e.g. a re-run finishing).
+    // A tick() between the two store writes is needed so the component's
+    // "just stopped running" watcher sees a true→false transition rather
+    // than both writes collapsing into a single flush.
+    pipelineRunning.set(true)
+    await tick()
+    pipelineRunning.set(false)
+    await waitFor(() => expect(listModelDiagrams).toHaveBeenCalledTimes(2))
+    // Wait for the reload's own state updates (selectedDiagramId reset to the
+    // list default) to land, not just the network call, before interacting again.
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'flow' })).toHaveAttribute('aria-selected', 'true'))
+
+    // Re-selecting the same tab after the reload must not start a second request.
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+
+    resolveFetch({ id: 'd2', content: 'aGVsbG8=', media_type: 'image/png' })
+    await waitFor(() => expect(document.querySelector('img[alt="photo"]')).not.toBeNull())
+    expect(getModelDiagram).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows no tablist with only one diagram', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'arch.mmd', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Diagram')).toBeInTheDocument())
+    expect(screen.queryByRole('tablist')).toBeNull()
+  })
+
+  it('hides the Diagram section while a pipeline run is in progress', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+
+    pipelineRunning.set(true)
+
+    await waitFor(() => expect(screen.queryByRole('tablist')).toBeNull())
   })
 })
 

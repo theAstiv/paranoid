@@ -1097,11 +1097,15 @@ async def list_model_diagrams(
     model_id: str,
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> JSONResponse:
-    """List persisted architecture diagrams for a model, most recently uploaded first."""
+    """List persisted architecture diagrams for a model, most recently uploaded first.
+
+    Image content is omitted here (``has_content: false``); fetch a single
+    diagram's bytes via ``GET /{model_id}/diagrams/{diagram_id}``.
+    """
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    diagrams = await crud.list_model_diagrams(model_id)
+    diagrams = await crud.list_model_diagrams(model_id, include_image_content=False)
     return JSONResponse(content=diagrams)
 
 

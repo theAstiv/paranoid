@@ -772,9 +772,11 @@ async def test_extract_without_upload_also_reuses_stored_diagrams(client, model_
 
 
 @pytest.mark.asyncio
-async def test_get_diagrams_list_response_unchanged_includes_content(client, model_id):
-    """5a-1 keeps GET /diagrams returning inline content; the
-    include_image_content=False switch is deferred to 5a-2."""
+async def test_get_diagrams_list_omits_image_content(client, model_id):
+    """5a-2: GET /diagrams omits png/jpeg content (has_content: false) so the
+    list response stays small; Mermaid rows keep their text inline since it's
+    not an image payload. A single diagram's image bytes come from
+    GET /diagrams/{diagram_id} instead (test_get_single_diagram)."""
     await crud.create_model_diagram(
         model_id=model_id,
         name="a.png",
@@ -783,10 +785,18 @@ async def test_get_diagrams_list_response_unchanged_includes_content(client, mod
         size_bytes=8,
         media_type="image/png",
     )
+    await crud.create_model_diagram(
+        model_id=model_id, name="b.mmd", kind="mermaid", content="graph TD; A-->B", size_bytes=15
+    )
     resp = await client.get(f"/api/models/{model_id}/diagrams")
     assert resp.status_code == 200
     body = resp.json()
-    assert body[0]["content"] == "aGVsbG8="
+    png_row = next(r for r in body if r["kind"] == "png")
+    mermaid_row = next(r for r in body if r["kind"] == "mermaid")
+    assert png_row["content"] is None
+    assert png_row["has_content"] is False
+    assert mermaid_row["content"] == "graph TD; A-->B"
+    assert mermaid_row["has_content"] is True
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams,
+    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams, getModelDiagram,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -34,7 +34,32 @@
   let dependencyScans = []
   let diagrams = []
   let selectedDiagramId = null
+  let diagramContentCache = {} // { [diagramId]: { content, media_type } }
+  let diagramContentLoading = {} // { [diagramId]: true } — per id, so switching tabs mid-fetch can't let one id's `finally` clear another's flag
+  let diagramContentError = {} // { [diagramId]: true } — a failed id is not retried automatically; see retryDiagram()
+  // Not reset on a list reload (unlike the three above): a re-run with no new
+  // upload keeps the same diagram ids, so a fetch already in flight when the
+  // list reloads must still be recognized as in flight — otherwise the
+  // reactive guard below sees a freshly-reset "not cached, not loading" id
+  // and starts a duplicate request for it.
+  let diagramFetchToken = {} // { [diagramId]: token }
+  let nextDiagramFetchToken = 0
+  let tabRefs = []
   $: selectedDiagram = diagrams.find(d => d.id === selectedDiagramId) ?? diagrams[0] ?? null
+  $: selectedDiagramContent = selectedDiagram
+    ? (selectedDiagram.kind === 'mermaid'
+        ? selectedDiagram.content
+        : (diagramContentCache[selectedDiagram.id]?.content ?? null))
+    : null
+  // The default-selected diagram (page load, or after a list reload) also needs
+  // its content lazily fetched, not just an explicit tab click. A failed id is
+  // excluded so a lasting error (404/403/500) doesn't retry forever.
+  $: if (selectedDiagram && selectedDiagram.kind !== 'mermaid'
+      && !diagramContentCache[selectedDiagram.id]
+      && !diagramContentLoading[selectedDiagram.id]
+      && !diagramContentError[selectedDiagram.id]) {
+    selectDiagram(selectedDiagram.id)
+  }
   /** @type {any} */ let assetsList
   /** @type {any} */ let flowsList
   /** @type {any} */ let boundariesList
@@ -123,6 +148,9 @@
     assets = a; flows = f; trustBoundaries = tb
     dependencyScans = deps
     diagrams = dgs
+    selectedDiagramId = null
+    diagramContentCache = {}
+    diagramContentError = {}
     assetCommentCounts = {}
     flowCommentCounts = {}
     threatCommentCounts = {}
@@ -169,6 +197,53 @@
       notify('error', `Status change failed: ${err.message}`)
     } finally {
       changingStatus = false
+    }
+  }
+
+  async function selectDiagram(id) {
+    selectedDiagramId = id
+    const d = diagrams.find(x => x.id === id)
+    // diagramFetchToken[id] being set means a fetch for this id is already in
+    // flight (possibly started before a list reload) — don't start a second one.
+    if (!d || d.kind === 'mermaid' || diagramContentCache[id] || diagramContentError[id] || diagramFetchToken[id] !== undefined) return
+    const token = ++nextDiagramFetchToken
+    diagramFetchToken = { ...diagramFetchToken, [id]: token }
+    diagramContentLoading = { ...diagramContentLoading, [id]: true }
+    try {
+      const full = await getModelDiagram(params.id, id)
+      if (diagramFetchToken[id] !== token) return // superseded — a newer fetch for this id owns the result now
+      diagramContentCache = { ...diagramContentCache, [id]: full }
+    } catch (err) {
+      if (diagramFetchToken[id] !== token) return
+      notify('error', `Failed to load diagram: ${err.message}`)
+      diagramContentError = { ...diagramContentError, [id]: true }
+    } finally {
+      if (diagramFetchToken[id] === token) {
+        const { [id]: _removedToken, ...restToken } = diagramFetchToken
+        diagramFetchToken = restToken
+        const { [id]: _removedLoading, ...restLoading } = diagramContentLoading
+        diagramContentLoading = restLoading
+      }
+    }
+  }
+
+  function retryDiagram(id) {
+    const { [id]: _removed, ...rest } = diagramContentError
+    diagramContentError = rest
+    selectDiagram(id)
+  }
+
+  function onTabKeydown(event, index) {
+    if (diagrams.length < 2) return
+    let next = null
+    if (event.key === 'ArrowRight') next = (index + 1) % diagrams.length
+    else if (event.key === 'ArrowLeft') next = (index - 1 + diagrams.length) % diagrams.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = diagrams.length - 1
+    if (next !== null) {
+      event.preventDefault()
+      selectDiagram(diagrams[next].id)
+      tabRefs[next]?.focus()
     }
   }
 
@@ -434,21 +509,48 @@
             Diagram <span class="normal-case font-mono text-c-faint">({diagrams.length})</span>
           </h2>
           {#if diagrams.length > 1}
-            <select bind:value={selectedDiagramId}
-              class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
-              {#each diagrams as d}
-                <option value={d.id}>{d.name}</option>
+            <div role="tablist" aria-label="Diagrams" class="flex items-center gap-1.5 flex-wrap">
+              {#each diagrams as d, i (d.id)}
+                <button type="button" role="tab"
+                  bind:this={tabRefs[i]}
+                  id="diagram-tab-{d.id}"
+                  aria-selected={d.id === (selectedDiagram?.id ?? null)}
+                  aria-controls="diagram-panel"
+                  tabindex={d.id === (selectedDiagram?.id ?? null) ? 0 : -1}
+                  on:click={() => selectDiagram(d.id)}
+                  on:keydown={(e) => onTabKeydown(e, i)}
+                  class="font-mono text-[11px] px-2.5 py-1 rounded-chip border transition-colors
+                    {d.id === (selectedDiagram?.id ?? null) ? 'chip-accent' : 'chip-gray'}">
+                  {d.name}
+                </button>
               {/each}
-            </select>
+            </div>
           {/if}
         </div>
+        <p class="text-xs text-c-faint mb-3">Re-runs reuse these diagrams. Upload new ones from a new run to replace them.</p>
         {#if selectedDiagram}
-          <DiagramView
-            kind={selectedDiagram.kind}
-            content={selectedDiagram.content}
-            mediaType={selectedDiagram.media_type}
-            name={selectedDiagram.name}
-          />
+          <div id="diagram-panel" role="tabpanel"
+            aria-labelledby={diagrams.length > 1 ? `diagram-tab-${selectedDiagram.id}` : undefined}>
+            {#if selectedDiagram.kind !== 'mermaid' && diagramContentLoading[selectedDiagram.id] && !diagramContentCache[selectedDiagram.id]}
+              <div class="flex justify-center py-12">
+                <div class="w-5 h-5 border-2 border-c-accent border-t-transparent rounded-full animate-spin-slow"></div>
+              </div>
+            {:else if selectedDiagram.kind !== 'mermaid' && diagramContentError[selectedDiagram.id]}
+              <div class="flex flex-col items-center gap-2 py-12">
+                <p class="text-sm text-c-muted">Couldn't load diagram</p>
+                <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => retryDiagram(selectedDiagram.id)}>
+                  Retry
+                </button>
+              </div>
+            {:else}
+              <DiagramView
+                kind={selectedDiagram.kind}
+                content={selectedDiagramContent ?? ''}
+                mediaType={selectedDiagram.media_type}
+                name={selectedDiagram.name}
+              />
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}

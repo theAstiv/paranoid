@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getModel, getConfig, login, subscribeToRun } from './api.js'
+import { getModel, getConfig, login, subscribeToRun, getModelDiagram } from './api.js'
 import { getStoredToken, setStoredToken } from './stores.js'
 
 function jsonResponse(body, init = {}) {
@@ -40,6 +40,18 @@ describe('request() — auth header', () => {
 
     const [, opts] = fetchMock.mock.calls[0]
     expect(opts.headers.Authorization).toBe('Bearer tok-abc')
+  })
+})
+
+describe('getModelDiagram()', () => {
+  it('fetches a single diagram by id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'd1', content: 'aGVsbG8=' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getModelDiagram('m1', 'd1')
+
+    expect(result).toEqual({ id: 'd1', content: 'aGVsbG8=' })
+    expect(fetchMock.mock.calls[0][0]).toContain('/models/m1/diagrams/d1')
   })
 })
 

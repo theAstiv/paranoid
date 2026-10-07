@@ -124,4 +124,22 @@ describe('PipelineProgress', () => {
     render(PipelineProgress, { props: { events, running: false } })
     expect(screen.getByText('custom_step')).toBeInTheDocument()
   })
+
+  it('renders stored_diagram_skipped and vision_unsupported info events via the generic message path', () => {
+    const events = [
+      evt('summarize', 'info', {
+        message: '1 stored diagram skipped (over the current size limit): arch.png',
+        timestamp: 1000,
+        data: { warning: 'stored_diagram_skipped', skipped: [{ name: 'arch.png', reason: 'too large' }] },
+      }),
+      evt('summarize', 'info', {
+        message: "The Ollama provider doesn't send images; 1 image diagram(s) skipped.",
+        timestamp: 1001,
+        data: { warning: 'vision_unsupported', ignored: ['arch.png'] },
+      }),
+    ]
+    render(PipelineProgress, { props: { events, running: true } })
+    expect(screen.getByText(/1 stored diagram skipped/)).toBeInTheDocument()
+    expect(screen.getByText(/Ollama provider doesn't send images/)).toBeInTheDocument()
+  })
 })
