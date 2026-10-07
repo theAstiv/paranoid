@@ -63,6 +63,14 @@ A run now takes 1–5 architecture diagrams instead of one, each a named view (d
 - The CLI persists loaded diagrams to the database for the first time — a CLI-run model now shows its diagrams on the Results page like a web-uploaded one does
 - Backend only in this release — the wizard's diagram step and Results' diagram viewer still handle a single diagram; multi-file upload UI lands in a follow-up
 
+#### Multi-Diagram Support (Week 5a-2) — frontend
+
+- Wizard's diagram step now accepts up to 5 files at once (`.png`/`.jpg`/`.jpeg`/`.mmd`/`.txt`), each with an editable name, a kind chip, and an individual remove button; a rejected file (too large, wrong type, over the count/total-size caps) never affects already-accepted files
+- `POST /{id}/run` is now called with `diagrams[]` + `diagram_names` from the web UI instead of the deprecated singular `diagram` field (still supported server-side for other callers, e.g. the CLI)
+- Results replaces the single-diagram `<select>` with a tab strip (`role="tablist"`, arrow-key navigation) for browsing multiple diagrams
+- `GET /{id}/diagrams` no longer inlines png/jpeg image bytes (`has_content: false`); Results fetches a selected diagram's content lazily via the existing `GET /{id}/diagrams/{diagram_id}` route and caches it per tab, so opening a model with several large diagrams no longer loads all of their bytes up front
+- `DiagramView`: the ELK/Mermaid dynamic import now runs inside its own try/catch with a visible Retry action on failure (previously an import error there was unrecoverable without reloading); added a Fit-to-view button; the scroll wheel now only zooms the diagram when Ctrl/Cmd is held, otherwise the page scrolls normally
+
 ---
 
 ### Refactored
