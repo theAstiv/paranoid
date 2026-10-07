@@ -4,9 +4,13 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from backend.db.connection import db
+from backend.image.validation import sanitize_diagram_name
+from backend.models.enums import DiagramFormat
+from backend.models.extended import DiagramData
 
 
 logger = logging.getLogger(__name__)
@@ -1057,8 +1061,9 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     # model_diagrams is NOT cleared here: a diagram is user input (like an
     # asset with user_edited=1), not pipeline output like dependency_scans.
     # A re-run or re-extract that doesn't re-upload a diagram must not wipe
-    # the one already shown on the Results page. See clear_model_diagrams(),
-    # called only when a new diagram is actually uploaded.
+    # the ones already shown on the Results page. See
+    # replace_model_diagrams(), called only when new diagrams are actually
+    # uploaded.
     if preserve_user_edits:
         await conn.execute("DELETE FROM assets WHERE model_id = ? AND user_edited = 0", (model_id,))
         await conn.execute("DELETE FROM flows WHERE model_id = ? AND user_edited = 0", (model_id,))
@@ -1106,55 +1111,89 @@ async def create_model_diagram(
     return diagram_id
 
 
-async def replace_model_diagram(
-    model_id: str,
-    name: str,
-    kind: str,
-    content: str,
-    size_bytes: int,
-    media_type: str | None = None,
-) -> str:
-    """Atomically replace a model's diagram(s) with a newly uploaded one.
+async def replace_model_diagrams(model_id: str, diagrams: list[dict[str, Any]]) -> list[str]:
+    """Atomically replace a model's stored diagrams with a newly uploaded set.
 
-    Called only when a new diagram is actually uploaded (see
+    Called only when new diagrams are actually uploaded (see
     _persist_diagram_data in backend/routes/models.py) — NOT part of
     clear_model_data(), since a diagram is user input that must survive a
     re-run that doesn't re-upload one.
 
+    Each dict in `diagrams` has keys name, kind, content, size_bytes, and
+    optionally media_type. Rows are inserted in list order with
+    position=0..N-1, so `list_model_diagrams` can return them in the order
+    the caller uploaded them rather than relying on `created_at`, which can
+    collide across rows inserted in the same transaction.
+
     Uses db.writer()'s BEGIN IMMEDIATE, not a plain execute+execute+commit:
     on the shared connection, a failed INSERT after an uncommitted DELETE
     left that DELETE pending — an unrelated later save on the same
-    connection would commit it and silently wipe the diagram. writer() rolls
-    back both statements together on any exception instead.
+    connection would commit it and silently wipe the diagrams. writer()
+    rolls back every statement together on any exception instead.
     """
-    diagram_id = generate_id()
     now = now_iso()
+    diagram_ids = [generate_id() for _ in diagrams]
 
     async with db.writer() as conn:
         await conn.execute("DELETE FROM model_diagrams WHERE model_id = ?", (model_id,))
-        await conn.execute(
-            """
-            INSERT INTO model_diagrams (
-                id, model_id, name, kind, content, media_type, size_bytes,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (diagram_id, model_id, name, kind, content, media_type, size_bytes, now, now),
-        )
+        for position, (diagram_id, diagram) in enumerate(zip(diagram_ids, diagrams, strict=True)):
+            await conn.execute(
+                """
+                INSERT INTO model_diagrams (
+                    id, model_id, name, kind, content, media_type, size_bytes,
+                    position, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    diagram_id,
+                    model_id,
+                    diagram["name"],
+                    diagram["kind"],
+                    diagram["content"],
+                    diagram.get("media_type"),
+                    diagram["size_bytes"],
+                    position,
+                    now,
+                    now,
+                ),
+            )
 
-    logger.info(f"Replaced model diagram(s) for model {model_id} with {diagram_id} (kind={kind})")
-    return diagram_id
+    logger.info(f"Replaced model diagram(s) for model {model_id} with {len(diagram_ids)} row(s)")
+    return diagram_ids
 
 
-async def list_model_diagrams(model_id: str) -> list[dict[str, Any]]:
-    """List diagrams for a model, most recently created first."""
+async def list_model_diagrams(
+    model_id: str, include_image_content: bool = True
+) -> list[dict[str, Any]]:
+    """List diagrams for a model, in upload order.
+
+    Args:
+        model_id: The model whose diagrams to list.
+        include_image_content: When False, png/jpeg rows come back with
+            `content` replaced by `has_content: False` instead of their
+            (potentially large) base64 payload — Mermaid rows are
+            unaffected, since their `content` is the text itself. Still
+            `True` everywhere this is called in 5a-1; 5a-2 switches the
+            diagram-list route to `False` once the frontend lazy-loads
+            images through the single-diagram route.
+    """
     conn = await db.get()
     async with conn.execute(
-        "SELECT * FROM model_diagrams WHERE model_id = ? ORDER BY created_at DESC",
+        "SELECT * FROM model_diagrams WHERE model_id = ? ORDER BY position ASC, created_at ASC",
         (model_id,),
     ) as cursor:
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+
+    if not include_image_content:
+        for row in result:
+            if row["kind"] != "mermaid":
+                row["content"] = None
+                row["has_content"] = False
+            else:
+                row["has_content"] = True
+
+    return result
 
 
 async def get_model_diagram(diagram_id: str) -> dict[str, Any] | None:
@@ -1163,6 +1202,70 @@ async def get_model_diagram(diagram_id: str) -> dict[str, Any] | None:
     async with conn.execute("SELECT * FROM model_diagrams WHERE id = ?", (diagram_id,)) as cursor:
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+def diagram_data_from_row(row: dict[str, Any]) -> DiagramData:
+    """Reconstruct a `DiagramData` from a `model_diagrams` row.
+
+    Used to feed stored diagrams back into the pipeline on a re-run or
+    re-extract that doesn't upload a new one. The name is re-derived from
+    the stem of the stored `name` and re-sanitized: pre-5a-1 rows stored
+    the raw uploaded filename (with extension) as `name`, so without the
+    stem step a row carried over from 4b-1 would display as "arch.mmd"
+    while an identical 5a-1 upload displays as "arch".
+
+    Raises:
+        ValueError: `row["kind"]` isn't one of mermaid/png/jpeg (the
+            column has a CHECK constraint, so this should only happen for
+            data written outside normal paths). Callers reusing stored
+            diagrams should treat this as a skip, not a hard failure.
+    """
+    kind = row["kind"]
+    raw_name = row.get("name") or ""
+    name = sanitize_diagram_name(Path(raw_name).stem or raw_name)
+
+    if kind == "mermaid":
+        return DiagramData(
+            format=DiagramFormat.MERMAID,
+            source_path=raw_name or name,
+            mermaid_source=row["content"],
+            name=name,
+        )
+    if kind not in ("png", "jpeg"):
+        raise ValueError(f"Unknown diagram kind: {kind!r}")
+
+    diagram_format = DiagramFormat.PNG if kind == "png" else DiagramFormat.JPEG
+    return DiagramData(
+        format=diagram_format,
+        source_path=raw_name or name,
+        base64_data=row["content"],
+        media_type=row.get("media_type"),
+        size_bytes=row.get("size_bytes"),
+        name=name,
+    )
+
+
+def diagram_data_to_row(diagram: DiagramData) -> dict[str, Any]:
+    """Shape a `DiagramData` into the dict `replace_model_diagrams` expects.
+
+    The inverse of `diagram_data_from_row`. Shared by the web run route and
+    the CLI's persist_pipeline_result so both write identically-shaped rows.
+    """
+    if diagram.format == DiagramFormat.MERMAID:
+        content = diagram.mermaid_source or ""
+        return {
+            "name": diagram.name,
+            "kind": DiagramFormat.MERMAID.value,
+            "content": content,
+            "size_bytes": len(content.encode("utf-8")),
+        }
+    return {
+        "name": diagram.name,
+        "kind": diagram.format.value,
+        "content": diagram.base64_data or "",
+        "size_bytes": diagram.size_bytes or 0,
+        "media_type": diagram.media_type,
+    }
 
 
 # Attack Trees CRUD

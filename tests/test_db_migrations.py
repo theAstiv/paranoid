@@ -501,3 +501,66 @@ async def test_0010_is_idempotent_on_v2_db(tmp_path):
         await run_migrations(conn)
     finally:
         await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 0011 — model_diagrams.position (ordered multi-diagram storage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_0011_adds_position_column(tmp_path):
+    """0011 adds model_diagrams.position, defaulting existing rows to 0."""
+    conn = await _make_conn(tmp_path)
+    try:
+        await run_migrations(conn)
+
+        async with conn.execute("PRAGMA table_info(model_diagrams)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        assert "position" in columns
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_0011_existing_rows_default_to_position_zero(tmp_path):
+    conn = await _make_v2_db(tmp_path)
+    try:
+        await conn.execute(
+            "INSERT INTO threat_models (id, title, provider, model, status, "
+            "created_at, updated_at, project_id) VALUES "
+            "('tm-diag', 'Test', 'anthropic', 'claude', 'pending', "
+            "'2024-01-01', '2024-01-01', '00000000-0000-0000-0000-000000000000')"
+        )
+        await conn.execute(
+            "INSERT INTO model_diagrams (id, model_id, name, kind, content, size_bytes, "
+            "created_at, updated_at) VALUES "
+            "('diag-1', 'tm-diag', 'a.mmd', 'mermaid', 'graph TD', 8, "
+            "'2024-01-01', '2024-01-01')"
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        async with conn.execute("SELECT position FROM model_diagrams WHERE id = 'diag-1'") as cur:
+            row = await cur.fetchone()
+        assert row is not None
+        assert row[0] == 0
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_0011_is_idempotent_on_v2_db(tmp_path):
+    """0011 applies cleanly to a DB that already has the full v2 schema
+    (ALTER TABLE re-add path), and running it twice does not raise."""
+    conn = await _make_v2_db(tmp_path)
+    try:
+        await run_migrations(conn)
+        async with conn.execute("PRAGMA table_info(model_diagrams)") as cur:
+            columns = {row[1] for row in await cur.fetchall()}
+        assert "position" in columns
+
+        await run_migrations(conn)
+    finally:
+        await conn.close()

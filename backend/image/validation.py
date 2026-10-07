@@ -47,7 +47,7 @@ _PIL_FORMAT_BY_DIAGRAM_FORMAT = {
 }
 
 
-def _format_for_extension(filename: str) -> DiagramFormat:
+def format_for_extension(filename: str) -> DiagramFormat:
     ext = Path(filename).suffix.lower()
     diagram_format = _EXTENSION_FORMATS.get(ext)
     if diagram_format is None:
@@ -135,7 +135,7 @@ def validate_diagram_bytes(filename: str, raw: bytes) -> DiagramFormat:
         DiagramValidationError: If content is invalid (unsupported format,
             too large, wrong format, corrupt/truncated, oversize dimensions)
     """
-    diagram_format = _format_for_extension(filename)
+    diagram_format = format_for_extension(filename)
 
     if diagram_format == DiagramFormat.MERMAID:
         _validate_mermaid_bytes(raw)
@@ -169,7 +169,7 @@ def validate_diagram_file(file_path: Path) -> DiagramFormat:
 
     # Reject on size before reading the whole file — avoids pulling an
     # oversize file fully into memory just to discard it a moment later.
-    diagram_format = _format_for_extension(file_path.name)
+    diagram_format = format_for_extension(file_path.name)
     max_size = (
         MAX_MERMAID_SIZE_BYTES if diagram_format == DiagramFormat.MERMAID else MAX_IMAGE_SIZE_BYTES
     )
@@ -201,13 +201,13 @@ def validate_diagram_file(file_path: Path) -> DiagramFormat:
     return validate_diagram_bytes(file_path.name, raw)
 
 
-def _image_byte_len(diagram: DiagramData) -> int:
+def image_byte_length(diagram: DiagramData) -> int:
     """Raw byte length of an image diagram, used for the total-size budget.
 
     Prefers `size_bytes` (set by the encoder/CLI loader); falls back to
     decoding `base64_data`'s length so a diagram reconstructed without
-    `size_bytes` (e.g. a stored row re-checked on reuse in 5a-2) still
-    counts toward the total instead of silently contributing 0.
+    `size_bytes` (e.g. a stored row reconstructed for reuse on a re-run)
+    still counts toward the total instead of silently contributing 0.
     """
     if diagram.size_bytes is not None:
         return diagram.size_bytes
@@ -246,7 +246,9 @@ def validate_diagram_set(diagrams: list[DiagramData]) -> list[DiagramData]:
         )
 
     total_image_bytes = sum(
-        _image_byte_len(d) for d in diagrams if d.format in (DiagramFormat.PNG, DiagramFormat.JPEG)
+        image_byte_length(d)
+        for d in diagrams
+        if d.format in (DiagramFormat.PNG, DiagramFormat.JPEG)
     )
     if total_image_bytes > MAX_TOTAL_IMAGE_BYTES:
         raise DiagramValidationError(
