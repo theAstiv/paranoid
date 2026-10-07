@@ -787,3 +787,39 @@ async def test_get_diagrams_list_response_unchanged_includes_content(client, mod
     assert resp.status_code == 200
     body = resp.json()
     assert body[0]["content"] == "aGVsbG8="
+
+
+@pytest.mark.asyncio
+async def test_run_with_diagrams_rejects_viewer_role(client, model_id):
+    """POST /run requires editor; a viewer uploading diagrams is blocked
+    the same way as a viewer with no diagrams — the run route's RBAC
+    doesn't special-case the diagrams field."""
+    viewer_user = {"id": "viewer-user", "username": "viewer", "is_admin": False, "is_active": True}
+
+    async def _viewer_override():
+        return viewer_user
+
+    app.dependency_overrides[get_current_user] = _viewer_override
+    try:
+        with (
+            patch("backend.config.settings.paranoid_require_auth", True),
+            patch(
+                "backend.db.crud_projects.resolve_project_id_from_model",
+                new=AsyncMock(return_value="proj-1"),
+            ),
+            patch(
+                "backend.db.crud_projects.get_user_role_in_project",
+                new=AsyncMock(return_value="viewer"),
+            ),
+        ):
+            resp = await client.post(
+                f"/api/models/{model_id}/run",
+                data=_MINIMAL_FORM,
+                files={"diagrams": ("a.mmd", "graph TD; A-->B", "text/plain")},
+            )
+        assert resp.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    rows = await crud.list_model_diagrams(model_id)
+    assert rows == []

@@ -9,6 +9,8 @@ import pytest
 from backend.models.enums import DiagramFormat, Framework, StrideCategory
 from backend.models.extended import DiagramData
 from backend.models.state import (
+    AssetsList,
+    FlowsList,
     GapAnalysis,
     SummaryState,
     Threat,
@@ -673,10 +675,24 @@ def _image_diagram(name: str) -> DiagramData:
     )
 
 
+def _calls_for(provider, response_model) -> list[dict]:
+    """provider.calls entries whose response_model matches, tolerating the
+    ThreatsList/ThreatsListDreadOnly dread-only substitution generate_threats
+    makes internally."""
+    if response_model is ThreatsList:
+        return [
+            c for c in provider.calls if c["response_model"] in (ThreatsList, ThreatsListDreadOnly)
+        ]
+    return [c for c in provider.calls if c["response_model"] is response_model]
+
+
 @pytest.mark.asyncio
 async def test_runner_ollama_degrade_emits_vision_unsupported_event():
     """Ollama + an image diagram: one vision_unsupported info event, images
-    dropped on the calls that would otherwise send them, Mermaid unaffected."""
+    dropped on every call that would otherwise send them (summarize,
+    extract_assets, extract_flows — the only 3 calls that ever carry
+    images), Mermaid unaffected. Iteration calls (generate_threats,
+    gap_analysis) never get images regardless of provider."""
     provider = _OllamaMockProvider(gap_call_threshold=1)
     config = PipelineConfig(max_iterations=1)
     runner = PipelineRunner(provider=provider, config=config, model_id="test-ollama")
@@ -700,13 +716,24 @@ async def test_runner_ollama_degrade_emits_vision_unsupported_event():
     ]
     assert len(warnings) == 1
     assert warnings[0].data["ignored"] == ["arch"]
-    # The extraction calls never received image bytes.
-    assert provider.last_images is None or provider.last_images == []
+
+    for response_model in (SummaryState, AssetsList, FlowsList):
+        calls = _calls_for(provider, response_model)
+        assert calls, f"expected at least one {response_model.__name__} call"
+        for call in calls:
+            assert not call["images"], f"{response_model.__name__} call got images on Ollama"
+
+    for response_model in (ThreatsList, GapAnalysis):
+        for call in _calls_for(provider, response_model):
+            assert not call["images"], f"{response_model.__name__} iteration call got images"
 
 
 @pytest.mark.asyncio
 async def test_runner_non_ollama_provider_keeps_images():
-    """A non-Ollama provider sends the image diagram's bytes as usual."""
+    """A non-Ollama provider sends the image diagram's bytes on each of the
+    3 extraction calls, but iteration calls (generate_threats,
+    gap_analysis) still never get images — that's unconditional, not just
+    an Ollama-degrade behavior."""
     provider = MockProvider(gap_call_threshold=1)
     config = PipelineConfig(max_iterations=1)
     runner = PipelineRunner(provider=provider, config=config, model_id="test-anthropic")
@@ -727,6 +754,16 @@ async def test_runner_non_ollama_provider_keeps_images():
         if isinstance(e.data, dict) and e.data.get("warning") == "vision_unsupported"
     ]
     assert warnings == []
+
+    for response_model in (SummaryState, AssetsList, FlowsList):
+        calls = _calls_for(provider, response_model)
+        assert calls, f"expected at least one {response_model.__name__} call"
+        for call in calls:
+            assert call["images"], f"{response_model.__name__} call should have received images"
+
+    for response_model in (ThreatsList, GapAnalysis):
+        for call in _calls_for(provider, response_model):
+            assert not call["images"], f"{response_model.__name__} iteration call got images"
 
 
 @pytest.mark.asyncio

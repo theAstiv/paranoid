@@ -16,7 +16,7 @@ from backend.deps.analyze import (
     count_resolvable_direct_dependencies,
 )
 from backend.export.sarif import export_sarif, to_sarif_uri
-from backend.image import validate_diagram_set
+from backend.image import sanitize_diagram_name, validate_diagram_set
 from backend.image.errors import DiagramValidationError
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
@@ -996,6 +996,39 @@ async def _run_pipeline_async(
         )
 
 
+async def _load_cli_diagrams(diagram_paths: tuple[Path, ...], *, quiet: bool) -> list[DiagramData]:
+    """Load, name-sanitize, and set-validate the --diagram/-d paths.
+
+    load_diagram_file names a diagram after the raw file stem; it's
+    sanitized here (the same rule every other name source — client
+    `diagram_names`, a stored row's filename — goes through) before it
+    reaches storage or a provider prompt's `Image i of n: {name}` label.
+    """
+    diagrams_data: list[DiagramData] = []
+    for diagram_path in diagram_paths:
+        if not quiet:
+            click.echo(f"Loading diagram from {diagram_path}...")
+        try:
+            diagram_data = await load_diagram_file(diagram_path)
+            if not quiet:
+                diagram_type = diagram_data.format.value.upper()
+                click.secho(
+                    f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green"
+                )
+        except InputFileError as e:
+            raise CLIError(f"Diagram loading failed: {e}")
+        diagram_data.name = sanitize_diagram_name(diagram_data.name)
+        diagrams_data.append(diagram_data)
+
+    if not diagrams_data:
+        return diagrams_data
+
+    try:
+        return validate_diagram_set(diagrams_data)
+    except DiagramValidationError as e:
+        raise CLIError(f"Diagram set invalid: {e}")
+
+
 async def _run_pipeline_inside_provider(
     model_id: str,
     description: str,
@@ -1072,25 +1105,7 @@ async def _run_pipeline_inside_provider(
         )
 
     # Load diagrams if one or more --diagram/-d flags were provided
-    diagrams_data: list[DiagramData] = []
-    if diagram_paths:
-        for diagram_path in diagram_paths:
-            if not quiet:
-                click.echo(f"Loading diagram from {diagram_path}...")
-            try:
-                diagram_data = await load_diagram_file(diagram_path)
-                if not quiet:
-                    diagram_type = diagram_data.format.value.upper()
-                    click.secho(
-                        f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green"
-                    )
-            except InputFileError as e:
-                raise CLIError(f"Diagram loading failed: {e}")
-            diagrams_data.append(diagram_data)
-        try:
-            diagrams_data = validate_diagram_set(diagrams_data)
-        except DiagramValidationError as e:
-            raise CLIError(f"Diagram set invalid: {e}")
+    diagrams_data = await _load_cli_diagrams(diagram_paths, quiet=quiet)
 
     # Track results
     total_threats = 0

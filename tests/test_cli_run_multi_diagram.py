@@ -78,3 +78,33 @@ def test_repeated_short_flag_loads_two_paths(monkeypatch, sample_input_file, tmp
 def test_nonexistent_diagram_path_rejected_by_click(monkeypatch, sample_input_file):
     result, _ = _invoke(monkeypatch, sample_input_file, ["-d", "/definitely/nonexistent.mmd"])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# _load_cli_diagrams — name sanitization (load_diagram_file names a diagram
+# after the raw file stem; nothing sanitized it before this fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_load_cli_diagrams_sanitizes_long_name_with_ampersand(tmp_path):
+    from cli.commands.run import _load_cli_diagrams
+
+    unsafe_stem = "a & b  [prod] " + "0" * 90
+    diagram = tmp_path / f"{unsafe_stem}.mmd"
+    diagram.write_text("graph TD; A-->B")
+
+    diagrams_data = await _load_cli_diagrams((diagram,), quiet=True)
+
+    assert len(diagrams_data) == 1
+    name = diagrams_data[0].name
+    assert "&" not in name
+    assert "  " not in name
+    assert len(name) <= 80
+
+
+@pytest.mark.asyncio
+async def test_load_cli_diagrams_empty_paths_returns_empty_list(tmp_path):
+    from cli.commands.run import _load_cli_diagrams
+
+    assert await _load_cli_diagrams((), quiet=True) == []

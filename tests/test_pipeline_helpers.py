@@ -395,3 +395,26 @@ class TestBuildDiagramParts:
         text, _ = build_diagram_parts([d])
         assert "<c>" not in text
         assert "&quot;" in text or "&lt;" in text
+
+
+def test_build_shared_context_with_two_mermaid_diagrams():
+    """build_shared_context inlines both Mermaid diagrams' source, each in
+    its own named/indexed <architecture_diagram> block."""
+    diagrams = [_mermaid("flow"), _mermaid("deployment")]
+    ctx = build_shared_context(
+        description="A service",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        code_summary=None,
+        diagrams=diagrams,
+        framework=Framework.STRIDE,
+    )
+
+    assert 'name="flow"' in ctx
+    assert 'name="deployment"' in ctx
+    assert ctx.index('name="flow"') < ctx.index('name="deployment"')
+    assert ctx.count("graph TD") == 2
+    # No image placeholder text — these are Mermaid, not PNG/JPEG.
+    assert "vision image" not in ctx
