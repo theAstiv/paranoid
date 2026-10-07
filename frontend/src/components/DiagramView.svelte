@@ -78,16 +78,22 @@
       container.innerHTML = ''
       return
     }
-    const mermaid = (await import('mermaid')).default
-    await ensureElkRegistered(mermaid)
-    if (seq !== renderSeq || !container) return
-    mermaid.initialize(diagramInitConfig)
     const renderId = `diagram-${Math.random().toString(36).slice(2)}`
     try {
+      const mermaid = (await import('mermaid')).default
+      await ensureElkRegistered(mermaid)
+      if (seq !== renderSeq || !container) return
+      mermaid.initialize(diagramInitConfig)
       const { svg } = await mermaid.render(renderId, cleaned)
       if (seq !== renderSeq || !container) return
       container.innerHTML = svg
+      requestAnimationFrame(fitToView)
     } catch (err) {
+      // A failed ELK chunk load must not be cached — the next render attempt
+      // re-imports instead of permanently failing. Resetting unconditionally
+      // (not just for an ELK-specific error) costs one harmless re-import
+      // (browser module cache) on a plain mermaid syntax error instead.
+      elkRegisterPromise = null
       if (seq !== renderSeq || !container) return
       container.innerHTML = ''
       renderError = err?.message || 'Mermaid rendering failed.'
@@ -100,7 +106,25 @@
     translateY = 0
   }
 
+  function fitToView() {
+    if (!viewport) return
+    const target = isMermaid ? container?.querySelector('svg') : viewport.querySelector('img')
+    if (!target) return
+    const vpRect = viewport.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    // getBoundingClientRect reflects the CURRENT scale/translate transform,
+    // so divide those out to get the content's natural (unscaled) size.
+    const naturalWidth = targetRect.width / scale
+    const naturalHeight = targetRect.height / scale
+    if (naturalWidth === 0 || naturalHeight === 0) return
+    const fitScale = Math.min(vpRect.width / naturalWidth, vpRect.height / naturalHeight, MAX_SCALE)
+    scale = Math.max(MIN_SCALE, fitScale)
+    translateX = (vpRect.width - naturalWidth * scale) / 2
+    translateY = (vpRect.height - naturalHeight * scale) / 2
+  }
+
   function onWheel(event) {
+    if (!(event.ctrlKey || event.metaKey)) return // let the page scroll normally
     event.preventDefault()
     const delta = event.deltaY < 0 ? 1.1 : 1 / 1.1
     scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * delta))
@@ -143,9 +167,10 @@
 
 <div class="space-y-2">
   <div class="flex items-center justify-end gap-2">
-    <button type="button" class="btn-ghost text-xs px-2 py-1" on:click={() => (scale = Math.max(MIN_SCALE, scale / 1.1))}>−</button>
+    <button type="button" class="btn-ghost text-xs px-2 py-1" aria-label="Zoom out" on:click={() => (scale = Math.max(MIN_SCALE, scale / 1.1))}>−</button>
     <button type="button" class="btn-ghost text-xs px-2 py-1" on:click={resetView}>Reset</button>
-    <button type="button" class="btn-ghost text-xs px-2 py-1" on:click={() => (scale = Math.min(MAX_SCALE, scale * 1.1))}>+</button>
+    <button type="button" class="btn-ghost text-xs px-2 py-1" aria-label="Fit to view" on:click={fitToView}>Fit</button>
+    <button type="button" class="btn-ghost text-xs px-2 py-1" aria-label="Zoom in" on:click={() => (scale = Math.min(MAX_SCALE, scale * 1.1))}>+</button>
     {#if isMermaid}
       <button type="button" class="btn-ghost text-xs px-2 py-1" on:click={exportSvg} disabled={!!renderError}>
         Export SVG
@@ -171,7 +196,7 @@
       {#if isMermaid}
         <div bind:this={container} class="diagram-svg" class:hidden={renderError !== null}></div>
       {:else}
-        <img src={`data:${mediaType};base64,${content}`} alt={name} draggable="false" />
+        <img src={`data:${mediaType};base64,${content}`} alt={name} draggable="false" on:load={fitToView} />
       {/if}
     </div>
   </div>
@@ -180,9 +205,14 @@
     <div class="rounded-panel border border-c-high/40 bg-c-high/5 px-4 py-4 space-y-3">
       <p class="text-sm font-medium text-c-high">Diagram rendering failed</p>
       <p class="text-xs text-c-muted">{renderError}</p>
-      <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => (showRawSource = !showRawSource)}>
-        {showRawSource ? 'Hide' : 'Show'} raw source
-      </button>
+      <div class="flex gap-2">
+        <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => renderMermaid(content)}>
+          Retry
+        </button>
+        <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => (showRawSource = !showRawSource)}>
+          {showRawSource ? 'Hide' : 'Show'} raw source
+        </button>
+      </div>
       {#if showRawSource}
         <pre class="font-mono text-xs text-c-text2 bg-c-well border border-c-border rounded-panel p-3 overflow-auto max-h-80 whitespace-pre">{content}</pre>
       {/if}
