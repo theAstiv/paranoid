@@ -87,6 +87,20 @@
       const { svg } = await mermaid.render(renderId, cleaned)
       if (seq !== renderSeq || !container) return
       container.innerHTML = svg
+      // Mermaid emits width="100%" plus a max-width style — inside this
+      // absolutely-positioned, shrink-to-fit wrapper there's no containing
+      // block for that percentage to resolve against, so the SVG falls back
+      // to the browser's replaced-element default (300x150) instead of its
+      // real size. Set explicit pixel dimensions from the viewBox so the
+      // wrapper sizes to the diagram's actual content and fitToView/scale(1)
+      // reflect its true dimensions.
+      const svgEl = container.querySelector('svg')
+      const viewBox = svgEl?.getAttribute('viewBox')?.split(/\s+/).map(Number)
+      if (svgEl && viewBox?.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) {
+        svgEl.setAttribute('width', String(viewBox[2]))
+        svgEl.setAttribute('height', String(viewBox[3]))
+        svgEl.style.maxWidth = 'none'
+      }
       requestAnimationFrame(fitToView)
     } catch (err) {
       // A failed ELK chunk load must not be cached — the next render attempt
@@ -181,7 +195,7 @@
   <div
     bind:this={viewport}
     role="application"
-    aria-label="{name} diagram viewport — scroll to zoom, drag to pan"
+    aria-label="{name} diagram viewport — hold Ctrl or Cmd and scroll to zoom, drag to pan"
     class="relative overflow-hidden rounded-panel border border-c-border bg-c-well h-[480px] cursor-grab"
     on:wheel={onWheel}
     on:pointerdown={onPointerDown}

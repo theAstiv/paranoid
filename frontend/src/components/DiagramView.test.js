@@ -38,6 +38,26 @@ describe('DiagramView — mermaid', () => {
     expect(container.querySelector('.diagram-svg svg')).not.toBeNull()
   })
 
+  it('sets explicit width/height from the viewBox instead of the 100% mermaid emits', async () => {
+    // Mermaid's real output: width="100%" + a max-width style + a viewBox
+    // that carries the diagram's actual size. Inside this absolutely
+    // positioned, shrink-to-fit wrapper, width="100%" has no containing
+    // block to resolve against and silently falls back to the browser's
+    // 300x150 replaced-element default — this pins the fix for that.
+    mermaidRender.mockResolvedValue({
+      svg: '<svg width="100%" style="max-width: 909px;" viewBox="0 0 909 611"><g class="node"><rect/></g></svg>',
+    })
+    const { container } = render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },
+    })
+    await waitFor(() => expect(container.querySelector('.diagram-svg svg')).not.toBeNull())
+
+    const svg = container.querySelector('.diagram-svg svg')
+    expect(svg.getAttribute('width')).toBe('909')
+    expect(svg.getAttribute('height')).toBe('611')
+    expect(svg.style.maxWidth).toBe('none')
+  })
+
   it('shows a render-failure panel with a raw-source toggle when rendering throws', async () => {
     mermaidRender.mockRejectedValue(new Error('Parse error'))
     render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD; broken!!!', name: 'arch' } })
