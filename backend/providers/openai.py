@@ -140,9 +140,16 @@ class OpenAIProvider:
             # Build user message content (images + text)
             user_content = []
 
-            # Add images as data URIs
+            # Add images as data URIs. With more than one image, a short
+            # "Image i of n" label precedes each (matches the Anthropic
+            # path); a single image is unaffected.
             if images:
-                for img in images:
+                multiple = len(images) > 1
+                for i, img in enumerate(images, start=1):
+                    if multiple:
+                        user_content.append(
+                            {"type": "text", "text": f"Image {i} of {len(images)}: {img.source}"}
+                        )
                     user_content.append(
                         {
                             "type": "image_url",

@@ -294,7 +294,12 @@ def _build_content_blocks(
     blocks: list[dict] = []
 
     if images:
-        for img in images:
+        # With more than one image, a short "Image i of n" label precedes
+        # each (matches the Anthropic path); a single image is unaffected.
+        multiple = len(images) > 1
+        for i, img in enumerate(images, start=1):
+            if multiple:
+                blocks.append({"text": f"Image {i} of {len(images)}: {img.source}"})
             # Decode base64 to bytes — Bedrock Converse expects raw bytes in image.source.bytes
             raw_bytes = base64.b64decode(img.data)
             fmt = img.media_type.split("/")[-1]  # "image/png" → "png"
