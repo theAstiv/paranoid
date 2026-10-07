@@ -44,13 +44,15 @@ A step-by-step wizard for creating a threat model.
 
 **Steps:**
 
-1. **Title** — name your model
-2. **Framework** — STRIDE, MAESTRO, or auto-detect
-3. **Description** — paste or type your system description (or use a structured template)
-4. **Diagram** — upload a PNG/JPG architecture diagram or `.mmd` Mermaid file (optional)
-5. **Code Source** — select a linked Git repository from the Sources page (optional)
-6. **Settings** — override provider, model, and iteration count for this run
-7. **Run** — starts the pipeline; progress shown via live SSE events
+1. **Title & Framework** — name your model; STRIDE, MAESTRO, or auto-detect
+2. **Description** — paste or type your system description (or use a structured template)
+3. **Diagram** — upload a PNG/JPG architecture diagram or `.mmd`/`.txt` Mermaid file (optional)
+4. **Code Source** — select a linked Git repository from the Sources page (optional)
+5. **Dependencies** — optionally upload `package.json` (+ lockfile) for dependency capability analysis
+6. **Assumptions** — list known assumptions about the system
+7. **Iterations** — set the iteration count (1–15) for this run
+8. **AI Components** — flag whether the system has AI/ML components (runs MAESTRO alongside STRIDE)
+9. **Review & Run** — confirm everything and start the pipeline; progress shown via live SSE events
 
 ---
 

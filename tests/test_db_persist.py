@@ -9,7 +9,8 @@ import pytest
 
 from backend.db import crud
 from backend.db.persist import persist_pipeline_result
-from backend.models.enums import AssetType, Framework, StrideCategory
+from backend.models.enums import AssetType, DiagramFormat, Framework, StrideCategory
+from backend.models.extended import DiagramData
 from backend.models.state import (
     Asset,
     AssetsList,
@@ -840,3 +841,63 @@ async def test_persist_defaults_scoring_method_to_dread(test_db):
 
     model = await crud.get_threat_model(model_id)
     assert model["scoring_method"] == "dread"
+
+
+# ---------------------------------------------------------------------------
+# Diagrams (5a-1) — the CLI never persisted these before this PR
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_diagrams_loaded_via_cli_flag(test_db):
+    diagrams = [
+        DiagramData(
+            format=DiagramFormat.MERMAID,
+            source_path="architecture.mmd",
+            mermaid_source="graph TD; A-->B",
+            name="architecture",
+        ),
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="deployment.png",
+            base64_data="aGVsbG8=",
+            media_type="image/png",
+            size_bytes=8,
+            name="deployment",
+        ),
+    ]
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+        diagrams=diagrams,
+    )
+
+    rows = await crud.list_model_diagrams(model_id)
+    assert [r["name"] for r in rows] == ["architecture", "deployment"]
+    assert rows[0]["kind"] == "mermaid"
+    assert rows[1]["kind"] == "png"
+
+
+@pytest.mark.asyncio
+async def test_persist_without_diagrams_saves_no_rows(test_db):
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+    )
+
+    rows = await crud.list_model_diagrams(model_id)
+    assert rows == []

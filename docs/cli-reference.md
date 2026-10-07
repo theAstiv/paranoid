@@ -27,7 +27,7 @@ paranoid run <description-file> [OPTIONS]
 | `--maestro` | off | Run STRIDE + MAESTRO in parallel |
 | `--format` | `json` | Output format: `json`, `full`, `sarif`, `markdown`, `pdf` |
 | `-o`, `--output` | auto | Output file path (extension added automatically for markdown/pdf) |
-| `--diagram` | — | Architecture diagram: `.png`, `.jpg` (vision), or `.mmd` (Mermaid text) |
+| `--diagram`, `-d` | — | Architecture diagram: `.png`, `.jpg` (vision), or `.mmd`/`.txt` (Mermaid text). Repeatable — up to 5 diagrams per run, each a named view (e.g. deployment, data flow) |
 | `--code` | — | Path to a local repo — grounded threats via context-link MCP |
 | `--enrich` | off | Generate attack trees + Gherkin test cases per threat after pipeline |
 | `--strict` | off | Exit code 2 if description has error-severity gaps (for CI gates) |
@@ -53,6 +53,9 @@ paranoid run system.md
 
 # With diagram + code context + strict mode
 paranoid run system.md --diagram arch.png --code /path/to/repo --strict
+
+# Multiple diagrams (deployment + data flow), each considered together
+paranoid run system.md -d architecture.mmd -d upload-flow.mmd -d deployment.png
 
 # Multiple output formats from one run
 paranoid run system.md --format sarif -o findings.sarif

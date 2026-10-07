@@ -68,7 +68,9 @@ Run (or re-run) the pipeline. Returns an SSE stream of `PipelineEvent` objects.
 | `model` | string | Override model |
 | `iterations` | int | Override iteration count |
 | `framework` | string | `STRIDE`, `MAESTRO`, or `BOTH` |
-| `diagram` | file | Architecture diagram (PNG, JPG, or .mmd) |
+| `diagram` | file | **Deprecated** — single architecture diagram (PNG, JPG, or .mmd). Kept for one release; merged first (position 0) if `diagrams` is also sent |
+| `diagrams` | file[] | 1–5 architecture diagrams (PNG, JPG, or .mmd/.txt). Replaces the model's entire stored diagram set. Omitted (with no `diagram` either) to reuse whatever is already stored |
+| `diagram_names` | string | JSON array of strings, same length as `diagrams`, labeling each file. An empty string falls back to that file's own name |
 | `code_source_id` | string | UUID of a ready code source |
 
 **SSE event format:**

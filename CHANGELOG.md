@@ -49,6 +49,20 @@ Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collabo
 - `GET /api/projects/{id}/dashboard`: aggregate stat counts (models, open threats, pending review, members, last run), open-threat severity breakdown (critical/high/medium/low), and an "assigned to you" list of open threats in models assigned to the caller, ordered by DREAD score
 - New `Dashboard.svelte` landing screen — stat grid, segmented severity bar, activity feed, and an "assigned to you" panel linking straight into Review; added as `/dashboard` with a new sidebar entry, alongside (not replacing) the existing Threat Models list
 
+#### Multi-Diagram Support (Week 5a-1)
+
+A run now takes 1–5 architecture diagrams instead of one, each a named view (deployment, data flow, etc.) considered together by the pipeline.
+
+- CLI: `--diagram`/`-d` is now repeatable (`-d arch.mmd -d flow.mmd -d deployment.png`); a single `-d` still behaves exactly as before
+- API: `POST /{id}/run` gains `diagrams[]` (1–5 files) and `diagram_names` (optional JSON array of labels). The singular `diagram` field is kept for one release, merged in first; sending both is allowed up to the combined 5-file limit
+- Re-running or re-extracting without a new upload now reuses the model's stored diagrams instead of silently dropping them — previously the pipeline saw nothing even though Results still showed a diagram
+- A stored diagram that no longer fits today's limits (e.g. saved under 4b-1's looser per-image cap) is skipped with an SSE `stored_diagram_skipped` info event rather than failing the run; the rest of the set still goes through
+- Images are validated with Pillow (format match, pixel-dimension/decompression-bomb guard, full decode) instead of a magic-byte check; diagram names are sanitized server-side everywhere they're set or read back
+- Anthropic/OpenAI/Bedrock providers label each image (`Image i of n: {name}`) when more than one is sent; Anthropic now caps cache_control breakpoints at one per image set instead of one per image, avoiding a 400 once combined with the system block and shared context
+- The Ollama provider still never sends images (a provider limit, not a per-model one) — image diagrams are now explicitly skipped with an SSE `vision_unsupported` info event instead of silently vanishing from the prompt
+- The CLI persists loaded diagrams to the database for the first time — a CLI-run model now shows its diagrams on the Results page like a web-uploaded one does
+- Backend only in this release — the wizard's diagram step and Results' diagram viewer still handle a single diagram; multi-file upload UI lands in a follow-up
+
 ---
 
 ### Refactored

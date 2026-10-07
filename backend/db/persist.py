@@ -22,15 +22,17 @@ from backend.db.crud import (
     create_threat_model,
     create_threat_source,
     create_trust_boundary,
+    diagram_data_to_row,
     list_assets,
     list_flows,
+    replace_model_diagrams,
     update_threat_model,
     update_threat_model_status,
 )
 from backend.deps.analyze import dependency_scan_rows
 from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, TestSuite
+from backend.models.extended import AttackTree, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.pipeline.confidence import score_threat_confidence
 from backend.scoring.cvss31 import to_vector_string
@@ -55,12 +57,14 @@ async def persist_pipeline_result(
     dependency_context: DependencyContext | None = None,
     usage_summary: dict | None = None,
     scoring_method: str = "dread",
+    diagrams: list[DiagramData] | None = None,
 ) -> str | None:
     """Persist all pipeline artifacts from a run to SQLite.
 
     Writes in dependency order: threat_model → assets → flows →
     trust_boundaries → threat_sources → threats → attack_trees → test_cases →
-    dependency_scans. Sets model status to "completed" on success.
+    dependency_scans → model_diagrams. Sets model status to "completed" on
+    success.
 
     Non-fatal: any exception is caught and logged — the caller always
     receives either a model_id string or None on failure.
@@ -88,6 +92,9 @@ async def persist_pipeline_result(
             configured with (see PipelineConfig.scoring_method). Only
             affects which score the pipeline computed; persisted here so
             Results/exports know which badge(s) to show.
+        diagrams: Diagrams loaded via --diagram/-d, if any. The CLI never
+            persisted these before 5a-1 — a model run from the CLI now shows
+            its diagrams on the Results page like a web-uploaded one does.
 
     Returns:
         model_id string on success, None on failure
@@ -109,6 +116,7 @@ async def persist_pipeline_result(
             dependency_context=dependency_context,
             usage_summary=usage_summary,
             scoring_method=scoring_method,
+            diagrams=diagrams,
         )
         logger.info(f"Persisted pipeline result: model_id={model_id}")
         return model_id
@@ -133,6 +141,7 @@ async def _persist(
     dependency_context: DependencyContext | None = None,
     usage_summary: dict | None = None,
     scoring_method: str = "dread",
+    diagrams: list[DiagramData] | None = None,
 ) -> str:
     """Internal persistence logic — raises on failure."""
     model_id = await create_threat_model(
@@ -294,6 +303,10 @@ async def _persist(
 
     if usage_summary:
         await update_threat_model(model_id, usage_summary=json.dumps(usage_summary))
+
+    if diagrams:
+        await replace_model_diagrams(model_id, [diagram_data_to_row(d) for d in diagrams])
+        logger.debug(f"Persisted {len(diagrams)} diagram(s)")
 
     await update_threat_model_status(model_id, "completed")
     return model_id
