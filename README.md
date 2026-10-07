@@ -13,7 +13,7 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **DREAD Risk Scoring**: Automatic 5-dimension scoring (0–10 scale) for severity classification
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Code-as-Input**: Semantic code extraction via context-link MCP (`--code /path/to/repo`)
-- **Image-as-Input**: Architecture diagram support (`--diagram arch.png` or `--diagram flow.mmd`)
+- **Image-as-Input**: Multiple architecture diagrams per run — up to 5 named views (deployment, data flow, etc.) via a repeatable `-d` on the CLI (`-d arch.png -d flow.mmd`) or the API's `diagrams[]` field
 - **Deterministic Rule Engine**: 362 curated patterns (STRIDE, MAESTRO, OWASP, MITRE ATT&CK/ATLAS, CAPEC, cloud misconfigs) across 16 seed files
 - **Export Formats**: JSON, SARIF (GitHub Security), Markdown, PDF
 - **Multi-User Collaboration**: Projects with owner/editor/viewer RBAC, threaded comments, assignments, activity log

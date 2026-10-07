@@ -16,11 +16,13 @@ from backend.deps.analyze import (
     count_resolvable_direct_dependencies,
 )
 from backend.export.sarif import export_sarif, to_sarif_uri
+from backend.image import sanitize_diagram_name, validate_diagram_set
+from backend.image.errors import DiagramValidationError
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError, MCPError
 from backend.models.api import AnalyzeBundleResponse
 from backend.models.enums import Framework
-from backend.models.extended import AttackTree, CodeContext, TestSuite
+from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
 from backend.models.usage import StepRun
 from backend.pipeline.pre_flight import analyze_bundle
@@ -402,9 +404,13 @@ def _parse_step_models(
 @click.option(
     "--diagram",
     "-d",
+    "diagrams",
     type=click.Path(exists=True, file_okay=True, path_type=Path),
-    default=None,
-    help="Path to architecture diagram (.png, .jpg, .jpeg, .mmd for Mermaid)",
+    multiple=True,
+    help=(
+        "Path to an architecture diagram (.png, .jpg, .jpeg, .mmd/.txt for Mermaid). "
+        "Repeatable, up to 5 — each -d adds one diagram."
+    ),
 )
 @click.option(
     "--provider",
@@ -519,7 +525,7 @@ def run(
     quiet: bool,
     verbose: bool,
     code: Path | None,
-    diagram: Path | None,
+    diagrams: tuple[Path, ...],
     provider_override: str | None,
     model_override: str | None,
     fast_model_override: str | None,
@@ -864,7 +870,7 @@ def run(
                 output_format=output_format,
                 quiet=quiet,
                 code_path=code,
-                diagram_path=diagram,
+                diagram_paths=diagrams,
                 content=content,
                 seed_collections=resolved_seed_collections,
                 seeded_assets=seeded_assets_data,
@@ -916,7 +922,7 @@ async def _run_pipeline_async(
     output_format: str,
     quiet: bool,
     code_path: Path | None,
-    diagram_path: Path | None,
+    diagram_paths: tuple[Path, ...],
     content: str,
     strict: bool = False,
     enrich: bool = False,
@@ -947,7 +953,7 @@ async def _run_pipeline_async(
         output_format: JSON format (simple or full)
         quiet: Whether to suppress real-time output
         code_path: Optional path to code repository for MCP extraction
-        diagram_path: Optional path to architecture diagram (.png, .jpg, .jpeg, .mmd)
+        diagram_paths: Architecture diagram paths (.png, .jpg, .jpeg, .mmd/.txt), 0-5
         content: Input file content for code context extraction
         strict: Exit with code 2 if error-severity gaps found
     """
@@ -974,7 +980,7 @@ async def _run_pipeline_async(
             output_format=output_format,
             quiet=quiet,
             code_path=code_path,
-            diagram_path=diagram_path,
+            diagram_paths=diagram_paths,
             content=content,
             strict=strict,
             enrich=enrich,
@@ -988,6 +994,39 @@ async def _run_pipeline_async(
             dependency_manifest_path=dependency_manifest_path,
             scoring_method=scoring_method,
         )
+
+
+async def _load_cli_diagrams(diagram_paths: tuple[Path, ...], *, quiet: bool) -> list[DiagramData]:
+    """Load, name-sanitize, and set-validate the --diagram/-d paths.
+
+    load_diagram_file names a diagram after the raw file stem; it's
+    sanitized here (the same rule every other name source — client
+    `diagram_names`, a stored row's filename — goes through) before it
+    reaches storage or a provider prompt's `Image i of n: {name}` label.
+    """
+    diagrams_data: list[DiagramData] = []
+    for diagram_path in diagram_paths:
+        if not quiet:
+            click.echo(f"Loading diagram from {diagram_path}...")
+        try:
+            diagram_data = await load_diagram_file(diagram_path)
+            if not quiet:
+                diagram_type = diagram_data.format.value.upper()
+                click.secho(
+                    f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green"
+                )
+        except InputFileError as e:
+            raise CLIError(f"Diagram loading failed: {e}")
+        diagram_data.name = sanitize_diagram_name(diagram_data.name)
+        diagrams_data.append(diagram_data)
+
+    if not diagrams_data:
+        return diagrams_data
+
+    try:
+        return validate_diagram_set(diagrams_data)
+    except DiagramValidationError as e:
+        raise CLIError(f"Diagram set invalid: {e}")
 
 
 async def _run_pipeline_inside_provider(
@@ -1005,7 +1044,7 @@ async def _run_pipeline_inside_provider(
     output_format: str,
     quiet: bool,
     code_path: Path | None,
-    diagram_path: Path | None,
+    diagram_paths: tuple[Path, ...],
     content: str,
     strict: bool,
     enrich: bool = False,
@@ -1065,20 +1104,8 @@ async def _run_pipeline_inside_provider(
             quiet=quiet,
         )
 
-    # Load diagram if --diagram flag provided
-    diagram_data = None
-    if diagram_path:
-        if not quiet:
-            click.echo(f"Loading diagram from {diagram_path}...")
-        try:
-            diagram_data = await load_diagram_file(diagram_path)
-            if not quiet:
-                diagram_type = diagram_data.format.value.upper()
-                click.secho(
-                    f"✓ Loaded {diagram_type} diagram: {diagram_data.source_path}", fg="green"
-                )
-        except InputFileError as e:
-            raise CLIError(f"Diagram loading failed: {e}")
+    # Load diagrams if one or more --diagram/-d flags were provided
+    diagrams_data = await _load_cli_diagrams(diagram_paths, quiet=quiet)
 
     # Track results
     total_threats = 0
@@ -1107,7 +1134,7 @@ async def _run_pipeline_inside_provider(
             has_ai_components=has_ai_components,
             similarity_threshold=settings.similarity_threshold,
             code_context=code_context,
-            diagram_data=diagram_data,
+            diagrams=diagrams_data or None,
             seed_collections=seed_collections,
             seeded_assets=seeded_assets,
             seeded_flows=seeded_flows,
@@ -1430,6 +1457,7 @@ async def _run_pipeline_inside_provider(
             dependency_context=json_writer.dependency_context,
             usage_summary=run_usage,
             scoring_method=scoring_method,
+            diagrams=diagrams_data or None,
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")

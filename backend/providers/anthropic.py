@@ -213,8 +213,14 @@ class AnthropicProvider:
         When shared_context is provided it is sent as a separate content block
         marked with cache_control: ephemeral so Anthropic's prompt cache can
         serve it from cache for every call in the same pipeline run (5-min TTL).
-        The system prompt block is always marked cacheable; images are marked
-        cacheable when shared_context is also present (they are stable too).
+        The system prompt block is always marked cacheable. When images are
+        also present and shared_context is set, only the *last* image gets a
+        cache_control breakpoint (not every image) — Anthropic allows at most
+        4 breakpoints per request, and marking every image would overflow
+        that budget with only 3 images once the system block and
+        shared_context are counted. The breakpoint on the last image still
+        covers the whole stable image run, since the cache covers everything
+        up to and including a breakpoint.
         """
         try:
             # Get JSON schema from Pydantic model (cached per class — deterministic)
@@ -239,7 +245,16 @@ class AnthropicProvider:
             content: list[dict] = []
 
             if images:
-                for img in images:
+                # With more than one image, a short "Image i of n" label
+                # precedes each image block (Anthropic's documented practice
+                # for multi-image requests). A single image is unaffected —
+                # same output shape as before this feature.
+                multiple = len(images) > 1
+                for i, img in enumerate(images, start=1):
+                    if multiple:
+                        content.append(
+                            {"type": "text", "text": f"Image {i} of {len(images)}: {img.source}"}
+                        )
                     block: dict = {
                         "type": "image",
                         "source": {
@@ -248,7 +263,14 @@ class AnthropicProvider:
                             "data": img.data,
                         },
                     }
-                    if shared_context:
+                    # Only the last image gets a cache breakpoint. Anthropic
+                    # allows at most 4 cache_control breakpoints per request;
+                    # marking every image would overflow that budget with as
+                    # few as 3 images once the system block and shared_context
+                    # are counted. Marking the last image still caches the
+                    # whole stable image run, since Anthropic's prompt cache
+                    # covers everything up to and including a breakpoint.
+                    if shared_context and i == len(images):
                         block["cache_control"] = {"type": "ephemeral"}
                     content.append(block)
 

@@ -13,8 +13,10 @@ from backend.models.dependencies import (
     PackageRef,
     ResolvedPackage,
 )
-from backend.models.enums import CapabilityCategory, Framework, PathClass, SourceKind
+from backend.models.enums import CapabilityCategory, DiagramFormat, Framework, PathClass, SourceKind
+from backend.models.extended import DiagramData
 from backend.pipeline.nodes.helpers import (
+    build_diagram_parts,
     build_shared_context,
     extract_controls,
     extract_technologies,
@@ -165,7 +167,7 @@ class TestBuildSharedContextEnrichment:
             assets=make_assets(),
             flows=make_flows(),
             code_summary=None,
-            diagram_data=None,
+            diagrams=None,
             framework=Framework.STRIDE,
         )
 
@@ -292,7 +294,7 @@ class TestBuildSharedContextDependencyTag:
             assets=make_assets(),
             flows=make_flows(),
             code_summary=None,
-            diagram_data=None,
+            diagrams=None,
             framework=Framework.STRIDE,
             dependency_context=DependencyContext(packages=[_notable_package()]),
         )
@@ -307,7 +309,7 @@ class TestBuildSharedContextDependencyTag:
             assets=make_assets(),
             flows=make_flows(),
             code_summary=None,
-            diagram_data=None,
+            diagrams=None,
             framework=Framework.STRIDE,
         )
         assert "<dependency_capabilities>" not in ctx
@@ -320,8 +322,99 @@ class TestBuildSharedContextDependencyTag:
             assets=make_assets(),
             flows=make_flows(),
             code_summary=None,
-            diagram_data=None,
+            diagrams=None,
             framework=Framework.STRIDE,
             dependency_context=DependencyContext(packages=[]),
         )
         assert "<dependency_capabilities>" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# build_diagram_parts (5a-1)
+# ---------------------------------------------------------------------------
+
+
+def _mermaid(name: str) -> DiagramData:
+    return DiagramData(
+        format=DiagramFormat.MERMAID,
+        source_path=f"{name}.mmd",
+        mermaid_source="graph TD\n  A-->B",
+        name=name,
+    )
+
+
+def _image(name: str) -> DiagramData:
+    return DiagramData(
+        format=DiagramFormat.PNG,
+        source_path=f"{name}.png",
+        base64_data="aGVsbG8=",
+        media_type="image/png",
+        name=name,
+    )
+
+
+class TestBuildDiagramParts:
+    def test_empty_returns_empty(self):
+        text, images = build_diagram_parts(None)
+        assert text == ""
+        assert images == []
+
+    def test_mixed_types_order_indices_and_image_count(self):
+        diagrams = [_mermaid("flow"), _image("arch1"), _image("arch2")]
+        text, images = build_diagram_parts(diagrams, with_images=True)
+
+        # Order and diagram-level index/of reflect position among ALL diagrams.
+        assert text.index('name="flow"') < text.index('name="arch1"')
+        assert text.index('name="arch1"') < text.index('name="arch2"')
+        assert 'index="1" of="3"' in text
+        assert 'index="2" of="3"' in text
+        assert 'index="3" of="3"' in text
+
+        # Mermaid source is inlined; images get a vision placeholder.
+        assert "graph TD" in text
+        assert "[Provided as vision image 1 of 2]" in text
+        assert "[Provided as vision image 2 of 2]" in text
+
+        # Only the 2 image diagrams produce ImageContent entries, in order.
+        assert len(images) == 2
+        assert images[0].source == "arch1"
+        assert images[1].source == "arch2"
+
+    def test_with_images_false_uses_unsupported_placeholder_and_no_images(self):
+        diagrams = [_mermaid("flow"), _image("arch")]
+        text, images = build_diagram_parts(diagrams, with_images=False)
+
+        assert "graph TD" in text
+        assert "[image not sent: provider does not support images]" in text
+        assert "[Provided as vision image" not in text
+        assert images == []
+
+    def test_single_diagram_name_attribute_escaped(self):
+        d = _mermaid("a")
+        d.name = 'a"b<c>d&e'  # bypass sanitization to test the XML escaper directly
+        text, _ = build_diagram_parts([d])
+        assert "<c>" not in text
+        assert "&quot;" in text or "&lt;" in text
+
+
+def test_build_shared_context_with_two_mermaid_diagrams():
+    """build_shared_context inlines both Mermaid diagrams' source, each in
+    its own named/indexed <architecture_diagram> block."""
+    diagrams = [_mermaid("flow"), _mermaid("deployment")]
+    ctx = build_shared_context(
+        description="A service",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        code_summary=None,
+        diagrams=diagrams,
+        framework=Framework.STRIDE,
+    )
+
+    assert 'name="flow"' in ctx
+    assert 'name="deployment"' in ctx
+    assert ctx.index('name="flow"') < ctx.index('name="deployment"')
+    assert ctx.count("graph TD") == 2
+    # No image placeholder text — these are Mermaid, not PNG/JPEG.
+    assert "vision image" not in ctx

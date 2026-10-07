@@ -1,15 +1,19 @@
 """Threat model CRUD routes and pipeline SSE streaming."""
 
+import asyncio
 import base64
+import binascii
 import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Annotated
 
 import aiosqlite
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 from backend.auth.dependencies import get_current_user, require_role
 from backend.config import settings
@@ -20,6 +24,19 @@ from backend.deps.analyze import (
     count_resolvable_direct_dependencies,
     dependency_scan_rows,
 )
+from backend.image import (
+    MAX_DIAGRAMS,
+    MAX_IMAGE_SIZE_BYTES,
+    MAX_MERMAID_SIZE_BYTES,
+    MAX_TOTAL_IMAGE_BYTES,
+    MAX_TOTAL_MERMAID_BYTES,
+    format_for_extension,
+    image_byte_length,
+    sanitize_diagram_name,
+    validate_diagram_bytes,
+    validate_diagram_set,
+)
+from backend.image.errors import DiagramValidationError
 from backend.mcp.client import MCPCodeExtractor
 from backend.mcp.errors import MCPBinaryNotFoundError
 from backend.models.api import (
@@ -71,79 +88,225 @@ def _decode_json_field(value: str | None) -> dict | None:
 
 router = APIRouter(prefix="/models", tags=["models"])
 
-_MAX_DIAGRAM_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_MANIFEST_BYTES = 1024 * 1024  # 1 MB — package.json itself is never large
 _MAX_LOCKFILE_BYTES = 20 * 1024 * 1024  # 20 MB — real package-lock.json files
 # from large monorepos routinely exceed 1 MB
 _VALID_DEPS_SOURCE_MODES = frozenset({"npm", "both"})
 
 
-async def _build_diagram_data(upload: UploadFile) -> DiagramData:
-    """Build DiagramData from an uploaded file."""
-    filename = upload.filename or ""
-    content_type = upload.content_type or ""
-    raw = await upload.read()
+async def _build_diagram_data(upload: UploadFile, *, name_hint: str | None = None) -> DiagramData:
+    """Build DiagramData from one uploaded file: a bounded read, then full
+    content validation (Pillow for images; size/UTF-8 for Mermaid).
 
-    if len(raw) > _MAX_DIAGRAM_BYTES:
+    The bounded read (`upload.read(cap + 1)`) protects this handler's own
+    memory use — Starlette has already received the whole request and
+    spooled it to a temp file before this handler runs, so it doesn't stop
+    an oversize request early, only how much of it this function holds at
+    once. `validate_diagram_bytes` is CPU-bound (Pillow decode), so it runs
+    via `asyncio.to_thread` rather than blocking the event loop.
+    """
+    filename = upload.filename or "diagram"
+    try:
+        diagram_format = format_for_extension(filename)
+    except DiagramValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    cap = (
+        MAX_MERMAID_SIZE_BYTES if diagram_format == DiagramFormat.MERMAID else MAX_IMAGE_SIZE_BYTES
+    )
+    raw = await upload.read(cap + 1)
+    if len(raw) > cap:
         raise HTTPException(
             status_code=413,
-            detail=f"Diagram file exceeds 5 MB limit ({len(raw)} bytes)",
+            detail=f"'{filename}' exceeds the {cap} byte limit for its type",
         )
 
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    try:
+        await asyncio.to_thread(validate_diagram_bytes, filename, raw)
+    except DiagramValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
-    if ext in ("mmd", "txt") or "mermaid" in content_type:
+    name = sanitize_diagram_name(name_hint or Path(filename).stem)
+
+    if diagram_format == DiagramFormat.MERMAID:
         return DiagramData(
             format=DiagramFormat.MERMAID,
             source_path=filename,
-            mermaid_source=raw.decode("utf-8", errors="replace"),
+            mermaid_source=raw.decode("utf-8"),
+            name=name,
         )
 
-    if ext in ("jpg", "jpeg") or "jpeg" in content_type:
-        fmt = DiagramFormat.JPEG
-        media_type = "image/jpeg"
-    else:
-        fmt = DiagramFormat.PNG
-        media_type = "image/png"
-
+    media_type = "image/jpeg" if diagram_format == DiagramFormat.JPEG else "image/png"
     return DiagramData(
-        format=fmt,
+        format=diagram_format,
         source_path=filename,
         base64_data=base64.b64encode(raw).decode("ascii"),
         media_type=media_type,
         size_bytes=len(raw),
+        name=name,
     )
 
 
-async def _persist_diagram_data(model_id: str, diagram_data: DiagramData) -> None:
-    """Store an uploaded diagram so it survives a page reload (Results diagram tab).
+async def _build_diagrams_from_request(
+    diagram: UploadFile | None,
+    diagrams: list[UploadFile] | None,
+    diagram_names: str | None,
+) -> list[DiagramData]:
+    """Build the full diagram set for a run from the request's upload fields.
 
-    Unlike dependency_scans, a diagram is user input, not pipeline output — it
-    is replaced here only because a new one was actually uploaded, never wiped
-    by clear_model_data() on a re-run that didn't upload one (see
-    crud.replace_model_diagram's docstring). The delete-old + insert-new pair
-    is atomic (one commit) so a failed insert can't leave the model with no
-    diagram at all.
+    `diagram` is the deprecated singular field (kept for one release); when
+    present it's merged in first (position 0). `diagrams` is the current
+    multi-file field; `diagram_names` optionally labels those files (not the
+    deprecated `diagram` field) — a JSON array of strings the same length as
+    `diagrams`, empty strings falling back to the file's own stem.
+
+    Returns an empty list when nothing was uploaded (the caller then
+    decides whether to reuse stored diagrams). Raises HTTPException (422/413)
+    for any malformed or over-limit upload, before any SSE stream opens.
     """
-    name = diagram_data.source_path or "diagram"
-    if diagram_data.format == DiagramFormat.MERMAID:
-        content = diagram_data.mermaid_source or ""
-        await crud.replace_model_diagram(
-            model_id=model_id,
-            name=name,
-            kind=DiagramFormat.MERMAID.value,
-            content=content,
-            size_bytes=len(content.encode("utf-8")),
-        )
-    else:
-        await crud.replace_model_diagram(
-            model_id=model_id,
-            name=name,
-            kind=diagram_data.format.value,
-            content=diagram_data.base64_data or "",
-            size_bytes=diagram_data.size_bytes or 0,
-            media_type=diagram_data.media_type,
-        )
+    diagram_files = [f for f in (diagrams or []) if f.filename]
+    shim_file = diagram if diagram is not None and diagram.filename else None
+
+    names: list[str | None] = [None] * len(diagram_files)
+    if diagram_names is not None:
+        try:
+            parsed_names = json.loads(diagram_names)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=422, detail="'diagram_names' must be a JSON array string"
+            )
+        if not isinstance(parsed_names, list) or not all(isinstance(n, str) for n in parsed_names):
+            raise HTTPException(
+                status_code=422, detail="'diagram_names' must be a JSON array of strings"
+            )
+        if len(parsed_names) != len(diagram_files):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"diagram_names has {len(parsed_names)} entries for {len(diagram_files)} files"
+                ),
+            )
+        names = [n or None for n in parsed_names]
+
+    total_uploaded = len(diagram_files) + (1 if shim_file else 0)
+    if total_uploaded > MAX_DIAGRAMS:
+        detail = f"Too many diagrams: {total_uploaded} uploaded"
+        if shim_file:
+            detail += " (including the deprecated `diagram` field)"
+        detail += f"; the limit is {MAX_DIAGRAMS}."
+        raise HTTPException(status_code=422, detail=detail)
+
+    built: list[DiagramData] = []
+    if shim_file:
+        built.append(await _build_diagram_data(shim_file))
+    for upload, name in zip(diagram_files, names, strict=True):
+        built.append(await _build_diagram_data(upload, name_hint=name))
+
+    if not built:
+        return []
+
+    try:
+        return validate_diagram_set(built)
+    except DiagramValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+async def _persist_diagram_data(model_id: str, diagrams: list[DiagramData]) -> None:
+    """Store an uploaded diagram set so it survives a page reload (Results tab).
+
+    Unlike dependency_scans, diagrams are user input, not pipeline output —
+    they're replaced here only because a new set was actually uploaded,
+    never wiped by clear_model_data() on a re-run that didn't upload one
+    (see crud.replace_model_diagrams's docstring). The delete-old +
+    insert-new sequence is atomic (one commit) so a failed insert can't
+    leave the model with no diagrams at all.
+    """
+    await crud.replace_model_diagrams(model_id, [crud.diagram_data_to_row(d) for d in diagrams])
+
+
+async def _load_stored_diagrams_for_reuse(
+    model_id: str,
+) -> tuple[list[DiagramData], list[dict[str, str]]]:
+    """Reconstruct a model's stored diagrams for a re-run/re-extract that
+    didn't upload a new set.
+
+    Stored rows are re-checked against today's limits — a row saved under a
+    looser cap in an earlier release can now exceed a lowered one, and the
+    4b-1 upload route did no content check at all (any file up to 5MB,
+    unknown extensions treated as PNG), so a stored row can also be a
+    corrupt file or a non-image that would otherwise get resent to a
+    vision API on every re-run. A row that fails any check is skipped, not
+    fatal: the rest of the set still runs. Caps and the count limit are
+    applied in stored order, so earlier diagrams are kept over later ones.
+
+    Returns (kept, skipped) — `skipped` entries have "name" and "reason",
+    meant to be sent as the SSE stream's first info event.
+    """
+    rows = await crud.list_model_diagrams(model_id, include_image_content=True)
+    if not rows:
+        return [], []
+
+    kept: list[DiagramData] = []
+    skipped: list[dict[str, str]] = []
+    image_total = 0
+    mermaid_total = 0
+
+    for row in rows:
+        if len(kept) >= MAX_DIAGRAMS:
+            skipped.append(
+                {"name": row.get("name") or "diagram", "reason": "too many stored diagrams"}
+            )
+            continue
+
+        try:
+            diagram = crud.diagram_data_from_row(row)
+        except (ValidationError, ValueError, KeyError):
+            skipped.append(
+                {"name": row.get("name") or "diagram", "reason": "stored row is malformed"}
+            )
+            continue
+
+        if diagram.format == DiagramFormat.MERMAID:
+            size = len((diagram.mermaid_source or "").encode("utf-8"))
+            if size > MAX_MERMAID_SIZE_BYTES:
+                skipped.append(
+                    {"name": diagram.name, "reason": "exceeds the current Mermaid size limit"}
+                )
+                continue
+            if mermaid_total + size > MAX_TOTAL_MERMAID_BYTES:
+                skipped.append(
+                    {"name": diagram.name, "reason": "exceeds the total Mermaid size budget"}
+                )
+                continue
+            mermaid_total += size
+        else:
+            size = image_byte_length(diagram)
+            if size > MAX_IMAGE_SIZE_BYTES:
+                skipped.append(
+                    {"name": diagram.name, "reason": "exceeds the current image size limit"}
+                )
+                continue
+            if image_total + size > MAX_TOTAL_IMAGE_BYTES:
+                skipped.append(
+                    {"name": diagram.name, "reason": "exceeds the total image size budget"}
+                )
+                continue
+            try:
+                await asyncio.to_thread(
+                    validate_diagram_bytes,
+                    f"{diagram.name}.{diagram.format.value}",
+                    base64.b64decode(diagram.base64_data or ""),
+                )
+            except (DiagramValidationError, ValueError, binascii.Error):
+                skipped.append(
+                    {"name": diagram.name, "reason": "stored image content is no longer valid"}
+                )
+                continue
+            image_total += size
+
+        kept.append(diagram)
+
+    return kept, skipped
 
 
 async def _parse_dependency_json_upload(
@@ -586,6 +749,8 @@ async def run_pipeline(
     assumptions: Annotated[str, Form()] = "[]",
     has_ai_components: Annotated[bool, Form()] = False,
     diagram: Annotated[UploadFile | None, File()] = None,
+    diagrams: Annotated[list[UploadFile] | None, File()] = None,
+    diagram_names: Annotated[str | None, Form()] = None,
     code_source_id: Annotated[str, Form()] = "",
     dependency_manifest: Annotated[UploadFile | None, File()] = None,
     dependency_lockfile: Annotated[UploadFile | None, File()] = None,
@@ -599,7 +764,14 @@ async def run_pipeline(
     Accepts multipart/form-data:
     - assumptions: JSON array string, e.g. '["TLS is enforced","Auth is OAuth2"]'
     - has_ai_components: bool, enables MAESTRO alongside STRIDE
-    - diagram: optional PNG/JPG/Mermaid file upload
+    - diagram: DEPRECATED — optional single PNG/JPG/Mermaid file upload, kept
+      for one release. Merged first (position 0) if `diagrams` is also sent.
+    - diagrams: optional 1-5 PNG/JPG/Mermaid file uploads. Replaces the
+      model's entire stored diagram set. Omit entirely (with no `diagram`
+      either) to reuse the diagrams already stored from a previous run.
+    - diagram_names: optional JSON array of strings, same length as
+      `diagrams`, labeling each file (not the deprecated `diagram` field).
+      An empty string falls back to that file's own name.
     - code_source_id: optional ID of a ready code source for code context
     - dependency_manifest: optional package.json file upload (<= 1 MB,
       <= 50 resolvable direct dependencies). A file upload, not a plain form
@@ -631,10 +803,10 @@ async def run_pipeline(
             detail="'assumptions' must be a JSON array string, e.g. '[\"assumption 1\"]'",
         )
 
-    # Build DiagramData if a file was uploaded
-    diagram_data: DiagramData | None = None
-    if diagram is not None and diagram.filename:
-        diagram_data = await _build_diagram_data(diagram)
+    # Build the diagram set if any files were uploaded. An empty list means
+    # nothing was uploaded — the event_generator below then falls back to
+    # whatever is already stored, rather than wiping it.
+    uploaded_diagrams = await _build_diagrams_from_request(diagram, diagrams, diagram_names)
 
     # Validate code source — fast fail before opening the SSE stream.
     source_row: dict | None = None
@@ -710,13 +882,40 @@ async def run_pipeline(
         # Persist assumptions unconditionally — clears stale data from prior runs
         await crud.update_threat_model(model_id, assumptions=json.dumps(parsed_assumptions))
 
-        if diagram_data is not None:
+        skipped_stored_diagrams: list[dict[str, str]] = []
+        if uploaded_diagrams:
+            run_diagrams = uploaded_diagrams
             try:
-                await _persist_diagram_data(model_id, diagram_data)
+                await _persist_diagram_data(model_id, uploaded_diagrams)
             except aiosqlite.Error:
                 logger.warning(
-                    "Failed to persist uploaded diagram for model %s", model_id, exc_info=True
+                    "Failed to persist uploaded diagrams for model %s", model_id, exc_info=True
                 )
+        else:
+            try:
+                run_diagrams, skipped_stored_diagrams = await _load_stored_diagrams_for_reuse(
+                    model_id
+                )
+            except aiosqlite.Error:
+                logger.exception("Failed to load stored diagrams for model %s", model_id)
+                await crud.update_threat_model_status(model_id, ModelStatus.FAILED.value)
+                yield PipelineEvent(
+                    step=PipelineStep.COMPLETE,
+                    status="failed",
+                    message="Failed to load stored diagrams; see server logs.",
+                ).to_sse_format()
+                return
+
+        if skipped_stored_diagrams:
+            yield PipelineEvent(
+                step=PipelineStep.SUMMARIZE,
+                status="info",
+                message=(
+                    f"{len(skipped_stored_diagrams)} stored diagram(s) no longer fit current "
+                    "limits and were skipped; the rest of the set still runs."
+                ),
+                data={"warning": "stored_diagram_skipped", "skipped": skipped_stored_diagrams},
+            ).to_sse_format()
 
         # Extract code context from the indexed clone directory (if requested).
         # This runs inside the SSE stream so the user sees extraction progress.
@@ -771,7 +970,7 @@ async def run_pipeline(
                     provider=provider,
                     fast_provider=fast_provider,
                     assumptions=parsed_assumptions or None,
-                    diagram_data=diagram_data,
+                    diagrams=run_diagrams or None,
                     code_context=code_context,
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,
@@ -1148,6 +1347,29 @@ async def extract_model_context(
 
     async def event_generator() -> AsyncGenerator[str, None]:
         await crud.clear_model_data(model_id, preserve_user_edits=True)
+
+        try:
+            run_diagrams, skipped_stored_diagrams = await _load_stored_diagrams_for_reuse(model_id)
+        except aiosqlite.Error:
+            logger.exception("Failed to load stored diagrams for model %s", model_id)
+            yield PipelineEvent(
+                step=PipelineStep.COMPLETE,
+                status="failed",
+                message="Failed to load stored diagrams; see server logs.",
+            ).to_sse_format()
+            return
+
+        if skipped_stored_diagrams:
+            yield PipelineEvent(
+                step=PipelineStep.SUMMARIZE,
+                status="info",
+                message=(
+                    f"{len(skipped_stored_diagrams)} stored diagram(s) no longer fit current "
+                    "limits and were skipped; the rest of the set still runs."
+                ),
+                data={"warning": "stored_diagram_skipped", "skipped": skipped_stored_diagrams},
+            ).to_sse_format()
+
         try:
             async with AsyncExitStack() as stack:
                 await stack.enter_async_context(provider)
@@ -1159,6 +1381,7 @@ async def extract_model_context(
                     framework=framework,
                     provider=provider,
                     fast_provider=fast_provider,
+                    diagrams=run_diagrams or None,
                     stop_after="extraction",
                     persist_usage=True,  # model_id already names a saved threat_models row
                 ):

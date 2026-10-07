@@ -11,6 +11,7 @@ import botocore.exceptions as _bce
 import pytest
 from pydantic import BaseModel
 
+from backend.models.extended import ImageContent
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -19,7 +20,7 @@ from backend.providers.base import (
     ProviderTransientError,
     create_provider,
 )
-from backend.providers.bedrock import BedrockProvider, _map_boto_error
+from backend.providers.bedrock import BedrockProvider, _build_content_blocks, _map_boto_error
 
 
 # ---------------------------------------------------------------------------
@@ -445,3 +446,44 @@ def test_create_provider_bedrock():
     assert isinstance(provider, BedrockProvider)
     assert provider.name == "bedrock"
     assert provider.model == "us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+
+# ---------------------------------------------------------------------------
+# _build_content_blocks (vision / multi-diagram)
+# ---------------------------------------------------------------------------
+
+
+def test_build_content_blocks_single_image_unchanged():
+    image = ImageContent(data="aGVsbG8=", media_type="image/png", source="arch.png")
+    blocks = _build_content_blocks("Describe this", [image], None)
+
+    # No label block for a single image: image + prompt text = 2 blocks.
+    assert len(blocks) == 2
+    assert "image" in blocks[0]
+    assert blocks[1] == {"text": "Describe this"}
+
+
+def test_build_content_blocks_multiple_images_interleave_labels():
+    images = [
+        ImageContent(data="aGVsbG8=", media_type="image/png", source="1.png"),
+        ImageContent(data="d29ybGQ=", media_type="image/jpeg", source="2.jpg"),
+    ]
+    blocks = _build_content_blocks("Compare diagrams", images, None)
+
+    # label1 + image1 + label2 + image2 + prompt text = 5 blocks.
+    assert len(blocks) == 5
+    assert blocks[0] == {"text": "Image 1 of 2: 1.png"}
+    assert "image" in blocks[1]
+    assert blocks[2] == {"text": "Image 2 of 2: 2.jpg"}
+    assert "image" in blocks[3]
+    assert blocks[4] == {"text": "Compare diagrams"}
+
+
+def test_build_content_blocks_without_images():
+    blocks = _build_content_blocks("No images here", None, None)
+    assert blocks == [{"text": "No images here"}]
+
+
+def test_build_content_blocks_with_shared_context():
+    blocks = _build_content_blocks("dynamic prompt", None, "stable shared context")
+    assert blocks == [{"text": "stable shared context"}, {"text": "dynamic prompt"}]

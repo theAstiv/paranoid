@@ -1063,7 +1063,7 @@ async def test_summarize_with_png_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter was passed to provider
@@ -1073,7 +1073,7 @@ async def test_summarize_with_png_diagram():
     assert provider.last_images[0].media_type == "image/png"
 
     # Verify placeholder tag was added to prompt
-    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
+    assert "[Provided as vision image 1 of 1]" in provider.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1095,14 +1095,14 @@ async def test_summarize_with_mermaid_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter is None for Mermaid
     assert provider.last_images is None
 
     # Verify Mermaid source appears in prompt XML tag
-    assert "<architecture_diagram>" in provider.last_prompt
+    assert "<architecture_diagram " in provider.last_prompt
     assert "graph TD" in provider.last_prompt
     assert "A-->B" in provider.last_prompt
 
@@ -1117,7 +1117,7 @@ async def test_summarize_without_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=None,
+        diagrams=None,
     )
 
     # Verify no images parameter
@@ -1138,7 +1138,7 @@ async def test_summarize_with_legacy_diagram_string():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=None,
+        diagrams=None,
     )
 
     # Verify no images parameter for legacy string
@@ -1174,7 +1174,7 @@ async def test_generate_threats_with_jpeg_diagram():
         flows=flows,
         framework=Framework.STRIDE,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter was passed
@@ -1183,4 +1183,128 @@ async def test_generate_threats_with_jpeg_diagram():
     assert provider.last_images[0].media_type == "image/jpeg"
 
     # Verify placeholder tag
-    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
+    assert "[Provided as vision image 1 of 1]" in provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_two_image_diagrams():
+    """summarize() with 2 image diagrams passes both via images, in order."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagrams = [
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="a.png",
+            base64_data="aaa",
+            media_type="image/png",
+            size_bytes=3,
+            name="a",
+        ),
+        DiagramData(
+            format=DiagramFormat.JPEG,
+            source_path="b.jpg",
+            base64_data="bbb",
+            media_type="image/jpeg",
+            size_bytes=3,
+            name="b",
+        ),
+    ]
+
+    provider = MockProvider()
+    await nodes.summarize(
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        code_context=None,
+        provider=provider,
+        diagrams=diagrams,
+    )
+
+    assert provider.last_images is not None
+    assert len(provider.last_images) == 2
+    assert [img.source for img in provider.last_images] == ["a", "b"]
+    assert "[Provided as vision image 1 of 2]" in provider.last_prompt
+    assert "[Provided as vision image 2 of 2]" in provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_extract_assets_with_two_image_diagrams():
+    """extract_assets() with 2 image diagrams passes both via images."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagrams = [
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="a.png",
+            base64_data="aaa",
+            media_type="image/png",
+            size_bytes=3,
+            name="a",
+        ),
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="b.png",
+            base64_data="bbb",
+            media_type="image/png",
+            size_bytes=3,
+            name="b",
+        ),
+    ]
+
+    provider = MockProvider()
+    await nodes.extract_assets(
+        summary="A system",
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        framework=Framework.STRIDE,
+        provider=provider,
+        diagrams=diagrams,
+    )
+
+    assert provider.last_images is not None
+    assert len(provider.last_images) == 2
+    assert [img.source for img in provider.last_images] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_extract_flows_with_two_image_diagrams():
+    """extract_flows() with 2 image diagrams passes both via images."""
+    from backend.models.enums import DiagramFormat
+    from backend.models.extended import DiagramData
+
+    diagrams = [
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="a.png",
+            base64_data="aaa",
+            media_type="image/png",
+            size_bytes=3,
+            name="a",
+        ),
+        DiagramData(
+            format=DiagramFormat.PNG,
+            source_path="b.png",
+            base64_data="bbb",
+            media_type="image/png",
+            size_bytes=3,
+            name="b",
+        ),
+    ]
+
+    provider = MockProvider()
+    await nodes.extract_flows(
+        summary="A system",
+        description="Test system",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        provider=provider,
+        diagrams=diagrams,
+    )
+
+    assert provider.last_images is not None
+    assert len(provider.last_images) == 2
+    assert [img.source for img in provider.last_images] == ["a", "b"]
