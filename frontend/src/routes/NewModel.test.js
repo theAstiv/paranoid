@@ -91,6 +91,97 @@ describe('NewModel — step 1 (description)', () => {
   })
 })
 
+describe('NewModel — step 2 (diagram)', () => {
+  function mkFile(name, sizeBytes) {
+    return new File([new Uint8Array(sizeBytes)], name)
+  }
+
+  async function toStep2() {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(2)
+  }
+
+  it('adds multiple files and shows a named row for each', async () => {
+    await toStep2()
+    const a = mkFile('a.png', 1024)
+    const b = mkFile('b.mmd', 256)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [a, b] } })
+
+    expect(screen.getByLabelText('Diagram name: a')).toBeInTheDocument()
+    expect(screen.getByLabelText('Diagram name: b')).toBeInTheDocument()
+  })
+
+  it('rejects an oversize file without dropping an already-accepted one', async () => {
+    await toStep2()
+    const good = mkFile('a.png', 1024)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [good] } })
+    expect(screen.getByLabelText('Diagram name: a')).toBeInTheDocument()
+
+    const big = mkFile('too-big.png', 4 * 1024 * 1024)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [big] } })
+
+    expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('too large'))
+    expect(screen.getByLabelText('Diagram name: a')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Diagram name: too-big')).toBeNull()
+  })
+
+  it('blocks a 6th file once 5 are already accepted', async () => {
+    await toStep2()
+    const five = ['a', 'b', 'c', 'd', 'e'].map(n => mkFile(`${n}.mmd`, 64))
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: five } })
+    for (const n of ['a', 'b', 'c', 'd', 'e']) {
+      expect(screen.getByLabelText(`Diagram name: ${n}`)).toBeInTheDocument()
+    }
+
+    const sixth = mkFile('f.mmd', 64)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [sixth] } })
+
+    expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('maximum 5 diagrams'))
+    expect(screen.queryByLabelText('Diagram name: f')).toBeNull()
+  })
+
+  it('removes only the targeted row', async () => {
+    await toStep2()
+    const a = mkFile('a.mmd', 64)
+    const b = mkFile('b.mmd', 64)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [a, b] } })
+
+    await fireEvent.click(screen.getByLabelText('Remove diagram: a'))
+
+    expect(screen.queryByLabelText('Diagram name: a')).toBeNull()
+    expect(screen.getByLabelText('Diagram name: b')).toBeInTheDocument()
+  })
+
+  it('renames a row and reflects the new label', async () => {
+    await toStep2()
+    const a = mkFile('a.mmd', 64)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [a] } })
+
+    await fireEvent.change(screen.getByLabelText('Diagram name: a'), { target: { value: 'Custom Name' } })
+
+    expect(screen.getByLabelText('Diagram name: Custom Name')).toBeInTheDocument()
+  })
+
+  it('submits accepted files under diagrams/diagram_names in FormData', async () => {
+    createModel.mockResolvedValue({ id: 'model-diag' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(2)
+    const a = mkFile('a.mmd', 64)
+    const b = mkFile('b.png', 1024)
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [a, b] } })
+    await goToStep(6)
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
+    const fd = subscribeToRun.mock.calls[0][1]
+    expect(fd.getAll('diagrams')).toEqual([a, b])
+    expect(JSON.parse(fd.get('diagram_names'))).toEqual(['a', 'b'])
+  })
+})
+
 describe('NewModel — step 3 (code source)', () => {
   it('loads and lists ready code sources when the step is reached', async () => {
     listCodeSources.mockResolvedValue([

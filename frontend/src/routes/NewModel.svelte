@@ -14,8 +14,10 @@
   let title = ''
   let framework = 'STRIDE'
   let description = ''
-  let diagramFile = null
-  let diagramPreview = null
+  /** @typedef {{ file: File, name: string, kind: 'png'|'jpeg'|'mermaid', size: number, preview: string|null }} DiagramFileEntry */
+  /** @type {DiagramFileEntry[]} */
+  let diagramFiles = []
+  let diagramInputKey = 0
   let assumptions = []
   let newAssumption = ''
   let iterationCount = 3
@@ -79,6 +81,14 @@
   let readySources = []
   let loadingSources = false
   let sourcesLoaded = false
+
+  // Architecture diagrams — multi-file upload. Keep in sync with backend/image/validation.py.
+  const MAX_DIAGRAMS = 5
+  const MAX_IMAGE_SIZE_BYTES = 3_932_160 // 3.75 MB
+  const MAX_MERMAID_SIZE_BYTES = 100 * 1024 // 100 KB
+  const MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024 // 15 MB
+  const MAX_TOTAL_MERMAID_BYTES = 200 * 1024 // 200 KB
+  const DIAGRAM_EXT_KIND = { '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.mmd': 'mermaid', '.txt': 'mermaid' }
 
   // Dependency capability engine — package.json (+ optional lockfile) input.
   const MAX_MANIFEST_BYTES = 1024 * 1024
@@ -154,22 +164,78 @@
     return false
   })()
 
-  function handleDiagramChange(e) {
-    const file = e.target.files[0]
-    if (!file) { diagramFile = null; diagramPreview = null; return }
-    if (file.size > 5 * 1024 * 1024) {
-      notify('error', 'Diagram file must be under 5 MB')
-      e.target.value = ''
-      return
+  function diagramKindFor(filename) {
+    const ext = '.' + filename.split('.').pop().toLowerCase()
+    return DIAGRAM_EXT_KIND[ext] ?? null
+  }
+
+  function stemOf(filename) {
+    const base = filename.replace(/\.[^./]+$/, '')
+    return base || filename
+  }
+
+  // Validates every newly picked file into a local `accepted` list before ever
+  // touching `diagramFiles`, so a rejected file can never affect already-accepted ones.
+  function handleDiagramFilesChange(e) {
+    const picked = Array.from(e.target.files ?? [])
+    if (picked.length === 0) return
+    const accepted = []
+    for (const file of picked) {
+      const kind = diagramKindFor(file.name)
+      if (!kind) {
+        notify('error', `${file.name}: unsupported format (use .png, .jpg, .jpeg, .mmd, or .txt)`)
+        continue
+      }
+      const isImage = kind !== 'mermaid'
+      const maxSize = isImage ? MAX_IMAGE_SIZE_BYTES : MAX_MERMAID_SIZE_BYTES
+      if (file.size > maxSize) {
+        const limitLabel = isImage ? `${(MAX_IMAGE_SIZE_BYTES / 1024 / 1024).toFixed(2)} MB` : `${MAX_MERMAID_SIZE_BYTES / 1024} KB`
+        notify('error', `${file.name}: too large (max ${limitLabel})`)
+        continue
+      }
+      if (diagramFiles.length + accepted.length >= MAX_DIAGRAMS) {
+        notify('error', `${file.name}: skipped — maximum ${MAX_DIAGRAMS} diagrams per model`)
+        continue
+      }
+      const existingImageBytes = diagramFiles.filter(d => d.kind !== 'mermaid').reduce((s, d) => s + d.size, 0)
+      const acceptedImageBytes = accepted.filter(d => d.kind !== 'mermaid').reduce((s, d) => s + d.size, 0)
+      const prospectiveImageBytes = existingImageBytes + acceptedImageBytes + (isImage ? file.size : 0)
+      if (isImage && prospectiveImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+        notify('error', `${file.name}: skipped — total image size would exceed ${MAX_TOTAL_IMAGE_BYTES / 1024 / 1024} MB`)
+        continue
+      }
+      const existingMermaidBytes = diagramFiles.filter(d => d.kind === 'mermaid').reduce((s, d) => s + d.size, 0)
+      const acceptedMermaidBytes = accepted.filter(d => d.kind === 'mermaid').reduce((s, d) => s + d.size, 0)
+      const prospectiveMermaidBytes = existingMermaidBytes + acceptedMermaidBytes + (!isImage ? file.size : 0)
+      if (!isImage && prospectiveMermaidBytes > MAX_TOTAL_MERMAID_BYTES) {
+        notify('error', `${file.name}: skipped — total Mermaid size would exceed ${MAX_TOTAL_MERMAID_BYTES / 1024} KB`)
+        continue
+      }
+      accepted.push({ file, name: stemOf(file.name), kind, size: file.size, preview: null })
     }
-    diagramFile = file
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader()
-      reader.onload = ev => { diagramPreview = ev.target.result }
-      reader.readAsDataURL(file)
-    } else {
-      diagramPreview = null
+    // Bumped on both the accept and reject paths so the native file list
+    // clears and the same filename can be re-picked immediately.
+    diagramInputKey++
+    if (accepted.length === 0) return
+    for (const entry of accepted) {
+      if (entry.kind !== 'mermaid') {
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          entry.preview = ev.target.result
+          diagramFiles = diagramFiles // retrigger reactivity for the async preview
+        }
+        reader.readAsDataURL(entry.file)
+      }
     }
+    diagramFiles = [...diagramFiles, ...accepted]
+  }
+
+  function removeDiagramFile(index) {
+    diagramFiles = diagramFiles.filter((_, i) => i !== index)
+  }
+
+  function renameDiagramFile(index, newName) {
+    diagramFiles = diagramFiles.map((d, i) => i === index ? { ...d, name: newName } : d)
   }
 
   function addAssumption() {
@@ -195,7 +261,10 @@
       const fd = new FormData()
       fd.append('assumptions', JSON.stringify(assumptions))
       fd.append('has_ai_components', String(hasAiComponents))
-      if (diagramFile) fd.append('diagram', diagramFile)
+      if (diagramFiles.length > 0) {
+        for (const entry of diagramFiles) fd.append('diagrams', entry.file)
+        fd.append('diagram_names', JSON.stringify(diagramFiles.map(d => d.name)))
+      }
       if (selectedCodeSourceId) fd.append('code_source_id', selectedCodeSourceId)
       if (manifestFile) {
         fd.append('dependency_manifest', manifestFile)
@@ -317,19 +386,44 @@
     {:else if step === 2}
       <div class="space-y-4">
         <div>
-          <label class="{LABEL_CLASS}" for="file-diagram">Architecture diagram <span class="text-c-faint font-normal normal-case">(optional)</span></label>
-          <input id="file-diagram" type="file" accept=".png,.jpg,.jpeg,.mmd,.txt"
-            on:change={handleDiagramChange}
-            class="block w-full text-sm text-c-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-panel file:border file:border-c-border file:text-xs file:font-medium file:bg-c-well file:text-c-text2 hover:file:bg-c-panel" />
-          <p class="mt-1 text-xs text-c-faint">PNG/JPG (max 5 MB) or Mermaid .mmd file.</p>
+          <label class="{LABEL_CLASS}" for="file-diagram">Architecture diagrams <span class="text-c-faint font-normal normal-case">(optional, up to {MAX_DIAGRAMS})</span></label>
+          {#key diagramInputKey}
+          <input id="file-diagram" type="file" multiple accept=".png,.jpg,.jpeg,.mmd,.txt"
+            on:change={handleDiagramFilesChange}
+            disabled={diagramFiles.length >= MAX_DIAGRAMS}
+            class="block w-full text-sm text-c-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-panel file:border file:border-c-border file:text-xs file:font-medium file:bg-c-well file:text-c-text2 hover:file:bg-c-panel disabled:opacity-50" />
+          {/key}
+          <p class="mt-1 text-xs text-c-faint">
+            PNG/JPG up to {(MAX_IMAGE_SIZE_BYTES / 1024 / 1024).toFixed(2)} MB each ({MAX_TOTAL_IMAGE_BYTES / 1024 / 1024} MB total),
+            Mermaid .mmd/.txt up to {MAX_MERMAID_SIZE_BYTES / 1024} KB each ({MAX_TOTAL_MERMAID_BYTES / 1024} KB total). Max {MAX_DIAGRAMS} diagrams.
+            Images are read by vision models. The Ollama provider doesn't send images; Mermaid diagrams are still used.
+          </p>
         </div>
-        {#if diagramPreview}
-          <img src={diagramPreview} alt="Diagram preview" class="max-h-48 rounded-panel border border-c-border object-contain" />
-        {:else if diagramFile}
-          <div class="flex items-center gap-2 text-sm text-c-muted bg-c-well border border-c-border rounded-panel px-3 py-2">
-            <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
-            {diagramFile.name}
-          </div>
+
+        {#if diagramFiles.length > 0}
+          <ul class="space-y-2">
+            {#each diagramFiles as entry, i (entry.file)}
+              <li class="flex items-center gap-3 bg-c-well border border-c-border rounded-panel px-3 py-2">
+                {#if entry.kind !== 'mermaid' && entry.preview}
+                  <img src={entry.preview} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0 border border-c-border" />
+                {:else}
+                  <svg class="w-5 h-5 text-c-faint flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+                {/if}
+                <input type="text" value={entry.name} on:change={(e) => renameDiagramFile(i, e.target.value)}
+                  aria-label="Diagram name: {entry.name}"
+                  class="flex-1 field text-sm py-1" />
+                <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border flex-shrink-0 {entry.kind === 'mermaid' ? 'chip-violet' : 'chip-blue'}">
+                  {entry.kind === 'mermaid' ? 'mermaid' : entry.kind}
+                </span>
+                <span class="font-mono text-[11px] text-c-faint flex-shrink-0 w-16 text-right">{(entry.size / 1024).toFixed(0)} KB</span>
+                <button type="button" on:click={() => removeDiagramFile(i)}
+                  aria-label="Remove diagram: {entry.name}"
+                  class="text-c-faint hover:text-c-critical flex-shrink-0 transition-colors">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" d="M5 5l10 10M15 5L5 15"/></svg>
+                </button>
+              </li>
+            {/each}
+          </ul>
         {/if}
       </div>
 
@@ -556,8 +650,14 @@
           <dd class="text-c-text2">{hasAiComponents ? 'Yes (MAESTRO enabled)' : 'No'}</dd>
           <dt class="text-c-muted">Scoring</dt>
           <dd class="text-c-text2 uppercase">{scoringMethod}</dd>
-          <dt class="text-c-muted">Diagram</dt>
-          <dd class="text-c-text2">{diagramFile ? diagramFile.name : '—'}</dd>
+          <dt class="text-c-muted">Diagrams</dt>
+          <dd class="text-c-text2">
+            {#if diagramFiles.length > 0}
+              {diagramFiles.map(d => d.name).join(', ')}
+            {:else}
+              —
+            {/if}
+          </dd>
           <dt class="text-c-muted">Code source</dt>
           <dd class="text-c-text2">{selectedCodeSourceId ? (readySources.find(s => s.id === selectedCodeSourceId)?.name ?? '—') : '—'}</dd>
           <dt class="text-c-muted">Dependencies</dt>
