@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams,
+    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams, getModelDiagram,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -34,7 +34,20 @@
   let dependencyScans = []
   let diagrams = []
   let selectedDiagramId = null
+  let diagramContentCache = {} // { [diagramId]: { content, media_type } }
+  let diagramContentLoading = false
+  let tabRefs = []
   $: selectedDiagram = diagrams.find(d => d.id === selectedDiagramId) ?? diagrams[0] ?? null
+  $: selectedDiagramContent = selectedDiagram
+    ? (selectedDiagram.kind === 'mermaid'
+        ? selectedDiagram.content
+        : (diagramContentCache[selectedDiagram.id]?.content ?? null))
+    : null
+  // The default-selected diagram (page load, or after a list reload) also needs
+  // its content lazily fetched, not just an explicit tab click.
+  $: if (selectedDiagram && selectedDiagram.kind !== 'mermaid' && !diagramContentCache[selectedDiagram.id] && !diagramContentLoading) {
+    selectDiagram(selectedDiagram.id)
+  }
   /** @type {any} */ let assetsList
   /** @type {any} */ let flowsList
   /** @type {any} */ let boundariesList
@@ -123,6 +136,8 @@
     assets = a; flows = f; trustBoundaries = tb
     dependencyScans = deps
     diagrams = dgs
+    selectedDiagramId = null
+    diagramContentCache = {}
     assetCommentCounts = {}
     flowCommentCounts = {}
     threatCommentCounts = {}
@@ -169,6 +184,35 @@
       notify('error', `Status change failed: ${err.message}`)
     } finally {
       changingStatus = false
+    }
+  }
+
+  async function selectDiagram(id) {
+    selectedDiagramId = id
+    const d = diagrams.find(x => x.id === id)
+    if (!d || d.kind === 'mermaid' || diagramContentCache[id]) return
+    diagramContentLoading = true
+    try {
+      const full = await getModelDiagram(params.id, id)
+      diagramContentCache = { ...diagramContentCache, [id]: full }
+    } catch (err) {
+      notify('error', `Failed to load diagram: ${err.message}`)
+    } finally {
+      diagramContentLoading = false
+    }
+  }
+
+  function onTabKeydown(event, index) {
+    if (diagrams.length < 2) return
+    let next = null
+    if (event.key === 'ArrowRight') next = (index + 1) % diagrams.length
+    else if (event.key === 'ArrowLeft') next = (index - 1 + diagrams.length) % diagrams.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = diagrams.length - 1
+    if (next !== null) {
+      event.preventDefault()
+      selectDiagram(diagrams[next].id)
+      tabRefs[next]?.focus()
     }
   }
 
@@ -434,21 +478,40 @@
             Diagram <span class="normal-case font-mono text-c-faint">({diagrams.length})</span>
           </h2>
           {#if diagrams.length > 1}
-            <select bind:value={selectedDiagramId}
-              class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
-              {#each diagrams as d}
-                <option value={d.id}>{d.name}</option>
+            <div role="tablist" aria-label="Diagrams" class="flex items-center gap-1.5 flex-wrap">
+              {#each diagrams as d, i (d.id)}
+                <button type="button" role="tab"
+                  bind:this={tabRefs[i]}
+                  id="diagram-tab-{d.id}"
+                  aria-selected={d.id === (selectedDiagram?.id ?? null)}
+                  aria-controls="diagram-panel"
+                  tabindex={d.id === (selectedDiagram?.id ?? null) ? 0 : -1}
+                  on:click={() => selectDiagram(d.id)}
+                  on:keydown={(e) => onTabKeydown(e, i)}
+                  class="font-mono text-[11px] px-2.5 py-1 rounded-chip border transition-colors
+                    {d.id === (selectedDiagram?.id ?? null) ? 'chip-accent' : 'chip-gray'}">
+                  {d.name}
+                </button>
               {/each}
-            </select>
+            </div>
           {/if}
         </div>
+        <p class="text-xs text-c-faint mb-3">Re-runs reuse these diagrams. Upload new ones from a new run to replace them.</p>
         {#if selectedDiagram}
-          <DiagramView
-            kind={selectedDiagram.kind}
-            content={selectedDiagram.content}
-            mediaType={selectedDiagram.media_type}
-            name={selectedDiagram.name}
-          />
+          <div id="diagram-panel" role="tabpanel" aria-labelledby="diagram-tab-{selectedDiagram.id}">
+            {#if selectedDiagram.kind !== 'mermaid' && diagramContentLoading && !diagramContentCache[selectedDiagram.id]}
+              <div class="flex justify-center py-12">
+                <div class="w-5 h-5 border-2 border-c-accent border-t-transparent rounded-full animate-spin-slow"></div>
+              </div>
+            {:else}
+              <DiagramView
+                kind={selectedDiagram.kind}
+                content={selectedDiagramContent ?? ''}
+                mediaType={selectedDiagram.media_type}
+                name={selectedDiagram.name}
+              />
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}

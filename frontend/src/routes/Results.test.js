@@ -35,6 +35,7 @@ vi.mock('../lib/api.js', () => ({
   getCommentCounts: vi.fn().mockResolvedValue([]),
   getModelDependencies: vi.fn().mockResolvedValue([]),
   listModelDiagrams: vi.fn().mockResolvedValue([]),
+  getModelDiagram: vi.fn(),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -50,7 +51,7 @@ vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
-  getModelDependencies, listModelDiagrams,
+  getModelDependencies, listModelDiagrams, getModelDiagram,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -142,6 +143,47 @@ describe('Results — diagram', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Diagram')).toBeInTheDocument())
     await waitFor(() => expect(mermaidRender).toHaveBeenCalled())
+  })
+})
+
+describe('Results — diagram tabs', () => {
+  it('shows a tablist with multiple diagrams and lazily fetches a non-mermaid tab on click', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    getModelDiagram.mockResolvedValue({ id: 'd2', content: 'aGVsbG8=', media_type: 'image/png' })
+
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalled())
+    expect(getModelDiagram).not.toHaveBeenCalled()
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'photo' }))
+
+    await waitFor(() => expect(getModelDiagram).toHaveBeenCalledWith('m1', 'd2'))
+  })
+
+  it('shows no tablist with only one diagram', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'arch.mmd', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Diagram')).toBeInTheDocument())
+    expect(screen.queryByRole('tablist')).toBeNull()
+  })
+
+  it('hides the Diagram section while a pipeline run is in progress', async () => {
+    listModelDiagrams.mockResolvedValue([
+      { id: 'd1', name: 'flow', kind: 'mermaid', content: 'graph TD; A-->B', media_type: null },
+      { id: 'd2', name: 'photo', kind: 'png', content: null, has_content: false, media_type: 'image/png' },
+    ])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByRole('tablist', { name: 'Diagrams' })).toBeInTheDocument())
+
+    pipelineRunning.set(true)
+
+    await waitFor(() => expect(screen.queryByRole('tablist')).toBeNull())
   })
 })
 
