@@ -37,6 +37,13 @@
   let diagramContentCache = {} // { [diagramId]: { content, media_type } }
   let diagramContentLoading = {} // { [diagramId]: true } — per id, so switching tabs mid-fetch can't let one id's `finally` clear another's flag
   let diagramContentError = {} // { [diagramId]: true } — a failed id is not retried automatically; see retryDiagram()
+  // Not reset on a list reload (unlike the three above): a re-run with no new
+  // upload keeps the same diagram ids, so a fetch already in flight when the
+  // list reloads must still be recognized as in flight — otherwise the
+  // reactive guard below sees a freshly-reset "not cached, not loading" id
+  // and starts a duplicate request for it.
+  let diagramFetchToken = {} // { [diagramId]: token }
+  let nextDiagramFetchToken = 0
   let tabRefs = []
   $: selectedDiagram = diagrams.find(d => d.id === selectedDiagramId) ?? diagrams[0] ?? null
   $: selectedDiagramContent = selectedDiagram
@@ -143,7 +150,6 @@
     diagrams = dgs
     selectedDiagramId = null
     diagramContentCache = {}
-    diagramContentLoading = {}
     diagramContentError = {}
     assetCommentCounts = {}
     flowCommentCounts = {}
@@ -197,17 +203,27 @@
   async function selectDiagram(id) {
     selectedDiagramId = id
     const d = diagrams.find(x => x.id === id)
-    if (!d || d.kind === 'mermaid' || diagramContentCache[id] || diagramContentLoading[id] || diagramContentError[id]) return
+    // diagramFetchToken[id] being set means a fetch for this id is already in
+    // flight (possibly started before a list reload) — don't start a second one.
+    if (!d || d.kind === 'mermaid' || diagramContentCache[id] || diagramContentError[id] || diagramFetchToken[id] !== undefined) return
+    const token = ++nextDiagramFetchToken
+    diagramFetchToken = { ...diagramFetchToken, [id]: token }
     diagramContentLoading = { ...diagramContentLoading, [id]: true }
     try {
       const full = await getModelDiagram(params.id, id)
+      if (diagramFetchToken[id] !== token) return // superseded — a newer fetch for this id owns the result now
       diagramContentCache = { ...diagramContentCache, [id]: full }
     } catch (err) {
+      if (diagramFetchToken[id] !== token) return
       notify('error', `Failed to load diagram: ${err.message}`)
       diagramContentError = { ...diagramContentError, [id]: true }
     } finally {
-      const { [id]: _removed, ...rest } = diagramContentLoading
-      diagramContentLoading = rest
+      if (diagramFetchToken[id] === token) {
+        const { [id]: _removedToken, ...restToken } = diagramFetchToken
+        diagramFetchToken = restToken
+        const { [id]: _removedLoading, ...restLoading } = diagramContentLoading
+        diagramContentLoading = restLoading
+      }
     }
   }
 
