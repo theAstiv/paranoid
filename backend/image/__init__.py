@@ -10,11 +10,21 @@ Mirrors backend/mcp/ pattern (optional feature, clear boundaries).
 
 from backend.image.encoder import load_image_as_diagram_data
 from backend.image.mermaid import load_mermaid_as_diagram_data
-from backend.image.validation import validate_diagram_file
+from backend.image.validation import (
+    MAX_DIAGRAMS,
+    sanitize_diagram_name,
+    validate_diagram_bytes,
+    validate_diagram_file,
+    validate_diagram_set,
+)
 
 
 __all__ = [
+    "MAX_DIAGRAMS",
     "load_image_as_diagram_data",
     "load_mermaid_as_diagram_data",
+    "sanitize_diagram_name",
+    "validate_diagram_bytes",
     "validate_diagram_file",
+    "validate_diagram_set",
 ]

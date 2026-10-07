@@ -1,9 +1,10 @@
 """Extended Pydantic models for Paranoid-specific functionality."""
 
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from backend.models.enums import (
     DiagramFormat,
@@ -181,7 +182,8 @@ class DiagramData(BaseModel):
     """Architecture diagram data for threat modeling.
 
     Supports PNG/JPG images (vision API) and Mermaid text files (parsed by LLM).
-    Loaded once at CLI, passed through all 5 pipeline nodes.
+    Loaded once at CLI, passed through all 5 pipeline nodes. A model may hold
+    1-5 of these (see backend/image/validation.py's MAX_DIAGRAMS).
     """
 
     format: Annotated[
@@ -192,6 +194,10 @@ class DiagramData(BaseModel):
         str,
         Field(description="Original file path"),
     ]
+    name: Annotated[
+        str,
+        Field(description="Display name for this diagram; defaults to the file stem"),
+    ] = ""
 
     # For PNG/JPG images (vision API input)
     base64_data: Annotated[
@@ -212,6 +218,23 @@ class DiagramData(BaseModel):
         str | None,
         Field(description="Raw Mermaid syntax (Claude/GPT-4 parse natively)"),
     ] = None
+
+    @model_validator(mode="after")
+    def _check_format_fields(self) -> "DiagramData":
+        if self.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
+            if not self.base64_data or not self.media_type:
+                raise ValueError(
+                    f"DiagramData with format={self.format.value} requires "
+                    "base64_data and media_type"
+                )
+        elif self.format == DiagramFormat.MERMAID:
+            if not self.mermaid_source or not self.mermaid_source.strip():
+                raise ValueError(
+                    "DiagramData with format=mermaid requires a non-empty mermaid_source"
+                )
+        if not self.name:
+            self.name = Path(self.source_path).stem or "diagram"
+        return self
 
 
 class StrideComponentDescription(BaseModel):
