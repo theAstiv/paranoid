@@ -6,7 +6,8 @@ Collects events from the async generator and asserts step ordering and data.
 
 import pytest
 
-from backend.models.enums import Framework, StrideCategory
+from backend.models.enums import DiagramFormat, Framework, StrideCategory
+from backend.models.extended import DiagramData
 from backend.models.state import (
     GapAnalysis,
     SummaryState,
@@ -24,6 +25,15 @@ from backend.pipeline.runner import (
 )
 from backend.providers.base import ProviderError
 from tests.mock_provider import MockProvider
+
+
+class _OllamaMockProvider(MockProvider):
+    """MockProvider that identifies as the Ollama provider, to exercise the
+    runner's vision-unsupported degrade path without a real Ollama install."""
+
+    @property
+    def name(self) -> str:
+        return "ollama"
 
 
 # ---------------------------------------------------------------------------
@@ -636,3 +646,133 @@ async def test_consecutive_zero_threat_event():
     ]
     assert len(consec_events) >= 1, "Expected a consecutive_zero_iterations info event"
     assert consec_events[0].data["consecutive_zero_iterations"] >= 2
+
+
+# ---------------------------------------------------------------------------
+# Multi-diagram handling (5a-1)
+# ---------------------------------------------------------------------------
+
+
+def _mermaid_diagram(name: str) -> DiagramData:
+    return DiagramData(
+        format=DiagramFormat.MERMAID,
+        source_path=f"{name}.mmd",
+        mermaid_source="graph TD\n  A-->B",
+        name=name,
+    )
+
+
+def _image_diagram(name: str) -> DiagramData:
+    return DiagramData(
+        format=DiagramFormat.PNG,
+        source_path=f"{name}.png",
+        base64_data="aGVsbG8=",
+        media_type="image/png",
+        size_bytes=1000,
+        name=name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_ollama_degrade_emits_vision_unsupported_event():
+    """Ollama + an image diagram: one vision_unsupported info event, images
+    dropped on the calls that would otherwise send them, Mermaid unaffected."""
+    provider = _OllamaMockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-ollama")
+
+    diagrams = [_mermaid_diagram("flow"), _image_diagram("arch")]
+    events = [
+        e
+        async for e in runner.run(
+            description="A document sharing app",
+            framework=Framework.STRIDE,
+            diagrams=diagrams,
+        )
+    ]
+
+    warnings = [
+        e
+        for e in events
+        if e.status == "info"
+        and isinstance(e.data, dict)
+        and e.data.get("warning") == "vision_unsupported"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].data["ignored"] == ["arch"]
+    # The extraction calls never received image bytes.
+    assert provider.last_images is None or provider.last_images == []
+
+
+@pytest.mark.asyncio
+async def test_runner_non_ollama_provider_keeps_images():
+    """A non-Ollama provider sends the image diagram's bytes as usual."""
+    provider = MockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-anthropic")
+
+    diagrams = [_image_diagram("arch")]
+    events = [
+        e
+        async for e in runner.run(
+            description="A document sharing app",
+            framework=Framework.STRIDE,
+            diagrams=diagrams,
+        )
+    ]
+
+    warnings = [
+        e
+        for e in events
+        if isinstance(e.data, dict) and e.data.get("warning") == "vision_unsupported"
+    ]
+    assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_runner_invalid_diagram_set_ends_as_failed_event_not_exception():
+    """Too many diagrams must end the stream with a failed event, not raise."""
+    provider = MockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-bad-diagrams")
+
+    too_many = [_mermaid_diagram(f"d{i}") for i in range(6)]
+
+    events = []
+    async for e in runner.run(
+        description="A document sharing app",
+        framework=Framework.STRIDE,
+        diagrams=too_many,
+    ):
+        events.append(e)
+
+    assert len(events) == 1
+    assert events[0].step == PipelineStep.COMPLETE
+    assert events[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_runner_mutation_check_disabling_validate_diagram_set(monkeypatch):
+    """Mutation check: if the runner stops calling validate_diagram_set, an
+    over-the-limit diagram set silently runs instead of failing."""
+    import backend.pipeline.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "validate_diagram_set", lambda diagrams: diagrams)
+
+    provider = MockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-mutation")
+
+    too_many = [_mermaid_diagram(f"d{i}") for i in range(6)]
+
+    events = [
+        e
+        async for e in runner.run(
+            description="A document sharing app",
+            framework=Framework.STRIDE,
+            diagrams=too_many,
+        )
+    ]
+
+    failed = [e for e in events if e.status == "failed"]
+    assert failed == [], "With validate_diagram_set disabled, the over-limit set must not fail"

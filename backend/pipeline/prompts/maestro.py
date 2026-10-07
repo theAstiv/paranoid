@@ -35,7 +35,7 @@ You are an expert in ML/AI security and threat modeling. Your role is to careful
 
 1. Review the provided inputs carefully:
 
-      * <architecture_diagram>: Architecture diagram of the ML/AI solution
+      * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the ML/AI solution (e.g. deployment, data flow); consider them together.
       * <description>: Description of the ML/AI system
       * <assumptions>: Assumptions about the ML/AI deployment
       * <code_summary>: Security-focused analysis of the system's source code (if available).
@@ -83,7 +83,7 @@ You are an expert in ML/AI security and threat modeling. Your goal is to generat
 
 1. Review the inputs carefully:
 
-   * <architecture_diagram>: Architecture diagram of the ML/AI solution
+   * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the ML/AI solution (e.g. deployment, data flow); consider them together.
    * <identified_assets_and_entities>: Inventory of ML/AI assets and entities
    * <data_flow>: ML pipeline data flows (training, inference, feedback)
    * <description>: System description

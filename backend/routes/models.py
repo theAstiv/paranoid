@@ -771,7 +771,7 @@ async def run_pipeline(
                     provider=provider,
                     fast_provider=fast_provider,
                     assumptions=parsed_assumptions or None,
-                    diagram_data=diagram_data,
+                    diagrams=[diagram_data] if diagram_data else None,
                     code_context=code_context,
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,

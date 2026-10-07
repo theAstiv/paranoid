@@ -22,8 +22,10 @@ from backend.config import settings
 from backend.dedup import deduplicate_threats
 from backend.deps.analyze import analyze_manifest
 from backend.deps.threats import dependency_threats, merge_dependency_threats
+from backend.image.errors import DiagramValidationError
+from backend.image.validation import validate_diagram_set
 from backend.models.dependencies import DependencyContext
-from backend.models.enums import Framework, ScoringMethod, StrideCategory
+from backend.models.enums import DiagramFormat, Framework, ScoringMethod, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.models.usage import StepRun
@@ -488,7 +490,7 @@ class PipelineRunner:
         architecture_diagram: str | None = None,
         assumptions: list[str] | None = None,
         code_context: CodeContext | None = None,
-        diagram_data: DiagramData | None = None,
+        diagrams: list[DiagramData] | None = None,
         stop_after: StopAfter | None = None,
         seeded_assets: AssetsList | None = None,
         seeded_flows: FlowsList | None = None,
@@ -503,10 +505,12 @@ class PipelineRunner:
         Args:
             description: System description
             framework: STRIDE or MAESTRO framework
-            architecture_diagram: DEPRECATED - use diagram_data instead
+            architecture_diagram: DEPRECATED - use diagrams instead
             assumptions: Optional list of assumptions
             code_context: Optional code context from MCP
-            diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+            diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more. Validated
+                as a set (count/total-size caps, duplicate-name resolution)
+                at the start of this call.
             stop_after: If "extraction", stop after assets/flows are extracted and
                 persisted, then yield a complete event. Used by the /extract endpoint
                 to populate context without running threat generation.
@@ -537,6 +541,43 @@ class PipelineRunner:
             self.config.max_iterations,
             self.config.has_ai_components,
         )
+
+        # This is a backstop, not the primary check — callers (the run route,
+        # the CLI) are expected to validate before invoking the pipeline at
+        # all. A failure here still has to end the SSE stream with a proper
+        # failed event rather than an unhandled exception breaking the
+        # generator (mirrors the except Exception handling in the /extract
+        # route's event_generator).
+        if diagrams:
+            try:
+                diagrams = validate_diagram_set(list(diagrams))
+            except DiagramValidationError as e:
+                yield PipelineEvent(
+                    step=PipelineStep.COMPLETE,
+                    status="failed",
+                    message=f"Invalid diagram set: {e}",
+                )
+                return
+
+        # The Ollama provider never sends images, even to vision-capable
+        # models — not a per-model limit, a provider limit. When any
+        # diagram is an image, degrade: skip sending image bytes on the
+        # calls that would otherwise carry them (with_images=False) and
+        # tell the caller which diagrams were ignored. Mermaid diagrams are
+        # unaffected either way.
+        images_supported = self.provider.name != "ollama"
+        if diagrams and not images_supported:
+            ignored = [d.name for d in diagrams if d.format != DiagramFormat.MERMAID]
+            if ignored:
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE,
+                    status="info",
+                    message=(
+                        f"The Ollama provider doesn't send images; {len(ignored)} image "
+                        "diagram(s) skipped, Mermaid diagrams are used."
+                    ),
+                    data={"warning": "vision_unsupported", "ignored": ignored},
+                )
 
         # Iteration state is initialized here (not inside the try) so that a
         # ProviderError in the pre-loop steps can still fall through to the rule
@@ -676,7 +717,8 @@ class PipelineRunner:
                             assumptions=assumptions,
                             code_context=code_context,
                             provider=p,
-                            diagram_data=diagram_data,
+                            diagrams=diagrams,
+                            with_images=images_supported,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
@@ -748,7 +790,8 @@ class PipelineRunner:
                             assumptions=assumptions,
                             code_context=None,
                             provider=p,
-                            diagram_data=diagram_data,
+                            diagrams=diagrams,
+                            with_images=images_supported,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
@@ -796,7 +839,8 @@ class PipelineRunner:
                             provider=p,
                             temperature=self.config.temperature,
                             code_summary=code_summary,
-                            diagram_data=diagram_data,
+                            diagrams=diagrams,
+                            with_images=images_supported,
                         ),
                         {"summary": summary.summary, "description": description},
                     )
@@ -847,7 +891,8 @@ class PipelineRunner:
                             provider=p,
                             temperature=self.config.temperature,
                             code_summary=code_summary,
-                            diagram_data=diagram_data,
+                            diagrams=diagrams,
+                            with_images=images_supported,
                         ),
                         {"summary": summary.summary, "assets": assets},
                     )
@@ -890,7 +935,8 @@ class PipelineRunner:
                     assets=assets,
                     flows=flows,
                     code_summary=code_summary,
-                    diagram_data=diagram_data,
+                    diagrams=diagrams,
+                    images_supported=images_supported,
                     framework=framework,
                     dependency_context=dependency_context,
                 )
@@ -1004,7 +1050,7 @@ class PipelineRunner:
                                     rag_context=rag_context,
                                     temperature=self.config.temperature,
                                     code_summary=code_summary,
-                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    diagrams=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
                                     scoring_method=self.config.scoring_method,
                                 ),
@@ -1077,7 +1123,7 @@ class PipelineRunner:
                                     rag_context=rag_context,
                                     temperature=self.config.temperature,
                                     code_summary=code_summary,
-                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    diagrams=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
                                     scoring_method=self.config.scoring_method,
                                 ),
@@ -1182,7 +1228,7 @@ class PipelineRunner:
                                     rag_context=rag_context,
                                     temperature=self.config.temperature,
                                     code_summary=code_summary,
-                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    diagrams=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
                                     scoring_method=self.config.scoring_method,
                                 ),
@@ -1382,7 +1428,7 @@ class PipelineRunner:
                                     ],  # cap: only last 2 gaps to bound prompt growth
                                     temperature=self.config.temperature,
                                     code_summary=code_summary,
-                                    diagram_data=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
+                                    diagrams=None,  # vision image intentionally dropped on iteration calls — generate_threats and gap_analysis rely on the assets/flows extracted from the earlier vision passes
                                     shared_context=shared_ctx,
                                 ),
                                 {
@@ -1697,7 +1743,7 @@ async def run_pipeline_for_model(
     architecture_diagram: str | None = None,
     assumptions: list[str] | None = None,
     code_context: CodeContext | None = None,
-    diagram_data: DiagramData | None = None,
+    diagrams: list[DiagramData] | None = None,
     max_iterations: int = 3,
     has_ai_components: bool = False,
     similarity_threshold: float = 0.85,
@@ -1723,10 +1769,10 @@ async def run_pipeline_for_model(
         description: System description
         framework: STRIDE or MAESTRO
         provider: LLM provider for threat generation and gap analysis
-        architecture_diagram: DEPRECATED - use diagram_data instead
+        architecture_diagram: DEPRECATED - use diagrams instead
         assumptions: Optional assumptions
         code_context: Optional code context
-        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more
         max_iterations: Maximum iteration count (1-15)
         has_ai_components: Whether to run MAESTRO alongside STRIDE
         similarity_threshold: Cosine similarity threshold for threat deduplication
@@ -1795,7 +1841,7 @@ async def run_pipeline_for_model(
         architecture_diagram=architecture_diagram,
         assumptions=assumptions,
         code_context=code_context,
-        diagram_data=diagram_data,
+        diagrams=diagrams,
         stop_after=stop_after,
         seeded_assets=seeded_assets,
         seeded_flows=seeded_flows,

@@ -9,10 +9,14 @@ import logging
 import re
 from pathlib import Path
 
-from backend.models.enums import DiagramFormat
-from backend.models.extended import CodeContext, CodeSummary, DiagramData, ImageContent
+from backend.models.extended import CodeContext, CodeSummary, DiagramData
 from backend.models.state import SummaryState
-from backend.pipeline.nodes.helpers import build_xml_tag, format_assumptions, format_code_context
+from backend.pipeline.nodes.helpers import (
+    build_diagram_parts,
+    build_xml_tag,
+    format_assumptions,
+    format_code_context,
+)
 from backend.pipeline.prompts import code_summary_prompt, stride_summary_prompt
 from backend.providers.base import LLMProvider, ProviderError
 
@@ -26,19 +30,22 @@ async def summarize(
     assumptions: list[str] | None,
     code_context: CodeContext | None,
     provider: LLMProvider,
-    diagram_data: DiagramData | None = None,
+    diagrams: list[DiagramData] | None = None,
     temperature: float = 0.2,
+    with_images: bool = True,
 ) -> SummaryState:
     """Generate system summary from description and optional diagram/code context.
 
     Args:
         description: User-provided system description
-        architecture_diagram: DEPRECATED - use diagram_data instead
+        architecture_diagram: DEPRECATED - use diagrams instead
         assumptions: Optional list of assumptions about the system
         code_context: Optional code context from MCP server
         provider: LLM provider for generation
-        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more
         temperature: Sampling temperature
+        with_images: Whether to send PNG/JPEG diagram bytes via the vision
+            API (False for the Ollama degrade path)
 
     Returns:
         SummaryState with generated summary
@@ -49,8 +56,9 @@ async def summarize(
     prompt_parts = []
 
     # Handle diagrams: Mermaid goes in prompt, PNG/JPG goes via vision API
-    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
-        prompt_parts.append(build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+    diagram_text, images = build_diagram_parts(diagrams, with_images=with_images)
+    if diagram_text:
+        prompt_parts.append(diagram_text)
     elif architecture_diagram:  # Legacy support
         prompt_parts.append(build_xml_tag("architecture_diagram", architecture_diagram))
 
@@ -67,27 +75,7 @@ async def summarize(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-    # Build images list for vision API (PNG/JPG only)
-    images = None
-    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
-        # Add placeholder tag to satisfy prompt instruction enumeration
-        # (actual image arrives via vision API content block)
-        prompt_parts.insert(
-            0,
-            build_xml_tag(
-                "architecture_diagram", "[Architecture diagram provided as vision image]"
-            ),
-        )
-        user_prompt = "".join(prompt_parts)
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        images = [
-            ImageContent(
-                data=diagram_data.base64_data,
-                media_type=diagram_data.media_type,
-                source=diagram_data.source_path,
-            )
-        ]
+    images = images or None
 
     # Generate structured output
     response = await provider.generate_structured(

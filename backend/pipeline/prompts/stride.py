@@ -40,7 +40,7 @@ You are an expert in all security domains and threat modeling. Your role is to c
 
 1. Review the provided inputs carefully:
 
-      * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
+      * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the solution (e.g. deployment, data flow); consider them together.
       * <description>: [Description of the solution provided by the user]
       * <assumptions>: [Assumptions provided by the user]
       * <code_summary>: Security-focused analysis of the system's source code (if available).
@@ -72,7 +72,7 @@ You are an expert in all security domains and threat modeling. Your goal is to s
 
 1. Review the provided inputs carefully:
 
-   * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
+   * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the solution (e.g. deployment, data flow); consider them together.
    * <description>: [Description of the solution provided by the user]
    * <assumptions>: [Assumptions provided by the user]
    * <identified_assets_and_entities>: Inventory of key assets and entities in the architecture.
@@ -208,7 +208,7 @@ You are an expert in all security domains and threat modeling. Your goal is to v
 
 1. Review the inputs carefully:
 
-   * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
+   * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the solution (e.g. deployment, data flow); consider them together.
    * <identified_assets_and_entities>: Inventory of key assets and entities in the architecture.
    * <data_flow>: Descriptions of data movements between components.
    * <threats>Threat Catalog</threats>: The existing threat catalog to be assessed.
@@ -342,7 +342,7 @@ You are an expert in all security domains and threat modeling. Your goal is to e
 <instructions>
 
 1. Review the inputs carefully:
-   * <architecture_diagram>: Architecture Diagram of the solution.
+   * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the solution (e.g. deployment, data flow); consider them together.
    * <identified_assets_and_entities>: Inventory of key assets and entities.
    * <data_flow>: Descriptions of data movements.
    * <description>: Contextual overview.
@@ -433,7 +433,7 @@ You are an expert in all security domains and threat modeling. Your goal is to g
 <instructions>
 
 1. Review the inputs carefully:
-   * <architecture_diagram>: Architecture Diagram of the solution in scope for threat modeling.
+   * <architecture_diagram>: One or more architecture_diagram blocks, each a named view of the solution (e.g. deployment, data flow); consider them together.
    * <identified_assets_and_entities>: Inventory of key assets and entities in the architecture.
    * <data_flow>: Descriptions of data movements between components.
    * <description>: Contextual overview of the system (if provided).

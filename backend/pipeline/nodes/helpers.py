@@ -12,6 +12,7 @@ from backend.models.extended import (
     CodeContext,
     CodeSummary,
     DiagramData,
+    ImageContent,
     MaestroAssumptions,
     MaestroComponentDescription,
     StrideAssumptions,
@@ -83,6 +84,86 @@ def build_xml_tag(tag: str, content: str) -> str:
     if not content or content.strip() == "":
         return ""
     return f"<{tag}>\n{content.strip()}\n</{tag}>\n\n"
+
+
+def _xml_attr_escape(value: str) -> str:
+    """Escape a value for use inside a double-quoted XML attribute.
+
+    Defense in depth: diagram names are already sanitized (stripped of
+    `<>"&`) wherever they're set, but this helper doesn't assume that was
+    done for every caller (e.g. a pre-5a-1 stored row read back as-is).
+    """
+    return (
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    )
+
+
+def build_diagram_parts(
+    diagrams: list[DiagramData] | None,
+    *,
+    with_images: bool = True,
+) -> tuple[str, list[ImageContent]]:
+    """Build the `<architecture_diagram>` block(s) and image list for a diagram set.
+
+    Replaces the identical Mermaid/placeholder/image-list block that used to
+    be copy-pasted in summary.py, extraction.py and threats.py. Emits one
+    `<architecture_diagram name="..." index="i" of="n">` block per diagram:
+    the Mermaid source inline, or a vision-image placeholder for PNG/JPEG
+    (the actual bytes go in the returned `images` list, not the text).
+
+    Args:
+        diagrams: Diagrams to render, in the order they should be presented.
+        with_images: When True (the default), PNG/JPEG diagrams get an
+            `ImageContent` entry and a "provided as vision image" placeholder.
+            When False, no `ImageContent` entries are returned and the
+            placeholder instead says the image wasn't sent — used for the
+            Ollama degrade path, where the provider never accepts images.
+            `build_shared_context` passes this through for wording only (it
+            discards the returned images; the bytes go out on the calls that
+            actually sent them).
+
+    Returns:
+        (diagram_text, images) — diagram_text is "" when diagrams is empty.
+    """
+    if not diagrams:
+        return "", []
+
+    total = len(diagrams)
+    image_diagrams = [d for d in diagrams if d.format != DiagramFormat.MERMAID]
+    total_images = len(image_diagrams)
+
+    blocks: list[str] = []
+    images: list[ImageContent] = []
+    image_seen = 0
+    for i, diagram in enumerate(diagrams, start=1):
+        if diagram.format == DiagramFormat.MERMAID:
+            # Pre-existing gap, not introduced here: mermaid_source is
+            # inserted verbatim, so a diagram containing the literal text
+            # "</architecture_diagram>" could close the tag early. The
+            # `name` attribute is escaped (below); the Mermaid body is not.
+            content = diagram.mermaid_source or ""
+        else:
+            image_seen += 1
+            if with_images:
+                content = f"[Provided as vision image {image_seen} of {total_images}]"
+                images.append(
+                    ImageContent(
+                        data=diagram.base64_data,
+                        media_type=diagram.media_type,
+                        source=diagram.name,
+                    )
+                )
+            else:
+                content = "[image not sent: provider does not support images]"
+
+        name_attr = _xml_attr_escape(diagram.name)
+        blocks.append(
+            f'<architecture_diagram name="{name_attr}" index="{i}" of="{total}">\n'
+            f"{content.strip()}\n"
+            f"</architecture_diagram>\n\n"
+        )
+
+    return "".join(blocks), images
 
 
 def format_assumptions(assumptions: list[str] | None) -> str:
@@ -373,9 +454,10 @@ def build_shared_context(
     assets: AssetsList,
     flows: FlowsList,
     code_summary: CodeSummary | None,
-    diagram_data: DiagramData | None,
+    diagrams: list[DiagramData] | None,
     framework: Framework,
     dependency_context: DependencyContext | None = None,
+    images_supported: bool = True,
 ) -> str:
     """Assemble the stable prompt context shared across all iteration calls.
 
@@ -396,10 +478,14 @@ def build_shared_context(
         assets: Extracted assets (stable after extract_assets)
         flows: Extracted flows (stable after extract_flows)
         code_summary: Optional condensed code summary (stable after summarize_code)
-        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more
         framework: STRIDE or MAESTRO (needed for structured input parsing)
         dependency_context: Optional dependency capability analysis (stable
             after the ANALYZE_DEPENDENCIES step)
+        images_supported: Wording only — whether the provider in use accepts
+            images at all (False for the Ollama degrade path). This block
+            never carries image bytes itself either way; it only controls
+            whether the placeholder claims an image was provided.
 
     Returns:
         Concatenated XML-tagged string ready for use as a cacheable prefix
@@ -410,14 +496,12 @@ def build_shared_context(
 
     parts: list[str] = []
 
-    # Architecture diagram: Mermaid source inline; PNG/JPG gets a placeholder
-    # (actual image bytes are passed separately via the vision API).
-    if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
-        parts.append(build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
-    elif diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
-        parts.append(
-            build_xml_tag("architecture_diagram", "[Architecture diagram provided as vision image]")
-        )
+    # Architecture diagram(s): Mermaid source inline; PNG/JPG gets a
+    # placeholder (actual image bytes are passed separately via the vision
+    # API, on whichever calls actually send them).
+    if diagrams:
+        diagram_text, _ = build_diagram_parts(diagrams, with_images=images_supported)
+        parts.append(diagram_text)
     elif architecture_diagram:
         parts.append(build_xml_tag("architecture_diagram", architecture_diagram))
 

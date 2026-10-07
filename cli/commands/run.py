@@ -1107,7 +1107,7 @@ async def _run_pipeline_inside_provider(
             has_ai_components=has_ai_components,
             similarity_threshold=settings.similarity_threshold,
             code_context=code_context,
-            diagram_data=diagram_data,
+            diagrams=[diagram_data] if diagram_data else None,
             seed_collections=seed_collections,
             seeded_assets=seeded_assets,
             seeded_flows=seeded_flows,

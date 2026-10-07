@@ -1063,7 +1063,7 @@ async def test_summarize_with_png_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter was passed to provider
@@ -1073,7 +1073,7 @@ async def test_summarize_with_png_diagram():
     assert provider.last_images[0].media_type == "image/png"
 
     # Verify placeholder tag was added to prompt
-    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
+    assert "[Provided as vision image 1 of 1]" in provider.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1095,14 +1095,14 @@ async def test_summarize_with_mermaid_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter is None for Mermaid
     assert provider.last_images is None
 
     # Verify Mermaid source appears in prompt XML tag
-    assert "<architecture_diagram>" in provider.last_prompt
+    assert "<architecture_diagram " in provider.last_prompt
     assert "graph TD" in provider.last_prompt
     assert "A-->B" in provider.last_prompt
 
@@ -1117,7 +1117,7 @@ async def test_summarize_without_diagram():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=None,
+        diagrams=None,
     )
 
     # Verify no images parameter
@@ -1138,7 +1138,7 @@ async def test_summarize_with_legacy_diagram_string():
         assumptions=None,
         code_context=None,
         provider=provider,
-        diagram_data=None,
+        diagrams=None,
     )
 
     # Verify no images parameter for legacy string
@@ -1174,7 +1174,7 @@ async def test_generate_threats_with_jpeg_diagram():
         flows=flows,
         framework=Framework.STRIDE,
         provider=provider,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data],
     )
 
     # Verify images parameter was passed
@@ -1183,4 +1183,4 @@ async def test_generate_threats_with_jpeg_diagram():
     assert provider.last_images[0].media_type == "image/jpeg"
 
     # Verify placeholder tag
-    assert "[Architecture diagram provided as vision image]" in provider.last_prompt
+    assert "[Provided as vision image 1 of 1]" in provider.last_prompt

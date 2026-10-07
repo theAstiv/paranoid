@@ -4,8 +4,8 @@ Contains generate_threats() for creating/improving threat catalogs, and
 gap_analysis() for identifying coverage gaps across STRIDE/MAESTRO categories.
 """
 
-from backend.models.enums import DiagramFormat, Framework
-from backend.models.extended import CodeSummary, DiagramData, ImageContent
+from backend.models.enums import Framework
+from backend.models.extended import CodeSummary, DiagramData
 from backend.models.state import (
     AssetsList,
     FlowsList,
@@ -15,6 +15,7 @@ from backend.models.state import (
 )
 from backend.pipeline.nodes.helpers import (
     build_assumptions_section,
+    build_diagram_parts,
     build_xml_tag,
     format_code_summary,
     format_structured_component_for_prompt,
@@ -61,7 +62,8 @@ async def generate_threats(
     rag_context: list[str] | None = None,
     temperature: float = 0.2,
     code_summary: CodeSummary | None = None,
-    diagram_data: DiagramData | None = None,
+    diagrams: list[DiagramData] | None = None,
+    with_images: bool = True,
     shared_context: str | None = None,
     scoring_method: str = "dread",
 ) -> ThreatsList:
@@ -69,7 +71,7 @@ async def generate_threats(
 
     Args:
         description: System description (may contain structured XML-tagged input)
-        architecture_diagram: DEPRECATED - use diagram_data instead
+        architecture_diagram: DEPRECATED - use diagrams instead
         assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
@@ -80,7 +82,9 @@ async def generate_threats(
         rag_context: Optional similar approved threats from vector store
         temperature: Sampling temperature
         code_summary: Optional condensed code context for threat identification
-        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more
+        with_images: Whether to send PNG/JPEG diagram bytes via the vision
+            API (False for the Ollama degrade path)
         shared_context: Pre-built stable context from build_shared_context(). When
             provided, the stable parts (diagram/description/assets/flows/code_summary)
             are skipped in the prompt and sent as a cacheable prefix instead.
@@ -134,8 +138,9 @@ async def generate_threats(
 
     if not shared_context:
         # Stable parts — only needed when not using prompt caching
-        if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
-            prompt_parts.append(build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+        diagram_text, images = build_diagram_parts(diagrams, with_images=with_images)
+        if diagram_text:
+            prompt_parts.append(diagram_text)
         elif architecture_diagram:
             prompt_parts.append(build_xml_tag("architecture_diagram", architecture_diagram))
 
@@ -168,6 +173,8 @@ async def generate_threats(
 
         if code_summary:
             prompt_parts.append(build_xml_tag("code_summary", format_code_summary(code_summary)))
+    else:
+        images = []
 
     # Iteration-specific parts (always built regardless of shared_context)
 
@@ -197,29 +204,6 @@ async def generate_threats(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}" if user_prompt else system_prompt
 
-    # Build images list for vision API (PNG/JPG only).
-    # When shared_context is provided, the placeholder tag is already included there;
-    # only add it to the dynamic prompt when building without shared_context.
-    images = None
-    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
-        if not shared_context:
-            prompt_parts.insert(
-                0,
-                build_xml_tag(
-                    "architecture_diagram", "[Architecture diagram provided as vision image]"
-                ),
-            )
-            user_prompt = "".join(prompt_parts)
-            full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        images = [
-            ImageContent(
-                data=diagram_data.base64_data,
-                media_type=diagram_data.media_type,
-                source=diagram_data.source_path,
-            )
-        ]
-
     # Generate structured output. Dread-only runs use ThreatsListDreadOnly,
     # whose schema hides `cvss` entirely (2,788 chars vs. 4,689 measured) —
     # see the comment above _ThreatDreadOnly in backend/models/state.py (not
@@ -242,7 +226,7 @@ async def generate_threats(
         response_model=response_model,
         temperature=temperature,
         max_tokens=GENERATE_THREATS_MAX_TOKENS,
-        images=images,
+        images=images or None,
         shared_context=shared_context,
     )
     response = (
@@ -287,14 +271,15 @@ async def gap_analysis(
     previous_gaps: list[str] | None = None,
     temperature: float = 0.2,
     code_summary: CodeSummary | None = None,
-    diagram_data: DiagramData | None = None,
+    diagrams: list[DiagramData] | None = None,
+    with_images: bool = True,
     shared_context: str | None = None,
 ) -> GapAnalysis:
     """Analyze gaps in threat coverage.
 
     Args:
         description: System description (may contain structured XML-tagged input)
-        architecture_diagram: DEPRECATED - use diagram_data instead
+        architecture_diagram: DEPRECATED - use diagrams instead
         assumptions: Optional assumptions (legacy list format)
         assets: Identified assets
         flows: Identified flows
@@ -304,7 +289,9 @@ async def gap_analysis(
         previous_gaps: Optional list of previously identified gaps
         temperature: Sampling temperature
         code_summary: Optional condensed code context for gap analysis
-        diagram_data: Optional diagram data (PNG/JPG/Mermaid)
+        diagrams: Optional diagrams (PNG/JPG/Mermaid), 1 or more
+        with_images: Whether to send PNG/JPEG diagram bytes via the vision
+            API (False for the Ollama degrade path)
         shared_context: Pre-built stable context from build_shared_context(). When
             provided, the stable parts (diagram/description/assets/flows/code_summary)
             are skipped in the prompt and sent as a cacheable prefix instead.
@@ -327,8 +314,9 @@ async def gap_analysis(
 
     if not shared_context:
         # Stable parts — only needed when not using prompt caching
-        if diagram_data and diagram_data.format == DiagramFormat.MERMAID:
-            prompt_parts.append(build_xml_tag("architecture_diagram", diagram_data.mermaid_source))
+        diagram_text, images = build_diagram_parts(diagrams, with_images=with_images)
+        if diagram_text:
+            prompt_parts.append(diagram_text)
         elif architecture_diagram:  # Legacy support
             prompt_parts.append(build_xml_tag("architecture_diagram", architecture_diagram))
 
@@ -361,6 +349,8 @@ async def gap_analysis(
 
         if code_summary:
             prompt_parts.append(build_xml_tag("code_summary", format_code_summary(code_summary)))
+    else:
+        images = []
 
     # Iteration-specific parts (always built regardless of shared_context)
 
@@ -385,36 +375,13 @@ async def gap_analysis(
     user_prompt = "".join(prompt_parts)
     full_prompt = f"{system_prompt}\n\n{user_prompt}" if user_prompt else system_prompt
 
-    # Build images list for vision API (PNG/JPG only).
-    # When shared_context is provided, the placeholder tag is already included there;
-    # only add it to the dynamic prompt when building without shared_context.
-    images = None
-    if diagram_data and diagram_data.format in (DiagramFormat.PNG, DiagramFormat.JPEG):
-        if not shared_context:
-            prompt_parts.insert(
-                0,
-                build_xml_tag(
-                    "architecture_diagram", "[Architecture diagram provided as vision image]"
-                ),
-            )
-            user_prompt = "".join(prompt_parts)
-            full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        images = [
-            ImageContent(
-                data=diagram_data.base64_data,
-                media_type=diagram_data.media_type,
-                source=diagram_data.source_path,
-            )
-        ]
-
     # Generate structured output
     response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=GapAnalysis,
         temperature=temperature,
         max_tokens=4096,
-        images=images,
+        images=images or None,
         shared_context=shared_context,
     )
 
