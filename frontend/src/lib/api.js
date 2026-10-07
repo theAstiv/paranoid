@@ -403,6 +403,11 @@ export function listModelDiagrams(modelId) {
   return request('GET', `/models/${modelId}/diagrams`)
 }
 
+/** @param {string} modelId @param {string} diagramId */
+export function getModelDiagram(modelId, diagramId) {
+  return request('GET', `/models/${modelId}/diagrams/${diagramId}`)
+}
+
 // ── Assets CRUD ───────────────────────────────────────────────────────────────
 
 /** @param {string} modelId @param {{ name: string, type?: string, description?: string }} body */
