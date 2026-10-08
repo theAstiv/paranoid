@@ -1,6 +1,7 @@
 """AWS Bedrock LLM provider implementation using the Converse API."""
 
 import base64
+import json
 import logging
 from typing import Any, TypeVar
 
@@ -15,6 +16,7 @@ from backend.providers.base import (
     ProviderTimeoutError,
     ProviderTransientError,
     run_sync_in_executor,
+    strip_markdown_fences,
 )
 from backend.providers.usage import as_token_count, record_usage
 
@@ -40,13 +42,26 @@ _BEDROCK_ID_HINT = (
     "Plain API model IDs (e.g. 'claude-sonnet-4-20250514') are not accepted."
 )
 
+# System instruction sent with `toolChoice: auto`, for models that reject
+# forced tool choice (see BedrockProvider's docstring).
+_AUTO_TOOL_INSTRUCTION = (
+    "Answer by calling the `respond` tool exactly once, with your complete answer as its "
+    "input. Do not answer in plain text."
+)
+
 
 class BedrockProvider:
     """AWS Bedrock provider using the Converse API for structured output.
 
     Supports Claude on Bedrock and Amazon Nova models. Models that do not
-    support toolChoice (e.g. Llama, Mistral) are not supported — there is no
-    JSON-mode fallback.
+    support tool use at all (e.g. Llama, Mistral) are not supported.
+
+    Structured output forces the `respond` tool (`toolChoice: {"tool": ...}`).
+    Claude Opus 5.5 / Sonnet 5.5 / Fable 5.1 reject forced tool choice with a
+    400 (and on Bedrock it also requires thinking disabled, which those
+    models can't do), so on that rejection the instance switches to
+    `toolChoice: {"auto": {}}` plus a system instruction naming the tool, and
+    accepts a JSON text answer if the model replies in text instead.
 
     Authentication follows the standard boto3 credential chain:
     environment variables → ~/.aws/credentials → IAM roles. No explicit
@@ -90,6 +105,8 @@ class BedrockProvider:
         # first call and cached per instance so later calls skip the doomed
         # round-trip entirely.
         self._temperature_unsupported = False
+        # Same lazy detection for forced tool choice (see the class docstring).
+        self._forced_tool_choice_unsupported = False
 
         session = boto3.Session(profile_name=profile or None)
         # Omit region_name when empty so boto3's own resolution runs
@@ -152,6 +169,35 @@ class BedrockProvider:
             self._client.converse, inferenceConfig=fallback_config, **kwargs
         )
 
+    async def _converse_structured(
+        self, inference_config: dict[str, Any], tools: list[dict], **kwargs: Any
+    ) -> dict:
+        """`_converse` with the `respond` tool, forced unless this model has
+        already rejected forced tool choice. On that rejection, retry once
+        with `auto` + an instruction and remember it for later calls."""
+        if not self._forced_tool_choice_unsupported:
+            try:
+                return await self._converse(
+                    inference_config,
+                    toolConfig={"tools": tools, "toolChoice": {"tool": {"name": "respond"}}},
+                    **kwargs,
+                )
+            except Exception as e:
+                if not _is_forced_tool_choice_error(e):
+                    raise
+                self._forced_tool_choice_unsupported = True
+                logger.warning(
+                    "Model %s rejects forced tool choice — using auto tool choice with an "
+                    "instruction for the rest of this provider instance's calls",
+                    self._model,
+                )
+        return await self._converse(
+            inference_config,
+            toolConfig={"tools": tools, "toolChoice": {"auto": {}}},
+            system=[{"text": _AUTO_TOOL_INSTRUCTION}],
+            **kwargs,
+        )
+
     async def generate_structured(
         self,
         prompt: str,
@@ -170,31 +216,28 @@ class BedrockProvider:
                 _schema_cache[response_model] = response_model.model_json_schema()
             schema = _schema_cache[response_model]
 
-            tool_config: dict[str, Any] = {
-                "tools": [
-                    {
-                        "toolSpec": {
-                            "name": "respond",
-                            "description": (
-                                "Respond with structured JSON conforming to the provided schema."
-                            ),
-                            "inputSchema": {"json": schema},
-                        }
+            tools = [
+                {
+                    "toolSpec": {
+                        "name": "respond",
+                        "description": (
+                            "Respond with structured JSON conforming to the provided schema."
+                        ),
+                        "inputSchema": {"json": schema},
                     }
-                ],
-                "toolChoice": {"tool": {"name": "respond"}},
-            }
+                }
+            ]
 
             content_blocks = _build_content_blocks(prompt, images, shared_context)
             budget = max_tokens or 4096
             last_error: ProviderError | None = None
 
             for attempt in range(1 + _MAX_RETRIES):
-                response = await self._converse(
+                response = await self._converse_structured(
                     {"maxTokens": budget, "temperature": temperature},
+                    tools,
                     modelId=self._model,
                     messages=[{"role": "user", "content": content_blocks}],
-                    toolConfig=tool_config,
                 )
                 self._record_usage(response)
 
@@ -218,13 +261,32 @@ class BedrockProvider:
                     (b for b in output_content if b.get("toolUse")),
                     None,
                 )
-                if tool_block is None:
-                    raise ProviderError(
-                        provider=self.name,
-                        message=f"Bedrock returned no tool_use block (stopReason={stop_reason!r})",
+                if tool_block is not None:
+                    data = tool_block["toolUse"]["input"]
+                else:
+                    # Under `auto` tool choice the model may answer in text;
+                    # accept it if the text is the JSON we asked for.
+                    data = (
+                        _json_from_text_blocks(output_content)
+                        if self._forced_tool_choice_unsupported
+                        else None
                     )
+                    if data is None:
+                        last_error = ProviderError(
+                            provider=self.name,
+                            message=f"Bedrock returned no tool_use block (stopReason={stop_reason!r})",
+                        )
+                        if self._forced_tool_choice_unsupported and attempt < _MAX_RETRIES:
+                            logger.warning(
+                                "Bedrock model %s answered without calling the respond tool; "
+                                "retrying (attempt %d/%d)",
+                                self._model,
+                                attempt + 1,
+                                1 + _MAX_RETRIES,
+                            )
+                            continue
+                        raise last_error
 
-                data = tool_block["toolUse"]["input"]
                 try:
                     return response_model.model_validate(data)
                 except ValidationError as e:
@@ -310,6 +372,30 @@ def _build_content_blocks(
 
     blocks.append({"text": prompt})
     return blocks
+
+
+def _is_forced_tool_choice_error(exc: Exception) -> bool:
+    """True when `exc` is a Bedrock `ValidationException` about tool choice,
+    e.g. Claude's "tool_choice: type "tool" and "any" are not supported for
+    this model." (duck-typed like `_is_temperature_deprecated_error`)."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    if response.get("Error", {}).get("Code") != "ValidationException":
+        return False
+    message = str(exc).lower()
+    return any(term in message for term in ("tool_choice", "toolchoice", "tool choice"))
+
+
+def _json_from_text_blocks(content: list[dict]) -> Any | None:
+    """Parse the response's text blocks as JSON (fences stripped), or None."""
+    text = "".join(b["text"] for b in content if isinstance(b.get("text"), str)).strip()
+    if not text:
+        return None
+    try:
+        return json.loads(strip_markdown_fences(text))
+    except json.JSONDecodeError:
+        return None
 
 
 def _is_temperature_deprecated_error(exc: Exception) -> bool:
