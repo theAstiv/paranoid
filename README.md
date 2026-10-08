@@ -53,6 +53,7 @@ docker compose up --build   # web UI at http://localhost:8000/app
 | [API Reference](docs/api-reference.md) | REST API — 83 route handlers across 13 route modules, plus `/health` and `/` in `main.py` |
 | [GitHub Action](docs/github-action.md) | Automated threat modeling in CI/CD |
 | [Architecture](docs/architecture.md) | System design, pipeline, data model |
+| [Benchmarks](docs/benchmarks.md) | Measured routing savings, pipeline timings, dependency-engine gates, multi-diagram cost — dated, with sample sizes and caveats |
 | [Deployment](docs/deployment.md) | Docker, PyPI, binary, production hardening |
 
 **Other docs:**
