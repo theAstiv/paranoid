@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant Partner as Partner app
+    participant API as Express API
+    participant Store as Object store
+    participant Queue as Redis queue
+    participant Worker as Resize worker
+    participant WS as ws channel
+
+    Partner->>API: POST /uploads (JWT bearer, multipart image)
+    API->>API: zod schema validation (content-type, size)
+    API->>Store: put original (UUID key)
+    API->>Queue: enqueue resize job
+    API-->>Partner: 202 Accepted (upload id)
+
+    Note over Queue,Worker: Async — returns immediately above
+
+    Queue->>Worker: dequeue resize job
+    Worker->>Worker: sharp: generate 128px / 512px / 1024px variants
+    Worker->>Store: put each thumbnail variant
+    Worker->>Partner: axios POST signed webhook (HMAC-signed payload)
+    Worker->>WS: push status event
+    WS-->>Partner: live processing status (if subscribed)
+
+    alt webhook delivery fails
+        Worker->>Partner: retry with exponential backoff (up to 5 attempts)
+        Worker->>Worker: after 5th failure, move job to dead-letter queue
+    end

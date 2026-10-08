@@ -1,0 +1,28 @@
+graph TB
+    Partner["Partner application"]
+
+    subgraph Edge["Edge (TLS-terminating load balancer)"]
+        LB["Load balancer"]
+    end
+
+    subgraph AppTier["App tier"]
+        API["Express API<br/>JWT auth + zod validation"]
+    end
+
+    subgraph AsyncTier["Async tier"]
+        Queue[("Redis job queue")]
+        Worker["Resize worker<br/>sharp (libvips)"]
+    end
+
+    subgraph DataTier["Data tier"]
+        Store[("Object store<br/>(S3-compatible)")]
+    end
+
+    Partner -- "POST /uploads (JWT, multipart)" --> LB
+    LB --> API
+    API -- "put original" --> Store
+    API -- "enqueue resize job" --> Queue
+    Queue -- "dequeue" --> Worker
+    Worker -- "put 3 thumbnail variants" --> Store
+    Worker -- "axios: signed webhook POST" --> Partner
+    API -. "ws: live status channel" .-> Partner
