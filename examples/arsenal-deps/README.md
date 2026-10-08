@@ -18,6 +18,11 @@ inert payload shape — see `inject_incident.py`'s docstring and
 | `package.json` | 8 real, ordinary direct dependencies (express, axios, sharp, esbuild, jsonwebtoken, zod, uuid, ws) already warm in the local dependency cache. |
 | `package-lock.json` | Minimal lockfile — only the top-level `node_modules/<name>` version pins `analyze_manifest()` actually reads, so a warm run is deterministic. |
 | `inject_incident.py` | Runs the real dependency engine against the manifest above, builds an inert reconstructed event-stream-style incident package, and runs a real pipeline (or `--no-llm` to just print the delta). |
+| `diagrams/architecture.mmd` | Component view — trust-boundary subgraphs for the partner, edge, app, async, and data tiers. Sent on every extraction call (`summarize`, `extract_assets`, `extract_flows`), same as the other two diagrams. |
+| `diagrams/upload-flow.mmd` | Data-flow view (sequence diagram) of the same system — the upload request path plus the async resize/webhook path, **plus a webhook-retry-with-backoff / dead-letter-queue branch that exists only here**, not in `description.md` or `architecture.mmd`. |
+| `diagrams/deployment.png` | Deployment view — the two deployable containers, Redis, the object store, and a **secrets manager (JWT signing key, webhook HMAC key) that exists only here**. Drawn with Pillow (`scripts/draw_arsenal_deployment_diagram.py`, rerun with `python scripts/draw_arsenal_deployment_diagram.py` to regenerate it) rather than Mermaid-CLI, since rendering through a headless Chromium wasn't available when this was built; no third-party branding either way. |
+
+The dead-letter-queue branch and the secrets manager each appear in exactly one input, deliberately — a live run's threats mentioning either one is evidence the pipeline actually used that diagram, not just `description.md` or the other diagram (see Verification 2 in `week5a-plan.md`).
 
 ## Commands
 
@@ -36,6 +41,9 @@ paranoid run examples/arsenal-deps/description.md \
   --manifest examples/arsenal-deps/package.json \
   --lockfile examples/arsenal-deps/package-lock.json \
   --deps-source both \
+  -d examples/arsenal-deps/diagrams/architecture.mmd \
+  -d examples/arsenal-deps/diagrams/upload-flow.mmd \
+  -d examples/arsenal-deps/diagrams/deployment.png \
   -f sarif -o /tmp/mediadrop.sarif
 ```
 

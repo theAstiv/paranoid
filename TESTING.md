@@ -182,31 +182,24 @@ paranoid_cli-1.2.1.tar.gz
 
 ## 📊 Test Coverage
 
-Current test suite breakdown:
+The per-category counts below go stale fast — get an exact current count with:
 
+```bash
+pytest --collect-only -q | tail -1          # backend
+cd frontend && npx vitest run --reporter=dot 2>&1 | tail -5   # frontend
 ```
-Total: 1,104+ tests
 
-Backend (pytest):
-- CLI tests: 16
-- Database / CRUD tests: 57+
-- Model tests: 24
-- Pipeline tests: 38+  (includes confidence scoring)
-- Provider tests: 7
-- Deduplication tests: 16
-- Export tests (markdown, PDF, SARIF): 52
-- Image/diagram tests: 36
-- MCP tests: 8
-- Routes / API tests: 100+  (includes bulk threat operations)
-- Seeds integrity: 96
-- Security / source key: 12
-- Sources manager: 18
-- Other: 123+
+As of the Week 5a merge (2026-10-07): **2,070 passed, 7 skipped** backend (default `-m "not live"` selection), **591/591** frontend (Vitest). Backend coverage spans the pipeline nodes (including `attack_mapping`/`map_techniques` and CVSS scoring), all four providers (Anthropic/OpenAI/Ollama/Bedrock), the dependency capability engine (`backend/deps/`), exports (Markdown/PDF/SARIF, including ATT&CK tags and CVSS `security-severity`), routes/API, seeds integrity, sources manager, and security/auth.
 
-Frontend (Vitest):
-- DreadBadge component: 7
-- Svelte stores: 9
-```
+### Opt-in `live` tests
+
+Tests marked `@pytest.mark.live` hit real network/APIs and are **excluded by default** (`addopts = -m "not live"` in `pyproject.toml`). Run them explicitly with `pytest -m live`:
+
+- `tests/live/test_deps_benchmark.py` + `tests/live/test_deps_pipeline_live.py`: dependency engine — real npm registry resolution + GitHub source fetch + a real Semgrep scan (requires `semgrep` on `PATH` — `pip install semgrep`) against `examples/arsenal-deps/`
+- `tests/live/test_pipeline_live.py`: real pipeline runs against the **Anthropic** API only (needs `ANTHROPIC_API_KEY`); not run in CI. There's no equivalent live suite for OpenAI/Ollama/Bedrock yet
+- `tests/live/test_attack_mapping_golden.py`: the ATT&CK/ATLAS golden-set precision check (embedding-based, needs `fastembed`'s model cached but no network once warm)
+
+On Windows, run the dependency-engine rule fixtures via `pytest tests/test_deps_rules.py` rather than invoking `semgrep --test` directly — concurrent Semgrep invocations racing on the same `settings.yml` is a real failure mode on that platform.
 
 ### Test modules added in v1.5.0
 

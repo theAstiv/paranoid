@@ -54,8 +54,11 @@ paranoid run system.md
 # With diagram + code context + strict mode
 paranoid run system.md --diagram arch.png --code /path/to/repo --strict
 
-# Multiple diagrams (deployment + data flow), each considered together
-paranoid run system.md -d architecture.mmd -d upload-flow.mmd -d deployment.png
+# Multiple diagrams (architecture + data flow + deployment), each considered together
+paranoid run examples/arsenal-deps/description.md \
+  -d examples/arsenal-deps/diagrams/architecture.mmd \
+  -d examples/arsenal-deps/diagrams/upload-flow.mmd \
+  -d examples/arsenal-deps/diagrams/deployment.png
 
 # Multiple output formats from one run
 paranoid run system.md --format sarif -o findings.sarif
