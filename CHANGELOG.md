@@ -49,6 +49,65 @@ Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collabo
 - `GET /api/projects/{id}/dashboard`: aggregate stat counts (models, open threats, pending review, members, last run), open-threat severity breakdown (critical/high/medium/low), and an "assigned to you" list of open threats in models assigned to the caller, ordered by DREAD score
 - New `Dashboard.svelte` landing screen — stat grid, segmented severity bar, activity feed, and an "assigned to you" panel linking straight into Review; added as `/dashboard` with a new sidebar entry, alongside (not replacing) the existing Threat Models list
 
+#### AWS Bedrock Provider
+
+A fourth LLM provider alongside Anthropic, OpenAI, and Ollama, for teams standardizing on AWS credentials instead of a separate API key.
+
+- `backend/providers/bedrock.py` implements the shared provider protocol over the Bedrock Converse API (`toolConfig`/`toolChoice` for structured output); `boto3` is imported lazily behind the `[bedrock]` optional extra so installing it stays opt-in
+- Uses the standard AWS credential chain only (`AWS_REGION`/`AWS_PROFILE`, falling back to boto3's env/profile/instance-metadata resolution) — no Bedrock-specific API key
+- Retries `converse()` without `temperature` on models that reject the parameter
+- `ping_bedrock()` health check, called from `POST /api/config/test-provider` and the Settings page's provider dropdown; `DEFAULT_PROVIDER=bedrock` and `FAST_MODEL_BEDROCK` select it as the active or fast-routed provider
+
+#### Dependency Capability Engine
+
+Static-analysis visibility into what an npm dependency can actually *do* — network access, filesystem, process spawning, dynamic code, native addons, and 6 more (11 categories total) — diffed against its own declared GitHub source, folded into the same STRIDE/MAESTRO threat model as everything else. See [the README section](../README.md#dependency-capability-engine) for the full category list and what it does and doesn't catch.
+
+- `backend/deps/`: `resolver.py` (npm registry + GitHub ref resolution, no GitHub token required), `fetcher.py` (safe tarball fetch/extract with per-key locks, integrity checked on compressed bytes, a size-bounded LRU cache under `DEPS_CACHE_DIR`), `scanner.py` (Semgrep-based evidence building across 11 capability categories), `delta.py` (semver-jump / publisher-change / supply-chain flags between two versions), `drift.py` (npm-tarball-vs-GitHub-source comparison; provenance narrows *where* a discrepancy is excused, it never excuses a whole category), `install_hooks.py` (lifecycle-script risk heuristics), `references.py` (reachability — promotes test/example files that shipped code actually loads)
+- `paranoid deps scan <pkg>@<ver> --source npm|both`, `paranoid deps diff <pkg> <v1> <v2> --source both`, `paranoid deps scan-manifest package.json` — standalone CLI, independent of the pipeline
+- Pipeline integration: a new `ANALYZE_DEPENDENCIES` step runs before `summarize` when a manifest (`--manifest`/`--lockfile` on the CLI, `dependency_manifest`/`dependency_lockfile` multipart fields on `POST /{id}/run`, or an auto-detected `package.json` from a linked code source) is present; findings become **deterministic** threat-template matches (never LLM-authored provenance — `source`/`dependency_ref` are hidden from every provider's structured-output schema and force-reset after every call) merged into the same threat list with package + file:line evidence
+- Server-side analysis is capped and kill-switchable: ≤ 50 resolvable direct dependencies, a wall-clock budget (`DEPS_ANALYSIS_TIMEOUT_SECONDS`, partial results on timeout rather than discarding the whole sweep), a process-wide Semgrep concurrency cap (`DEPS_MAX_CONCURRENT_SCANS`), an LRU-evicted cache budget (`DEPS_CACHE_MAX_GB`), and `DEPS_ANALYSIS_ENABLED` to disable the feature without a redeploy
+- Migration `0005_dependency_scans.py`: `dependency_scans` table (one row per analyzed package) plus `threats.dependency_ref`
+- UI: an optional "Dependencies" wizard step (upload manifest/lockfile or reuse the linked code source's); a Results heatmap section (packages × categories, expandable evidence, drift buckets, skip reasons); a "Dependency" chip on `ThreatCard` with `pkg@ver · file:line`
+- Exports: SARIF gets a logical `npm:pkg@ver` location plus a physical location on the consumer's own manifest (not the dependency's own `file:line`, which GitHub would resolve against the wrong repo — that survives in `properties.dependencyRef` for anyone reading the raw SARIF); Markdown/PDF get a dependency-findings section
+- Semgrep is an external binary (`pip install semgrep`), not a Python dependency of Paranoid — see `SEMGREP_BINARY` in [Configuration](docs/configuration.md#dependency-capability-engine)
+
+#### Model Routing (fast/main per pipeline step)
+
+Cheaper, faster extraction steps without downgrading the steps that write the actual threat text.
+
+- `PipelineConfig.step_models` routes each pipeline step to a `fast` or `main` model; `generate_threats` and `gap_analysis` can never be routed to `fast` (rejected at startup if attempted)
+- Per-provider fast-model defaults: `FAST_MODEL` (Anthropic, default `claude-haiku-4-5-20251001`), `FAST_MODEL_OPENAI` (default `gpt-4.1-mini`), `FAST_MODEL_BEDROCK` and `FAST_MODEL_OLLAMA` (both empty/disabled by default); any can be set to `""` or to the main model's value to turn routing off for that provider
+- `STEP_MODELS` env var (JSON map, e.g. `{"extract_flows":"main"}`) and the CLI's `--fast-model`/`--step-model` override it per run; the Settings page exposes the active provider's fast-model field
+- A step routed to `fast` that fails with a non-transient error (anything other than a rate limit, timeout, connection error, or 5xx) disables fast routing for the rest of that run — flagged as `fast_routing_disabled: true` in the usage summary, with a CLI warning and a Results page Run Summary chip
+- Per-step model + token usage (input/output/cache-read/cache-write) is now recorded end to end: the provider protocol reports last-call usage, `pipeline_runs` persists it as an audit log, and the Results page's Run Summary breaks it down by step
+
+#### Mermaid Rendering (ELK layout)
+
+- Added the ELK layout engine (`@mermaid-js/layout-elk`) alongside Mermaid's default Dagre layout — the biggest single readability win for architecture diagrams with more than a handful of nodes
+- `base` theme built from the `c-*` design tokens (rounded nodes, soft shadows, dashed trust-boundary clusters, IBM Plex Sans labels) instead of Mermaid's default theme
+- New shared `DiagramView.svelte` (pan/zoom, fit-to-view, SVG) used for input architecture diagrams on Results, for generated attack trees, and for every diagram added since (multiple diagrams, below)
+- PDF export keeps a Mermaid description (and generated attack trees) as a code block rather than rendering server-side (Mermaid needs a browser; rendering would require a headless one in the export path) — input architecture diagrams themselves are never embedded in the PDF
+- `securityLevel: 'strict'` (`diagram_theme.js`) plus `mermaid_sanitize.js`'s XSS hardening (see Security, above) apply to every diagram rendered through `DiagramView`, including this new layout path
+
+#### ATT&CK / ATLAS Technique Enrichment
+
+Every threat — LLM-generated, rule-engine, or dependency — is now tagged with the MITRE ATT&CK / ATLAS technique(s) it maps to, not just the rule-engine's own pattern library.
+
+- `scripts/build_techniques.py` builds `seeds/techniques/attack_enterprise.json` (173 techniques) and `atlas.json` (170) from MITRE's live ATT&CK Enterprise STIX feed and the ATLAS YAML source, with an offline fallback if the fetch fails
+- A deterministic `map_techniques` pipeline step assigns technique references three ways depending on the threat's origin: a fixed `rule_id → technique` table for dependency-engine threats, a parenthesized-ID regex against the seed pattern name for rule-engine threats, and embedding similarity (cosine + keyword overlap, narrowed by a STRIDE-category tactic prior) for everything else, including LLM-generated threats
+- `Threat.attack_techniques` is schema-guarded the same way dependency provenance is — hidden from every provider's structured-output schema (`SkipJsonSchema`) and force-reset after every provider call, so an LLM can't forge its own technique attribution
+- Migration `0009_threats_attack_techniques.py`; SARIF `properties.tags`; a Markdown/PDF "ATT&CK/ATLAS:" line; `ThreatCard` chips linking to attack.mitre.org / atlas.mitre.org, with embedding-sourced matches shown as "suggested" rather than confirmed
+- Measured precision@3 on a golden set: 0.70 (7/10) after correcting a mislabeled case and crediting parent-technique matches; two genuine misses are tracked in `tests/live/test_attack_mapping_golden.py`
+
+#### CVSS v3.1 Scoring (alongside DREAD)
+
+- `backend/scoring/cvss31.py`: a standalone CVSS v3.1 base-score calculator (no third-party scoring library)
+- Migration `0010_threats_cvss.py`: `threats.cvss_vector`/`cvss_score`/`cvss_severity`/`scoring_method` columns; `scoring_method` records whether a threat was scored with DREAD, CVSS, or both
+- Dependency-engine threats get a default CVSS vector per rule; LLM-generated threats can be scored via a CVSS-specific prompt block plus a dread-only response schema that saves ~430–670 prompt tokens per `generate_threats` call versus asking for both scoring systems in one schema
+- `POST /api/cvss/score` scores an arbitrary vector server-side (used by the UI's manual CVSS editor); `scoring_method` is selectable per run from the CLI, API, and wizard
+- SARIF `security-severity` is now keyed per `(STRIDE/MAESTRO category, CVSS band)` instead of per category alone, so a Tampering threat scored 9.8 no longer inherits the severity of an unrelated low-scored Tampering threat sharing the same rule; Markdown/PDF/SARIF all show CVSS alongside DREAD when present
+- UI: a CVSS badge + inline editor on `ThreatCard`/Review, and a scoring-method selector in the wizard
+
 #### Multi-Diagram Support (Week 5a-1)
 
 A run now takes 1–5 architecture diagrams instead of one, each a named view (deployment, data flow, etc.) considered together by the pipeline.

@@ -46,7 +46,7 @@ A step-by-step wizard for creating a threat model.
 
 1. **Title & Framework** — name your model; STRIDE, MAESTRO, or auto-detect
 2. **Description** — paste or type your system description (or use a structured template)
-3. **Diagram** — upload a PNG/JPG architecture diagram or `.mmd`/`.txt` Mermaid file (optional)
+3. **Diagram** — upload up to 5 architecture diagrams at once (PNG/JPG or `.mmd`/`.txt` Mermaid), each with an editable name and a kind chip; a rejected file never drops ones already accepted (optional)
 4. **Code Source** — select a linked Git repository from the Sources page (optional)
 5. **Dependencies** — optionally upload `package.json` (+ lockfile) for dependency capability analysis
 6. **Assumptions** — list known assumptions about the system
@@ -63,8 +63,11 @@ Shows the full threat model context and threat list after a run completes.
 **Sections:**
 
 - **Summary**: title, framework, provider/model used, run date, iteration count, duration
-- **Context** (assets, flows, trust boundaries): click any item to expand; **Re-extract** button re-runs extraction without regenerating threats
-- **Threats**: filterable table by category, severity, and status
+- **Run Summary**: per-step model (fast vs. main) and token usage, with a warning chip if fast routing fell back to the main model mid-run
+- **Diagrams**: a single diagram renders directly; two or more show a tab strip (`role="tablist"`, arrow-key navigation). Each image loads lazily on first selection and is cached per tab
+- **Dependencies**: a heatmap of packages × capability categories (network, filesystem, process, dynamic code, native addons, …), with expandable evidence and drift/skip reasons, shown when the run included a manifest
+- **Context** (assets, flows, trust boundaries): click any item to expand; **Re-extract** button re-runs extraction without regenerating threats (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
+- **Threats**: filterable table by category, severity, and status; each threat can show ATT&CK/ATLAS technique chips and a CVSS badge alongside its DREAD score
 - **Compare**: opens the Model Diff view
 
 ---
@@ -75,12 +78,13 @@ The human-in-the-loop approval interface.
 
 **Per-threat card:**
 - DREAD micro-chart (5 bars, colour-coded: critical/high/medium/low)
-- DREAD score badge (e.g. `7.5 HIGH`)
-- Category chip (Spoofing, Tampering, etc.)
+- DREAD score badge (e.g. `7.5 HIGH`) and, when scored, a CVSS v3.1 badge with inline vector editing
+- ATT&CK/ATLAS technique chips (embedding-sourced matches shown as "suggested"), linking out to attack.mitre.org / atlas.mitre.org
+- Category chip (Spoofing, Tampering, etc.) and, for dependency-engine threats, a "Dependency" chip with `pkg@ver · file:line`
 - Target and likelihood
 - Full description and mitigations
 - **Approve** / **Reject** buttons
-- Inline DREAD score editing (no page reload)
+- Inline DREAD/CVSS score editing (no page reload)
 - Assignee picker
 - Comment thread (threaded, inline)
 
@@ -128,10 +132,10 @@ Once `ready`, a source can be selected in the New Model Wizard.
 Runtime configuration editor. Changes take effect immediately without restarting.
 
 **Available settings:**
-- Provider (Anthropic / OpenAI / Ollama)
+- Provider (Anthropic / OpenAI / Ollama / Bedrock)
 - Model name
 - Default iterations
-- Fast model (Anthropic only)
+- Fast model for the selected provider (each provider has its own fast-model field; empty disables routing for that provider)
 - API keys (write-only; existing value shown as `***`)
 
 If `CONFIG_SECRET` is set, the Settings page requires entering it before saving.

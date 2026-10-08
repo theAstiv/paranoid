@@ -23,7 +23,7 @@ graph TD
     Pipeline --> Rules
     Pipeline --> DB
     Pipeline --> CL
-    Pipeline --> LLM["LLM Provider\nAnthropic / OpenAI / Ollama"]
+    Pipeline --> LLM["LLM Provider\nAnthropic / OpenAI / Ollama / Bedrock"]
 ```
 
 ## Stack
@@ -34,7 +34,7 @@ graph TD
 | Frontend | Svelte 5 (legacy mode), Tailwind CSS, svelte-spa-router |
 | Database | SQLite + sqlite-vec (vector search) |
 | Embeddings | fastembed (ONNX, local — no external API) |
-| LLM providers | Anthropic, OpenAI, Ollama (protocol-based) |
+| LLM providers | Anthropic, OpenAI, Ollama, AWS Bedrock (protocol-based) |
 | Code indexing | context-link Go binary (MCP over stdio) |
 | Deployment | Docker Compose (3-stage build: Go + Node + Python) |
 
@@ -43,20 +43,26 @@ graph TD
 The pipeline is a sequence of plain `async def` functions — no LangChain, no LangGraph.
 
 ```
-Input (description + optional diagram + optional code)
+Input (description + 0-5 diagrams + optional code + optional dependency manifest)
   │
-  ├─ summarize          → SystemSummary (~200 chars)
-  ├─ extract_assets     → AssetsList (components, data stores, users)
-  ├─ extract_flows      → FlowsList + TrustBoundaries
+  ├─ analyze_dependencies → CapabilityProfile per package (deterministic, skippable)
+  ├─ summarize             → SystemSummary (~200 chars)
+  ├─ extract_assets        → AssetsList (components, data stores, users)
+  ├─ extract_flows         → FlowsList + TrustBoundaries
   │
   └─ for iteration in 1..N:
-       ├─ generate_threats  → ThreatsList (STRIDE or MAESTRO)
-       └─ gap_analysis      → GapSummary (feeds next iteration)
+       ├─ generate_threats  → ThreatsList (STRIDE or MAESTRO; always the main model)
+       └─ gap_analysis      → GapSummary (feeds next iteration; always the main model)
   │
   ├─ Rule Engine (always runs in parallel with LLM)
+  ├─ Dependency threat templates (deterministic, merged in)
   ├─ Merge + dedup (cosine similarity ≥ 0.85)
+  ├─ map_techniques → ATT&CK/ATLAS technique refs per threat (deterministic/embedding, never LLM-authored)
+  ├─ CVSS/DREAD scoring per threat
   └─ [optional] enrich → AttackTrees + GherkinTestCases
 ```
+
+Each step runs on either the "fast" or "main" model per `PipelineConfig.step_models`. Defaults: `summarize`/`summarize_code` → main, `extract_assets`/`extract_flows`/enrichment (attack trees, test cases) → fast, `generate_threats`/`gap_analysis` → always main (routing either to fast is rejected at startup). OpenAI overrides `extract_flows` back to main by default (dense MAESTRO flow extraction is suspected to come out thinner on `gpt-4.1-mini`). See [Configuration](configuration.md#provider) for the routing env vars and CLI/Settings overrides.
 
 **SSE events** are emitted per step by `runner.py`. The frontend subscribes via `EventSource`.
 
@@ -71,7 +77,7 @@ Runs on every pipeline execution alongside the LLM. Results are merged and dedup
 
 ## LLM provider protocol
 
-All three providers implement a single method:
+All four providers implement a single method:
 
 ```python
 async def generate_structured(
@@ -86,6 +92,7 @@ async def generate_structured(
 | Anthropic | Tool use (`tool_choice="any"`) + prompt caching |
 | OpenAI | Structured Outputs (`client.chat.completions.parse`) |
 | Ollama | `format=<json_schema>` |
+| Bedrock | Converse API `toolConfig`/`toolChoice`, via `boto3` (standard AWS credential chain) |
 
 All providers auto-bump `max_tokens` on truncation (up to 2× per step, max 2 retries).
 
@@ -100,7 +107,9 @@ Key tables (all have `id TEXT PRIMARY KEY`, `created_at`, `updated_at`):
 | `assets` | Extracted components and data stores |
 | `data_flows` | Extracted data flows |
 | `trust_boundaries` | Extracted trust boundary definitions |
-| `pipeline_runs` | Audit log per step (token usage, duration, hash) |
+| `pipeline_runs` | Audit log per step (model used, token usage, duration, hash) |
+| `model_diagrams` | 0–5 architecture diagrams per model (image or Mermaid source), ordered by `position` |
+| `dependency_scans` | One row per analyzed package: capability categories, evidence, drift/delta results |
 | `users` | Account credentials, roles |
 | `projects` | Project metadata and per-project defaults |
 | `project_members` | User ↔ project role join table |
@@ -116,9 +125,12 @@ Schema changes: drop a file in `backend/db/migrations/NNNN_description.py` and i
 ```
 backend/
   models/       state.py, extended.py, enums.py, api.py
-  providers/    base.py (Protocol), anthropic.py, openai.py, ollama.py
-  pipeline/     nodes/ (8 step files), runner.py, prompts/, confidence.py
+  providers/    base.py (Protocol), anthropic.py, openai.py, ollama.py, bedrock.py
+  pipeline/     nodes/ (summary, extraction, threats, enrichment, attack_mapping, helpers), runner.py, prompts/, confidence.py
   rules/        engine.py + 16 seed files in seeds/
+  deps/         resolver.py, fetcher.py, scanner.py, delta.py, drift.py,
+                install_hooks.py, references.py, analyze.py, threats.py
+  scoring/      cvss31.py (CVSS v3.1 base-score calculator)
   auth/         passwords.py (argon2), tokens.py (JWT/PAT), dependencies.py
   db/           schema.py, crud.py, crud_auth.py, crud_projects.py,
                 crud_comments.py, crud_activity.py, crud_staleness.py,
@@ -128,7 +140,7 @@ backend/
   export/       pdf.py, sarif.py, markdown.py, _common.py
   routes/       models.py, threats.py, export.py, auth.py, sources.py,
                 config.py, projects.py, comments.py, notifications.py,
-                analyze.py, dashboard.py, diff.py
+                analyze.py, dashboard.py, diff.py, scoring.py
   security/     rate_limit.py
   sources/      manager.py, paths.py
 frontend/src/

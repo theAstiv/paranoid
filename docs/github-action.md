@@ -115,10 +115,13 @@ For high-security workflows where any new threat in a PR is a blocker:
 
 The SARIF file maps each threat to a SARIF result:
 
-- **ruleId**: STRIDE/MAESTRO category (e.g. `STRIDE/Tampering`)
-- **level**: mapped from DREAD score (critical → error, high → warning, medium → note, low → note)
+- **ruleId**: STRIDE/MAESTRO category (e.g. `STRIDE/Tampering`); rules are keyed per `(category, CVSS band)` when a threat has a CVSS score, so a 9.8-scored threat doesn't inherit `security-severity` from an unrelated low-scored threat in the same category
+- **level**: CVSS score when present, otherwise DREAD severity, otherwise likelihood (critical/high → error, medium → warning, low → note)
+- **properties.security-severity**: the numeric score GitHub's code-scanning UI sorts/filters by
+- **properties.tags**: MITRE ATT&CK/ATLAS technique IDs mapped to the threat, when any matched
+- **properties.cvss**: `{vector, score, severity}` when the threat was CVSS-scored
 - **message**: threat description
-- **locations**: references the description file
+- **locations**: for dependency-engine threats, a logical `npm:pkg@ver` location plus a physical location on the *consumer's own* manifest (line 1) — not the dependency's own `file:line`, which GitHub would resolve against the wrong repo; that survives in `properties.dependencyRef`. The description file otherwise
 
 Results appear in the **Security** tab under **Code scanning alerts** and as **PR annotations** on relevant lines.
 

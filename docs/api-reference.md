@@ -37,10 +37,13 @@ Create a new threat model record (without running the pipeline).
   "framework": "STRIDE",
   "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
-  "iterations": 3,
-  "project_id": "uuid"
+  "iteration_count": 3,
+  "project_id": "uuid",
+  "scoring_method": "dread"
 }
 ```
+
+`provider` is `anthropic`, `openai`, `ollama`, or `bedrock`. `scoring_method` is `dread` (default), `cvss`, or `both`.
 
 ### `GET /api/models/{id}`
 
@@ -62,15 +65,19 @@ Run (or re-run) the pipeline. Returns an SSE stream of `PipelineEvent` objects.
 
 **Body (multipart/form-data):**
 
+`provider`/`model`/`iteration_count`/`framework`/`scoring_method` are set once at `POST /api/models` creation time (below) and reused from the stored record on every run — they aren't passed to `/run` itself. Fast/main model routing is a CLI flag (`--fast-model`/`--step-model`) or a Settings-page field, not a per-API-call override — see [Configuration](configuration.md#provider).
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `provider` | string | Override provider for this run |
-| `model` | string | Override model |
-| `iterations` | int | Override iteration count |
-| `framework` | string | `STRIDE`, `MAESTRO`, or `BOTH` |
+| `assumptions` | string | JSON array of assumption strings |
+| `has_ai_components` | bool | Runs MAESTRO alongside STRIDE for this run |
 | `diagram` | file | **Deprecated** — single architecture diagram (PNG, JPG, or .mmd). Kept for one release; merged first (position 0) if `diagrams` is also sent |
 | `diagrams` | file[] | 1–5 architecture diagrams (PNG, JPG, or .mmd/.txt). Replaces the model's entire stored diagram set. Omitted (with no `diagram` either) to reuse whatever is already stored |
 | `diagram_names` | string | JSON array of strings, same length as `diagrams`, labeling each file. An empty string falls back to that file's own name |
+| `dependency_manifest` | file | `package.json` (≤ 1 MB) for the dependency capability engine. Omitted to reuse a linked code source's manifest when `use_code_source_manifest` is set |
+| `dependency_lockfile` | file | `package-lock.json` (≤ 20 MB), optional, requires `dependency_manifest` |
+| `deps_source_mode` | string | `npm` (fast, default) or `both` (adds GitHub-source drift comparison) |
+| `use_code_source_manifest` | bool | Auto-detect and use the linked code source's root `package.json`/lockfile instead of an upload |
 | `code_source_id` | string | UUID of a ready code source |
 
 **SSE event format:**
@@ -85,9 +92,29 @@ data: {"step": "complete", "status": "completed", "total_threats": 23}
 
 Get extracted context (assets, flows, trust boundaries) for editing before or after a run.
 
-### `POST /api/models/{id}/re-extract`
+### `POST /api/models/{id}/extract`
 
-Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats.
+Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`.
+
+### `POST /api/models/{id}/analyze`
+
+Run the pre-flight gap analysis against this model's own stored description — deterministic checks plus one LLM pass, returning gaps and `is_sufficient`. For analyzing a draft description that isn't saved as a model yet, use `POST /api/analyze` instead.
+
+### `GET /api/models/{id}/stats`
+
+Pipeline execution statistics (per-step duration, token usage) for a model.
+
+### `GET /api/models/{id}/dependencies`
+
+List persisted dependency capability scans for a model (package names, versions, capability categories, evidence, drift/delta results), most recent first. Viewer-gated — exposes more detail than a threat's own text.
+
+### `GET /api/models/{id}/diagrams`
+
+List persisted architecture diagrams for a model, ordered by position. Image bytes are omitted (`has_content: false`); Mermaid source is returned inline. Fetch an image's bytes via the route below.
+
+### `GET /api/models/{id}/diagrams/{diagram_id}`
+
+Get one diagram's full content, including image bytes for PNG/JPG diagrams.
 
 ### `GET /api/models/{head_id}/diff`
 
@@ -107,7 +134,7 @@ List threats, optionally filtered.
 
 ### `GET /api/threats/{id}`
 
-Get a single threat with full DREAD scores, mitigations, and enrichment.
+Get a single threat with full DREAD scores, mitigations, and enrichment. Also includes `attack_techniques` (ATT&CK/ATLAS technique refs — deterministic or embedding-matched, never LLM-authored) and, when `scoring_method` included CVSS, `cvss_vector`/`cvss_score`/`cvss_severity`.
 
 ### `PATCH /api/threats/{id}`
 
@@ -150,6 +177,18 @@ Export a saved model.
 
 ---
 
+## Scoring
+
+### `POST /api/cvss/score`
+
+Stateless CVSS v3.1 scoring — parses a vector string and returns its computed base score + severity. Used by the UI's live score recomputation as a reviewer edits the 8 metric dropdowns; no DB access.
+
+**Body:** `{"vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}`
+
+**Response:** `{"score": 9.8, "severity": "critical"}`
+
+---
+
 ## Configuration
 
 ### `GET /api/config`
@@ -166,7 +205,7 @@ Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secr
 {
   "provider": "openai",
   "model": "gpt-4o",
-  "iterations": 5
+  "default_iterations": 5
 }
 ```
 

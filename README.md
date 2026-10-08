@@ -10,10 +10,12 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **Multi-Provider LLM**: Anthropic, OpenAI, Ollama (fully local/air-gapped), or AWS Bedrock
 - **Dependency Capability Engine**: static-analysis visibility into what an npm dependency can do (network, filesystem, process, dynamic code, native addons), diffed against its own GitHub source — see [below](#dependency-capability-engine)
 - **Dual Framework**: STRIDE (traditional) + MAESTRO (AI/ML) — auto-detected or run in parallel
-- **DREAD Risk Scoring**: Automatic 5-dimension scoring (0–10 scale) for severity classification
+- **DREAD + CVSS Risk Scoring**: automatic 5-dimension DREAD (0–10) and/or a standalone CVSS v3.1 base-score calculator, selectable per run
+- **ATT&CK / ATLAS Enrichment**: every threat — LLM-generated, rule-engine, or dependency — is mapped to MITRE ATT&CK/ATLAS techniques (deterministic rule table, pattern-ID regex, or embedding similarity depending on origin), never self-attributed by the LLM
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
+- **Model Routing**: per-pipeline-step fast/main model selection (e.g. Haiku for extraction, Sonnet for threat generation) to cut cost and latency without downgrading the steps that write the threat text
 - **Code-as-Input**: Semantic code extraction via context-link MCP (`--code /path/to/repo`)
-- **Image-as-Input**: Multiple architecture diagrams per run — up to 5 named views (deployment, data flow, etc.) via a repeatable `-d` on the CLI (`-d arch.png -d flow.mmd`) or the API's `diagrams[]` field
+- **Image-as-Input**: Multiple architecture diagrams per run — up to 5 named views (deployment, data flow, etc.) via a repeatable `-d` on the CLI (`-d arch.png -d flow.mmd`) or the API's `diagrams[]` field, rendered with a proper ELK layout
 - **Deterministic Rule Engine**: 362 curated patterns (STRIDE, MAESTRO, OWASP, MITRE ATT&CK/ATLAS, CAPEC, cloud misconfigs) across 16 seed files
 - **Export Formats**: JSON, SARIF (GitHub Security), Markdown, PDF
 - **Multi-User Collaboration**: Projects with owner/editor/viewer RBAC, threaded comments, assignments, activity log
@@ -48,7 +50,7 @@ docker compose up --build   # web UI at http://localhost:8000/app
 | [Configuration](docs/configuration.md) | All environment variables and config options |
 | [Web UI Guide](docs/web-ui-guide.md) | Browser interface walkthrough |
 | [Authentication](docs/authentication.md) | Multi-user setup, JWT, PATs, RBAC |
-| [API Reference](docs/api-reference.md) | REST API — 79+ route handlers across 12 files |
+| [API Reference](docs/api-reference.md) | REST API — 83 route handlers across 13 route modules, plus `/health` and `/` in `main.py` |
 | [GitHub Action](docs/github-action.md) | Automated threat modeling in CI/CD |
 | [Architecture](docs/architecture.md) | System design, pipeline, data model |
 | [Deployment](docs/deployment.md) | Docker, PyPI, binary, production hardening |
