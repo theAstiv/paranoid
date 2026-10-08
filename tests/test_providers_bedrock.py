@@ -273,6 +273,121 @@ async def test_bedrock_non_temperature_validation_error_still_raises():
 
 
 # ---------------------------------------------------------------------------
+# Forced tool choice fallback (Opus 5.5 / Sonnet 5.5 / Fable 5.1)
+# ---------------------------------------------------------------------------
+
+_OPUS_55 = "us.anthropic.claude-opus-5-5"
+_FORCED_TOOL_CHOICE_MESSAGE = 'tool_choice: type "tool" and "any" are not supported for this model.'
+
+
+def _patched_modules(mock_boto3: MagicMock) -> dict:
+    return {
+        "boto3": mock_boto3,
+        "botocore": MagicMock(),
+        "botocore.config": MagicMock(),
+        "botocore.exceptions": _bce,
+    }
+
+
+def _mock_boto3_with_client(mock_client: MagicMock) -> MagicMock:
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    return mock_boto3
+
+
+@pytest.mark.asyncio
+async def test_bedrock_forced_tool_choice_rejection_falls_back_to_auto():
+    """A ValidationException about tool_choice retries once with
+    `toolChoice: auto` + a system instruction, and the instance remembers it
+    so later calls skip the doomed forced attempt."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    tool_choice_error = _make_client_error("ValidationException", _FORCED_TOOL_CHOICE_MESSAGE)
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "tool" in kwargs["toolConfig"]["toolChoice"]:
+            raise tool_choice_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=_OPUS_55)
+        result = await provider.generate_structured("test", _SimpleModel)
+
+        assert result.value == "ok"
+        assert len(calls) == 2
+        assert calls[0]["toolConfig"]["toolChoice"] == {"tool": {"name": "respond"}}
+        assert "system" not in calls[0]
+        assert calls[1]["toolConfig"]["toolChoice"] == {"auto": {}}
+        assert "respond" in calls[1]["system"][0]["text"]
+
+        result2 = await provider.generate_structured("again", _SimpleModel)
+
+    assert result2.value == "ok"
+    assert len(calls) == 3
+    assert calls[2]["toolConfig"]["toolChoice"] == {"auto": {}}
+
+
+@pytest.mark.asyncio
+async def test_bedrock_auto_tool_choice_accepts_json_text_answer():
+    """Under auto tool choice a model may answer in text; a fenced JSON
+    answer that matches the schema is accepted without another call."""
+    mock_client = MagicMock()
+    tool_choice_error = _make_client_error("ValidationException", _FORCED_TOOL_CHOICE_MESSAGE)
+    mock_client.converse.side_effect = [
+        tool_choice_error,
+        _make_text_response('```json\n{"value": "from text", "count": 2}\n```'),
+    ]
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=_OPUS_55)
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "from text"
+    assert result.count == 2
+    assert mock_client.converse.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_bedrock_auto_tool_choice_retries_a_prose_answer():
+    """A prose answer (no tool call, not JSON) under auto tool choice is
+    retried rather than failing the step outright."""
+    mock_client = MagicMock()
+    tool_choice_error = _make_client_error("ValidationException", _FORCED_TOOL_CHOICE_MESSAGE)
+    mock_client.converse.side_effect = [
+        tool_choice_error,
+        _make_text_response("**Threat Name**: something in prose"),
+        _make_tool_response({"value": "ok", "count": 1}),
+    ]
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=_OPUS_55)
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert mock_client.converse.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_bedrock_text_answer_under_forced_tool_choice_still_errors():
+    """While forced tool choice is in effect, a text-only answer is still an
+    error — the JSON-from-text path is only for auto tool choice."""
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_text_response('{"value": "x", "count": 1}')
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        with pytest.raises(ProviderError, match="no tool_use block"):
+            await provider.generate_structured("test", _SimpleModel)
+
+    assert mock_client.converse.call_count == 1
+
+
+# ---------------------------------------------------------------------------
 # Error mapping
 # ---------------------------------------------------------------------------
 
