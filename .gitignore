@@ -202,3 +202,6 @@ recordings/output/
 *.mkv
 *.flv
 *.avi
+# Benchmark harness local config and price table (tests/bench)
+tests/bench/bench.env
+tests/bench/prices.json
