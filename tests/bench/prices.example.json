@@ -1,0 +1,8 @@
+{
+  "currency": "USD",
+  "_comment": "Copy to tests/bench/prices.json (gitignored), fill in per-million-token prices from https://aws.amazon.com/bedrock/pricing/ (or the OpenAI pricing page for OPENAI_DIRECT) on the day you read them, and point BENCH_PRICES_FILE at it. Keys are model slot names from tests/bench/config.py. A slot with no entry is treated as unpriced: its runs show cost n/a and count against --max-cost as unknown.",
+  "models": {
+    "OPUS_55": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "source": "https://aws.amazon.com/bedrock/pricing/", "read_on": "YYYY-MM-DD", "region": "fill-me"},
+    "HAIKU_55": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "source": "https://aws.amazon.com/bedrock/pricing/", "read_on": "YYYY-MM-DD", "region": "fill-me"}
+  }
+}
