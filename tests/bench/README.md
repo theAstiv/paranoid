@@ -46,7 +46,7 @@ Use these as sanity baselines, not as the answer:
 ## 2. Setup
 
 ```bash
-pip install -e ".[dev,bedrock]"   # bedrock extra = boto3
+pip install -e ".[dev,bedrock]"   # bedrock extra = boto3; dev includes pypdf for the PDF export gate
 pip install semgrep               # external binary used by the dependency engine
 ```
 
