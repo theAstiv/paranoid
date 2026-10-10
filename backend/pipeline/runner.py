@@ -34,6 +34,7 @@ from backend.pipeline.nodes.helpers import build_shared_context
 from backend.providers.base import (
     LLMProvider,
     ProviderError,
+    ProviderRefusalError,
     ProviderTransientError,
 )
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
@@ -55,6 +56,16 @@ StopAfter = Literal["extraction"]
 # the whole partial DependencyContext it was about to return — exactly the
 # all-or-nothing failure the deadline exists to avoid.
 _DEPS_ANALYSIS_BACKSTOP_GRACE_S = 30.0
+
+
+def _provider_error_event_data(e: ProviderError) -> dict:
+    """Build a PipelineEvent `data` dict for a caught ProviderError, flagging
+    refusals so the bench harness and the UI can count them separately from
+    other provider failures."""
+    data: dict = {"error": str(e)}
+    if isinstance(e, ProviderRefusalError):
+        data["refusal"] = True
+    return data
 
 
 def _hash_value(value: Any) -> str:
@@ -331,6 +342,18 @@ class PipelineRunner:
         # pays one failed call *per step*, and per *enrichment call* under
         # --enrich (one attack-tree/test-case pair per threat).
         self._fast_disabled = False
+        # Count of ProviderRefusalError occurrences, surfaced in RunUsage so
+        # the bench harness and the UI can tell a refusal apart from any
+        # other provider failure.
+        self._refusal_count = 0
+
+    def _note_refusal(self, e: ProviderError) -> None:
+        """Increment the refusal counter exactly once per distinct
+        ProviderRefusalError. Call this at the one catch site that will
+        actually own each exception instance — never both the site that
+        re-raises it and the site that later catches the re-raised copy."""
+        if isinstance(e, ProviderRefusalError):
+            self._refusal_count += 1
 
     def _provider_for(self, step: PipelineStep) -> LLMProvider:
         """Return the provider instance routed for `step` by self._step_models."""
@@ -363,7 +386,11 @@ class PipelineRunner:
             return result, provider, None
         except ProviderError as e:
             if provider is self.provider:
+                # Re-raised as-is: the caller's own ProviderError handler
+                # counts it (via _note_refusal) exactly once. Counting here
+                # too would double it for every main-model failure.
                 raise
+            self._note_refusal(e)
             logger.warning(
                 "Fast model failed for step %s, retrying on main model: %s", step.value, e
             )
@@ -559,13 +586,13 @@ class PipelineRunner:
                 )
                 return
 
-        # The Ollama provider never sends images, even to vision-capable
-        # models — not a per-model limit, a provider limit. When any
-        # diagram is an image, degrade: skip sending image bytes on the
-        # calls that would otherwise carry them (with_images=False) and
-        # tell the caller which diagrams were ignored. Mermaid diagrams are
-        # unaffected either way.
-        images_supported = self.provider.name != "ollama"
+        # Image support is per provider instance (Ollama never sends images;
+        # Bedrock decides per model — see BedrockProvider.supports_images).
+        # When any diagram is an image and the provider can't take it,
+        # degrade: skip sending image bytes on the calls that would
+        # otherwise carry them (with_images=False) and tell the caller which
+        # diagrams were ignored. Mermaid diagrams are unaffected either way.
+        images_supported = self.provider.supports_images
         if diagrams and not images_supported:
             ignored = [d.name for d in diagrams if d.format != DiagramFormat.MERMAID]
             if ignored:
@@ -573,10 +600,50 @@ class PipelineRunner:
                     step=PipelineStep.SUMMARIZE,
                     status="info",
                     message=(
-                        f"The Ollama provider doesn't send images; {len(ignored)} image "
-                        "diagram(s) skipped, Mermaid diagrams are used."
+                        f"The {self.provider.name} provider ({self.provider.model}) doesn't "
+                        f"support images; {len(ignored)} image diagram(s) skipped, Mermaid "
+                        "diagrams are used."
                     ),
                     data={"warning": "vision_unsupported", "ignored": ignored},
+                )
+
+        # The main provider may support images while the fast provider
+        # doesn't (or vice versa) — each step's with_images is already
+        # gated on the provider it actually runs on (images_supported and
+        # p.supports_images below), but that would otherwise degrade
+        # silently for whichever image-eligible steps are fast-routed.
+        if (
+            diagrams
+            and images_supported
+            and self.fast_provider is not self.provider
+            and not self.fast_provider.supports_images
+        ):
+            ignored = [d.name for d in diagrams if d.format != DiagramFormat.MERMAID]
+            fast_image_steps = [
+                step
+                for step in (
+                    PipelineStep.SUMMARIZE,
+                    PipelineStep.EXTRACT_ASSETS,
+                    PipelineStep.EXTRACT_FLOWS,
+                )
+                if self._step_models.get(step, "main") == "fast"
+            ]
+            if ignored and fast_image_steps:
+                yield PipelineEvent(
+                    step=PipelineStep.SUMMARIZE,
+                    status="info",
+                    message=(
+                        f"The fast provider ({self.fast_provider.name} "
+                        f"{self.fast_provider.model}) doesn't support images; "
+                        f"{len(ignored)} image diagram(s) skipped on "
+                        f"{', '.join(s.value for s in fast_image_steps)}, Mermaid "
+                        "diagrams are used there."
+                    ),
+                    data={
+                        "warning": "vision_unsupported",
+                        "ignored": ignored,
+                        "steps": [s.value for s in fast_image_steps],
+                    },
                 )
 
         # Iteration state is initialized here (not inside the try) so that a
@@ -718,7 +785,7 @@ class PipelineRunner:
                             code_context=code_context,
                             provider=p,
                             diagrams=diagrams,
-                            with_images=images_supported,
+                            with_images=images_supported and p.supports_images,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
@@ -791,7 +858,7 @@ class PipelineRunner:
                             code_context=None,
                             provider=p,
                             diagrams=diagrams,
-                            with_images=images_supported,
+                            with_images=images_supported and p.supports_images,
                             temperature=self.config.temperature,
                         ),
                         {"description": description, "assumptions": assumptions},
@@ -840,7 +907,7 @@ class PipelineRunner:
                             temperature=self.config.temperature,
                             code_summary=code_summary,
                             diagrams=diagrams,
-                            with_images=images_supported,
+                            with_images=images_supported and p.supports_images,
                         ),
                         {"summary": summary.summary, "description": description},
                     )
@@ -892,7 +959,7 @@ class PipelineRunner:
                             temperature=self.config.temperature,
                             code_summary=code_summary,
                             diagrams=diagrams,
-                            with_images=images_supported,
+                            with_images=images_supported and p.supports_images,
                         ),
                         {"summary": summary.summary, "assets": assets},
                     )
@@ -945,6 +1012,7 @@ class PipelineRunner:
                 # LLM provider is offline — degrade gracefully to rule-engine-only.
                 # Use the original description as a minimal summary so the rule
                 # engine still has text to match keywords against.
+                self._note_refusal(e)
                 provider_failed = True
                 stopped_reason = "provider_offline"
                 summary = SummaryState(summary=description)
@@ -957,7 +1025,7 @@ class PipelineRunner:
                     message=(
                         f"LLM provider unavailable ({e}) — switching to rule-engine-only mode"
                     ),
-                    data={"error": str(e)},
+                    data=_provider_error_event_data(e),
                 )
 
             # Step 4: Iterative Threat Generation
@@ -1061,6 +1129,7 @@ class PipelineRunner:
                                 },
                             )
                         except ProviderError as e:
+                            self._note_refusal(e)
                             provider_failed = True
                             stopped_reason = "provider_offline"
                             logger.warning(
@@ -1075,7 +1144,7 @@ class PipelineRunner:
                                     f"LLM provider unavailable after {iterations_completed} completed "
                                     f"iteration(s) ({e}) — switching to rule-engine-only mode"
                                 ),
-                                data={"error": str(e)},
+                                data=_provider_error_event_data(e),
                             )
                             break
 
@@ -1134,6 +1203,7 @@ class PipelineRunner:
                                 },
                             )
                         except ProviderError as e:
+                            self._note_refusal(e)
                             provider_failed = True
                             stopped_reason = "provider_offline"
                             # Preserve STRIDE threats from this iteration before yielding
@@ -1151,7 +1221,7 @@ class PipelineRunner:
                                     f"LLM provider unavailable after {iterations_completed} completed "
                                     f"iteration(s) ({e}) — switching to rule-engine-only mode"
                                 ),
-                                data={"error": str(e)},
+                                data=_provider_error_event_data(e),
                             )
                             break
 
@@ -1239,6 +1309,7 @@ class PipelineRunner:
                                 },
                             )
                         except ProviderError as e:
+                            self._note_refusal(e)
                             provider_failed = True
                             stopped_reason = "provider_offline"
                             logger.warning(
@@ -1253,7 +1324,7 @@ class PipelineRunner:
                                     f"LLM provider unavailable after {iterations_completed} completed "
                                     f"iteration(s) ({e}) — switching to rule-engine-only mode"
                                 ),
-                                data={"error": str(e)},
+                                data=_provider_error_event_data(e),
                             )
                             break
 
@@ -1437,6 +1508,7 @@ class PipelineRunner:
                                 },
                             )
                         except ProviderError as e:
+                            self._note_refusal(e)
                             provider_failed = True
                             stopped_reason = "provider_offline"
                             logger.warning(
@@ -1451,7 +1523,7 @@ class PipelineRunner:
                                     f"LLM provider unavailable during gap analysis ({e}) — "
                                     "switching to rule-engine-only mode"
                                 ),
-                                data={"error": str(e)},
+                                data=_provider_error_event_data(e),
                             )
                             break
 
@@ -1623,6 +1695,7 @@ class PipelineRunner:
             )
             run_usage = build_run_usage(self._step_runs, fast_model=fast_model)
             run_usage.fast_routing_disabled = self._fast_disabled
+            run_usage.refusal_count = self._refusal_count
 
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,

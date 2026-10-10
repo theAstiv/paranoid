@@ -927,3 +927,17 @@ def test_provider_properties():
     ollama = OllamaProvider(model="llama3")
     assert ollama.name == "ollama"
     assert ollama.model == "llama3"
+
+
+def test_provider_supports_images():
+    """Anthropic and OpenAI take images; Ollama never does (PR A)."""
+    with patch("backend.providers.anthropic.Anthropic"):
+        anthropic = AnthropicProvider(model="claude-sonnet-4", api_key="test-key")
+        assert anthropic.supports_images is True
+
+    with patch("backend.providers.openai.OpenAI"):
+        openai = OpenAIProvider(model="gpt-4", api_key="test-key")
+        assert openai.supports_images is True
+
+    ollama = OllamaProvider(model="llama3")
+    assert ollama.supports_images is False

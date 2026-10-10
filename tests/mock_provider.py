@@ -17,7 +17,7 @@ from backend.models.state import (
     ThreatsList,
     ThreatsListDreadOnly,
 )
-from backend.providers.base import ProviderError
+from backend.providers.base import ProviderError, ProviderRefusalError
 from tests.fixtures.pipeline import (
     make_assets,
     make_attack_tree,
@@ -44,12 +44,15 @@ class MockProvider:
         self,
         framework: Framework = Framework.STRIDE,
         gap_call_threshold: int = 2,
+        supports_images: bool = True,
     ) -> None:
         self._framework = framework
         self._gap_call_threshold = gap_call_threshold
+        self._supports_images = supports_images
         self.calls: list[dict[str, Any]] = []
         self.response_overrides: dict[type, Any] = {}
         self.error_types: set[type] = set()
+        self.refusal_types: set[type] = set()
         self._gap_call_count = 0
         self.last_prompt: str | None = None
         self.last_images: list | None = None
@@ -61,6 +64,10 @@ class MockProvider:
     @property
     def model(self) -> str:
         return "mock-v1"
+
+    @property
+    def supports_images(self) -> bool:
+        return self._supports_images
 
     async def generate_structured(
         self,
@@ -93,6 +100,12 @@ class MockProvider:
         # against ThreatsList regardless of which scoring_method triggered the
         # call — resolve to the canonical key so both dispatch the same way.
         canonical_model = ThreatsList if response_model is ThreatsListDreadOnly else response_model
+
+        if canonical_model in self.refusal_types:
+            raise ProviderRefusalError(
+                provider="mock",
+                message=f"Mock refusal for {canonical_model.__name__}",
+            )
 
         if canonical_model in self.error_types:
             raise ProviderError(

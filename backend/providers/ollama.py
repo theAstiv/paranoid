@@ -141,6 +141,11 @@ class OllamaProvider:
         """Model identifier."""
         return self._model
 
+    @property
+    def supports_images(self) -> bool:
+        """Ollama never sends images, even to vision-capable models."""
+        return False
+
     async def generate_structured(
         self,
         prompt: str,

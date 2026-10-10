@@ -13,6 +13,7 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderRefusalError,
     ProviderTimeoutError,
     ProviderTransientError,
     run_sync_in_executor,
@@ -49,6 +50,27 @@ _AUTO_TOOL_INSTRUCTION = (
     "input. Do not answer in plain text."
 )
 
+# Model-ID substrings (case-insensitive) that take images, absent an
+# override. Conservative default: only the families known to accept vision
+# input on Bedrock. "amazon.nova-micro" is deliberately excluded — it's
+# text-only, unlike the other Nova sizes. Everything else (gpt-oss, Qwen,
+# DeepSeek, Llama text variants, etc.) is treated as text-only until
+# BEDROCK_IMAGE_MODELS says otherwise.
+_DEFAULT_IMAGE_MODEL_HINTS = (
+    "anthropic.claude",
+    "amazon.nova-lite",
+    "amazon.nova-pro",
+    "amazon.nova-premier",
+)
+
+# Bedrock Converse `stopReason` values that mean the model refused to answer
+# or a guardrail/content filter intervened — not a format failure, and not
+# worth retrying with the same prompt. "refusal" mirrors the direct
+# Anthropic API's stop_reason for a Claude 5.x safety refusal; unconfirmed
+# whether Bedrock Converse uses the same string for Claude on Bedrock (check
+# the diagnostic run's converse.jsonl), but matching it costs nothing if not.
+_REFUSAL_STOP_REASONS = frozenset({"content_filtered", "guardrail_intervened", "refusal"})
+
 
 class BedrockProvider:
     """AWS Bedrock provider using the Converse API for structured output.
@@ -73,6 +95,7 @@ class BedrockProvider:
         model: str,
         region: str = "",
         profile: str = "",
+        image_models: list[str] | None = None,
     ):
         """Initialise Bedrock provider.
 
@@ -80,6 +103,9 @@ class BedrockProvider:
             model: Bedrock model ID in provider-namespaced format.
             region: AWS region for the Bedrock endpoint.
             profile: AWS named profile (empty string = default credential chain).
+            image_models: Optional override (BEDROCK_IMAGE_MODELS) of which
+                model-ID substrings accept images, replacing the built-in
+                default (Claude and Nova IDs) rather than extending it.
 
         Raises:
             ImportError: If boto3 is not installed.
@@ -99,6 +125,7 @@ class BedrockProvider:
 
         self._model = model
         self._region = region
+        self._image_models = [h.lower() for h in (image_models or [])]
         # Some model families reject `temperature` outright with a 400
         # ValidationException rather than accepting/ignoring it (see the
         # direct Anthropic provider's identical fallback). Detected lazily on
@@ -144,6 +171,15 @@ class BedrockProvider:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def supports_images(self) -> bool:
+        """Per-model image support: Claude and Nova IDs by default, or — when
+        an image_models override was passed in — only models matching it."""
+        model_lower = self._model.lower()
+        if self._image_models:
+            return any(hint in model_lower for hint in self._image_models)
+        return any(hint in model_lower for hint in _DEFAULT_IMAGE_MODEL_HINTS)
 
     async def _converse(self, inference_config: dict[str, Any], **kwargs: Any) -> dict:
         """Call `bedrock-runtime.converse`, retrying once without `temperature`
@@ -242,6 +278,12 @@ class BedrockProvider:
                 self._record_usage(response)
 
                 stop_reason = response.get("stopReason", "")
+
+                if stop_reason in _REFUSAL_STOP_REASONS:
+                    raise ProviderRefusalError(
+                        provider=self.name,
+                        message=f"Bedrock refused the request (stopReason={stop_reason!r})",
+                    )
 
                 if stop_reason == "max_tokens" and budget < _MAX_AUTO_BUMP:
                     old = budget

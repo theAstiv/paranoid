@@ -33,6 +33,10 @@ class _OllamaMockProvider(MockProvider):
     """MockProvider that identifies as the Ollama provider, to exercise the
     runner's vision-unsupported degrade path without a real Ollama install."""
 
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("supports_images", False)
+        super().__init__(*args, **kwargs)
+
     @property
     def name(self) -> str:
         return "ollama"
@@ -236,6 +240,73 @@ async def test_runner_provider_error_during_threats_degrades_gracefully():
     # A warning info event should mention the offline fallback
     info_events = [e for e in events if e.status == "info" and e.step == PipelineStep.RULE_ENGINE]
     assert any("rule-engine-only" in e.message for e in info_events)
+
+
+@pytest.mark.asyncio
+async def test_runner_refusal_is_flagged_and_counted():
+    """A ProviderRefusalError degrades the same way a generic ProviderError
+    does, but its info event and the run's usage summary mark it as a
+    refusal rather than an indistinguishable provider failure (PR A)."""
+    provider = MockProvider()
+    provider.refusal_types.add(ThreatsList)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-refusal")
+
+    events = await _collect_events(runner, "A web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] == "provider_offline"
+    assert complete.data["usage"]["refusal_count"] == 1
+
+    info_events = [e for e in events if e.status == "info" and e.step == PipelineStep.RULE_ENGINE]
+    assert any(e.data.get("refusal") is True for e in info_events)
+
+
+@pytest.mark.asyncio
+async def test_runner_refusal_during_pre_loop_counts_once():
+    """A refusal on the very first LLM call (summarize) must be counted
+    exactly once — regression test for a bug where _call_step's own catch
+    and the pre-loop handler each incremented the same exception."""
+    provider = MockProvider()
+    provider.refusal_types.add(SummaryState)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-refusal-preloop")
+
+    events = await _collect_events(runner, "A web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.data["stopped_reason"] == "provider_offline"
+    assert complete.data["usage"]["refusal_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_refusal_on_fast_model_counts_once_and_falls_back_to_main():
+    """A refusal on the fast model (extract_assets defaults to fast) is
+    counted once and the run falls back to the main model rather than
+    degrading to rule-engine-only."""
+    main_provider = MockProvider()
+    fast_provider = MockProvider()
+    fast_provider.refusal_types.add(AssetsList)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(
+        provider=main_provider,
+        fast_provider=fast_provider,
+        config=config,
+        model_id="test-refusal-fast",
+    )
+
+    events = await _collect_events(runner, "A web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.step == PipelineStep.COMPLETE
+    assert complete.data["stopped_reason"] != "provider_offline"
+    assert complete.data["usage"]["refusal_count"] == 1
+
+    fallback_events = [
+        e for e in events if e.status == "info" and "retried on main model" in e.message
+    ]
+    assert len(fallback_events) == 1
 
 
 @pytest.mark.asyncio
@@ -764,6 +835,129 @@ async def test_runner_non_ollama_provider_keeps_images():
     for response_model in (ThreatsList, GapAnalysis):
         for call in _calls_for(provider, response_model):
             assert not call["images"], f"{response_model.__name__} iteration call got images"
+
+
+class _BedrockTextOnlyMockProvider(MockProvider):
+    """MockProvider that identifies as a text-only Bedrock model (e.g.
+    gpt-oss/Qwen/DeepSeek), to exercise the per-model (not per-provider)
+    image-support degrade path (PR A)."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("supports_images", False)
+        super().__init__(*args, **kwargs)
+
+    @property
+    def name(self) -> str:
+        return "bedrock"
+
+    @property
+    def model(self) -> str:
+        return "openai.gpt-oss-120b-1:0"
+
+
+@pytest.mark.asyncio
+async def test_runner_text_only_bedrock_model_degrades_like_ollama():
+    """A text-only Bedrock model (gpt-oss/Qwen/DeepSeek) gets the same
+    vision_unsupported degrade as Ollama, driven by supports_images rather
+    than a provider-name check — the run continues on the LLM, it doesn't
+    fall back to the rule engine."""
+    provider = _BedrockTextOnlyMockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-bedrock-text-only")
+
+    diagrams = [_mermaid_diagram("flow"), _image_diagram("arch")]
+    events = [
+        e
+        async for e in runner.run(
+            description="A document sharing app",
+            framework=Framework.STRIDE,
+            diagrams=diagrams,
+        )
+    ]
+
+    warnings = [
+        e
+        for e in events
+        if e.status == "info"
+        and isinstance(e.data, dict)
+        and e.data.get("warning") == "vision_unsupported"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].data["ignored"] == ["arch"]
+    assert "bedrock" in warnings[0].message
+
+    for response_model in (SummaryState, AssetsList, FlowsList):
+        calls = _calls_for(provider, response_model)
+        assert calls, f"expected at least one {response_model.__name__} call"
+        for call in calls:
+            assert not call["images"], f"{response_model.__name__} call got images"
+
+    complete_events = [e for e in events if e.step == PipelineStep.COMPLETE]
+    assert complete_events
+    assert complete_events[-1].status == "completed"
+    assert complete_events[-1].data["threats"].threats, "run should still produce LLM threats"
+
+
+@pytest.mark.asyncio
+async def test_runner_image_support_is_checked_per_call_not_just_main_provider():
+    """A main provider that supports images routed with a fast provider that
+    doesn't must not send images on the fast-routed steps (extract_assets,
+    extract_flows default to fast) — only the main-routed steps (summarize)
+    should get them. Regression test: with_images was previously derived
+    only from the main provider's capability, so a text-only fast model
+    would get sent an image and 400."""
+    main_provider = MockProvider()
+    fast_provider = _BedrockTextOnlyMockProvider(gap_call_threshold=1)
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(
+        provider=main_provider,
+        fast_provider=fast_provider,
+        config=config,
+        model_id="test-mixed-image-support",
+    )
+
+    diagrams = [_image_diagram("arch")]
+    events = [
+        e
+        async for e in runner.run(
+            description="A document sharing app",
+            framework=Framework.STRIDE,
+            diagrams=diagrams,
+        )
+    ]
+
+    complete_events = [e for e in events if e.step == PipelineStep.COMPLETE]
+    assert complete_events
+    assert complete_events[-1].status == "completed"
+
+    summarize_calls = _calls_for(main_provider, SummaryState)
+    assert summarize_calls, "expected at least one SummaryState call on main"
+    for call in summarize_calls:
+        assert call["images"], "summarize runs on main and should get the image"
+
+    for provider, response_model in (
+        (fast_provider, AssetsList),
+        (fast_provider, FlowsList),
+    ):
+        calls = _calls_for(provider, response_model)
+        assert calls, f"expected at least one {response_model.__name__} call on the fast provider"
+        for call in calls:
+            assert not call["images"], (
+                f"{response_model.__name__} ran on the text-only fast provider "
+                "and must not have received the image"
+            )
+
+    fast_warnings = [
+        e
+        for e in events
+        if e.status == "info"
+        and isinstance(e.data, dict)
+        and e.data.get("warning") == "vision_unsupported"
+        and "fast" in e.message
+    ]
+    assert len(fast_warnings) == 1
+    assert fast_warnings[0].data["ignored"] == ["arch"]
+    assert set(fast_warnings[0].data["steps"]) == {"extract_assets", "extract_flows"}
 
 
 @pytest.mark.asyncio

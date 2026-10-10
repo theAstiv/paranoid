@@ -16,6 +16,7 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderRefusalError,
     ProviderTimeoutError,
     ProviderTransientError,
     create_provider,
@@ -602,3 +603,108 @@ def test_build_content_blocks_without_images():
 def test_build_content_blocks_with_shared_context():
     blocks = _build_content_blocks("dynamic prompt", None, "stable shared context")
     assert blocks == [{"text": "stable shared context"}, {"text": "dynamic prompt"}]
+
+
+# ---------------------------------------------------------------------------
+# supports_images (per-model capability, PR A)
+# ---------------------------------------------------------------------------
+
+
+def _make_bedrock_provider(model: str, image_models: list[str] | None = None) -> BedrockProvider:
+    mock_boto3 = MagicMock()
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        return BedrockProvider(model=model, image_models=image_models)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "amazon.nova-pro-v1:0",
+        "us.amazon.nova-lite-v1:0",
+    ],
+)
+def test_bedrock_supports_images_default_claude_and_nova(model):
+    provider = _make_bedrock_provider(model)
+    assert provider.supports_images is True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "openai.gpt-oss-120b-1:0",
+        "qwen.qwen3-32b-v1:0",
+        "deepseek.r1-v1:0",
+        # Nova Micro is text-only, unlike the other Nova sizes.
+        "amazon.nova-micro-v1:0",
+    ],
+)
+def test_bedrock_supports_images_default_text_only(model):
+    provider = _make_bedrock_provider(model)
+    assert provider.supports_images is False
+
+
+def test_bedrock_image_models_override_restricts_to_listed_models():
+    """BEDROCK_IMAGE_MODELS, when set, replaces the built-in default — a
+    model that would default to text-only can be opted in, and a Claude
+    model not on the list is opted back out, without a code change."""
+    opted_in = _make_bedrock_provider("openai.gpt-oss-120b-1:0", image_models=["gpt-oss"])
+    assert opted_in.supports_images is True
+
+    opted_out = _make_bedrock_provider(
+        "us.anthropic.claude-sonnet-4-20250514-v1:0", image_models=["gpt-oss"]
+    )
+    assert opted_out.supports_images is False
+
+
+# ---------------------------------------------------------------------------
+# Refusals (PR A): content_filtered / guardrail_intervened -> ProviderRefusalError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stop_reason", ["content_filtered", "guardrail_intervened", "refusal"])
+@pytest.mark.asyncio
+async def test_bedrock_refusal_stop_reason_raises_refusal_error(stop_reason):
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = {
+        "stopReason": stop_reason,
+        "output": {"message": {"content": []}},
+    }
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        with pytest.raises(ProviderRefusalError):
+            await provider.generate_structured("test prompt", _SimpleModel)
+
+
+@pytest.mark.asyncio
+async def test_bedrock_refusal_is_not_retried():
+    """A refusal is non-transient: it must surface on the first attempt, not
+    burn through the auto-bump retry budget."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = {
+        "stopReason": "content_filtered",
+        "output": {"message": {"content": []}},
+    }
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        with pytest.raises(ProviderRefusalError):
+            await provider.generate_structured("test prompt", _SimpleModel)
+
+    assert mock_client.converse.call_count == 1

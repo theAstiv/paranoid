@@ -191,6 +191,11 @@ class AnthropicProvider:
         """Model identifier."""
         return self._model
 
+    @property
+    def supports_images(self) -> bool:
+        """Claude models support vision."""
+        return True
+
     async def generate_structured(
         self,
         prompt: str,

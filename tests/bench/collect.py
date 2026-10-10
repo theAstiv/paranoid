@@ -205,6 +205,7 @@ def collect_run(run_dir: Path, arm: Arm, prices: PriceTable | None) -> dict:
                 for s in usage.get("steps", [])
             ],
             "fast_routing_disabled": usage.get("fast_routing_disabled"),
+            "refusal_count": usage.get("refusal_count", 0),
         }
         row["cost"] = float(cost) if cost is not None else None
         row["step_cost"] = {
