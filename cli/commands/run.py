@@ -653,7 +653,11 @@ def run(
         try:
             _extra: dict = {}
             if settings.default_provider == "bedrock":
-                _extra = {"region": settings.aws_region, "profile": settings.aws_profile}
+                _extra = {
+                    "region": settings.aws_region,
+                    "profile": settings.aws_profile,
+                    "image_models": settings.bedrock_image_models,
+                }
             elif settings.default_provider == "anthropic" and settings.anthropic_effort:
                 _extra = {"effort": settings.anthropic_effort}
             provider = create_provider(

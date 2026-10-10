@@ -101,6 +101,11 @@ class LLMProvider(Protocol):
         """Model identifier being used."""
         ...
 
+    @property
+    def supports_images(self) -> bool:
+        """Whether this provider instance accepts image content blocks."""
+        ...
+
 
 class ProviderError(Exception):
     """Base exception for provider errors."""
@@ -133,6 +138,13 @@ class ProviderRateLimitError(ProviderTransientError):
 
 class ProviderAuthError(ProviderError):
     """Raised when provider authentication fails."""
+
+    pass
+
+
+class ProviderRefusalError(ProviderError):
+    """The model refused to answer, or a content filter / guardrail blocked
+    the response (not transient: retrying the same prompt won't help)."""
 
     pass
 

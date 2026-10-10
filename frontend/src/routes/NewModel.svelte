@@ -398,7 +398,7 @@
           <p class="mt-1 text-xs text-c-faint">
             PNG/JPG up to {(MAX_IMAGE_SIZE_BYTES / 1024 / 1024).toFixed(2)} MB each ({MAX_TOTAL_IMAGE_BYTES / 1024 / 1024} MB total),
             Mermaid .mmd/.txt up to {MAX_MERMAID_SIZE_BYTES / 1024} KB each ({MAX_TOTAL_MERMAID_BYTES / 1024} KB total). Max {MAX_DIAGRAMS} diagrams.
-            Images are read by vision models. The Ollama provider doesn't send images; Mermaid diagrams are still used.
+            Images are read by vision models. Some providers/models (Ollama, and text-only Bedrock models) don't send images; Mermaid diagrams are still used.
           </p>
         </div>
 

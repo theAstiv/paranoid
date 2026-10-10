@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     aws_region: str = ""
     aws_profile: str = ""
     default_model: str = "claude-sonnet-4-20250514"
+    # Override for which Bedrock model IDs accept images, without a code
+    # change. Comma-separated list of model-ID substrings; a model whose ID
+    # contains any of these (case-insensitive) is treated as image-capable.
+    # Empty (default) falls back to BedrockProvider's built-in default:
+    # Claude and Nova model IDs take images, everything else is text-only.
+    # NoDecode: pydantic-settings otherwise tries to JSON-decode a list[str]
+    # env var, so BEDROCK_IMAGE_MODELS=foo,bar would raise a startup
+    # SettingsError instead of splitting on commas (see parse_comma_list below).
+    bedrock_image_models: Annotated[list[str], NoDecode] = Field(default_factory=list)
     # Fast model is used for cheaper extraction steps (assets/flows) and
     # enrichment (attack trees / test cases).  Only applies when
     # default_provider == 'anthropic'.  Set FAST_MODEL="" to disable.
@@ -199,6 +208,13 @@ class Settings(BaseSettings):
     # Empty list (default) loads all 16 collections — no behaviour change.
     # Example: SEED_COLLECTIONS=stride,auth,cloud
     seed_collections: list[str] = Field(default_factory=list)
+
+    @field_validator("bedrock_image_models", mode="before")
+    @classmethod
+    def parse_bedrock_image_models(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        return [item.strip() for item in v.split(",") if item.strip()]
 
     @field_validator("anthropic_effort", mode="before")
     @classmethod

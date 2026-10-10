@@ -165,15 +165,23 @@ def test_bedrock_kwargs_non_bedrock_returns_empty():
 def test_bedrock_kwargs_bedrock_returns_region_profile(monkeypatch):
     monkeypatch.setattr(settings, "aws_region", "eu-west-1")
     monkeypatch.setattr(settings, "aws_profile", "staging")
+    monkeypatch.setattr(settings, "bedrock_image_models", [])
     result = bedrock_kwargs("bedrock")
-    assert result == {"region": "eu-west-1", "profile": "staging"}
+    assert result == {"region": "eu-west-1", "profile": "staging", "image_models": []}
 
 
 def test_bedrock_kwargs_bedrock_empty_region_profile(monkeypatch):
     monkeypatch.setattr(settings, "aws_region", "")
     monkeypatch.setattr(settings, "aws_profile", "")
+    monkeypatch.setattr(settings, "bedrock_image_models", [])
     result = bedrock_kwargs("bedrock")
-    assert result == {"region": "", "profile": ""}
+    assert result == {"region": "", "profile": "", "image_models": []}
+
+
+def test_bedrock_kwargs_bedrock_returns_image_models_override(monkeypatch):
+    monkeypatch.setattr(settings, "bedrock_image_models", ["gpt-oss", "qwen"])
+    result = bedrock_kwargs("bedrock")
+    assert result["image_models"] == ["gpt-oss", "qwen"]
 
 
 def test_build_provider_from_record_passes_bedrock_kwargs(monkeypatch):

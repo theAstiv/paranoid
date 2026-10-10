@@ -33,6 +33,16 @@ def test_step_models_default_empty():
     assert _settings().step_models == {}
 
 
+def test_bedrock_image_models_default_empty():
+    assert _settings().bedrock_image_models == []
+
+
+def test_bedrock_image_models_env_var_comma_separated(monkeypatch):
+    monkeypatch.setenv("BEDROCK_IMAGE_MODELS", "gpt-oss, qwen")
+    s = _settings()
+    assert s.bedrock_image_models == ["gpt-oss", "qwen"]
+
+
 def test_step_models_env_var_parsed_as_json(monkeypatch):
     monkeypatch.setenv("STEP_MODELS", '{"extract_flows": "main", "summarize": "fast"}')
     s = _settings()

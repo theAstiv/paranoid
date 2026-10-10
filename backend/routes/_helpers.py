@@ -23,14 +23,18 @@ def get_api_key(provider_type: str, settings_obj: Settings | None = None) -> str
 
 
 def bedrock_kwargs(provider_type: str, settings_obj: Settings | None = None) -> dict:
-    """Return region/profile kwargs for create_provider when provider is bedrock.
+    """Return region/profile/image-model kwargs for create_provider when provider is bedrock.
 
     Non-bedrock callers spread an empty dict, so this is always safe to pass through.
     """
     s = settings_obj or settings
     if provider_type != "bedrock":
         return {}
-    return {"region": s.aws_region, "profile": s.aws_profile}
+    return {
+        "region": s.aws_region,
+        "profile": s.aws_profile,
+        "image_models": s.bedrock_image_models,
+    }
 
 
 def anthropic_kwargs(provider_type: str) -> dict:

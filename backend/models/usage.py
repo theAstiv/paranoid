@@ -74,3 +74,7 @@ class RunUsage(BaseModel):
     # breaker, so later fast-routed steps ran on main — such a run's token
     # split doesn't represent the configured routing.
     fast_routing_disabled: bool = False
+    # Number of ProviderRefusalError occurrences during the run (a model or
+    # content filter declined to answer) — reported separately from other
+    # provider failures since retrying the same prompt won't help.
+    refusal_count: int = 0

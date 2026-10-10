@@ -111,6 +111,11 @@ class OpenAIProvider:
         """Model identifier."""
         return self._model
 
+    @property
+    def supports_images(self) -> bool:
+        """Vision-capable GPT-4o-class models support images."""
+        return True
+
     async def generate_structured(
         self,
         prompt: str,
