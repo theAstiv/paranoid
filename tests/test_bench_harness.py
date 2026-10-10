@@ -1,7 +1,9 @@
 """CI-safe tests for the live benchmark harness (tests/bench/). No network, no credentials."""
 
 import json
+import os
 import sqlite3
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
@@ -247,10 +249,39 @@ def test_estimates_unpriced_free_routing_and_web():
 # --- runner -------------------------------------------------------------------
 
 
-def _fake_executor(calls: list):
+def _write_minimal_db(path: Path, llm_threats: int, total_tokens: int) -> None:
+    """Just the tables and columns collect_run reads, with a completed model."""
+    usage = json.dumps({"steps": [], "by_model": [], "total_tokens": total_tokens})
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.executescript(
+            """
+            CREATE TABLE threat_models (id TEXT, status TEXT, usage_summary TEXT, created_at TEXT);
+            CREATE TABLE threats (model_id TEXT, name TEXT, description TEXT, target TEXT, source TEXT,
+                stride_category TEXT, maestro_category TEXT, attack_techniques TEXT,
+                cvss_vector TEXT, cvss_score REAL, cvss_severity TEXT);
+            CREATE TABLE assets (model_id TEXT, name TEXT);
+            CREATE TABLE flows (model_id TEXT, source_entity TEXT, target_entity TEXT, flow_description TEXT);
+            CREATE TABLE model_diagrams (model_id TEXT, name TEXT, kind TEXT, position INT, created_at TEXT);
+            CREATE TABLE dependency_scans (model_id TEXT);
+            """
+        )
+        conn.execute(
+            "INSERT INTO threat_models VALUES ('m1', 'completed', ?, '2026-10-10')", (usage,)
+        )
+        conn.executemany(
+            "INSERT INTO threats (model_id, name, source) VALUES ('m1', ?, ?)",
+            [(f"llm {i}", "llm") for i in range(llm_threats)] + [("rule", "rule_engine")],
+        )
+
+
+def _fake_executor(
+    calls: list, *, llm_threats: int = 3, total_tokens: int = 1000, write_db: bool = True
+):
     def run(arm, run_dir, env, timeout_s):
         calls.append((arm.id, run_dir.name, env["DB_PATH"]))
         run_dir.mkdir(parents=True, exist_ok=True)
+        if write_db:  # no DB -> no measured cost, so the runner falls back to the estimate
+            _write_minimal_db(run_dir / "paranoid.db", llm_threats, total_tokens)
         (run_dir / "run.json").write_text(
             json.dumps({"exit_code": 0, "started": 0, "finished": 1}), encoding="utf-8"
         )
@@ -307,7 +338,7 @@ def test_runner_stops_before_crossing_the_cap(tmp_path):
             {},
             prices,
             max_cost=one_run * 2 + Decimal("0.001"),
-            executor=_fake_executor(calls),
+            executor=_fake_executor(calls, write_db=False),
             log=lambda _: None,
         )
     assert len(calls) == 2
@@ -355,6 +386,81 @@ def test_runner_records_only_allow_listed_settings(tmp_path):
     assert "secret" not in recorded
     assert "sk" not in recorded
     assert "us-east-1" in recorded
+
+
+def test_runner_fails_and_retries_a_run_that_fell_back_to_the_rule_engine(tmp_path):
+    """10-09: expired credentials gave 17 rule-engine-only runs recorded as ok and
+    skipped on resume. A run whose LLM produced nothing must fail and be retried."""
+    settings = load_settings({"BENCH_OUT_DIR": str(tmp_path)})
+    prices = _prices(OPUS_55=(4, 20))
+    suite = _suite(Arm(id="a", main=OPUS), reps=1)
+    calls: list = []
+    first = run_suite(
+        suite,
+        settings,
+        {},
+        prices,
+        max_cost=Decimal(100),
+        executor=_fake_executor(calls, llm_threats=0, total_tokens=0),
+        log=lambda _: None,
+    )
+    assert first[0]["outcome"] == "failed"
+    assert not first[0]["gates"]["llm_produced_output"]["ok"]
+    second = run_suite(
+        suite,
+        settings,
+        {},
+        prices,
+        max_cost=Decimal(100),
+        executor=_fake_executor(calls),
+        log=lambda _: None,
+    )
+    assert second[0]["outcome"] == "ok"
+    assert len(calls) == 2
+
+
+def test_retry_archives_the_previous_attempt(tmp_path):
+    settings = load_settings({"BENCH_OUT_DIR": str(tmp_path)})
+    prices = _prices(OPUS_55=(4, 20))
+    suite = _suite(Arm(id="a", main=OPUS), reps=1)
+    run_suite(
+        suite,
+        settings,
+        {},
+        prices,
+        max_cost=Decimal(100),
+        executor=_fake_executor([], llm_threats=0),
+        log=lambda _: None,
+    )
+    (tmp_path / "t" / "a" / "rep-1" / "calls.jsonl").write_text("stale", encoding="utf-8")
+    run_suite(
+        suite,
+        settings,
+        {},
+        prices,
+        max_cost=Decimal(100),
+        executor=_fake_executor([]),
+        log=lambda _: None,
+    )
+    fresh = tmp_path / "t" / "a" / "rep-1"
+    archived = tmp_path / "t" / "a" / "rep-1.attempt-1"
+    assert (archived / "calls.jsonl").read_text(encoding="utf-8") == "stale"
+    assert not (fresh / "calls.jsonl").exists()
+
+
+def test_no_llm_arms_skip_the_implicit_gate(tmp_path):
+    settings = load_settings({"BENCH_OUT_DIR": str(tmp_path)})
+    rows = run_suite(
+        _suite(Arm(id="n", main=None), reps=1),
+        settings,
+        {},
+        None,
+        max_cost=Decimal(1),
+        executor=_fake_executor([], llm_threats=0, total_tokens=0),
+        log=lambda _: None,
+    )
+    assert "llm_produced_output" not in rows[0]["gates"]
+    assert rows[0]["outcome"] == "ok"
 
 
 # --- report -------------------------------------------------------------------
@@ -433,7 +539,7 @@ def test_match_threats_uses_threshold():
 def test_spotcheck_sheet_is_blinded(tmp_path):
     run_dir = tmp_path / "suite" / "arm-x" / "rep-1"
     run_dir.mkdir(parents=True)
-    with sqlite3.connect(run_dir / "paranoid.db") as conn:
+    with closing(sqlite3.connect(run_dir / "paranoid.db")) as conn, conn:
         conn.execute("CREATE TABLE threat_models (id TEXT, created_at TEXT)")
         conn.execute("CREATE TABLE threats (model_id TEXT, name TEXT, description TEXT)")
         conn.execute("INSERT INTO threat_models VALUES ('m1', '2026-10-09')")
@@ -479,3 +585,58 @@ def test_fixture_inputs_exist():
         *DIAGRAMS,
     ]:
         assert Path(path).is_file(), path
+
+
+def test_aws_settings_from_bench_env_reach_os_environ_without_overriding(monkeypatch):
+    """spike calls boto3 in-process, which reads os.environ, not the merged dict."""
+    from tests.bench.__main__ import _export_aws_settings
+
+    fake_environ = {"AWS_REGION": "eu-west-1"}
+    monkeypatch.setattr(os, "environ", fake_environ)  # nothing leaks into later tests
+    _export_aws_settings(
+        {"AWS_PROFILE": "bench", "AWS_REGION": "us-east-2", "BENCH_MODEL_OPUS_55": "x"}
+    )
+    assert fake_environ == {
+        "AWS_REGION": "eu-west-1",
+        "AWS_PROFILE": "bench",
+    }  # real env wins; non-AWS keys untouched
+
+
+def test_converse_shape_distinguishes_the_two_structured_output_failures():
+    """10-09: 'should be a valid list' (a list sent as a JSON string) vs 'Field required,
+    input_value={}' (an empty tool input) need different fixes; the log must tell them apart."""
+    from tests.bench.run_one import converse_shape
+
+    kwargs = {
+        "modelId": "opus.id",
+        "inferenceConfig": {"maxTokens": 16384},
+        "toolConfig": {"toolChoice": {"auto": {}}},
+    }
+    stringified = {
+        "stopReason": "tool_use",
+        "usage": {"outputTokens": 900},
+        "output": {
+            "message": {
+                "content": [
+                    {"reasoningContent": {}},
+                    {"toolUse": {"input": {"threats": '[{"name": "x"}]'}}},
+                ]
+            }
+        },
+    }
+    shape = converse_shape(kwargs, stringified, None)
+    assert shape["tool_choice"] == "auto"
+    assert shape["max_tokens"] == 16384
+    assert shape["blocks"] == ["reasoningContent", "toolUse"]
+    assert shape["tool_input_shape"] == [{"threats": "str(json)"}]
+
+    empty = {
+        "stopReason": "max_tokens",
+        "output": {"message": {"content": [{"toolUse": {"input": {}}}]}},
+    }
+    assert converse_shape(kwargs, empty, None)["tool_input_shape"] == [{}]
+    assert converse_shape(kwargs, empty, None)["stop_reason"] == "max_tokens"
+
+    failed = converse_shape(kwargs, None, "ValidationException: tool_choice not supported")
+    assert failed["error"].startswith("ValidationException")
+    assert "stop_reason" not in failed

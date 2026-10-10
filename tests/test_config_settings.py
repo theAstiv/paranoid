@@ -1,5 +1,7 @@
 """Tests for Settings fields added in week 4a-2 (per-step model routing)."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -35,6 +37,28 @@ def test_step_models_env_var_parsed_as_json(monkeypatch):
     monkeypatch.setenv("STEP_MODELS", '{"extract_flows": "main", "summarize": "fast"}')
     s = _settings()
     assert s.step_models == {"extract_flows": "main", "summarize": "fast"}
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_step_models_blank_env_var_means_no_overrides(monkeypatch, blank):
+    """`STEP_MODELS=` (as shipped in .env.example) must not crash settings load."""
+    monkeypatch.setenv("STEP_MODELS", blank)
+    assert _settings().step_models == {}
+
+
+def test_step_models_rejects_invalid_json_with_a_clear_error(monkeypatch):
+    monkeypatch.setenv("STEP_MODELS", "extract_flows=main")
+    with pytest.raises(ValidationError, match="STEP_MODELS must be a JSON object"):
+        _settings()
+
+
+def test_env_example_loads(monkeypatch):
+    """The quickstart is `cp .env.example .env`: that file must load as-is."""
+    for var in ("DEFAULT_PROVIDER", "DEFAULT_MODEL", "LOG_LEVEL", "DB_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    env_example = Path(__file__).resolve().parent.parent / ".env.example"
+    s = Settings(_env_file=env_example)
+    assert s.step_models == {}
 
 
 def test_step_models_rejects_invalid_choice(monkeypatch):

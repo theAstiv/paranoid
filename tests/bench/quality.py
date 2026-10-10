@@ -11,6 +11,7 @@ import math
 import random
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -69,7 +70,7 @@ def match_threats(
 
 def run_threats(run_dir: Path) -> list[tuple[str, str]]:
     db = run_dir / "paranoid.db"
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         mid = conn.execute(
             "SELECT id FROM threat_models ORDER BY created_at DESC LIMIT 1"
         ).fetchone()[0]

@@ -8,10 +8,12 @@ and writes run.json. stdout/stderr are captured to files by the parent.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 from tests.bench.matrix import (
@@ -90,6 +92,66 @@ def _install_call_logger(calls_path: Path) -> None:
             ):
                 continue
             cls.generate_structured = _wrap(cls.generate_structured, module_name, calls_path)
+    _install_converse_logger(calls_path.parent / "converse.jsonl")
+
+
+def _value_type(value: object) -> str:
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        # A JSON document sent as a string, e.g. a list field returned as "[...]".
+        return "str(json)" if stripped[:1] in ("[", "{") else "str"
+    return type(value).__name__
+
+
+def converse_shape(kwargs: dict, response: dict | None, error: str | None) -> dict:
+    """What one Bedrock converse call asked for and got back (pure; unit-tested)."""
+    tool_choice = (kwargs.get("toolConfig") or {}).get("toolChoice") or {}
+    record: dict = {
+        "model": kwargs.get("modelId"),
+        "tool_choice": next(iter(tool_choice), None),
+        "max_tokens": (kwargs.get("inferenceConfig") or {}).get("maxTokens"),
+        "error": error,
+    }
+    if response is not None:
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        record["stop_reason"] = response.get("stopReason")
+        record["blocks"] = [next(iter(b), "?") for b in blocks]
+        record["output_tokens"] = (response.get("usage") or {}).get("outputTokens")
+        tool_inputs = [b["toolUse"].get("input") for b in blocks if "toolUse" in b]
+        record["tool_input_shape"] = [
+            {k: _value_type(v) for k, v in ti.items()} if isinstance(ti, dict) else _value_type(ti)
+            for ti in tool_inputs
+        ]
+    return record
+
+
+def _install_converse_logger(path: Path) -> None:
+    """One line per raw Bedrock converse call: stop reason, block kinds, tool-input shape."""
+    try:
+        from backend.providers.bedrock import BedrockProvider
+    except ImportError:
+        return
+    original = BedrockProvider._converse
+    if getattr(original, "_bench_wrapped", False):
+        return
+
+    async def logged(self, inference_config, **kwargs):
+        response, error = None, None
+        try:
+            response = await original(self, inference_config, **kwargs)
+            return response
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            raise
+        finally:
+            record = converse_shape(
+                {**kwargs, "inferenceConfig": inference_config}, response, error
+            )
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+
+    logged._bench_wrapped = True
+    BedrockProvider._converse = logged
 
 
 def _wrap(original, provider_name: str, calls_path: Path):
@@ -142,7 +204,7 @@ def _wrap(original, provider_name: str, calls_path: Path):
 def _saved_model_id(db_path: Path) -> str | None:
     if not db_path.is_file():
         return None
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         row = conn.execute(
             "SELECT id FROM threat_models ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
@@ -192,4 +254,9 @@ def main(run_dir: Path, arm: Arm) -> int:
 if __name__ == "__main__":
     _run_dir = Path(sys.argv[1])
     _arm = Arm.model_validate_json(Path(sys.argv[2]).read_text(encoding="utf-8"))
-    sys.exit(main(_run_dir, _arm))
+    _code = main(_run_dir, _arm)
+    # A lingering aiosqlite thread can keep the interpreter alive after the CLI
+    # finishes (10-09), so exit hard, after flushing what the parent reads.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_code)

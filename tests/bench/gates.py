@@ -29,6 +29,21 @@ def completed(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
     )
 
 
+def llm_produced_output(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
+    """Implicit on every arm with a model: the LLM must actually have contributed.
+
+    A run that fell back to the rule engine (expired credentials, a provider 400,
+    a validation failure) still exits 0 with ~17 threats; without this check it
+    was recorded as ok and skipped on resume (10-09: 17 runs after a token expiry).
+    """
+    db = row.get("db") or {}
+    llm = db.get("by_source", {}).get("llm", 0)
+    fallback = row.get("reliability", {}).get("rule_engine_fallback", 0)
+    tokens = (row.get("usage") or {}).get("total_tokens") or 0
+    ok = llm > 0 and fallback == 0 and tokens > 0
+    return ok, f"llm threats={llm} fallback lines={fallback} tokens={tokens}"
+
+
 def no_rule_engine_fallback(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
     rel = row.get("reliability", {})
     usage = row.get("usage") or {}
@@ -217,6 +232,7 @@ GATES: dict[str, Gate] = {
     g.__name__: g
     for g in [
         completed,
+        llm_produced_output,
         no_rule_engine_fallback,
         rule_engine_fallback_reported,
         sources_present,
@@ -235,7 +251,10 @@ GATES: dict[str, Gate] = {
 
 def evaluate(row: dict, arm: Arm, run_dir: Path) -> dict[str, dict]:
     results = {}
-    for name in arm.gates:
+    names = list(arm.gates)
+    if arm.main is not None and "llm_produced_output" not in names:
+        names.insert(0, "llm_produced_output")
+    for name in names:
         try:
             ok, detail = GATES[name](row, arm, run_dir)
         except Exception as exc:  # a crashing gate is a failed gate, with the reason kept

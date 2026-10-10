@@ -46,7 +46,7 @@ Use these as sanity baselines, not as the answer:
 ## 2. Setup
 
 ```bash
-pip install -e ".[dev,bedrock]"   # bedrock extra = boto3
+pip install -e ".[dev,bedrock]"   # bedrock extra = boto3; dev includes pypdf for the PDF export gate
 pip install semgrep               # external binary used by the dependency engine
 ```
 
@@ -124,7 +124,8 @@ python -m tests.bench list
   - Spend is tracked from real token usage × the price file.
   - Unpriced models are refused by default.
 - **Timeouts:** each run is its own subprocess. On timeout the whole process tree is killed (`taskkill /T /F` on Windows), so a hung `aiosqlite` thread can't stall the batch. The run is recorded as `timeout`.
-- **Isolation:** every run gets a scratch SQLite DB inside its run directory, so the dev database is never touched.
+- **Isolation:** every run gets a scratch SQLite DB inside its run directory, so the dev database is never touched. A retry first moves the previous attempt to `rep-N.attempt-K`, so attempts never mix.
+- **No silent fallbacks:** every arm that has a model also gets an implicit `llm_produced_output` gate. A run where the LLM produced nothing fails and is retried: an expired token, a provider 400, a validation failure. Such a run otherwise exits 0 with the ~17-threat rule-engine baseline (10 rule-engine + 7 dependency threats on this fixture). **17 threats on the full fixture is the signature of a fallback.**
 - **No secrets in artifacts:** only allow-listed settings (`AWS_REGION`, `AWS_PROFILE`, effort, fast-model and iteration settings) are recorded.
 - **Concurrency is 1.** Don't parallelise runs of the same model: timings get skewed and Bedrock throttles.
 
@@ -154,6 +155,7 @@ Each run directory (`data/benchmarks/<suite>/<arm>/rep-N/`) contains:
 - `paranoid.db`: the scratch DB;
 - `out.json`: the full CLI output, including the event stream;
 - `calls.jsonl`: one line per LLM call, with image count, diagram tags, probe terms in the prompt, timing and error;
+- `converse.jsonl` (Bedrock): one line per raw Converse call, with the tool choice and `maxTokens` sent, the stop reason, the content block kinds, and each tool input's keys and value types (`str(json)` marks a JSON document sent as a string);
 - `stdout.log` / `stderr.log`;
 - the exports;
 - `run.json`: metadata (arm, CLI args, exit code, times, exports).
@@ -167,9 +169,12 @@ Each run directory (`data/benchmarks/<suite>/<arm>/rep-N/`) contains:
 | Issue | Effect | Status to check |
 |---|---|---|
 | **Forced tool choice on Claude 5.x on Bedrock.** Opus 5.5, Sonnet 5.5 and Fable 5.1 reject forced `toolChoice` | Without the fix, every step on those models fails and falls back to the rule engine | **PR #124** (`fix/bedrock-tool-choice`). Make sure it's merged into the checkout you run. The spike's `forced_tool` vs `auto_tool` columns and a "rejects forced tool choice" log line confirm the behaviour |
-| **Images to text-only Bedrock models.** The pipeline only skips images for the `ollama` provider | gpt-oss, Qwen and DeepSeek may 400 on extraction whenever the PNG is attached | Open (planned fix: per-model image capability on providers). Until then, run text-only models in `e2e-degraded` first; if they 400, report it and run them on Mermaid-only inputs |
+| **Images to text-only Bedrock models.** The pipeline only skips images for the `ollama` provider | **Confirmed 10-09:** gpt-oss, Qwen and DeepSeek get a 400 on the image. A provider error before the iterations sends the **whole run** to the rule engine; the call isn't retried without the image, so these models produced no LLM output at all | Open (planned fix: per-model image capability on providers). Until it lands, judge text-only models only on runs without the PNG |
 | **No effort control on Bedrock.** `ANTHROPIC_EFFORT` only reaches the direct Anthropic provider | Claude on Bedrock runs at its own default effort (Opus 5.5 `medium`, Sonnet 5 `high`), so comparisons aren't effort-matched | Open (planned: pass effort through `additionalModelRequestFields`). The spike's `effort_field` column says whether Bedrock accepts it. State the effective effort in every report |
 | **No prompt caching on Bedrock** in Paranoid's provider | Bedrock costs are higher than the direct-API numbers on record; don't compare them directly | Open (optional enhancement) |
+| **SARIF from a saved-model export** (`paranoid models export`, web export) has no physical location for non-dependency threats | `exports_valid` fails on SARIF for those exports; `paranoid run --format sarif` is fine | Known product issue P7; expected to fail until fixed |
+| **Bedrock structured-output failures on Claude 5.x** (10-09: Opus 5.5, Sonnet 5, Haiku 5.5, Fable 5.1). Two shapes: a list field returned as a JSON string, and an empty tool input | The step fails, and before the iterations that means a whole-run fallback | Open; `converse.jsonl` records which shape each failure is. Include it in the report |
+| **MAESTRO categories are never saved** for LLM threats (threat generation uses the STRIDE-only schema) | `e2e-maestro`'s `maestro_present` gate fails | Open product bug; expected to fail until fixed |
 | **Refusals look like format errors.** A refusal or content filter shows up as "Bedrock returned no tool_use block" | Refusal counts are approximate | Open (planned: a distinct refusal error). Count "no tool_use block" errors in `calls.jsonl` separately |
 | **`tests/test_pipeline_e2e.py` is broken.** It still passes `diagram_data=`, which no longer exists | It fails if run | Don't use it; the suites here replace it |
 
