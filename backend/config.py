@@ -1,10 +1,11 @@
 """Application configuration using pydantic-settings."""
 
+import json
 import sys
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 # Mirrors the keys of backend.pipeline.runner's _DEFAULT_STEP_MODELS — the
@@ -74,7 +75,9 @@ class Settings(BaseSettings):
     # backend.pipeline.runner.resolve_step_models(). Validated eagerly below
     # (step names, "fast"/"main" values, and the forbidden-fast rule) so a
     # bad env var fails at startup, not on the first pipeline run.
-    step_models: dict[str, str] = Field(default_factory=dict)
+    # NoDecode: parsed by parse_step_models below, so a blank `STEP_MODELS=`
+    # (as shipped in .env.example) means "no overrides" instead of a JSON error.
+    step_models: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
 
     # Embedding settings
     embedding_model: str = "BAAI/bge-small-en-v1.5"
@@ -202,6 +205,20 @@ class Settings(BaseSettings):
     def blank_effort_is_unset(cls, v: object) -> object:
         # `ANTHROPIC_EFFORT=` in .env arrives as "" rather than being absent.
         return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("step_models", mode="before")
+    @classmethod
+    def parse_step_models(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        if not v.strip():
+            return {}
+        try:
+            return json.loads(v)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f'STEP_MODELS must be a JSON object, e.g. {{"extract_flows": "main"}}: {e}'
+            ) from e
 
     @field_validator("step_models")
     @classmethod
