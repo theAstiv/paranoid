@@ -8,6 +8,7 @@ and writes run.json. stdout/stderr are captured to files by the parent.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -193,4 +194,9 @@ def main(run_dir: Path, arm: Arm) -> int:
 if __name__ == "__main__":
     _run_dir = Path(sys.argv[1])
     _arm = Arm.model_validate_json(Path(sys.argv[2]).read_text(encoding="utf-8"))
-    sys.exit(main(_run_dir, _arm))
+    _code = main(_run_dir, _arm)
+    # A lingering aiosqlite thread can keep the interpreter alive after the CLI
+    # finishes (10-09), so exit hard, after flushing what the parent reads.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_code)

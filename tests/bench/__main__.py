@@ -5,6 +5,7 @@ about to do and require --yes. `run` also requires a spend cap.
 """
 
 import argparse
+import os
 import sys
 from decimal import Decimal
 
@@ -14,8 +15,28 @@ from tests.bench.matrix import EXTERNAL_SUITES, build_suites
 from tests.bench.prices import load_prices
 
 
+# boto3 reads credentials from os.environ / the profile chain, not from our merged
+# dict. Pipeline runs get the merged env in their subprocess, but `spike` calls
+# boto3 in this process, so copy the AWS settings from bench.env across first.
+_AWS_KEYS = (
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_PROFILE",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
+
+
+def _export_aws_settings(env: dict[str, str]) -> None:
+    for key in _AWS_KEYS:
+        if env.get(key) and not os.environ.get(key):
+            os.environ[key] = env[key]
+
+
 def _context():
     env = merged_env()
+    _export_aws_settings(env)
     settings = load_settings(env)
     return env, settings, build_suites(env, settings), load_prices(settings.prices_file)
 

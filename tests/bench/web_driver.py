@@ -9,6 +9,7 @@ Writes the same run.json/out.json/calls.jsonl shape as run_one.py, plus `web_che
 """
 
 import json
+import platform
 import socket
 import subprocess
 import sys
@@ -98,6 +99,8 @@ def run_web(arm: Arm, run_dir: Path, env: dict[str, str], timeout_s: float) -> R
             stdout=out,
             stderr=err,
             stdin=subprocess.DEVNULL,
+            # Own process group, so _kill_tree's killpg reaches the server (POSIX).
+            start_new_session=platform.system() != "Windows",
         )
         try:
             with httpx.Client(base_url=origin, headers={"Origin": origin}, timeout=60) as client:
@@ -207,8 +210,12 @@ def run_web(arm: Arm, run_dir: Path, env: dict[str, str], timeout_s: float) -> R
             meta["exit_code"] = 1
             meta["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
         finally:
-            _kill_tree(proc)
-            proc.wait(timeout=30)
+            # Teardown must never block the suite (10-09: a failed killpg left wait() hanging).
+            try:
+                _kill_tree(proc)
+                proc.wait(timeout=30)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                meta.setdefault("teardown_error", f"{type(exc).__name__}: {exc}")
 
     complete = next((e for e in events if e["step"] == "complete"), {})
     data = complete.get("data") or {}

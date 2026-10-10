@@ -1,6 +1,7 @@
 """CI-safe tests for the live benchmark harness (tests/bench/). No network, no credentials."""
 
 import json
+import os
 import sqlite3
 from contextlib import closing
 from decimal import Decimal
@@ -584,3 +585,18 @@ def test_fixture_inputs_exist():
         *DIAGRAMS,
     ]:
         assert Path(path).is_file(), path
+
+
+def test_aws_settings_from_bench_env_reach_os_environ_without_overriding(monkeypatch):
+    """spike calls boto3 in-process, which reads os.environ, not the merged dict."""
+    from tests.bench.__main__ import _export_aws_settings
+
+    fake_environ = {"AWS_REGION": "eu-west-1"}
+    monkeypatch.setattr(os, "environ", fake_environ)  # nothing leaks into later tests
+    _export_aws_settings(
+        {"AWS_PROFILE": "bench", "AWS_REGION": "us-east-2", "BENCH_MODEL_OPUS_55": "x"}
+    )
+    assert fake_environ == {
+        "AWS_REGION": "eu-west-1",
+        "AWS_PROFILE": "bench",
+    }  # real env wins; non-AWS keys untouched
