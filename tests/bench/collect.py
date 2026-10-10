@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 
 from backend.scoring.cvss31 import score_and_severity
@@ -144,7 +145,7 @@ def collect_run(run_dir: Path, arm: Arm, prices: PriceTable | None) -> dict:
         row["db"] = None
         return row
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.row_factory = sqlite3.Row
         model = conn.execute(
             "SELECT * FROM threat_models ORDER BY created_at DESC LIMIT 1"

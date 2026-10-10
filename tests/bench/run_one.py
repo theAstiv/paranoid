@@ -12,6 +12,7 @@ import re
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 from tests.bench.matrix import (
@@ -142,7 +143,7 @@ def _wrap(original, provider_name: str, calls_path: Path):
 def _saved_model_id(db_path: Path) -> str | None:
     if not db_path.is_file():
         return None
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         row = conn.execute(
             "SELECT id FROM threat_models ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
