@@ -112,6 +112,20 @@ def safe_env_snapshot(env: dict[str, str]) -> dict[str, str]:
     return {k: env[k] for k in ARTIFACT_SAFE_KEYS if k in env}
 
 
+def fresh_run_dir(run_dir: Path) -> Path:
+    """Move a previous attempt aside (rep-N -> rep-N.attempt-K) so a retry starts clean.
+
+    Without this a retry reused the scratch DB and appended to calls.jsonl,
+    mixing attempts (seen 10-09: one web run dir held 390 threat rows).
+    """
+    if run_dir.exists():
+        k = 1
+        while (archived := run_dir.with_name(f"{run_dir.name}.attempt-{k}")).exists():
+            k += 1
+        run_dir.rename(archived)
+    return run_dir
+
+
 def _done_keys(results_path: Path) -> set[tuple[str, int]]:
     if not results_path.is_file():
         return set()
@@ -161,7 +175,7 @@ def run_suite(
                     f"next run {arm.id} rep {rep} (est. {estimate}) would exceed the cap: spent {spent} of {max_cost}"
                 )
 
-            run_dir = suite_dir / arm.id / f"rep-{rep}"
+            run_dir = fresh_run_dir(suite_dir / arm.id / f"rep-{rep}")
             env = run_env(arm, run_dir, base_env, settings)
             timeout_s = settings.run_timeout_s * arm.timeout_factor
             log(
