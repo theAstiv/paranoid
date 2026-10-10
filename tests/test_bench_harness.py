@@ -600,3 +600,43 @@ def test_aws_settings_from_bench_env_reach_os_environ_without_overriding(monkeyp
         "AWS_REGION": "eu-west-1",
         "AWS_PROFILE": "bench",
     }  # real env wins; non-AWS keys untouched
+
+
+def test_converse_shape_distinguishes_the_two_structured_output_failures():
+    """10-09: 'should be a valid list' (a list sent as a JSON string) vs 'Field required,
+    input_value={}' (an empty tool input) need different fixes; the log must tell them apart."""
+    from tests.bench.run_one import converse_shape
+
+    kwargs = {
+        "modelId": "opus.id",
+        "inferenceConfig": {"maxTokens": 16384},
+        "toolConfig": {"toolChoice": {"auto": {}}},
+    }
+    stringified = {
+        "stopReason": "tool_use",
+        "usage": {"outputTokens": 900},
+        "output": {
+            "message": {
+                "content": [
+                    {"reasoningContent": {}},
+                    {"toolUse": {"input": {"threats": '[{"name": "x"}]'}}},
+                ]
+            }
+        },
+    }
+    shape = converse_shape(kwargs, stringified, None)
+    assert shape["tool_choice"] == "auto"
+    assert shape["max_tokens"] == 16384
+    assert shape["blocks"] == ["reasoningContent", "toolUse"]
+    assert shape["tool_input_shape"] == [{"threats": "str(json)"}]
+
+    empty = {
+        "stopReason": "max_tokens",
+        "output": {"message": {"content": [{"toolUse": {"input": {}}}]}},
+    }
+    assert converse_shape(kwargs, empty, None)["tool_input_shape"] == [{}]
+    assert converse_shape(kwargs, empty, None)["stop_reason"] == "max_tokens"
+
+    failed = converse_shape(kwargs, None, "ValidationException: tool_choice not supported")
+    assert failed["error"].startswith("ValidationException")
+    assert "stop_reason" not in failed
