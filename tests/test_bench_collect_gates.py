@@ -178,6 +178,10 @@ async def test_collect_reads_db_logs_calls_and_prices(test_db, tmp_path):
     log = (
         "Anthropic response failed JSON parsing (x)\nOutput truncated, auto-bumping to 8192\n"
         "Enrichment complete: 11 attack trees, 11 test suites\n"
+        "Model bedrock-model returned field(s) ['threats'] as a JSON string instead of "
+        "the schema's list/object type — coerced before validation\n"
+        "Bedrock model bedrock-model called the respond tool with an empty input; "
+        "retrying with the instruction restated (attempt 1/3)\n"
     )
     run_dir = _run_dir(tmp_path, test_db, calls=_image_calls(1), log=log)
     row = collect_run(run_dir, Arm(id="a", main=OPUS), PRICES)
@@ -199,6 +203,8 @@ async def test_collect_reads_db_logs_calls_and_prices(test_db, tmp_path):
     assert row["db"]["probe_hits"]["dead_letter_queue"]["flows"] == 1
     assert row["reliability"]["json_retries"] == 1
     assert row["reliability"]["auto_bumps"] == 1
+    assert row["reliability"]["json_string_field_coercions"] == 1
+    assert row["reliability"]["empty_tool_input_retries"] == 1
     assert row["enrich"] == {"attack_trees": 11, "test_suites": 11}
     assert row["cost"] == 4.0
     assert row["step_cost"] == {"extract_flows": 4.0}

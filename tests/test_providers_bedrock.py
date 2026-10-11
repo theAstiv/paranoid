@@ -21,7 +21,14 @@ from backend.providers.base import (
     ProviderTransientError,
     create_provider,
 )
-from backend.providers.bedrock import BedrockProvider, _build_content_blocks, _map_boto_error
+from backend.providers.bedrock import (
+    _AUTO_TOOL_INSTRUCTION,
+    _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION,
+    _MAX_RETRIES,
+    BedrockProvider,
+    _build_content_blocks,
+    _map_boto_error,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +39,11 @@ from backend.providers.bedrock import BedrockProvider, _build_content_blocks, _m
 class _SimpleModel(BaseModel):
     value: str
     count: int
+
+
+class _ListFieldModel(BaseModel):
+    name: str
+    items: list[str]
 
 
 def _make_tool_response(data: dict, stop_reason: str = "tool_use") -> dict:
@@ -812,3 +824,189 @@ async def test_bedrock_refusal_is_not_retried():
             await provider.generate_structured("test prompt", _SimpleModel)
 
     assert mock_client.converse.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Structured-output failures on Claude 5.x (PR C)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bedrock_coerces_list_field_returned_as_json_string(caplog):
+    """A schema-array field returned as a JSON-encoded string (seen on
+    Claude 5.x: "Input should be a valid list") is parsed before
+    validation instead of failing."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = _make_tool_response(
+        {"name": "x", "items": '["a", "b", "c"]'}
+    )
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        with caplog.at_level("WARNING"):
+            result = await provider.generate_structured("test", _ListFieldModel)
+
+    assert result.items == ["a", "b", "c"]
+    assert mock_client.converse.call_count == 1
+    assert any("JSON string" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_bedrock_does_not_coerce_a_field_that_is_legitimately_a_string():
+    """A string field that happens to parse as JSON (e.g. a bare number or
+    word) must not be touched — only array/object-typed schema fields are
+    eligible for coercion."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = _make_tool_response({"value": "42", "count": 1})
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "42"
+
+
+@pytest.mark.asyncio
+async def test_bedrock_does_not_coerce_a_malformed_json_string():
+    """A string that isn't valid JSON at all is left alone, surfacing the
+    normal validation error rather than crashing in the coercion helper."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = _make_tool_response(
+        {"name": "x", "items": "not valid json["}
+    )
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        with pytest.raises(ProviderError, match="Failed to validate"):
+            await provider.generate_structured("test", _ListFieldModel)
+
+
+@pytest.mark.asyncio
+async def test_bedrock_empty_tool_input_retries_with_restated_instruction():
+    """Claude 5.x calling `respond` with an empty input (not a max_tokens
+    truncation) retries once with the instruction restated as an extra
+    system message, rather than failing immediately."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+
+    calls: list[dict] = []
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _make_tool_response({})
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert "system" not in calls[0]
+    assert calls[1]["system"] == [{"text": _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION}]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_empty_tool_input_gives_up_after_max_retries():
+    """A persistently empty tool input must surface as a real error, not
+    loop forever or silently succeed with an invalid result."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    mock_client.converse.return_value = _make_tool_response({})
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        with pytest.raises(ProviderError, match="empty tool input"):
+            await provider.generate_structured("test", _SimpleModel)
+
+    assert mock_client.converse.call_count == 1 + _MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_bedrock_empty_tool_input_at_max_tokens_uses_budget_bump_not_restate():
+    """When the empty input coincides with stopReason=max_tokens, the
+    existing truncation auto-bump handles it — no restate-instruction
+    retry is needed (or double-counted)."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+
+    calls: list[dict] = []
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _make_tool_response({}, stop_reason="max_tokens")
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-opus-5-5-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel, max_tokens=512)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert calls[1]["inferenceConfig"]["maxTokens"] == 1024
+    assert "system" not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_empty_tool_input_retry_keeps_auto_tool_instruction():
+    """The empty-input restate retry must not drop the auto-tool-choice
+    instruction when that fallback is already active (Opus 5.5 / Sonnet 5.5
+    / Fable 5.1 reject forced tool choice, so this is the path they're
+    actually on) — both system messages have to be sent together."""
+    mock_client = MagicMock()
+    tool_choice_error = _make_client_error("ValidationException", _FORCED_TOOL_CHOICE_MESSAGE)
+    mock_client.converse.side_effect = [
+        tool_choice_error,  # forced tool choice rejected -> switches to auto
+        _make_tool_response({}),  # auto, empty input -> restate retry
+        _make_tool_response({"value": "ok", "count": 1}),  # auto + restated -> succeeds
+    ]
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=_OPUS_55)
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    calls = mock_client.converse.call_args_list
+    assert len(calls) == 3
+    third_system_texts = [block["text"] for block in calls[2].kwargs["system"]]
+    assert _AUTO_TOOL_INSTRUCTION in third_system_texts
+    assert _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION in third_system_texts

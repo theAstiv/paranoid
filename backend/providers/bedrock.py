@@ -50,6 +50,18 @@ _AUTO_TOOL_INSTRUCTION = (
     "input. Do not answer in plain text."
 )
 
+# Sent once, as an extra system message, when a model calls `respond` with
+# an empty input — reported on Claude 5.x (Opus 5.5, Sonnet 5, Haiku 5.5,
+# Fable 5.1) in the 10-09 Bedrock session, cause unconfirmed (no
+# converse.jsonl from that session to check stop reasons / token counts
+# against; a plausible guess is thinking tokens eating the output budget
+# before any tool-input tokens are written). Restating the instruction
+# gives the retry a better shot than an identical blind retry.
+_EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION = (
+    "Your previous call to the `respond` tool had an empty or incomplete input. Call it "
+    "again with the complete input, including every required field, conforming to the schema."
+)
+
 # Model-ID substrings (case-insensitive) that take images, absent an
 # override. Conservative default: only the families known to accept vision
 # input on Bedrock. "amazon.nova-micro" is deliberately excluded — it's
@@ -244,16 +256,28 @@ class BedrockProvider:
             raise
 
     async def _converse_structured(
-        self, inference_config: dict[str, Any], tools: list[dict], **kwargs: Any
+        self,
+        inference_config: dict[str, Any],
+        tools: list[dict],
+        *,
+        extra_system: list[dict] | None = None,
+        **kwargs: Any,
     ) -> dict:
         """`_converse` with the `respond` tool, forced unless this model has
         already rejected forced tool choice. On that rejection, retry once
-        with `auto` + an instruction and remember it for later calls."""
+        with `auto` + an instruction and remember it for later calls.
+
+        `extra_system` is an additional system message the caller wants on
+        this attempt only (e.g. restating the instruction after an empty
+        tool-input response) — it's combined with the auto-tool-choice
+        instruction when that fallback is already active, never replacing it.
+        """
         if not self._forced_tool_choice_unsupported:
             try:
                 return await self._converse(
                     inference_config,
                     toolConfig={"tools": tools, "toolChoice": {"tool": {"name": "respond"}}},
+                    **({"system": extra_system} if extra_system else {}),
                     **kwargs,
                 )
             except Exception as e:
@@ -268,7 +292,7 @@ class BedrockProvider:
         return await self._converse(
             inference_config,
             toolConfig={"tools": tools, "toolChoice": {"auto": {}}},
-            system=[{"text": _AUTO_TOOL_INSTRUCTION}],
+            system=[{"text": _AUTO_TOOL_INSTRUCTION}, *(extra_system or [])],
             **kwargs,
         )
 
@@ -305,14 +329,17 @@ class BedrockProvider:
             content_blocks = _build_content_blocks(prompt, images, shared_context)
             budget = max_tokens or 4096
             last_error: ProviderError | None = None
+            restate_instruction: list[dict] | None = None
 
             for attempt in range(1 + _MAX_RETRIES):
                 response = await self._converse_structured(
                     {"maxTokens": budget, "temperature": temperature},
                     tools,
+                    extra_system=restate_instruction,
                     modelId=self._model,
                     messages=[{"role": "user", "content": content_blocks}],
                 )
+                restate_instruction = None
                 self._record_usage(response)
 
                 stop_reason = response.get("stopReason", "")
@@ -343,6 +370,33 @@ class BedrockProvider:
                 )
                 if tool_block is not None:
                     data = tool_block["toolUse"]["input"]
+                    # Reported on Claude 5.x (see
+                    # _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION): the tool is
+                    # called but its input is `{}` — every required field
+                    # missing, not just malformed. stopReason isn't
+                    # max_tokens here (that case is already handled above,
+                    # and is the right fix if it turns out this is really
+                    # truncation under another name), so the fix is a fresh
+                    # attempt with the instruction restated, not a budget
+                    # bump.
+                    if not data and schema.get("required") and stop_reason != "max_tokens":
+                        last_error = ProviderError(
+                            provider=self.name,
+                            message=(
+                                f"Bedrock returned an empty tool input (stopReason={stop_reason!r})"
+                            ),
+                        )
+                        if attempt < _MAX_RETRIES:
+                            logger.warning(
+                                "Bedrock model %s called the respond tool with an empty input; "
+                                "retrying with the instruction restated (attempt %d/%d)",
+                                self._model,
+                                attempt + 1,
+                                1 + _MAX_RETRIES,
+                            )
+                            restate_instruction = [{"text": _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION}]
+                            continue
+                        raise last_error
                 else:
                     # Under `auto` tool choice the model may answer in text;
                     # accept it if the text is the JSON we asked for.
@@ -366,6 +420,8 @@ class BedrockProvider:
                             )
                             continue
                         raise last_error
+
+                data = _coerce_json_string_fields(data, schema, model=self._model)
 
                 try:
                     return response_model.model_validate(data)
@@ -476,6 +532,53 @@ def _json_from_text_blocks(content: list[dict]) -> Any | None:
         return json.loads(strip_markdown_fences(text))
     except json.JSONDecodeError:
         return None
+
+
+def _coerce_json_string_fields(data: Any, schema: dict, *, model: str) -> Any:
+    """Parse top-level tool-input fields that arrived as a JSON-encoded
+    string instead of the list/object the schema asked for.
+
+    Reported on Claude 5.x in the 10-09 Bedrock session: a field like
+    "threats" (schema type "array") came back as the string
+    '[{"name": ...}, ...]' rather than the decoded list, which fails
+    Pydantic validation with "Input should be a valid list". Only top-level
+    fields are checked (a nested model's own fields, under a `$ref` or
+    `anyOf` with no top-level "type", aren't — today's schemas don't need
+    it), and only coerced when the parsed value actually matches the
+    expected array/object shape — a field that legitimately holds a
+    JSON-looking string is left alone.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    coerced_fields: list[str] = []
+    result = dict(data)
+    for field, prop_schema in schema.get("properties", {}).items():
+        prop_type = prop_schema.get("type")
+        if prop_type not in ("array", "object"):
+            continue
+        value = result.get(field)
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if prop_type == "array" and not isinstance(parsed, list):
+            continue
+        if prop_type == "object" and not isinstance(parsed, dict):
+            continue
+        result[field] = parsed
+        coerced_fields.append(field)
+
+    if coerced_fields:
+        logger.warning(
+            "Model %s returned field(s) %s as a JSON string instead of the schema's "
+            "list/object type — coerced before validation",
+            model,
+            coerced_fields,
+        )
+    return result
 
 
 def _is_temperature_deprecated_error(exc: Exception) -> bool:
