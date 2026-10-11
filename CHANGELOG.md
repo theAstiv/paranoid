@@ -104,6 +104,7 @@ Every threat — LLM-generated, rule-engine, or dependency — is now tagged wit
 - `backend/scoring/cvss31.py`: a standalone CVSS v3.1 base-score calculator (no third-party scoring library)
 - Migration `0010_threats_cvss.py`: `threats.cvss_vector`/`cvss_score`/`cvss_severity`/`scoring_method` columns; `scoring_method` records whether a threat was scored with DREAD, CVSS, or both
 - Dependency-engine threats get a default CVSS vector per rule; LLM-generated threats can be scored via a CVSS-specific prompt block plus a dread-only response schema that saves ~430–670 prompt tokens per `generate_threats` call versus asking for both scoring systems in one schema
+- Rule-engine threats get a default CVSS vector derived from the seed pattern's STRIDE category, `impact` and `likelihood` (`rule_pattern_cvss_vector()` in `backend/rules/cvss_defaults.py`), so a `cvss`/`both` run no longer leaves them unscored. Network-reachable, scope unchanged; editable per threat like any other vector
 - `POST /api/cvss/score` scores an arbitrary vector server-side (used by the UI's manual CVSS editor); `scoring_method` is selectable per run from the CLI, API, and wizard
 - SARIF `security-severity` is now keyed per `(STRIDE/MAESTRO category, CVSS band)` instead of per category alone, so a Tampering threat scored 9.8 no longer inherits the severity of an unrelated low-scored Tampering threat sharing the same rule; Markdown/PDF/SARIF all show CVSS alongside DREAD when present
 - UI: a CVSS badge + inline editor on `ThreatCard`/Review, and a scoring-method selector in the wizard

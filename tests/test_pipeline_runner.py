@@ -1022,3 +1022,24 @@ async def test_runner_mutation_check_disabling_validate_diagram_set(monkeypatch)
 
     failed = [e for e in events if e.status == "failed"]
     assert failed == [], "With validate_diagram_set disabled, the over-limit set must not fail"
+
+
+@pytest.mark.asyncio
+async def test_runner_cvss_scoring_reaches_rule_engine_threats():
+    """F3: a cvss run's rule-engine threats carry a score, including in the
+    rules-only fallback (provider offline from the first call)."""
+    provider = MockProvider()
+    provider.error_types.add(SummaryState)
+    config = PipelineConfig(max_iterations=1, scoring_method="cvss")
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-f3")
+
+    events = await _collect_events(
+        runner,
+        "A web app with JWT authentication, a PostgreSQL database and Redis sessions",
+        Framework.STRIDE,
+    )
+
+    threats = events[-1].data["threats"].threats
+    rule_threats = [t for t in threats if t.source == "rule_engine"]
+    assert rule_threats
+    assert all(t.cvss is not None and t.cvss_score is not None for t in rule_threats)
