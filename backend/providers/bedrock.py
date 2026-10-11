@@ -62,6 +62,19 @@ _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION = (
     "again with the complete input, including every required field, conforming to the schema."
 )
 
+# Sent as an extra system message when the tool input fails schema
+# validation for a reason more tokens can't fix: seen on Haiku 5.5 as a
+# list field sent as a JSON string with a dropped opening bracket, which
+# _coerce_json_string_fields() can't parse. Re-sending the identical
+# prompt with only a bigger budget rarely changes that; naming the fields
+# that failed does. `{fields}` is filled with top-level field names only,
+# never values, so no model output is echoed back into the prompt.
+_VALIDATION_RESTATE_INSTRUCTION = (
+    "Your previous call to the `respond` tool did not match the schema (problem fields: "
+    "{fields}). Call it again with every required field present and each list or object "
+    "given as a JSON value, not as a string containing JSON."
+)
+
 # Model-ID substrings (case-insensitive) that take images, absent an
 # override. Conservative default: only the families known to accept vision
 # input on Bedrock. "amazon.nova-micro" is deliberately excluded — it's
@@ -431,8 +444,25 @@ class BedrockProvider:
                         message=f"Failed to validate structured output: {e}",
                         original_error=e,
                     )
-                    if attempt < _MAX_RETRIES and budget < _MAX_AUTO_BUMP:
+                    if attempt < _MAX_RETRIES:
+                        # Retry even at the budget cap (the old loop gave up
+                        # there), and restate the instruction: a malformed
+                        # value isn't truncation, which stopReason max_tokens
+                        # already handles above. Still bounded by _MAX_RETRIES.
                         budget = min(budget * 2, _MAX_AUTO_BUMP)
+                        fields = _invalid_top_level_fields(e)
+                        logger.warning(
+                            "Bedrock model %s returned a tool input that failed validation "
+                            "(fields: %s); retrying with the instruction restated "
+                            "(attempt %d/%d)",
+                            self._model,
+                            fields,
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        restate_instruction = [
+                            {"text": _VALIDATION_RESTATE_INSTRUCTION.format(fields=fields)}
+                        ]
                         continue
                     raise last_error
 
@@ -551,8 +581,8 @@ def _coerce_json_string_fields(data: Any, schema: dict, *, model: str) -> Any:
     if not isinstance(data, dict):
         return data
 
+    result = _unwrap_buried_response(data, schema, model=model)
     coerced_fields: list[str] = []
-    result = dict(data)
     for field, prop_schema in schema.get("properties", {}).items():
         prop_type = prop_schema.get("type")
         if prop_type not in ("array", "object"):
@@ -579,6 +609,47 @@ def _coerce_json_string_fields(data: Any, schema: dict, *, model: str) -> Any:
             coerced_fields,
         )
     return result
+
+
+def _unwrap_buried_response(data: dict, schema: dict, *, model: str) -> dict:
+    """Recover a response that was JSON-encoded whole into one of its own fields.
+
+    Seen on Sonnet 5 for the pre-flight description check: `gaps` (schema
+    type array) arrived as the string '{"gaps": [...], "is_sufficient":
+    false}' - the entire response, not the list. Coercing that field alone gets a dict where a
+    list belongs, so it's skipped and validation fails.
+
+    Only unwrapped when the string parses to a dict that contains that same
+    field *and* every required property of the schema, so an object field
+    that merely looks like JSON is never mistaken for a buried response. The
+    decoded keys are merged over the outer ones (the buried copy is the
+    complete one); the caller still coerces any remaining string fields.
+    """
+    required = set(schema.get("required", []))
+    if not required:
+        return dict(data)
+    for field, value in data.items():
+        if not isinstance(value, str) or not value.lstrip().startswith("{"):
+            continue
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and field in parsed and required <= parsed.keys():
+            logger.warning(
+                "Model %s returned its whole response JSON-encoded in field %r - unwrapped "
+                "before validation",
+                model,
+                field,
+            )
+            return {**data, **parsed}
+    return dict(data)
+
+
+def _invalid_top_level_fields(exc: ValidationError) -> str:
+    """Comma-separated top-level field names from a ValidationError (names only)."""
+    names = sorted({str(err["loc"][0]) for err in exc.errors() if err.get("loc")})
+    return ", ".join(names) or "unknown"
 
 
 def _is_temperature_deprecated_error(exc: Exception) -> bool:

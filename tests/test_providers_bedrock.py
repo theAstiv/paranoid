@@ -1010,3 +1010,118 @@ async def test_bedrock_empty_tool_input_retry_keeps_auto_tool_instruction():
     third_system_texts = [block["text"] for block in calls[2].kwargs["system"]]
     assert _AUTO_TOOL_INSTRUCTION in third_system_texts
     assert _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION in third_system_texts
+
+
+# ---------------------------------------------------------------------------
+# Structured-output shapes #130 didn't cover (Sonnet 5 / Haiku 5.5)
+# ---------------------------------------------------------------------------
+
+
+def _provider_with_responses(responses: list[dict]):
+    """A BedrockProvider whose converse() returns `responses` in order,
+    recording each call's kwargs."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+    calls: list[dict] = []
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        return responses[min(len(calls), len(responses)) - 1]
+
+    mock_client.converse.side_effect = _converse
+    modules = {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    return modules, calls
+
+
+@pytest.mark.asyncio
+async def test_bedrock_unwraps_whole_response_buried_in_one_field(caplog):
+    """Sonnet 5 on the pre-flight check: `gaps` arrived as the string
+    '{"gaps": [...], "is_sufficient": false}' - the entire response. The
+    buried response is unwrapped in one call, with no retry."""
+    from backend.models.api import AnalyzeDescriptionResponse
+
+    buried = (
+        '{"gaps": [{"field": "authentication", "severity": "error", '
+        '"message": "No auth described"}], "is_sufficient": false}'
+    )
+    modules, calls = _provider_with_responses([_make_tool_response({"gaps": buried})])
+
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-v1:0")
+        with caplog.at_level("WARNING"):
+            result = await provider.generate_structured("test", AnalyzeDescriptionResponse)
+
+    assert result.is_sufficient is False
+    assert [g.field for g in result.gaps] == ["authentication"]
+    assert len(calls) == 1
+    assert any("whole response" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_bedrock_does_not_unwrap_a_dict_missing_required_fields():
+    """A field whose string decodes to an object lacking the schema's other
+    required properties isn't a buried response and is left for normal
+    validation (and its retry)."""
+    from backend.models.api import AnalyzeDescriptionResponse
+
+    not_buried = '{"gaps": []}'  # no is_sufficient
+    modules, calls = _provider_with_responses(
+        [_make_tool_response({"gaps": not_buried, "is_sufficient": True})]
+    )
+
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-v1:0")
+        with pytest.raises(ProviderError, match="Failed to validate"):
+            await provider.generate_structured("test", AnalyzeDescriptionResponse)
+
+    assert len(calls) == 1 + _MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_bedrock_validation_failure_retries_with_field_names_restated():
+    """Haiku 5.5: `assets` arrived as a JSON string with a dropped opening
+    bracket, which coercion can't parse. The retry restates the instruction,
+    naming the failed field (names only, no values), and the second answer
+    validates."""
+    from backend.models.state import AssetsList
+
+    malformed = '{"type": "Asset", "name": "API", "description": "Public API"}]'
+    good = {"assets": [{"type": "Asset", "name": "API", "description": "Public API"}]}
+    modules, calls = _provider_with_responses(
+        [_make_tool_response({"assets": malformed}), _make_tool_response(good)]
+    )
+
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="us.anthropic.claude-haiku-5-5-v1:0")
+        result = await provider.generate_structured("test", AssetsList)
+
+    assert [a.name for a in result.assets] == ["API"]
+    assert len(calls) == 2
+    assert "system" not in calls[0]
+    restated = calls[1]["system"][0]["text"]
+    assert "problem fields: assets" in restated
+    assert "Public API" not in restated
+
+
+@pytest.mark.asyncio
+async def test_bedrock_validation_retry_happens_even_at_the_budget_cap():
+    """The old loop only retried a validation failure while it could still
+    bump max_tokens, so a step already at the cap failed on the first bad
+    answer. The restate retry no longer depends on budget headroom."""
+    modules, calls = _provider_with_responses(
+        [
+            _make_tool_response({"value": "x", "count": "not-a-number"}),
+            _make_tool_response({"value": "x", "count": 3}),
+        ]
+    )
+
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="us.anthropic.claude-haiku-5-5-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel, max_tokens=16384)
+
+    assert result.count == 3
+    assert len(calls) == 2
+    assert calls[1]["inferenceConfig"]["maxTokens"] == 16384
