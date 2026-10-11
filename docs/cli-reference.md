@@ -18,28 +18,34 @@ paranoid run <description-file> [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--provider` | config default | LLM provider: `anthropic`, `openai`, `ollama` |
+| `--provider` | config default | LLM provider: `anthropic`, `openai`, `ollama`, `bedrock` |
 | `--model` | config default | Model name (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
 | `--fast-model` | config default | Fast model for the active provider (overrides `FAST_MODEL` / `FAST_MODEL_OPENAI` / …). `--fast-model=` (the `=` form) runs every step on the main model — a bare `--fast-model ""` loses the empty value in PowerShell |
 | `--step-model` | provider defaults | `STEP=fast\|main`, repeatable (e.g. `--step-model extract_flows=main`). Replaces `STEP_MODELS` for this run; `generate_threats` and `gap_analysis` can never be `fast` |
 | `--iterations` | `3` | Pipeline iterations (1–15) |
 | `--framework` | auto-detect | Force `STRIDE` or `MAESTRO` |
-| `--maestro` | off | Run STRIDE + MAESTRO in parallel |
-| `--format` | `json` | Output format: `json`, `full`, `sarif`, `markdown`, `pdf` |
+| `--stride-maestro` | off | Run STRIDE + MAESTRO in parallel |
+| `--format` | `simple` | Output format: `simple` (JSON), `full` (JSON), `sarif`, `markdown`, `pdf` |
 | `-o`, `--output` | auto | Output file path (extension added automatically for markdown/pdf) |
 | `--diagram`, `-d` | — | Architecture diagram: `.png`, `.jpg` (vision), or `.mmd`/`.txt` (Mermaid text). Repeatable — up to 5 diagrams per run, each a named view (e.g. deployment, data flow) |
 | `--code` | — | Path to a local repo — grounded threats via context-link MCP |
 | `--enrich` | off | Generate attack trees + Gherkin test cases per threat after pipeline |
+| `--scoring-method` | `dread` | Risk scoring: `dread`, `cvss` (CVSS v3.1 base score instead) or `both`. The LLM proposes CVSS metrics; scores are always computed by the built-in calculator. Rule-engine and dependency threats get deterministic default vectors |
+| `--manifest` | — | `package.json` for dependency capability analysis (needs Semgrep, see [`paranoid deps`](#paranoid-deps)) |
+| `--lockfile` | — | `package-lock.json` to pin dependency versions (with `--manifest`) |
+| `--deps-source` | `npm` | `npm` (fast) or `both` (adds the npm-tarball vs GitHub-source drift check) |
+| `--seed-collections` | all | Restrict the rule engine to named seed collections, repeatable (e.g. `--seed-collections stride --seed-collections auth`) |
+| `--seeded-assets` / `--seeded-flows` | — | JSON `AssetsList` / `FlowsList` to use instead of LLM extraction |
+| `--seeded-threats` | — | JSON file of known threats to seed into the catalog before iterating |
 | `--strict` | off | Exit code 2 if description has error-severity gaps (for CI gates) |
 | `--quiet` | off | Suppress real-time output, show only summary |
 | `--verbose` | off | Show detailed event data with complete models |
-| `--token` | — | PAT for authenticating to a remote Paranoid server |
 
 **Output formats**
 
 | Format | Flag | Size | Use case |
 |--------|------|------|----------|
-| JSON simple | `json` (default) | ~2–3 KB | CI dashboards, quick review |
+| JSON simple | `simple` (default) | ~2–3 KB | CI dashboards, quick review |
 | JSON full | `full` | ~45 KB | Analysis, archival, tool integration |
 | SARIF | `sarif` | varies | GitHub Security tab, VS Code, Azure DevOps |
 | Markdown | `markdown` | ~4–15 KB | PRs, Confluence, Notion |
@@ -71,12 +77,44 @@ paranoid run system.md --provider openai --model gpt-4o
 paranoid run system.md --step-model extract_flows=main
 paranoid run system.md --fast-model=
 
+# Dependency capabilities + CVSS alongside DREAD
+paranoid run examples/arsenal-deps/description.md \
+  --manifest examples/arsenal-deps/package.json \
+  --lockfile examples/arsenal-deps/package-lock.json \
+  --deps-source both --scoring-method both
+
 # Dual framework
-paranoid run system.md --maestro --iterations 5
+paranoid run system.md --stride-maestro --iterations 5
 
 # With attack tree enrichment
 paranoid run system.md --enrich --format pdf -o enriched-report.pdf
 ```
+
+---
+
+## `paranoid deps`
+
+Dependency capability scanning for npm packages: what a package *can do* (network, filesystem, process, dynamic code, native addons, …), what changed between two versions, and whether the published tarball matches its GitHub source. Static analysis only; nothing fetched is installed or executed. Requires [Semgrep](https://semgrep.dev) on `PATH` or `SEMGREP_BINARY` (not a pip dependency; the Docker image ships it).
+
+```bash
+paranoid deps scan <name>@<version> [--source github|npm|both] [--format console|json] [-o out.json]
+paranoid deps diff <name> <old-version> <new-version> [--source github|npm|both] [--format console|json] [-o out.json]
+paranoid deps scan-manifest <package.json> [--source github|npm|both] [--format console|json] [-o out.json]
+```
+
+| Subcommand | `--source` default | Notes |
+|---|---|---|
+| `scan` | `both` | One package; with `both`, per-file drift between the npm tarball and the GitHub source |
+| `diff` | `npm` | Capability delta between two versions (always from the npm tarballs); `--source both` adds drift for the newer version |
+| `scan-manifest` | `npm` | Every direct dependency in a `package.json` |
+
+```bash
+paranoid deps scan chalk@5.3.0 --source both
+paranoid deps diff ws 8.21.3 8.22.0
+paranoid deps scan-manifest package.json --format json -o deps.json
+```
+
+What the drift signals mean and what the engine does not catch: see the [README](../README.md#dependency-capability-engine).
 
 ---
 
@@ -175,5 +213,4 @@ Runtime overrides for all CLI commands. See [configuration.md](configuration.md)
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...  paranoid run system.md
 DEFAULT_PROVIDER=ollama       paranoid run system.md --model llama3
-PARANOID_TOKEN=pat_...        paranoid models list   # authenticate to remote server
 ```

@@ -20,7 +20,7 @@ Paranoid moves from single-user to multi-user, multi-project, RBAC-gated collabo
 
 **Auth foundation**
 - Local accounts: argon2id password hashing (`argon2-cffi`, lazy-imported so the CLI import path stays free of it), 15-minute HS256 JWT access tokens, 7-day refresh tokens with rotation + reuse detection (a stolen refresh token works exactly once — reuse revokes the entire session family)
-- Personal Access Tokens (`pat_<id>_<random>`, sha256-hashed, project-scoped) for the CLI and GitHub Action — `--token` / `PARANOID_TOKEN` / `PARANOID_URL` on `cli/main.py`
+- Personal Access Tokens (`pat_<id>_<random>`, sha256-hashed, project-scoped) for HTTP API clients (`Authorization: Bearer pat_…`). Remote CLI authentication (`--token` / `PARANOID_TOKEN`) was planned but isn't implemented; the CLI works against its local database
 - `PARANOID_REQUIRE_AUTH` (default `false`): anonymous requests get synthetic owner-on-everything access, preserving pre-v2 single-user behavior; `true` requires a valid JWT or PAT on every route except `/health` and `/api/auth/*`
 - Login/refresh rate-limited (10 req/60s); Login/Register pages, Bearer-header `fetch()` wrapper with silent-refresh-and-retry on 401 (including SSE streams)
 

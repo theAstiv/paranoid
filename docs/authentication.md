@@ -95,16 +95,10 @@ The raw token is returned **once** — store it securely.
 ### Use a PAT
 
 ```bash
-# CLI — environment variable
-export PARANOID_TOKEN=pat_xxxx
-paranoid models list
-
-# CLI — flag
-paranoid models list --token pat_xxxx
-
-# Direct HTTP
 curl -H "Authorization: Bearer pat_xxxx" http://localhost:8000/api/models
 ```
+
+PATs authenticate HTTP API clients (scripts, CI jobs calling the REST API). The `paranoid` CLI doesn't talk to a remote server yet: it runs the pipeline locally and reads and writes its own database (`DB_PATH`), so it has no `--token` flag or `PARANOID_TOKEN` variable.
 
 ### List and revoke PATs
 

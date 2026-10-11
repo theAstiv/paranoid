@@ -57,8 +57,8 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `sarif-file` | Path to the generated SARIF file |
-| `total-threats` | Number of threats found |
-| `model-id` | UUID of the saved threat model (query via API) |
+
+The threat count is printed as a `::notice::` in the job log. The action uses a throwaway database inside its container, so no model is saved.
 
 ## Examples
 

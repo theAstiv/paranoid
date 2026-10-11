@@ -41,6 +41,40 @@ cp .env.example .env        # add your API key
 docker compose up --build   # web UI at http://localhost:8000/app
 ```
 
+> **Note:** the dependency capability engine, Bedrock, model routing, multiple diagrams, CVSS and ATT&CK/ATLAS mapping are on `main` and ship to PyPI in the next release. Until then, install from source (`pip install git+https://github.com/theAstiv/paranoid`) or use Docker. The dependency engine also needs [Semgrep](https://semgrep.dev) on `PATH` (`pip install semgrep`); the Docker image includes it.
+
+## Try the full demo (Black Hat India Arsenal 2026)
+
+[`examples/arsenal-deps/`](examples/arsenal-deps/) is "MediaDrop", a fictional image-upload service with 8 real npm dependencies and three diagrams of the same system. Every command below runs against it.
+
+```bash
+# 1. Dependency capabilities inside a threat model (heatmap + drift in the web UI)
+paranoid run examples/arsenal-deps/description.md \
+  --manifest examples/arsenal-deps/package.json \
+  --lockfile examples/arsenal-deps/package-lock.json --deps-source both
+
+#    A reconstructed (inert) event-stream-style incident: capability delta + drift, no LLM call
+python examples/arsenal-deps/inject_incident.py --source both --no-llm
+
+# 2. Three diagrams, ATT&CK/ATLAS techniques, CVSS next to DREAD
+paranoid run examples/arsenal-deps/description.md -n 2 \
+  -d examples/arsenal-deps/diagrams/architecture.mmd \
+  -d examples/arsenal-deps/diagrams/upload-flow.mmd \
+  -d examples/arsenal-deps/diagrams/deployment.png \
+  --step-model extract_assets=main --step-model extract_flows=main \
+  --scoring-method both
+
+# 3. Iterations + model routing, SARIF for GitHub code scanning
+paranoid run examples/arsenal-deps/description.md -n 3 -v \
+  --manifest examples/arsenal-deps/package.json \
+  --lockfile examples/arsenal-deps/package-lock.json \
+  --format sarif -o mediadrop.sarif
+```
+
+CLI runs are saved to the local database (`paranoid models list`); start the web UI against the same `DB_PATH` to open them at `http://localhost:8000/app`. Set `ANTHROPIC_EFFORT=medium` for Claude: at the default effort a run takes about three times as long. Measured costs, timings and their sample sizes are in [Benchmarks](docs/benchmarks.md).
+
+**What the dependency engine claims:** capability visibility plus change and discrepancy triage: what a dependency can do, what changed in a release, and what ships in the npm tarball that isn't in the repo. It doesn't claim to catch supply-chain attacks; see [what it does not catch](#dependency-capability-engine).
+
 ## Documentation
 
 | Guide | Description |
@@ -166,7 +200,9 @@ Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 ## Development Status
 
-**v1.5.0+** — Multi-user collaboration release. Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
+**v1.5.0** — Multi-user collaboration release. Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
+
+**Next release (on `main`)** — dependency capability engine, AWS Bedrock, per-step model routing, multiple diagrams with ELK rendering, ATT&CK/ATLAS mapping and CVSS v3.1 scoring. See the [CHANGELOG](CHANGELOG.md).
 
 **Future:** OIDC/SSO federation.
 

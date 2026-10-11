@@ -50,7 +50,7 @@ A step-by-step wizard for creating a threat model.
 4. **Code Source** — select a linked Git repository from the Sources page (optional)
 5. **Dependencies** — optionally upload `package.json` (+ lockfile) for dependency capability analysis
 6. **Assumptions** — list known assumptions about the system
-7. **Iterations** — set the iteration count (1–15) for this run
+7. **Iterations** — set the iteration count (1–15) for this run, and the **severity scoring**: DREAD only (default), CVSS only, or both. The LLM only proposes CVSS base metrics; scores are computed server-side
 8. **AI Components** — flag whether the system has AI/ML components (runs MAESTRO alongside STRIDE)
 9. **Review & Run** — confirm everything and start the pipeline; progress shown via live SSE events
 
