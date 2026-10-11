@@ -144,6 +144,59 @@ async def test_sarif_export_stride_threats(test_db, tmp_path: Path) -> None:
     assert len(fixes) == 2
     assert "parameterized queries" in fixes[0]["description"]["text"]
 
+    # P7: without --source-file, every result still gets a physical first
+    # location (the default anchor), not just a logical one — GitHub's
+    # code-scanning upload rejects a result (and the whole run) without one.
+    location = results[0]["locations"][0]
+    assert "physicalLocation" in location
+    assert location["physicalLocation"]["artifactLocation"]["uri"] == "threat-model.md"
+
+
+@pytest.mark.asyncio
+async def test_sarif_export_honours_source_file_option(test_db, tmp_path: Path) -> None:
+    """--source-file overrides the default anchor with the caller's real
+    description file in the repo."""
+    model_id = await _make_stride_model()
+    await _add_stride_threat(model_id)
+    await crud.update_threat_model_status(model_id, "completed")
+
+    out = tmp_path / "findings.sarif"
+    await _export_model_async(
+        model_id=model_id,
+        output_format="sarif",
+        output=out,
+        source_file="docs/threat-model.md",
+    )
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    location = sarif["runs"][0]["results"][0]["locations"][0]
+    assert location["physicalLocation"]["artifactLocation"]["uri"] == "docs/threat-model.md"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_source_file",
+    ["../x", "/etc/passwd", "https://example.com/evil.md", "x" * 2000],
+)
+async def test_sarif_export_rejects_unsafe_source_file(
+    test_db, tmp_path: Path, bad_source_file: str
+) -> None:
+    """An invalid --source-file must raise a clear CLIError, not be
+    silently swapped for the default anchor."""
+    from cli.errors import CLIError
+
+    model_id = await _make_stride_model()
+    await _add_stride_threat(model_id)
+    await crud.update_threat_model_status(model_id, "completed")
+
+    with pytest.raises(CLIError, match="source-file"):
+        await _export_model_async(
+            model_id=model_id,
+            output_format="sarif",
+            output=tmp_path / "findings.sarif",
+            source_file=bad_source_file,
+        )
+
 
 @pytest.mark.asyncio
 async def test_sarif_export_with_persisted_dependency_threat(test_db, tmp_path: Path) -> None:

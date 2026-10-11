@@ -5,6 +5,7 @@ Main CLI command that runs the threat modeling pipeline on an input file.
 
 import asyncio
 import json
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 
@@ -318,6 +319,31 @@ def _merge_pre_flight_usage(run_usage: dict | None, pre_flight_step: StepRun | N
     )
     rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False)
     return rebuilt.model_dump()
+
+
+def _repo_relative_source_file(input_file: Path) -> str:
+    """Convert the description file path into the repo-relative form GitHub
+    resolves a SARIF `artifactLocation.uri` against.
+
+    The GitHub Action always passes an absolute path
+    (`${GITHUB_WORKSPACE}/${DESCRIPTION_FILE}`, see action/entrypoint.sh) —
+    an absolute path in the SARIF output would resolve outside (or nowhere
+    near) the uploaded repo. Relative to GITHUB_WORKSPACE when set (running
+    as an Action), else relative to the current directory; falls back to
+    the path as given (POSIX-separated) if it's under neither.
+    """
+    resolved = input_file.resolve()
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        try:
+            return to_sarif_uri(resolved.relative_to(Path(workspace).resolve()))
+        except ValueError:
+            pass
+    try:
+        return to_sarif_uri(resolved.relative_to(Path.cwd()))
+    except ValueError:
+        pass
+    return to_sarif_uri(input_file)
 
 
 def _parse_step_models(
@@ -1306,11 +1332,12 @@ async def _run_pipeline_inside_provider(
                 sarif_kwargs: dict = {}
                 if dependency_manifest_path:
                     sarif_kwargs["dependency_manifest_path"] = dependency_manifest_path
+                sarif_source_file = _repo_relative_source_file(input_file)
                 sarif_data = export_sarif(
                     threats=json_writer.threats if json_writer.threats else ThreatsList(threats=[]),
                     model_id=model_id,
                     framework=framework.value,
-                    source_file=str(input_file),
+                    source_file=sarif_source_file,
                     **sarif_kwargs,
                 )
                 # Append description-completeness findings from gap analysis
@@ -1336,7 +1363,7 @@ async def _run_pipeline_inside_provider(
                                 "locations": [
                                     {
                                         "physicalLocation": {
-                                            "artifactLocation": {"uri": to_sarif_uri(input_file)},
+                                            "artifactLocation": {"uri": sarif_source_file},
                                             "region": {"startLine": 1},
                                         }
                                     }

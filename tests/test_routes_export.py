@@ -157,6 +157,54 @@ async def test_export_sarif_valid_structure(client, model_with_threats):
 
 
 @pytest.mark.asyncio
+async def test_export_sarif_default_anchor_gives_every_result_a_physical_location(
+    client, model_with_threats
+):
+    """P7: without a source_file query param, the web export must still give
+    every non-dependency result a physical first location (the default
+    anchor) — a logical-only first location is the shape GitHub's
+    code-scanning upload rejects the whole run over."""
+    resp = await client.get(f"/api/export/{model_with_threats['id']}?format=sarif")
+    assert resp.status_code == 200
+    results = json.loads(resp.content)["runs"][0]["results"]
+    assert results
+    for r in results:
+        location = r["locations"][0]
+        assert "physicalLocation" in location
+        assert location["physicalLocation"]["artifactLocation"]["uri"] == "threat-model.md"
+
+
+@pytest.mark.asyncio
+async def test_export_sarif_honours_source_file_query_param(client, model_with_threats):
+    """?source_file=... overrides the default anchor with the caller's real
+    description file in the repo."""
+    resp = await client.get(
+        f"/api/export/{model_with_threats['id']}?format=sarif&source_file=docs/threat-model.md"
+    )
+    assert resp.status_code == 200
+    results = json.loads(resp.content)["runs"][0]["results"]
+    assert results
+    location = results[0]["locations"][0]
+    assert location["physicalLocation"]["artifactLocation"]["uri"] == "docs/threat-model.md"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_source_file",
+    ["../x", "/etc/passwd", "https://example.com/evil.md", "x" * 2000],
+)
+async def test_export_sarif_rejects_unsafe_source_file(client, model_with_threats, bad_source_file):
+    """An invalid source_file must fail with 422 and a reason, not be
+    silently swapped for the default — the user asked for one path and
+    should be told if it was rejected, not get a different one back."""
+    resp = await client.get(
+        f"/api/export/{model_with_threats['id']}?format=sarif&source_file={bad_source_file}"
+    )
+    assert resp.status_code == 422
+    assert "source_file" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_export_sarif_with_persisted_dependency_threat(client, test_db):
     """A threat with a persisted dependency_ref must not crash SARIF export.
 

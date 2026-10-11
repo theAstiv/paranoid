@@ -5,7 +5,7 @@ for security findings in GitHub, GitLab, VS Code, and most CI systems.
 """
 
 from datetime import UTC, datetime
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from pydantic import ValidationError
@@ -13,6 +13,19 @@ from pydantic import ValidationError
 from backend.models.state import DependencyRef, DreadScore, TechniqueRef, Threat, ThreatsList
 from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
 
+
+# Default anchor file for SARIF results when the caller gives no source_file
+# (the CLI's `paranoid run` always passes the real description file it read;
+# only exports of an already-saved model — `models export`, the web export
+# route — have no file on disk to point at). GitHub's code-scanning upload
+# rejects a result with no physical location at all, so this exists to give
+# every non-dependency result *a* physical location. Unverified: whether
+# GitHub accepts a physical location pointing at a file that doesn't exist
+# in the repo at upload time (the 10-01 verification anchored to a real
+# description.md) — check this against a real upload before relying on it.
+# Callers should point --source-file / source_file at their real
+# description file when they have one.
+DEFAULT_SARIF_SOURCE_FILE = "threat-model.md"
 
 _DREAD_COLUMNS = (
     "dread_damage",
@@ -81,7 +94,22 @@ def export_sarif(
         threats: ThreatsList containing all threats
         model_id: Unique identifier for this threat model run
         framework: Framework used (STRIDE or MAESTRO)
-        source_file: Optional path to the input file analyzed
+        source_file: Repo-relative path GitHub code scanning should anchor
+            non-dependency results to. None falls back to
+            DEFAULT_SARIF_SOURCE_FILE — every non-dependency result must
+            have *a* physical first location, or GitHub's code-scanning
+            upload rejects the whole run ("expected a physical location").
+            The default lives here, not in each caller, so a future caller
+            that forgets this argument can't bring that bug back. This
+            function trusts the value as given — it's a filesystem/repo
+            path, not something validated against on disk, and
+            `paranoid run` legitimately passes an absolute path (resolved
+            relative to the repo before it gets here — see
+            cli.commands.run._repo_relative_source_file). A caller taking
+            this from an untrusted source (the web export route's query
+            param, the CLI export command's flag) should validate with
+            `sanitize_source_file()` first and reject an invalid value
+            rather than silently swapping in the default.
         dependency_manifest_path: Repo-relative path to the package.json a
             dependency-sourced threat's physical location points at (see
             _build_locations). Defaults to "package.json" (repo root) — pass
@@ -92,6 +120,8 @@ def export_sarif(
     Returns:
         SARIF 2.1.0 compliant dict ready for JSON serialization
     """
+    source_file = source_file or DEFAULT_SARIF_SOURCE_FILE
+
     # Map STRIDE/MAESTRO categories to SARIF rule IDs
     rules = _generate_rules(threats, framework)
 
@@ -377,6 +407,38 @@ def _generate_results(
         results.append(result)
 
     return results
+
+
+# Generous but bounded — this is a repo-relative path, not free text.
+_MAX_SOURCE_FILE_LENGTH = 1024
+
+
+def sanitize_source_file(source_file: str | None) -> str | None:
+    """Validate an untrusted caller-supplied source_file (the web export
+    route's query param, the CLI export command's --source-file flag)
+    before it becomes a SARIF `artifactLocation.uri`. Not for
+    `paranoid run`'s own input-file path, which is a real filesystem path
+    this process read and export_sarif() trusts directly — see
+    cli.commands.run._repo_relative_source_file for that one instead.
+
+    It's only ever echoed back to the requester (never read from disk), so
+    the risk is low, but a mistyped or hostile value should fail clearly,
+    not be silently swapped for something else: returns None (the caller's
+    cue to reject the request) for anything invalid — an absolute path, a
+    URL scheme, a `..` segment, or one over _MAX_SOURCE_FILE_LENGTH.
+    """
+    if not source_file:
+        return None
+    value = source_file.strip()
+    if not value or len(value) > _MAX_SOURCE_FILE_LENGTH:
+        return None
+    if "://" in value:
+        return None
+    if PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        return None
+    if ".." in PurePosixPath(value.replace("\\", "/")).parts:
+        return None
+    return value
 
 
 def to_sarif_uri(path: PurePath | str) -> str:

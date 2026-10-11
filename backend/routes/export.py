@@ -13,7 +13,7 @@ from backend.db import crud
 from backend.db.gap_utils import decode_gap_summaries
 from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
-from backend.export.sarif import export_sarif, threat_from_row
+from backend.export.sarif import export_sarif, sanitize_source_file, threat_from_row
 from backend.models.api import ExportFormat
 from backend.models.state import ThreatsList
 
@@ -51,6 +51,7 @@ async def export_model(
     model_id: str,
     export_format: Annotated[ExportFormat, Query(alias="format")] = "markdown",
     status_filter: Annotated[str | None, Query()] = None,
+    source_file: Annotated[str | None, Query()] = None,
     _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> Response:
     """Export a threat model in the requested format.
@@ -58,7 +59,21 @@ async def export_model(
     Query parameters:
     - format: markdown | pdf | sarif | json  (default: markdown)
     - status_filter: pending | approved | rejected | mitigated  (optional)
+    - source_file: sarif only — repo-relative path GitHub code scanning
+      should anchor non-dependency results to (point this at your
+      description file in the repo). Defaults to "threat-model.md".
+      Must be a plain relative path: no leading "/", no URL scheme, no
+      ".." segment, and no longer than 1024 characters
     """
+    if source_file is not None and sanitize_source_file(source_file) is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Invalid source_file: must be a relative path with no '..' segment, "
+                "URL scheme, or leading '/', and no longer than 1024 characters"
+            ),
+        )
+
     model = await crud.get_threat_model(model_id)
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -152,6 +167,7 @@ async def export_model(
             threats=threats_list,
             model_id=model_id,
             framework=framework,
+            source_file=source_file,
         )
         return Response(
             content=json.dumps(sarif_data, indent=2),
