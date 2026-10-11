@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Frontend lockfile refresh** — clears 7 open Dependabot alerts: `dompurify` →3.4.16 (via mermaid; IN_PLACE sanitizer issues, a mode neither mermaid nor Paranoid uses), `devalue` →5.9.4 and `source-map-js` →1.2.2 (dev/build only)
 - **Frontend dependency audit** — resolved all 19 Dependabot alerts: `mermaid` →11.16.1 (CSS injection, prototype pollution, DoS), `postcss` →8.5.23 (path traversal), `vitest` →4.1.11 (path traversal via mocker), `dompurify` →3.4.13 (XSS), plus transitive patches for `undici`, `brace-expansion`, `browserslist`, `baseline-browser-mapping`
 - **Vite 5→8, Svelte 4→5** — clears remaining dev-server CVEs; Svelte 5 runs in legacy mode (all existing component syntax unchanged)
+
+### Fixed
+
+- **`paranoid models …` never exited** — `list`, `show`, `export`, `review`, `delete` and `prune` printed their result and then hung, because the shared DB connection (aiosqlite runs each connection on a non-daemon thread) was never closed. CLI commands now go through `cli/async_runner.run_async()`, which closes it in the same event loop on every exit path; `paranoid run` uses it too, so an error or `--strict` exit after the DB opened no longer hangs either
+- **Crash on Windows redirected output** — piping or redirecting CLI output on Windows (cp1252) made the `✓`/`→` success lines raise `UnicodeEncodeError` after the work was done, reported as "Unexpected error" with exit code 1. Unencodable characters are now written as `?`
+- **Version drift** — `paranoid --version` said 1.3.0, `paranoid version` 1.0.0 (it looked up a distribution named `paranoid`, not `paranoid-cli`) and SARIF's `tool.driver.version` 1.1.0. All now read `backend.__version__`, pinned to `pyproject.toml` by `tests/test_version.py`
 
 ### Added
 

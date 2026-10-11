@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from backend import __version__
 from backend.models.state import DependencyRef, DreadScore, TechniqueRef, Threat, ThreatsList
 from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
 
@@ -137,7 +138,7 @@ def export_sarif(
                 "tool": {
                     "driver": {
                         "name": "Paranoid Threat Modeler",
-                        "version": "1.1.0",
+                        "version": __version__,
                         "informationUri": "https://github.com/theAstiv/paranoid",
                         "rules": rules,
                     }
