@@ -630,3 +630,101 @@ def test_run_rule_engine_none_collections_unchanged():
     with_none = run_rule_engine(desc, Framework.STRIDE, collections=None)
     without_param = run_rule_engine(desc, Framework.STRIDE)
     assert len(with_none.threats) == len(without_param.threats)
+
+
+# ---------------------------------------------------------------------------
+# CVSS defaults for rule-engine threats (F3)
+# ---------------------------------------------------------------------------
+
+
+class TestRulePatternCvssVector:
+    @pytest.mark.parametrize(
+        ("category", "impact", "likelihood", "expected"),
+        [
+            (
+                StrideCategory.INFORMATION_DISCLOSURE,
+                "High",
+                "Medium",
+                "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+            ),
+            (StrideCategory.TAMPERING, "Medium", "High", "AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"),
+            (
+                StrideCategory.DENIAL_OF_SERVICE,
+                "High",
+                "Low",
+                "AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H",
+            ),
+            (StrideCategory.SPOOFING, "Critical", "High", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"),
+            (
+                StrideCategory.ELEVATION_OF_PRIVILEGE,
+                "High",
+                "Medium",
+                "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+            ),
+            # Repudiation is capped at I:L even when the seed says Critical.
+            (
+                StrideCategory.REPUDIATION,
+                "Critical",
+                "Medium",
+                "AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N",
+            ),
+        ],
+    )
+    def test_vector_per_category_impact_and_likelihood(
+        self, category, impact, likelihood, expected
+    ):
+        from backend.rules.cvss_defaults import rule_pattern_cvss_vector
+
+        assert rule_pattern_cvss_vector(category, impact, likelihood) == expected
+
+    def test_unknown_impact_scores_as_medium_and_never_zero(self):
+        from backend.rules.cvss_defaults import rule_pattern_cvss_vector
+        from backend.scoring.cvss31 import score_and_severity
+
+        vector = rule_pattern_cvss_vector(StrideCategory.TAMPERING, "whatever", "medium")
+        assert vector == "AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+        assert score_and_severity(vector)[0] > 0
+
+    def test_every_seed_pattern_gets_a_valid_nonzero_vector(self):
+        """All 362 seeds, through the same conversion the pipeline uses — no
+        seed's category/impact/likelihood combination may fail to parse or
+        score 0.0."""
+        patterns = _load_seed_patterns(None)
+        assert patterns
+        for pattern in patterns:
+            threat = _pattern_to_threat(pattern, Framework.HYBRID, scoring_method="cvss")
+            if threat is None:
+                continue
+            assert threat.cvss is not None, pattern.get("name")
+            assert threat.cvss_score is not None, pattern.get("name")
+            assert threat.cvss_score > 0, pattern.get("name")
+            assert threat.cvss_severity in ("low", "medium", "high", "critical")
+
+
+class TestRuleEngineCvssScoring:
+    _DESC = (
+        "A web application with JWT authentication, a PostgreSQL database, "
+        "Redis sessions and an S3 bucket for uploads."
+    )
+
+    def test_dread_default_leaves_cvss_fields_unset(self):
+        result = run_rule_engine(self._DESC, Framework.STRIDE)
+        assert result.threats
+        for t in result.threats:
+            assert t.cvss is None
+            assert t.cvss_score is None
+            assert t.cvss_severity is None
+
+    @pytest.mark.parametrize("scoring_method", ["cvss", "both"])
+    def test_cvss_attaches_derived_vector_and_calculator_score(self, scoring_method):
+        from backend.rules.cvss_defaults import rule_pattern_cvss_vector
+        from backend.scoring.cvss31 import score_and_severity, to_vector_string
+
+        result = run_rule_engine(self._DESC, Framework.STRIDE, scoring_method=scoring_method)
+        assert result.threats
+        for t in result.threats:
+            expected = rule_pattern_cvss_vector(t.stride_category, t.impact, t.likelihood)
+            assert to_vector_string(t.cvss) == expected
+            score, severity = score_and_severity(expected)
+            assert t.cvss_score == pytest.approx(score)
+            assert t.cvss_severity == severity
