@@ -146,6 +146,11 @@ class OllamaProvider:
         """Ollama never sends images, even to vision-capable models."""
         return False
 
+    @property
+    def effort(self) -> str | None:
+        """Ollama has no `output_config.effort` equivalent wired up."""
+        return None
+
     async def generate_structured(
         self,
         prompt: str,

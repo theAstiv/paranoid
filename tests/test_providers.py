@@ -342,11 +342,13 @@ async def test_anthropic_effort_rejected_retries_without_it_and_remembers():
         mock_anthropic.return_value = mock_client
 
         provider = AnthropicProvider(model="claude-haiku-4-5", api_key="k", effort="medium")
+        assert provider.effort == "medium"
         assert await provider.generate(prompt="Hello") == "ok without effort"
         assert mock_client.messages.create.call_count == 2
         calls = mock_client.messages.create.call_args_list
         assert "extra_body" in calls[0].kwargs
         assert "extra_body" not in calls[1].kwargs
+        assert provider.effort is None, "effort property must reflect the rejection"
 
         mock_client.messages.create.side_effect = [mock_success]
         await provider.generate(prompt="Hello again")
@@ -941,3 +943,17 @@ def test_provider_supports_images():
 
     ollama = OllamaProvider(model="llama3")
     assert ollama.supports_images is False
+
+
+def test_provider_effort_defaults_to_none_without_opt_in():
+    """Anthropic defaults to no effort; OpenAI/Ollama have no equivalent (PR B)."""
+    with patch("backend.providers.anthropic.Anthropic"):
+        anthropic = AnthropicProvider(model="claude-sonnet-4", api_key="test-key")
+        assert anthropic.effort is None
+
+    with patch("backend.providers.openai.OpenAI"):
+        openai = OpenAIProvider(model="gpt-4", api_key="test-key")
+        assert openai.effort is None
+
+    ollama = OllamaProvider(model="llama3")
+    assert ollama.effort is None

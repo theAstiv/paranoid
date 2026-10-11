@@ -106,6 +106,13 @@ class LLMProvider(Protocol):
         """Whether this provider instance accepts image content blocks."""
         ...
 
+    @property
+    def effort(self) -> str | None:
+        """The `output_config.effort` level actually in effect for this
+        instance's calls — None when never set, not applicable to this
+        provider, or dropped after the model rejected it."""
+        ...
+
 
 class ProviderError(Exception):
     """Base exception for provider errors."""

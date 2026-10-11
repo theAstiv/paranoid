@@ -389,6 +389,110 @@ async def test_bedrock_text_answer_under_forced_tool_choice_still_errors():
 
 
 # ---------------------------------------------------------------------------
+# Effort (PR B)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bedrock_effort_sent_as_additional_model_request_fields():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(
+            model="us.anthropic.claude-sonnet-4-20250514-v1:0", effort="medium"
+        )
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    kwargs = mock_client.converse.call_args.kwargs
+    assert kwargs["additionalModelRequestFields"] == {"output_config": {"effort": "medium"}}
+
+
+@pytest.mark.asyncio
+async def test_bedrock_without_effort_sends_no_additional_model_request_fields():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        await provider.generate_structured("test", _SimpleModel)
+
+    kwargs = mock_client.converse.call_args.kwargs
+    assert "additionalModelRequestFields" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_bedrock_effort_rejected_retries_without_it_and_remembers():
+    """A ValidationException about `effort`/`output_config` retries once
+    without it, then the flag persists for later calls on the same instance."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    effort_error = _make_client_error(
+        "ValidationException", "output_config.effort is not supported for this model"
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "additionalModelRequestFields" in kwargs:
+            raise effort_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.anthropic.claude-haiku-4-5-v1:0", effort="medium")
+        assert provider.effort == "medium"
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert "additionalModelRequestFields" in calls[0]
+    assert "additionalModelRequestFields" not in calls[1]
+    assert provider.effort is None, "effort property must reflect the rejection"
+
+    # Second call on the same instance: the flag is already set, so it skips
+    # straight to the no-effort call.
+    result2 = await provider.generate_structured("test again", _SimpleModel)
+    assert result2.value == "ok"
+    assert len(calls) == 3
+    assert "additionalModelRequestFields" not in calls[2]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_effort_and_temperature_rejections_both_fall_back():
+    """A model that rejects both `temperature` and `effort` ends up with
+    neither, bounded at one extra attempt per flag (3 calls total)."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    temperature_error = _make_client_error(
+        "ValidationException", "temperature is not supported for this model"
+    )
+    effort_error = _make_client_error(
+        "ValidationException", "output_config.effort is not supported for this model"
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "temperature" in kwargs["inferenceConfig"]:
+            raise temperature_error
+        if "additionalModelRequestFields" in kwargs:
+            raise effort_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(
+            model="us.anthropic.claude-sonnet-4-20250514-v1:0", effort="medium"
+        )
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert len(calls) == 3
+
+
+# ---------------------------------------------------------------------------
 # Error mapping
 # ---------------------------------------------------------------------------
 
