@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from backend import __version__
+
 
 # Mirrors the keys of backend.pipeline.runner's _DEFAULT_STEP_MODELS — the
 # subset of PipelineStep that actually calls an LLM and so can be routed —
@@ -284,9 +286,10 @@ except ValidationError as _exc:
     print("\n".join(_lines), file=sys.stderr)
     sys.exit(1)
 
-# Single source of truth for the application version.
-# Keep in sync with pyproject.toml when bumping releases.
-VERSION = "1.5.0"
+# The application version lives in backend/__init__.py (import-side-effect
+# free, so the SARIF exporter and CLI can read it without loading settings).
+# tests/test_version.py pins it to pyproject.toml.
+VERSION = __version__
 
 
 # Provider → (env var name, settings attribute / config-table DB key).

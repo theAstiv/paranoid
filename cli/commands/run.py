@@ -43,6 +43,7 @@ from backend.providers import (
 from backend.providers.base import LLMProvider
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider, effort_kwargs
+from cli.async_runner import run_async
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
@@ -883,7 +884,7 @@ def run(
             resolved_seed_collections = list(seed_collections)
 
         # Run pipeline (async)
-        asyncio.run(
+        run_async(
             _run_pipeline_async(
                 model_id=model_id,
                 description=description,
@@ -1493,8 +1494,3 @@ async def _run_pipeline_inside_provider(
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")
-
-    # Close database connection (CLI cleanup path)
-    from backend.db.connection import db
-
-    await db.close()

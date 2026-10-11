@@ -1,11 +1,11 @@
 """Models command - list and inspect saved threat models from SQLite."""
 
-import asyncio
 import json
 from pathlib import Path
 
 import click
 
+from cli.async_runner import run_async
 from cli.errors import CLIError
 
 
@@ -83,7 +83,7 @@ def list_models(limit: int, as_json: bool) -> None:
         paranoid models list --json
     """
     try:
-        asyncio.run(_list_models_async(limit=limit, as_json=as_json))
+        run_async(_list_models_async(limit=limit, as_json=as_json))
     except CLIError as e:
         click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
         raise SystemExit(e.exit_code) from e
@@ -167,7 +167,7 @@ def show(model_id: str, as_json: bool, mitigations: bool) -> None:
         paranoid models show a1b2c3d4 --no-mitigations
     """
     try:
-        asyncio.run(
+        run_async(
             _show_model_async(model_id=model_id, as_json=as_json, show_mitigations=mitigations)
         )
     except CLIError as e:
@@ -330,7 +330,7 @@ def export_model(
         paranoid models export a1b2c3d4 --format full
     """
     try:
-        asyncio.run(
+        run_async(
             _export_model_async(
                 model_id=model_id,
                 output_format=output_format,
@@ -528,7 +528,7 @@ def review_threats(model_id: str, status: str, source_filter: str | None, yes: b
         paranoid models review a1b2c3d4 --status rejected --yes
     """
     try:
-        asyncio.run(
+        run_async(
             _review_threats_async(
                 model_id=model_id,
                 status=status,
@@ -617,7 +617,7 @@ def delete_model(model_id: str, yes: bool) -> None:
         paranoid models delete a1b2c3d4 --yes
     """
     try:
-        asyncio.run(_delete_model_async(model_id=model_id, yes=yes))
+        run_async(_delete_model_async(model_id=model_id, yes=yes))
     except CLIError as e:
         click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
         raise SystemExit(e.exit_code) from e
@@ -724,7 +724,7 @@ def prune_models(older_than_days: int | None, status: str | None, yes: bool) -> 
         raise click.UsageError("Provide at least one filter: --older-than DAYS or --status STATUS")
 
     try:
-        asyncio.run(_prune_models_async(older_than_days=older_than_days, status=status, yes=yes))
+        run_async(_prune_models_async(older_than_days=older_than_days, status=status, yes=yes))
     except CLIError as e:
         click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
         raise SystemExit(e.exit_code) from e

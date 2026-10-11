@@ -5,6 +5,7 @@ from importlib import metadata
 
 import click
 
+from backend import __version__
 from cli.context import config_exists, load_config
 
 
@@ -26,10 +27,7 @@ def version() -> None:
     """
     try:
         # Get package version
-        try:
-            pkg_version = metadata.version("paranoid")
-        except metadata.PackageNotFoundError:
-            pkg_version = "dev (not installed)"
+        pkg_version = __version__
 
         # Get Python version
         python_version = (

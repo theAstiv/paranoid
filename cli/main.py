@@ -3,8 +3,12 @@
 Command-line interface for iterative threat modeling powered by LLMs.
 """
 
+import io
+import sys
+
 import click
 
+from backend import __version__
 from cli.commands.config import config
 from cli.commands.deps import deps
 from cli.commands.models import models
@@ -13,7 +17,7 @@ from cli.commands.version import version
 
 
 @click.group()
-@click.version_option(version="1.3.0", prog_name="paranoid")
+@click.version_option(version=__version__, prog_name="paranoid")
 def cli() -> None:
     """Paranoid - Open-source iterative threat modeling powered by LLMs.
 
@@ -45,8 +49,22 @@ cli.add_command(models)
 cli.add_command(version)
 
 
+def _replace_unencodable_output() -> None:
+    """Write `?` for characters the output encoding can't represent instead
+    of crashing on them.
+
+    Redirected or piped output on Windows uses the ANSI code page (cp1252),
+    which has no ✓/✗/→/⚠. click.echo would raise UnicodeEncodeError after the
+    command's work was already done and report it as an "Unexpected error".
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
+
+
 def main() -> None:
     """Entry point for CLI (called by pyproject.toml script)."""
+    _replace_unencodable_output()
     cli()
 
 
