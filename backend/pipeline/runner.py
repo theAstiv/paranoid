@@ -1593,6 +1593,7 @@ class PipelineRunner:
                 collections=set(self.config.seed_collections)
                 if self.config.seed_collections
                 else None,
+                scoring_method=self.config.scoring_method,
             )
 
             if rule_threats.threats:

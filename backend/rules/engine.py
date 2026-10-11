@@ -14,6 +14,8 @@ from typing import Any
 
 from backend.models.enums import Framework, StrideCategory
 from backend.models.state import Threat, ThreatsList
+from backend.rules.cvss_defaults import rule_pattern_cvss_vector
+from backend.scoring.cvss31 import parse_vector, score_and_severity
 
 
 logger = logging.getLogger(__name__)
@@ -357,7 +359,9 @@ def _score_pattern(pattern: dict[str, Any], keywords: set[str]) -> int:
     )
 
 
-def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat | None:
+def _pattern_to_threat(
+    pattern: dict[str, Any], framework: Framework, scoring_method: str = "dread"
+) -> Threat | None:
     """Convert a seed pattern dict to a Threat model instance.
 
     MAESTRO-only patterns are mapped to the nearest STRIDE category to satisfy
@@ -366,6 +370,9 @@ def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat 
     Args:
         pattern: Seed pattern dict from seeds/*.json
         framework: Active threat modeling framework
+        scoring_method: "dread" | "cvss" | "both". When it includes "cvss",
+            the threat gets a default vector from rule_pattern_cvss_vector()
+            and a score computed by the calculator.
 
     Returns:
         Threat instance, or None if conversion fails
@@ -393,6 +400,10 @@ def _pattern_to_threat(pattern: dict[str, Any], framework: Framework) -> Threat 
             ),
         )
         threat.source = "rule_engine"
+        if scoring_method in ("cvss", "both"):
+            vector = rule_pattern_cvss_vector(stride_cat, threat.impact, threat.likelihood)
+            threat.cvss = parse_vector(vector)
+            threat.cvss_score, threat.cvss_severity = score_and_severity(vector)
         return threat
     except (KeyError, ValueError) as e:
         logger.warning(f"Skipping seed pattern '{pattern.get('name')}': {e}")
@@ -405,6 +416,7 @@ def match_patterns(
     max_results: int = 10,
     min_score: int = 1,
     collections: set[str] | None = None,
+    scoring_method: str = "dread",
 ) -> ThreatsList:
     """Match seed patterns against keywords extracted from the description.
 
@@ -420,6 +432,7 @@ def match_patterns(
         max_results: Maximum number of matched threats to return
         min_score: Minimum keyword match score to include a pattern
         collections: Friendly seed collection names to restrict loading (None = all).
+        scoring_method: "dread" | "cvss" | "both" — see _pattern_to_threat().
 
     Returns:
         ThreatsList of matched seed patterns (may be empty)
@@ -443,7 +456,7 @@ def match_patterns(
 
     threats = []
     for pattern, _ in scored[:max_results]:
-        threat = _pattern_to_threat(pattern, framework)
+        threat = _pattern_to_threat(pattern, framework, scoring_method)
         if threat is not None:
             threats.append(threat)
 
@@ -553,6 +566,7 @@ def run_rule_engine(
     framework: Framework,
     max_patterns: int = 10,
     collections: set[str] | None = None,
+    scoring_method: str = "dread",
 ) -> ThreatsList:
     """Run the deterministic rule engine on a system description.
 
@@ -563,8 +577,15 @@ def run_rule_engine(
         framework: Active threat modeling framework
         max_patterns: Cap on matched patterns returned
         collections: Friendly seed collection names to restrict loading (None = all).
+        scoring_method: "dread" | "cvss" | "both" — see _pattern_to_threat().
 
     Returns:
         ThreatsList of matched patterns (may be empty if no keywords extracted)
     """
-    return match_patterns(description, framework, max_results=max_patterns, collections=collections)
+    return match_patterns(
+        description,
+        framework,
+        max_results=max_patterns,
+        collections=collections,
+        scoring_method=scoring_method,
+    )
