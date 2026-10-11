@@ -116,6 +116,11 @@ class OpenAIProvider:
         """Vision-capable GPT-4o-class models support images."""
         return True
 
+    @property
+    def effort(self) -> str | None:
+        """OpenAI has no `output_config.effort` equivalent wired up."""
+        return None
+
     async def generate_structured(
         self,
         prompt: str,

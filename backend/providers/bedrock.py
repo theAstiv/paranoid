@@ -85,6 +85,11 @@ class BedrockProvider:
     `toolChoice: {"auto": {}}` plus a system instruction naming the tool, and
     accepts a JSON text answer if the model replies in text instead.
 
+    `effort` (ANTHROPIC_EFFORT) is opt-in and Claude-specific; a non-Claude
+    Bedrock model that rejects it falls back the same lazy way `temperature`
+    and forced tool choice do — one failed call, then never sent again for
+    the rest of this instance's calls.
+
     Authentication follows the standard boto3 credential chain:
     environment variables → ~/.aws/credentials → IAM roles. No explicit
     access key parameters are accepted; use AWS_PROFILE or IAM roles instead.
@@ -96,6 +101,7 @@ class BedrockProvider:
         region: str = "",
         profile: str = "",
         image_models: list[str] | None = None,
+        effort: str | None = None,
     ):
         """Initialise Bedrock provider.
 
@@ -105,7 +111,12 @@ class BedrockProvider:
             profile: AWS named profile (empty string = default credential chain).
             image_models: Optional override (BEDROCK_IMAGE_MODELS) of which
                 model-ID substrings accept images, replacing the built-in
-                default (Claude and Nova IDs) rather than extending it.
+                default (Claude and the vision-capable Nova sizes) rather
+                than extending it.
+            effort: Optional `output_config.effort` level (low/medium/high/xhigh/max),
+                sent via `additionalModelRequestFields`. None sends nothing,
+                which is the model's default. Non-Claude models, and some
+                Claude models, may reject it — see the class docstring.
 
         Raises:
             ImportError: If boto3 is not installed.
@@ -134,6 +145,9 @@ class BedrockProvider:
         self._temperature_unsupported = False
         # Same lazy detection for forced tool choice (see the class docstring).
         self._forced_tool_choice_unsupported = False
+        # Same lazy detection for `effort` (see the class docstring).
+        self._effort = effort
+        self._effort_unsupported = False
 
         session = boto3.Session(profile_name=profile or None)
         # Omit region_name when empty so boto3's own resolution runs
@@ -181,29 +195,53 @@ class BedrockProvider:
             return any(hint in model_lower for hint in self._image_models)
         return any(hint in model_lower for hint in _DEFAULT_IMAGE_MODEL_HINTS)
 
+    @property
+    def effort(self) -> str | None:
+        """The `output_config.effort` level actually in effect — None if
+        never set, or if the model rejected it (see `_effort_unsupported`)."""
+        return None if self._effort_unsupported else self._effort
+
     async def _converse(self, inference_config: dict[str, Any], **kwargs: Any) -> dict:
         """Call `bedrock-runtime.converse`, retrying once without `temperature`
-        if this model rejects it outright (some model families do, as a
-        `ValidationException` rather than accepting/silently ignoring it —
-        mirrors the direct Anthropic provider's `_create_message` fallback)."""
-        if not self._temperature_unsupported:
-            try:
-                return await run_sync_in_executor(
-                    self._client.converse, inferenceConfig=inference_config, **kwargs
-                )
-            except Exception as e:
-                if not _is_temperature_deprecated_error(e):
-                    raise
+        and/or once without `effort` if this model rejects either outright
+        (a `ValidationException` rather than accepting/silently ignoring it —
+        mirrors the direct Anthropic provider's `_create_message` fallback).
+        Each rejection flips a per-instance flag, so a later call for the
+        same instance skips the doomed round-trip entirely; recursion here
+        is bounded by those two flags (at most one extra attempt per flag)."""
+        config = dict(inference_config)
+        if self._temperature_unsupported:
+            config.pop("temperature", None)
+
+        call_kwargs = dict(kwargs)
+        if self._effort and not self._effort_unsupported:
+            call_kwargs["additionalModelRequestFields"] = {
+                **call_kwargs.get("additionalModelRequestFields", {}),
+                "output_config": {"effort": self._effort},
+            }
+
+        try:
+            return await run_sync_in_executor(
+                self._client.converse, inferenceConfig=config, **call_kwargs
+            )
+        except Exception as e:
+            if not self._temperature_unsupported and _is_temperature_deprecated_error(e):
                 self._temperature_unsupported = True
                 logger.warning(
                     "Model %s rejects the `temperature` parameter — omitting it "
                     "for the rest of this provider instance's calls",
                     self._model,
                 )
-        fallback_config = {k: v for k, v in inference_config.items() if k != "temperature"}
-        return await run_sync_in_executor(
-            self._client.converse, inferenceConfig=fallback_config, **kwargs
-        )
+                return await self._converse(inference_config, **kwargs)
+            if self._effort and not self._effort_unsupported and _is_effort_unsupported_error(e):
+                self._effort_unsupported = True
+                logger.warning(
+                    "Model %s rejects the `effort` parameter — omitting it "
+                    "for the rest of this provider instance's calls",
+                    self._model,
+                )
+                return await self._converse(inference_config, **kwargs)
+            raise
 
     async def _converse_structured(
         self, inference_config: dict[str, Any], tools: list[dict], **kwargs: Any
@@ -455,6 +493,20 @@ def _is_temperature_deprecated_error(exc: Exception) -> bool:
     return "temperature" in message and (
         "deprecated" in message or "not supported" in message or "unsupported" in message
     )
+
+
+def _is_effort_unsupported_error(exc: Exception) -> bool:
+    """True when `exc` is a botocore `ClientError` whose Bedrock
+    `ValidationException` complains about the `effort` /
+    `additionalModelRequestFields.output_config` field, mirroring the direct
+    Anthropic provider's `_is_effort_unsupported_error`."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    if response.get("Error", {}).get("Code") != "ValidationException":
+        return False
+    message = str(exc).lower()
+    return "effort" in message or "output_config" in message
 
 
 _CLIENT_ERROR_CLASSES: dict[str, type[ProviderError]] = {

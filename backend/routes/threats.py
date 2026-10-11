@@ -13,8 +13,8 @@ from backend.models.api import BulkStatusRequest, UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
 from backend.routes._helpers import (
-    anthropic_kwargs,
     bedrock_kwargs,
+    effort_kwargs,
     get_api_key,
     model_assignee_ids,
 )
@@ -40,7 +40,7 @@ def _default_runner(model_id: str) -> PipelineRunner:
         api_key=api_key,
         base_url=base_url,
         **bedrock_kwargs(provider_type),
-        **anthropic_kwargs(provider_type),
+        **effort_kwargs(provider_type, model_str),
     )
     config = PipelineConfig(max_iterations=1, temperature=0.3)
     # persist_usage=True: model_id here always names an existing threat_models

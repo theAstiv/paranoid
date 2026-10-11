@@ -1696,6 +1696,7 @@ class PipelineRunner:
             run_usage = build_run_usage(self._step_runs, fast_model=fast_model)
             run_usage.fast_routing_disabled = self._fast_disabled
             run_usage.refusal_count = self._refusal_count
+            run_usage.effort = self.provider.effort
 
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,

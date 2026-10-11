@@ -217,6 +217,21 @@ async def test_runner_emits_threat_count_in_events():
 
 
 @pytest.mark.asyncio
+async def test_runner_usage_summary_records_main_providers_effort():
+    """The run's usage summary records the main provider's effective effort
+    (PR B) — read from the provider at the end of the run, not configured
+    separately, so a mid-run fallback-to-None would show up too."""
+    provider = MockProvider(effort="medium")
+    config = PipelineConfig(max_iterations=1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-effort-usage")
+
+    events = await _collect_events(runner, "A web app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.data["usage"]["effort"] == "medium"
+
+
+@pytest.mark.asyncio
 async def test_runner_provider_error_during_threats_degrades_gracefully():
     """ProviderError during threat generation degrades to rule-engine-only mode.
 

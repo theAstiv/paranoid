@@ -196,6 +196,12 @@ class AnthropicProvider:
         """Claude models support vision."""
         return True
 
+    @property
+    def effort(self) -> str | None:
+        """The `output_config.effort` level actually in effect — None if
+        never set, or if the model rejected it (see `_effort_unsupported`)."""
+        return None if self._effort_unsupported else self._effort
+
     async def generate_structured(
         self,
         prompt: str,

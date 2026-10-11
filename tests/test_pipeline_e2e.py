@@ -173,7 +173,12 @@ async def _collect_events(
     max_iterations: int = 2,
     has_ai_components: bool = False,
 ) -> list[PipelineEvent]:
-    """Run pipeline and collect all events."""
+    """Run pipeline and collect all events.
+
+    `diagram_data` is this helper's own (single-diagram) convenience
+    parameter — run_pipeline_for_model itself takes `diagrams`, a list
+    (5a-1 replaced the old single-diagram `diagram_data` parameter there).
+    """
     events = []
     async for event in run_pipeline_for_model(
         model_id="e2e-test",
@@ -181,7 +186,7 @@ async def _collect_events(
         framework=framework,
         provider=provider,
         code_context=code_context,
-        diagram_data=diagram_data,
+        diagrams=[diagram_data] if diagram_data is not None else None,
         max_iterations=max_iterations,
         has_ai_components=has_ai_components,
     ):

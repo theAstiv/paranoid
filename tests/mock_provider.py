@@ -45,10 +45,12 @@ class MockProvider:
         framework: Framework = Framework.STRIDE,
         gap_call_threshold: int = 2,
         supports_images: bool = True,
+        effort: str | None = None,
     ) -> None:
         self._framework = framework
         self._gap_call_threshold = gap_call_threshold
         self._supports_images = supports_images
+        self._effort = effort
         self.calls: list[dict[str, Any]] = []
         self.response_overrides: dict[type, Any] = {}
         self.error_types: set[type] = set()
@@ -68,6 +70,10 @@ class MockProvider:
     @property
     def supports_images(self) -> bool:
         return self._supports_images
+
+    @property
+    def effort(self) -> str | None:
+        return self._effort
 
     async def generate_structured(
         self,

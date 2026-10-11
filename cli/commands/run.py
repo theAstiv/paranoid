@@ -41,7 +41,7 @@ from backend.providers import (
 )
 from backend.providers.base import LLMProvider
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
-from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider
+from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider, effort_kwargs
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
@@ -658,8 +658,9 @@ def run(
                     "profile": settings.aws_profile,
                     "image_models": settings.bedrock_image_models,
                 }
-            elif settings.default_provider == "anthropic" and settings.anthropic_effort:
-                _extra = {"effort": settings.anthropic_effort}
+            _extra.update(
+                effort_kwargs(settings.default_provider, settings.default_model, settings)
+            )
             provider = create_provider(
                 provider_type=settings.default_provider,
                 model=settings.default_model,
