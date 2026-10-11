@@ -25,6 +25,8 @@ LOG_PATTERNS = {
     "prose_retries": r"answered without calling the respond tool",
     "refusals": r"refus(al|ed)",
     "timeouts": r"timed out",
+    "json_string_field_coercions": r"as a JSON string instead of the schema's",
+    "empty_tool_input_retries": r"called the respond tool with an empty input",
 }
 _ENRICH = re.compile(r"Enrichment complete: (\d+) attack trees, (\d+) test suites")
 
