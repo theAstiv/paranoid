@@ -106,10 +106,12 @@ Partial IDs work — first 8 characters are enough.
 ### `paranoid models export`
 
 ```bash
-paranoid models export <model-id> --format <fmt> [-o <output>]
+paranoid models export <model-id> --format <fmt> [-o <output>] [--source-file <path>]
 ```
 
 Run once, export many times. Supported formats: `json`, `full`, `sarif`, `markdown`, `pdf`.
+
+`--source-file` (SARIF only) sets the repo-relative path GitHub code scanning anchors non-dependency results to — point it at your description file in the repo. Without it, results fall back to a fixed anchor (`threat-model.md`) rather than a logical-only location, which GitHub's code-scanning upload rejects the whole run over.
 
 ### `paranoid models delete`
 

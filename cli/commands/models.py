@@ -303,7 +303,19 @@ _FORMAT_EXTENSIONS = {
     default=None,
     help="Output file path (default: {id_prefix}_{format}{ext} in current directory)",
 )
-def export_model(model_id: str, output_format: str, output: Path | None) -> None:
+@click.option(
+    "--source-file",
+    "source_file",
+    default=None,
+    help=(
+        "SARIF only: repo-relative path GitHub code scanning should anchor "
+        "non-dependency results to — point this at your description file in "
+        "the repo. Defaults to 'threat-model.md' when not given."
+    ),
+)
+def export_model(
+    model_id: str, output_format: str, output: Path | None, source_file: str | None
+) -> None:
     """Export a saved threat model to a file.
 
     MODEL_ID can be a full UUID or a unique prefix (e.g. 'a1b2c3d4').
@@ -313,13 +325,18 @@ def export_model(model_id: str, output_format: str, output: Path | None) -> None
         \b
         paranoid models export a1b2c3d4 --format markdown -o report.md
         paranoid models export a1b2c3d4 --format pdf -o report.pdf
-        paranoid models export a1b2c3d4 --format sarif -o findings.sarif
+        paranoid models export a1b2c3d4 --format sarif -o findings.sarif --source-file docs/threat-model.md
         paranoid models export a1b2c3d4 --format simple -o threats.json
         paranoid models export a1b2c3d4 --format full
     """
     try:
         asyncio.run(
-            _export_model_async(model_id=model_id, output_format=output_format, output=output)
+            _export_model_async(
+                model_id=model_id,
+                output_format=output_format,
+                output=output,
+                source_file=source_file,
+            )
         )
     except CLIError as e:
         click.secho(f"\n✗ Error: {e.message}", fg="red", err=True)
@@ -333,8 +350,16 @@ async def _export_model_async(
     model_id: str,
     output_format: str,
     output: Path | None,
+    source_file: str | None = None,
 ) -> None:
     from backend.db import crud
+    from backend.export.sarif import sanitize_source_file
+
+    if source_file is not None and sanitize_source_file(source_file) is None:
+        raise CLIError(
+            "Invalid --source-file: must be a relative path with no '..' segment, "
+            "URL scheme, or leading '/', and no longer than 1024 characters"
+        )
 
     # Resolve full UUID or prefix
     if len(model_id) == 36:
@@ -422,6 +447,7 @@ async def _export_model_async(
             threats=threats_list,
             model_id=model["id"],
             framework=model.get("framework", "STRIDE"),
+            source_file=source_file,
         )
         output_path.write_text(json.dumps(sarif_data, indent=2), encoding="utf-8")
 

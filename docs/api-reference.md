@@ -167,11 +167,14 @@ Bulk status update for multiple threats.
 
 ## Export
 
-### `GET /api/models/{id}/export`
+### `GET /api/export/{model_id}`
 
 Export a saved model.
 
-**Query params:** `format` — `json`, `full`, `sarif`, `markdown`, `pdf`
+**Query params:**
+- `format` — `markdown` (default), `pdf`, `sarif`, `json`
+- `status_filter` — `pending` | `approved` | `rejected` | `mitigated` (optional)
+- `source_file` — SARIF only; repo-relative path GitHub code scanning should anchor non-dependency results to (point this at your description file in the repo). Defaults to `threat-model.md` when not given
 
 **Response:** File download with appropriate `Content-Type`.
 

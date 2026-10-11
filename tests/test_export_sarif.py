@@ -6,6 +6,7 @@ Uses fixture threats from tests/fixtures/pipeline.py — no API tokens needed.
 import pytest
 
 from backend.export.sarif import (
+    DEFAULT_SARIF_SOURCE_FILE,
     _severity_to_level,
     export_sarif,
     threat_from_row,
@@ -99,6 +100,21 @@ def test_sarif_locations(sarif_output):
             assert "physicalLocation" in location
             artifact = location["physicalLocation"]["artifactLocation"]
             assert artifact["uri"] == "examples/stride-example.md"
+
+
+def test_sarif_no_source_file_still_gets_the_default_physical_location():
+    """The default lives in export_sarif() itself (PR D), not in each
+    caller — a caller that forgets to pass source_file must not bring back
+    the bug this PR fixes (a logical-only first location, the shape
+    GitHub's code-scanning upload rejects the whole run over)."""
+    threats = make_stride_threats()
+    result = export_sarif(threats=threats, model_id="no-source-file", framework="STRIDE")
+    results = result["runs"][0]["results"]
+    assert results
+    for r in results:
+        location = r["locations"][0]
+        assert "physicalLocation" in location
+        assert location["physicalLocation"]["artifactLocation"]["uri"] == DEFAULT_SARIF_SOURCE_FILE
 
 
 def test_sarif_dependency_threat_gets_npm_logical_location_and_manifest_physical_location():
@@ -288,6 +304,67 @@ def test_sarif_locations_normalize_windows_style_paths():
         "uri"
     ]
     assert uri == "apps/web/package.json"
+
+
+@pytest.mark.parametrize(
+    "bad_source_file",
+    [
+        "/etc/passwd",
+        "C:\\Windows\\system.ini",
+        "https://example.com/evil.md",
+        "../../etc/passwd",
+        "docs/../../etc/passwd",
+        "x" * 2000,
+    ],
+)
+def test_sanitize_source_file_rejects_unsafe_values(bad_source_file):
+    """sanitize_source_file() — used by the web export route and the CLI
+    export command on their untrusted source_file input, never by
+    export_sarif() itself — rejects an absolute path, a URL scheme, a `..`
+    segment, and an over-long value."""
+    from backend.export.sarif import sanitize_source_file
+
+    assert sanitize_source_file(bad_source_file) is None
+
+
+def test_sanitize_source_file_accepts_a_normal_relative_path():
+    from backend.export.sarif import sanitize_source_file
+
+    assert sanitize_source_file("docs/threat-model.md") == "docs/threat-model.md"
+    assert sanitize_source_file(None) is None
+    assert sanitize_source_file("") is None
+
+
+def test_export_sarif_trusts_source_file_as_given():
+    """export_sarif() itself does not sanitize — it trusts the value as
+    given, since `paranoid run` legitimately passes an absolute path
+    before PR D's repo-relative conversion runs at the CLI layer, and
+    validating untrusted input is the caller's job (sanitize_source_file)."""
+    threats = make_stride_threats()
+    result = export_sarif(
+        threats=threats,
+        model_id="trusted",
+        framework="STRIDE",
+        source_file="/etc/passwd",
+    )
+    uri = result["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ]
+    assert uri == "/etc/passwd"
+
+
+def test_sarif_accepts_a_normal_relative_source_file():
+    threats = make_stride_threats()
+    result = export_sarif(
+        threats=threats,
+        model_id="safe",
+        framework="STRIDE",
+        source_file="docs/threat-model.md",
+    )
+    uri = result["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ]
+    assert uri == "docs/threat-model.md"
 
 
 def test_sarif_attack_techniques_rendered_as_tags():
