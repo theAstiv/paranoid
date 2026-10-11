@@ -1,30 +1,44 @@
 """Tests for shared route helper utilities (backend/routes/_helpers.py)."""
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from backend.config import settings
 from backend.routes._helpers import (
-    anthropic_kwargs,
     bedrock_kwargs,
     build_fast_provider,
     build_provider_from_record,
+    effort_kwargs,
 )
 
 
-def test_anthropic_kwargs_passes_effort_only_for_anthropic_when_set(monkeypatch):
+def test_effort_kwargs_passes_effort_for_anthropic_and_claude_on_bedrock(monkeypatch):
+    """Claude via Bedrock honours the same ANTHROPIC_EFFORT setting as the
+    direct Anthropic provider (PR B); openai/ollama never get it."""
     monkeypatch.setattr(settings, "anthropic_effort", "medium")
-    assert anthropic_kwargs("anthropic") == {"effort": "medium"}
-    assert anthropic_kwargs("openai") == {}
-    assert anthropic_kwargs("bedrock") == {}
+    assert effort_kwargs("anthropic", "claude-sonnet-5") == {"effort": "medium"}
+    assert effort_kwargs("bedrock", "us.anthropic.claude-sonnet-5-v1:0") == {"effort": "medium"}
+    assert effort_kwargs("openai", "gpt-4.1") == {}
+    assert effort_kwargs("ollama", "llama3.1:8b") == {}
 
 
-def test_anthropic_kwargs_unset_effort_returns_empty(monkeypatch):
+def test_effort_kwargs_non_claude_bedrock_model_returns_empty(monkeypatch):
+    """A non-Claude Bedrock model (gpt-oss, Qwen, DeepSeek, Nova) never gets
+    `effort` — its rejection-message wording for an unsupported field is
+    unconfirmed, unlike Claude's, which BedrockProvider's fallback matches."""
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    assert effort_kwargs("bedrock", "openai.gpt-oss-120b-1:0") == {}
+    assert effort_kwargs("bedrock", "qwen.qwen3-32b-v1:0") == {}
+    assert effort_kwargs("bedrock", "amazon.nova-pro-v1:0") == {}
+
+
+def test_effort_kwargs_unset_effort_returns_empty(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_effort", None)
-    assert anthropic_kwargs("anthropic") == {}
+    assert effort_kwargs("anthropic", "claude-sonnet-5") == {}
+    assert effort_kwargs("bedrock", "us.anthropic.claude-sonnet-5-v1:0") == {}
 
 
 def test_effort_reaches_main_provider_but_not_fast_provider(monkeypatch):
@@ -36,6 +50,53 @@ def test_effort_reaches_main_provider_but_not_fast_provider(monkeypatch):
 
     assert build_provider_from_record(record)._effort == "medium"
     assert build_fast_provider(record)._effort is None
+
+
+def test_effort_reaches_bedrock_main_provider_but_not_bedrock_fast_provider(monkeypatch):
+    """Claude on Bedrock gets the same ANTHROPIC_EFFORT the direct provider
+    does (PR B); the Bedrock fast model must not get it either."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = MagicMock()
+
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    monkeypatch.setattr(settings, "default_provider", "bedrock")
+    monkeypatch.setattr(settings, "fast_model_bedrock", "us.anthropic.claude-haiku-fast-v1:0")
+    record = {"provider": "bedrock", "model": "us.anthropic.claude-sonnet-5-v1:0"}
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        main = build_provider_from_record(record)
+        fast = build_fast_provider(record)
+
+    assert main._effort == "medium"
+    assert main.effort == "medium"
+    assert fast is not None
+    assert fast._effort is None
+    assert fast.effort is None
+
+
+def test_effort_withheld_from_non_claude_bedrock_main_provider(monkeypatch):
+    """A non-Claude Bedrock model as the *main* provider must not receive
+    `effort` either, end to end through build_provider_from_record."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = MagicMock()
+
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    monkeypatch.setattr(settings, "default_provider", "bedrock")
+    record = {"provider": "bedrock", "model": "openai.gpt-oss-120b-1:0"}
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        main = build_provider_from_record(record)
+
+    assert main._effort is None
+    assert main.effort is None
 
 
 def test_build_fast_provider_builds_openai_from_its_own_fast_model(monkeypatch):

@@ -37,14 +37,26 @@ def bedrock_kwargs(provider_type: str, settings_obj: Settings | None = None) -> 
     }
 
 
-def anthropic_kwargs(provider_type: str) -> dict:
-    """Return the opt-in effort kwarg for create_provider when provider is anthropic.
+def effort_kwargs(provider_type: str, model: str, settings_obj: Settings | None = None) -> dict:
+    """Return the opt-in effort kwarg for create_provider, for the main
+    provider only (the fast/Haiku provider must never get it).
 
-    Only for the main provider: the fast (Haiku) provider must not get it.
+    Applies to the direct Anthropic provider, and to Claude models on
+    Bedrock (model ID contains "anthropic.claude") — never Nova/gpt-oss/
+    Qwen/DeepSeek on Bedrock. Those models' rejection-message wording for
+    an unsupported `effort` field is unconfirmed, and BedrockProvider's
+    fallback only recognises the wording Claude uses; sending it
+    unconditionally would risk an unhandled failure that falls the whole
+    run back to the rule engine instead of just dropping the field.
     """
-    if provider_type != "anthropic" or not settings.anthropic_effort:
+    s = settings_obj or settings
+    if not s.anthropic_effort:
         return {}
-    return {"effort": settings.anthropic_effort}
+    if provider_type == "anthropic":
+        return {"effort": s.anthropic_effort}
+    if provider_type == "bedrock" and "anthropic.claude" in model.lower():
+        return {"effort": s.anthropic_effort}
+    return {}
 
 
 def resolve_provider(
@@ -78,7 +90,7 @@ def build_provider_from_record(record: dict) -> LLMProvider:
             api_key=api_key,
             base_url=base_url,
             **bedrock_kwargs(provider_type),
-            **anthropic_kwargs(provider_type),
+            **effort_kwargs(provider_type, model_str),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -114,7 +126,7 @@ def build_fast_provider(record: dict, settings_obj: Settings | None = None) -> L
     - A fast model is configured for the resolved provider type
     - The fast model differs from the main model (so we don't create a duplicate)
 
-    Never forwards ``anthropic_kwargs()`` (the opt-in ``effort`` setting) —
+    Never forwards ``effort_kwargs()`` (the opt-in ``effort`` setting) —
     that applies to the main model only, never the fast model.
 
     Returns None in all other cases — callers pass None directly to
