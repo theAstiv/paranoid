@@ -327,4 +327,107 @@ def test_run_sarif_output_uses_forward_slash_uris(
     ]
     assert uris, "expected at least the description-completeness finding"
     assert all("\\" not in uri for uri in uris), uris
-    assert all(uri.endswith("system.md") for uri in uris)
+
+
+def test_run_sarif_source_file_is_cwd_relative_for_an_absolute_input_path(
+    runner, tmp_path, monkeypatch, fake_settings
+):
+    """Regression test: moving PR D's default/validation logic into
+    export_sarif() briefly made every absolute input path (what the GitHub
+    Action always passes) fall back to the fixed 'threat-model.md' anchor
+    instead of resolving to the real description file. The CLI's own
+    source_file must never be sanitized/defaulted away — only made
+    repo-relative — since it's a real filesystem path this process just
+    read, not untrusted input."""
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    _patch_settings(monkeypatch, fake_settings)
+
+    repo_dir = tmp_path / "repo"
+    docs_dir = repo_dir / "docs"
+    docs_dir.mkdir(parents=True)
+    input_file = docs_dir / "system.md"
+    input_file.write_text("A document sharing web application for threat modeling")
+
+    async def _fake_run_pipeline_for_model(*args, **kwargs):
+        return
+        yield  # pragma: no cover
+
+    class _EmptyResult:
+        is_sufficient = True
+        gaps: list = []
+
+    class _FakeBundle:
+        description = _EmptyResult()
+        assumptions = _EmptyResult()
+
+    async def _fake_analyze_bundle(*args, **kwargs):
+        return _FakeBundle()
+
+    from backend.export.sarif import export_sarif as real_export_sarif
+
+    captured_sarif_kwargs: dict = {}
+
+    def _spy_export_sarif(*args, **kwargs):
+        captured_sarif_kwargs.update(kwargs)
+        return real_export_sarif(*args, **kwargs)
+
+    monkeypatch.setattr("cli.commands.run.run_pipeline_for_model", _fake_run_pipeline_for_model)
+    monkeypatch.setattr("cli.commands.run.analyze_bundle", _fake_analyze_bundle)
+    monkeypatch.setattr("cli.commands.run.export_sarif", _spy_export_sarif)
+    monkeypatch.chdir(repo_dir)
+
+    out = tmp_path / "out.sarif"
+    result = runner.invoke(
+        run,
+        [str(input_file), "--format", "sarif", "--output", str(out), "--quiet"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured_sarif_kwargs["source_file"] == "docs/system.md"
+
+
+def test_repo_relative_source_file_resolves_against_cwd(tmp_path, monkeypatch):
+    """Unit-level check of the helper itself: an absolute path under the
+    current directory resolves relative to it."""
+    from cli.commands.run import _repo_relative_source_file
+
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    repo_dir = tmp_path / "repo"
+    (repo_dir / "docs").mkdir(parents=True)
+    input_file = repo_dir / "docs" / "system.md"
+    input_file.write_text("x")
+    monkeypatch.chdir(repo_dir)
+
+    assert _repo_relative_source_file(input_file) == "docs/system.md"
+
+
+def test_repo_relative_source_file_resolves_against_github_workspace(tmp_path, monkeypatch):
+    """With GITHUB_WORKSPACE set (running as the Action), an absolute path
+    under it resolves relative to the workspace root, not cwd."""
+    from cli.commands.run import _repo_relative_source_file
+
+    workspace = tmp_path / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    input_file = workspace / "docs" / "system.md"
+    input_file.write_text("x")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(workspace))
+    monkeypatch.chdir(tmp_path)  # cwd is deliberately NOT the workspace
+
+    assert _repo_relative_source_file(input_file) == "docs/system.md"
+
+
+def test_repo_relative_source_file_falls_back_when_outside_both(tmp_path, monkeypatch):
+    """A path under neither GITHUB_WORKSPACE nor cwd falls back to the path
+    as given (forward-slashed), rather than raising."""
+    from cli.commands.run import _repo_relative_source_file, to_sarif_uri
+
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    input_file = elsewhere / "system.md"
+    input_file.write_text("x")
+
+    cwd_dir = tmp_path / "cwd"
+    cwd_dir.mkdir()
+    monkeypatch.chdir(cwd_dir)
+
+    assert _repo_relative_source_file(input_file) == to_sarif_uri(input_file.resolve())
