@@ -728,3 +728,22 @@ class TestRuleEngineCvssScoring:
             score, severity = score_and_severity(expected)
             assert t.cvss_score == pytest.approx(score)
             assert t.cvss_severity == severity
+
+
+def test_rule_engine_threats_carry_the_seed_maestro_category():
+    """Seeds with a maestro_category keep it on the Threat (and so in the DB)
+    instead of only using it to pick the nearest STRIDE category."""
+    desc = "A RAG chatbot built on an LLM with a vector database and prompt templates."
+    result = match_patterns(desc, Framework.MAESTRO, max_results=20)
+    assert result.threats
+    assert all(t.maestro_category is not None for t in result.threats)
+    assert all(t.stride_category is not None for t in result.threats)
+
+
+def test_rule_engine_stride_only_seeds_have_no_maestro_category():
+    desc = "A web application with JWT authentication and a PostgreSQL database."
+    result = match_patterns(desc, Framework.STRIDE, max_results=50)
+    loaded = {p["name"]: p for p in _load_seed_patterns(None)}
+    for t in result.threats:
+        if not loaded[t.name].get("maestro_category"):
+            assert t.maestro_category is None

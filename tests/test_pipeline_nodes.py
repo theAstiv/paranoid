@@ -5,8 +5,9 @@ to trigger ProviderError on specific response models (per RULES.md).
 """
 
 import pytest
+from pydantic import ValidationError
 
-from backend.models.enums import Framework
+from backend.models.enums import Framework, MaestroCategory
 from backend.models.extended import AttackTree, CodeContext, CodeFile, CodeSummary, TestSuite
 from backend.models.state import (
     AssetsList,
@@ -14,7 +15,10 @@ from backend.models.state import (
     GapAnalysis,
     SummaryState,
     ThreatsList,
+    ThreatsListCvss,
     ThreatsListDreadOnly,
+    ThreatsListMaestroCvss,
+    ThreatsListMaestroDreadOnly,
 )
 from backend.pipeline import nodes
 from backend.pipeline.nodes import helpers
@@ -27,7 +31,7 @@ from tests.fixtures.pipeline import (
     make_flows,
     make_stride_threats,
 )
-from tests.mock_provider import MockProvider
+from tests.mock_provider import _THREATS_VARIANTS, MockProvider
 
 
 # ---------------------------------------------------------------------------
@@ -429,31 +433,89 @@ async def test_generate_threats_dread_only_prompt_has_no_cvss_section(mock_provi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("scoring_method", "expected_model"),
-    [("dread", ThreatsListDreadOnly), ("cvss", ThreatsList), ("both", ThreatsList)],
+    ("framework", "scoring_method", "expected_model"),
+    [
+        (Framework.STRIDE, "dread", ThreatsListDreadOnly),
+        (Framework.STRIDE, "cvss", ThreatsListCvss),
+        (Framework.STRIDE, "both", ThreatsListCvss),
+        (Framework.MAESTRO, "dread", ThreatsListMaestroDreadOnly),
+        (Framework.MAESTRO, "cvss", ThreatsListMaestroCvss),
+        (Framework.MAESTRO, "both", ThreatsListMaestroCvss),
+    ],
 )
-async def test_generate_threats_requests_schema_matching_scoring_method(
-    mock_provider, scoring_method, expected_model
+async def test_generate_threats_requests_schema_matching_framework_and_scoring(
+    framework, scoring_method, expected_model
 ):
-    """A dread-only run must request ThreatsListDreadOnly (the schema
-    without `cvss`) from the provider — not just avoid showing it in the
-    prompt. cvss/both runs still need the full ThreatsList schema."""
+    """Each (framework, scoring_method) cell requests its own schema: dread
+    hides `cvss`, cvss/both require it, MAESTRO requires `maestro_category`."""
+    provider = MockProvider(framework=framework)
     await nodes.generate_threats(
         description="Users upload and share documents",
         architecture_diagram=None,
         assumptions=None,
         assets=make_assets(),
         flows=make_flows(),
-        framework=Framework.STRIDE,
-        provider=mock_provider,
+        framework=framework,
+        provider=provider,
         scoring_method=scoring_method,
     )
 
-    threat_calls = [
-        c for c in mock_provider.calls if c["response_model"] in (ThreatsList, ThreatsListDreadOnly)
-    ]
+    threat_calls = [c for c in provider.calls if c["response_model"] in _THREATS_VARIANTS]
     assert len(threat_calls) == 1
     assert threat_calls[0]["response_model"] is expected_model
+
+
+def _threat_schema(response_model) -> dict:
+    schema = response_model.model_json_schema()
+    return next(v for k, v in schema["$defs"].items() if k.startswith("_Threat"))
+
+
+@pytest.mark.parametrize("model", [ThreatsListCvss, ThreatsListMaestroCvss])
+def test_cvss_schemas_require_cvss(model):
+    """Opus 5.5 left the optional `cvss` out of all 10 threats in a "both"
+    run (10-11 e2e-web). It's required, not optional, whenever CVSS is asked for."""
+    assert "cvss" in _threat_schema(model)["required"]
+
+
+@pytest.mark.parametrize("model", [ThreatsListMaestroDreadOnly, ThreatsListMaestroCvss])
+def test_maestro_schemas_require_maestro_and_stride_category(model):
+    required = _threat_schema(model)["required"]
+    assert "maestro_category" in required
+    assert "stride_category" in required
+
+
+@pytest.mark.parametrize("model", [ThreatsListDreadOnly, ThreatsListCvss])
+def test_stride_schemas_hide_maestro_category(model):
+    assert "maestro_category" not in _threat_schema(model)["properties"]
+
+
+def test_cvss_schema_rejects_a_threat_without_cvss():
+    threat = make_stride_threats().threats[0].model_dump(exclude={"cvss"})
+    with pytest.raises(ValidationError, match="cvss"):
+        ThreatsListCvss.model_validate({"threats": [threat]})
+
+
+@pytest.mark.asyncio
+async def test_generate_threats_keeps_maestro_category_from_provider():
+    """The MAESTRO category a provider returns survives normalisation back to
+    plain ThreatsList (it used to have nowhere to go)."""
+    provider = MockProvider(framework=Framework.MAESTRO)
+    result = await nodes.generate_threats(
+        description="An LLM summarises uploaded documents",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=make_assets(),
+        flows=make_flows(),
+        framework=Framework.MAESTRO,
+        provider=provider,
+    )
+
+    assert type(result) is ThreatsList
+    assert [t.maestro_category for t in result.threats] == [
+        MaestroCategory.LLM_SECURITY,
+        MaestroCategory.MODEL_SECURITY,
+        MaestroCategory.DATA_SECURITY,
+    ]
 
 
 @pytest.mark.asyncio

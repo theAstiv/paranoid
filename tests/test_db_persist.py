@@ -901,3 +901,45 @@ async def test_persist_without_diagrams_saves_no_rows(test_db):
 
     rows = await crud.list_model_diagrams(model_id)
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_persist_saves_maestro_category(test_db):
+    """A MAESTRO threat's category is written to the maestro_category column
+    (the column and crud param existed, but persistence never passed it, so
+    every MAESTRO run stored NULL and the bench's maestro_present gate failed)."""
+    from tests.fixtures.pipeline import make_maestro_threats
+
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.MAESTRO,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=make_maestro_threats(),
+    )
+
+    rows = {t["name"]: t for t in await crud.list_threats(model_id)}
+    assert rows["Prompt Injection via Document Content"]["maestro_category"] == "LLM Security"
+    assert rows["Prompt Injection via Document Content"]["stride_category"] == "Tampering"
+    assert rows["Model Extraction via API Probing"]["maestro_category"] == "Model Security"
+
+
+@pytest.mark.asyncio
+async def test_persist_leaves_maestro_category_null_for_stride_threats(test_db):
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=1,
+        assets=None,
+        flows=None,
+        threats=_make_threats(),
+    )
+
+    assert all(t["maestro_category"] is None for t in await crud.list_threats(model_id))

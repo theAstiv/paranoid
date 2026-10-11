@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
-from backend.models.enums import AssetType, StrideCategory
+from backend.models.enums import AssetType, MaestroCategory, StrideCategory
 from backend.scoring.cvss31 import Cvss31Metrics as CvssVector
 
 
@@ -166,6 +166,14 @@ class Threat(BaseModel):
         StrideCategory,
         Field(description="The STRIDE category of the threat"),
     ]
+    # Hidden from the provider schema on STRIDE calls (an LLM doing STRIDE has
+    # no business picking a MAESTRO layer, and it keeps that schema small).
+    # MAESTRO calls use _ThreatMaestro / _ThreatMaestroCvss below, which
+    # expose it as a required field. stride_category stays required in every
+    # variant: SARIF rule IDs, exports, review filters and the next
+    # iteration's "existing threats" prompt all key on it, the same way the
+    # rule engine maps MAESTRO-only seeds onto the nearest STRIDE category.
+    maestro_category: SkipJsonSchema[MaestroCategory | None] = None
     description: Annotated[
         str,
         Field(
@@ -267,6 +275,59 @@ class ThreatsListDreadOnly(BaseModel):
     """Response model for a dread-only generate_threats() call."""
 
     threats: Annotated[list[_ThreatDreadOnly], Field(description="The list of threats")]
+
+
+# Response models for the other three (framework x scoring_method) cells,
+# selected by backend.pipeline.nodes.threats._threats_response_model().
+#
+# cvss/both runs make `cvss` REQUIRED. As an optional field (plain Threat) it
+# was skipped outright: in the 10-11 e2e-web run Opus 5.5 returned all 10
+# LLM threats without it despite the CVSS prompt block, so a "both" run
+# stored no vectors at all. A required field turns an omission into a
+# validation error, which providers retry, instead of a silently unscored
+# threat. No defaults are back-filled: a default would be indistinguishable
+# from an assessed vector in the UI, SARIF and the CVSS benchmarks.
+#
+# MAESTRO runs expose `maestro_category` as required (see Threat).
+# Docstrings stay one line for the same schema-size reason as above.
+class _ThreatCvss(Threat):
+    """Same as Threat, with `cvss` required."""
+
+    cvss: Annotated[CvssVector, Field(description="CVSS v3.1 base metrics for this threat")]
+
+
+class _ThreatMaestro(_ThreatDreadOnly):
+    """Same as Threat, with `maestro_category` required and `cvss` hidden."""
+
+    maestro_category: Annotated[
+        MaestroCategory, Field(description="The MAESTRO category of the threat")
+    ]
+
+
+class _ThreatMaestroCvss(_ThreatCvss):
+    """Same as Threat, with `maestro_category` and `cvss` required."""
+
+    maestro_category: Annotated[
+        MaestroCategory, Field(description="The MAESTRO category of the threat")
+    ]
+
+
+class ThreatsListCvss(BaseModel):
+    """Response model for a STRIDE cvss/both generate_threats() call."""
+
+    threats: Annotated[list[_ThreatCvss], Field(description="The list of threats")]
+
+
+class ThreatsListMaestroDreadOnly(BaseModel):
+    """Response model for a MAESTRO dread-only generate_threats() call."""
+
+    threats: Annotated[list[_ThreatMaestro], Field(description="The list of threats")]
+
+
+class ThreatsListMaestroCvss(BaseModel):
+    """Response model for a MAESTRO cvss/both generate_threats() call."""
+
+    threats: Annotated[list[_ThreatMaestroCvss], Field(description="The list of threats")]
 
 
 class GapAnalysis(BaseModel):

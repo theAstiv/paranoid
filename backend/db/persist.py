@@ -234,6 +234,9 @@ async def _persist(
                 likelihood=threat.likelihood,
                 mitigations=threat.mitigations,
                 stride_category=threat.stride_category.value if threat.stride_category else None,
+                maestro_category=(
+                    threat.maestro_category.value if threat.maestro_category else None
+                ),
                 dread_score=dread_score,
                 dread_damage=dread_damage,
                 dread_reproducibility=dread_reproducibility,

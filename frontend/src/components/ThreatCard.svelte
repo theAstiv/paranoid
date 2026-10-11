@@ -263,6 +263,9 @@
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 flex-wrap mb-1.5">
         <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border {categoryChip}">{category}</span>
+        {#if threat.stride_category && threat.maestro_category}
+          <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border chip-violet" title="MAESTRO category">{threat.maestro_category}</span>
+        {/if}
         {#if threat.status}
           <span class="font-mono text-[11px] px-2 py-0.5 rounded-chip border capitalize {STATUS_CHIPS[threat.status] ?? 'chip-gray'}">
             {threat.status}

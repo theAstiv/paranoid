@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from backend.models.enums import Framework, StrideCategory
+from backend.models.enums import Framework, MaestroCategory, StrideCategory
 from backend.models.state import Threat, ThreatsList
 from backend.rules.cvss_defaults import rule_pattern_cvss_vector
 from backend.scoring.cvss31 import parse_vector, score_and_severity
@@ -400,6 +400,14 @@ def _pattern_to_threat(
             ),
         )
         threat.source = "rule_engine"
+        raw_maestro = pattern.get("maestro_category")
+        if raw_maestro:
+            try:
+                threat.maestro_category = MaestroCategory(raw_maestro)
+            except ValueError:
+                logger.debug(
+                    f"Seed '{pattern['name']}' has unknown MAESTRO category {raw_maestro!r}"
+                )
         if scoring_method in ("cvss", "both"):
             vector = rule_pattern_cvss_vector(stride_cat, threat.impact, threat.likelihood)
             threat.cvss = parse_vector(vector)
