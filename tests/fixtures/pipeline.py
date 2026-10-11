@@ -6,7 +6,7 @@ All responses satisfy Pydantic validation constraints:
 - DREAD scores: 0-10 per dimension
 """
 
-from backend.models.enums import AssetType, StrideCategory
+from backend.models.enums import AssetType, MaestroCategory, StrideCategory
 from backend.models.extended import AttackTree, CodeContext, CodeFile, CodeSummary, TestSuite
 from backend.models.state import (
     Asset,
@@ -416,6 +416,7 @@ def make_maestro_threats() -> ThreatsList:
             Threat(
                 name="Prompt Injection via Document Content",
                 stride_category=StrideCategory.TAMPERING,
+                maestro_category=MaestroCategory.LLM_SECURITY,
                 description=(
                     "An attacker could embed adversarial instructions within uploaded "
                     "documents that are processed by the AI summarization component. "
@@ -436,6 +437,7 @@ def make_maestro_threats() -> ThreatsList:
             Threat(
                 name="Model Extraction via API Probing",
                 stride_category=StrideCategory.INFORMATION_DISCLOSURE,
+                maestro_category=MaestroCategory.MODEL_SECURITY,
                 description=(
                     "An adversary could systematically query the document classification "
                     "API with crafted inputs to reconstruct the underlying machine learning "
@@ -455,6 +457,7 @@ def make_maestro_threats() -> ThreatsList:
             Threat(
                 name="Training Data Poisoning via Malicious Documents",
                 stride_category=StrideCategory.TAMPERING,
+                maestro_category=MaestroCategory.DATA_SECURITY,
                 description=(
                     "An attacker could upload carefully crafted documents designed to "
                     "corrupt the training data used for the document classification model. "

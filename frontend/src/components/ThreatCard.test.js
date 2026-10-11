@@ -48,6 +48,18 @@ describe('ThreatCard', () => {
     expect(screen.getByText('Model Theft')).toBeInTheDocument()
   })
 
+  it('renders a MAESTRO chip next to the STRIDE one when a threat has both', () => {
+    const both = { ...baseThreat, maestro_category: 'LLM Security' }
+    render(ThreatCard, { props: { threat: both } })
+    expect(screen.getByText('Tampering')).toBeInTheDocument()
+    expect(screen.getByTitle('MAESTRO category')).toHaveTextContent('LLM Security')
+  })
+
+  it('shows no MAESTRO chip for a STRIDE-only threat', () => {
+    render(ThreatCard, { props: { threat: baseThreat } })
+    expect(screen.queryByTitle('MAESTRO category')).toBeNull()
+  })
+
   it('renders status badge', () => {
     render(ThreatCard, { props: { threat: baseThreat } })
     expect(screen.getByText('pending')).toBeInTheDocument()

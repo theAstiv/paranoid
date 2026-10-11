@@ -15,7 +15,10 @@ from backend.models.state import (
     GapAnalysis,
     SummaryState,
     ThreatsList,
+    ThreatsListCvss,
     ThreatsListDreadOnly,
+    ThreatsListMaestroCvss,
+    ThreatsListMaestroDreadOnly,
 )
 from backend.providers.base import ProviderError, ProviderRefusalError
 from tests.fixtures.pipeline import (
@@ -29,6 +32,14 @@ from tests.fixtures.pipeline import (
     make_stride_threats,
     make_summary,
     make_test_suite,
+)
+
+
+_THREATS_VARIANTS = (
+    ThreatsListDreadOnly,
+    ThreatsListCvss,
+    ThreatsListMaestroDreadOnly,
+    ThreatsListMaestroCvss,
 )
 
 
@@ -100,12 +111,12 @@ class MockProvider:
             }
         )
 
-        # ThreatsListDreadOnly (the dread-only run's schema, see
-        # backend/models/state.py's _ThreatDreadOnly) is a distinct class
-        # from ThreatsList, but tests configure error_types/response_overrides
-        # against ThreatsList regardless of which scoring_method triggered the
-        # call — resolve to the canonical key so both dispatch the same way.
-        canonical_model = ThreatsList if response_model is ThreatsListDreadOnly else response_model
+        # generate_threats() asks for one of four ThreatsList variants (per
+        # framework x scoring_method, see _threats_response_model), but tests
+        # configure error_types/response_overrides against ThreatsList
+        # regardless of which cell triggered the call — resolve to the
+        # canonical key so they all dispatch the same way.
+        canonical_model = ThreatsList if response_model in _THREATS_VARIANTS else response_model
 
         if canonical_model in self.refusal_types:
             raise ProviderRefusalError(

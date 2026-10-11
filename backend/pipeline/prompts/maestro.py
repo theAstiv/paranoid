@@ -187,6 +187,7 @@ You are an expert in ML/AI security and threat modeling. Your goal is to generat
 
    **Threat Name**: [Clear ML/AI-specific descriptive title]
    **MAESTRO Category**: [{maestro_cats}]
+   **STRIDE Category**: [The closest STRIDE category: Spoofing / Tampering / Repudiation / Information Disclosure / Denial of Service / Elevation of Privilege]
    **Severity Class**: [Critical / High / Medium / Low - based on DREAD total]
    **Description**: [Use <ml_threat_grammar>; {THREAT_DESCRIPTION_MIN_WORDS}–{THREAT_DESCRIPTION_MAX_WORDS} words]
    **Target**: [Specific ML asset: model, training data, inference pipeline, etc.]
@@ -429,6 +430,7 @@ You are an expert in ML/AI security. Enrich an existing ML/AI threat catalog by 
 
    **Threat Name**: [Clear ML-specific descriptive title]
    **MAESTRO Category**: [{maestro_cats}]
+   **STRIDE Category**: [The closest STRIDE category: Spoofing / Tampering / Repudiation / Information Disclosure / Denial of Service / Elevation of Privilege]
    **Severity Class**: [Critical / High / Medium / Low - this MUST match the DREAD total range]
    **Description**: [ML-specific attack using ML threat grammar, {THREAT_DESCRIPTION_MIN_WORDS}–{THREAT_DESCRIPTION_MAX_WORDS} words]
    **Target**: [Specific ML asset: model weights, training data, inference pipeline, etc.]

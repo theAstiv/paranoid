@@ -11,7 +11,10 @@ from backend.models.state import (
     FlowsList,
     GapAnalysis,
     ThreatsList,
+    ThreatsListCvss,
     ThreatsListDreadOnly,
+    ThreatsListMaestroCvss,
+    ThreatsListMaestroDreadOnly,
 )
 from backend.pipeline.nodes.helpers import (
     build_assumptions_section,
@@ -220,7 +223,7 @@ async def generate_threats(
     # ~20k output tokens and two round-trips per run. The final ceiling is
     # unchanged; max_tokens is a cap, not a charge, so a call that finishes
     # early costs the same as before.
-    response_model = ThreatsListDreadOnly if scoring_method == "dread" else ThreatsList
+    response_model = _threats_response_model(framework, scoring_method)
     raw_response = await provider.generate_structured(
         prompt=full_prompt,
         response_model=response_model,
@@ -229,9 +232,7 @@ async def generate_threats(
         images=images or None,
         shared_context=shared_context,
     )
-    response = (
-        raw_response if scoring_method != "dread" else ThreatsList(threats=raw_response.threats)
-    )
+    response = ThreatsList(threats=raw_response.threats)
 
     # Defense in depth: source/dependency_ref are hidden from the schema sent
     # to providers (SkipJsonSchema on Threat), but a provider that ignores
@@ -257,6 +258,21 @@ async def generate_threats(
             threat.cvss_score, threat.cvss_severity = score_and_severity_from_metrics(threat.cvss)
 
     return response
+
+
+def _threats_response_model(
+    framework: Framework, scoring_method: str
+) -> type[
+    ThreatsListDreadOnly | ThreatsListCvss | ThreatsListMaestroDreadOnly | ThreatsListMaestroCvss
+]:
+    """Pick the generate_threats() response schema for one (framework,
+    scoring_method) cell. MAESTRO requires `maestro_category`; cvss/both
+    requires `cvss`; dread-only hides `cvss`. See the comment above
+    _ThreatCvss in backend/models/state.py."""
+    wants_cvss = scoring_method != "dread"
+    if framework == Framework.MAESTRO:
+        return ThreatsListMaestroCvss if wants_cvss else ThreatsListMaestroDreadOnly
+    return ThreatsListCvss if wants_cvss else ThreatsListDreadOnly
 
 
 async def gap_analysis(
