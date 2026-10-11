@@ -78,3 +78,7 @@ class RunUsage(BaseModel):
     # content filter declined to answer) — reported separately from other
     # provider failures since retrying the same prompt won't help.
     refusal_count: int = 0
+    # The main provider's `output_config.effort` level actually in effect —
+    # None when never configured, not applicable to this provider, or
+    # dropped after the model rejected it (see LLMProvider.effort).
+    effort: str | None = None
