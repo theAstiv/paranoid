@@ -1,9 +1,10 @@
 """Recovery for structured output that arrives in a shape the schema rejects.
 
-Shared by the providers whose structured output isn't schema-constrained at
-decode time (Bedrock Converse tool use, the direct Anthropic JSON path).
-OpenAI strict mode and Ollama `format=` constrain decoding, so they don't need
-it. Every fix here is deterministic and conservative: a value is only
+Shared by the Bedrock (Converse tool use) and direct Anthropic (JSON text)
+providers, whose output isn't schema-constrained at decode time. OpenAI
+Structured Outputs constrains decoding to the schema, so it doesn't need this.
+Ollama's `format="json"` only guarantees valid JSON, not the schema; it has its
+own single repair pass instead. Every fix here is deterministic and conservative: a value is only
 reshaped when the result provably matches the schema's required fields, and
 anything else is left for normal validation (and the provider's
 restate-retry, which uses `describe_validation_errors`).

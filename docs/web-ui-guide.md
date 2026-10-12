@@ -80,7 +80,7 @@ The human-in-the-loop approval interface.
 - DREAD micro-chart (5 bars, colour-coded: critical/high/medium/low)
 - DREAD score badge (e.g. `7.5 HIGH`) and, when scored, a CVSS v3.1 badge with inline vector editing
 - ATT&CK/ATLAS technique chips (embedding-sourced matches shown as "suggested"), linking out to attack.mitre.org / atlas.mitre.org
-- Category chip (Spoofing, Tampering, etc.) and, for dependency-engine threats, a "Dependency" chip with `pkg@ver · file:line`
+- Category chip (Spoofing, Tampering, etc.), a violet MAESTRO chip (e.g. "LLM Security") on threats from a MAESTRO run, and, for dependency-engine threats, a "Dependency" chip with `pkg@ver · file:line`
 - Target and likelihood
 - Full description and mitigations
 - **Approve** / **Reject** buttons
