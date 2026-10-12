@@ -9,6 +9,11 @@ from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
 from backend.models.usage import UsageRecord
+from backend.providers._recovery import (
+    VALIDATION_RESTATE_INSTRUCTION,
+    coerce_tool_input,
+    describe_validation_errors,
+)
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -60,19 +65,6 @@ _AUTO_TOOL_INSTRUCTION = (
 _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION = (
     "Your previous call to the `respond` tool had an empty or incomplete input. Call it "
     "again with the complete input, including every required field, conforming to the schema."
-)
-
-# Sent as an extra system message when the tool input fails schema
-# validation for a reason more tokens can't fix: seen on Haiku 5.5 as a
-# list field sent as a JSON string with a dropped opening bracket, which
-# _coerce_json_string_fields() can't parse. Re-sending the identical
-# prompt with only a bigger budget rarely changes that; naming the fields
-# that failed does. `{fields}` is filled with top-level field names only,
-# never values, so no model output is echoed back into the prompt.
-_VALIDATION_RESTATE_INSTRUCTION = (
-    "Your previous call to the `respond` tool did not match the schema (problem fields: "
-    "{fields}). Call it again with every required field present and each list or object "
-    "given as a JSON value, not as a string containing JSON."
 )
 
 # Model-ID substrings (case-insensitive) that take images, absent an
@@ -411,30 +403,42 @@ class BedrockProvider:
                             continue
                         raise last_error
                 else:
-                    # Under `auto` tool choice the model may answer in text;
-                    # accept it if the text is the JSON we asked for.
-                    data = (
-                        _json_from_text_blocks(output_content)
-                        if self._forced_tool_choice_unsupported
-                        else None
-                    )
+                    # No tool call: accept the text if it's the JSON we asked
+                    # for, under any tool choice. Some models (GPT-OSS, Qwen in
+                    # the 10-11 bench) accept a forced toolChoice and then
+                    # answer in prose with stopReason end_turn, rather than
+                    # rejecting it the way _is_forced_tool_choice_error() catches.
+                    data = _json_from_text_blocks(output_content)
                     if data is None:
                         last_error = ProviderError(
                             provider=self.name,
                             message=f"Bedrock returned no tool_use block (stopReason={stop_reason!r})",
                         )
-                        if self._forced_tool_choice_unsupported and attempt < _MAX_RETRIES:
-                            logger.warning(
-                                "Bedrock model %s answered without calling the respond tool; "
-                                "retrying (attempt %d/%d)",
-                                self._model,
-                                attempt + 1,
-                                1 + _MAX_RETRIES,
-                            )
+                        if attempt < _MAX_RETRIES:
+                            if not self._forced_tool_choice_unsupported:
+                                # Ignoring forced tool choice is treated like
+                                # rejecting it: auto + instruction from here on.
+                                self._forced_tool_choice_unsupported = True
+                                logger.warning(
+                                    "Bedrock model %s ignored forced tool choice and answered "
+                                    "in text - using auto tool choice for the rest of this "
+                                    "provider instance's calls (attempt %d/%d)",
+                                    self._model,
+                                    attempt + 1,
+                                    1 + _MAX_RETRIES,
+                                )
+                            else:
+                                logger.warning(
+                                    "Bedrock model %s answered without calling the respond "
+                                    "tool; retrying (attempt %d/%d)",
+                                    self._model,
+                                    attempt + 1,
+                                    1 + _MAX_RETRIES,
+                                )
                             continue
                         raise last_error
 
-                data = _coerce_json_string_fields(data, schema, model=self._model)
+                data = coerce_tool_input(data, schema, model=self._model)
 
                 try:
                     return response_model.model_validate(data)
@@ -450,18 +454,17 @@ class BedrockProvider:
                         # value isn't truncation, which stopReason max_tokens
                         # already handles above. Still bounded by _MAX_RETRIES.
                         budget = min(budget * 2, _MAX_AUTO_BUMP)
-                        fields = _invalid_top_level_fields(e)
+                        problems = describe_validation_errors(e)
                         logger.warning(
                             "Bedrock model %s returned a tool input that failed validation "
-                            "(fields: %s); retrying with the instruction restated "
-                            "(attempt %d/%d)",
+                            "(%s); retrying with the instruction restated (attempt %d/%d)",
                             self._model,
-                            fields,
+                            problems.replace("\n", " "),
                             attempt + 1,
                             1 + _MAX_RETRIES,
                         )
                         restate_instruction = [
-                            {"text": _VALIDATION_RESTATE_INSTRUCTION.format(fields=fields)}
+                            {"text": VALIDATION_RESTATE_INSTRUCTION.format(problems=problems)}
                         ]
                         continue
                     raise last_error
@@ -562,94 +565,6 @@ def _json_from_text_blocks(content: list[dict]) -> Any | None:
         return json.loads(strip_markdown_fences(text))
     except json.JSONDecodeError:
         return None
-
-
-def _coerce_json_string_fields(data: Any, schema: dict, *, model: str) -> Any:
-    """Parse top-level tool-input fields that arrived as a JSON-encoded
-    string instead of the list/object the schema asked for.
-
-    Reported on Claude 5.x in the 10-09 Bedrock session: a field like
-    "threats" (schema type "array") came back as the string
-    '[{"name": ...}, ...]' rather than the decoded list, which fails
-    Pydantic validation with "Input should be a valid list". Only top-level
-    fields are checked (a nested model's own fields, under a `$ref` or
-    `anyOf` with no top-level "type", aren't — today's schemas don't need
-    it), and only coerced when the parsed value actually matches the
-    expected array/object shape — a field that legitimately holds a
-    JSON-looking string is left alone.
-    """
-    if not isinstance(data, dict):
-        return data
-
-    result = _unwrap_buried_response(data, schema, model=model)
-    coerced_fields: list[str] = []
-    for field, prop_schema in schema.get("properties", {}).items():
-        prop_type = prop_schema.get("type")
-        if prop_type not in ("array", "object"):
-            continue
-        value = result.get(field)
-        if not isinstance(value, str):
-            continue
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if prop_type == "array" and not isinstance(parsed, list):
-            continue
-        if prop_type == "object" and not isinstance(parsed, dict):
-            continue
-        result[field] = parsed
-        coerced_fields.append(field)
-
-    if coerced_fields:
-        logger.warning(
-            "Model %s returned field(s) %s as a JSON string instead of the schema's "
-            "list/object type — coerced before validation",
-            model,
-            coerced_fields,
-        )
-    return result
-
-
-def _unwrap_buried_response(data: dict, schema: dict, *, model: str) -> dict:
-    """Recover a response that was JSON-encoded whole into one of its own fields.
-
-    Seen on Sonnet 5 for the pre-flight description check: `gaps` (schema
-    type array) arrived as the string '{"gaps": [...], "is_sufficient":
-    false}' - the entire response, not the list. Coercing that field alone gets a dict where a
-    list belongs, so it's skipped and validation fails.
-
-    Only unwrapped when the string parses to a dict that contains that same
-    field *and* every required property of the schema, so an object field
-    that merely looks like JSON is never mistaken for a buried response. The
-    decoded keys are merged over the outer ones (the buried copy is the
-    complete one); the caller still coerces any remaining string fields.
-    """
-    required = set(schema.get("required", []))
-    if not required:
-        return dict(data)
-    for field, value in data.items():
-        if not isinstance(value, str) or not value.lstrip().startswith("{"):
-            continue
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and field in parsed and required <= parsed.keys():
-            logger.warning(
-                "Model %s returned its whole response JSON-encoded in field %r - unwrapped "
-                "before validation",
-                model,
-                field,
-            )
-            return {**data, **parsed}
-    return dict(data)
-
-
-def _invalid_top_level_fields(exc: ValidationError) -> str:
-    """Comma-separated top-level field names from a ValidationError (names only)."""
-    names = sorted({str(err["loc"][0]) for err in exc.errors() if err.get("loc")})
-    return ", ".join(names) or "unknown"
 
 
 def _is_temperature_deprecated_error(exc: Exception) -> bool:

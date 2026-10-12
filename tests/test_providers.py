@@ -957,3 +957,60 @@ def test_provider_effort_defaults_to_none_without_opt_in():
 
     ollama = OllamaProvider(model="llama3")
     assert ollama.effort is None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_unwraps_an_envelope_and_a_json_string_field():
+    """The direct Anthropic path now gets the same shape recovery as Bedrock
+    (#130/#136 were Bedrock-only): an extra wrapper key plus a list sent as a
+    JSON string both validate in one call."""
+    payload = json.dumps({"input": {"assets": json.dumps([])}})
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [_text_response(payload)]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        result = await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+    assert result.assets == []
+    assert mock_client.messages.create.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_validation_failure_retries_with_the_problem_restated():
+    """Valid JSON in the wrong shape used to fail immediately on the direct
+    Anthropic path. It now retries once with an extra system block naming the
+    field path, after the cached schema block (cache prefix unchanged)."""
+    bad = _text_response(json.dumps({"assets": [{"type": "Asset", "name": "API"}]}))
+    good = _text_response(
+        json.dumps({"assets": [{"type": "Asset", "name": "API", "description": "Public API"}]})
+    )
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [bad, good]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        result = await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+    assert [a.description for a in result.assets] == ["Public API"]
+    first, second = (c.kwargs["system"] for c in mock_client.messages.create.call_args_list)
+    assert len(first) == 1
+    assert second[0] == first[0]
+    assert "assets.0.description: Field required" in second[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_persistent_validation_failure_still_raises():
+    bad = _text_response(json.dumps({"assets": "nope"}))
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = bad
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5", api_key="k")
+        with pytest.raises(ProviderError, match="Failed to parse structured output"):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+    assert mock_client.messages.create.call_count == 3

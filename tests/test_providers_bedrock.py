@@ -386,18 +386,43 @@ async def test_bedrock_auto_tool_choice_retries_a_prose_answer():
 
 
 @pytest.mark.asyncio
-async def test_bedrock_text_answer_under_forced_tool_choice_still_errors():
-    """While forced tool choice is in effect, a text-only answer is still an
-    error — the JSON-from-text path is only for auto tool choice."""
+async def test_bedrock_json_text_answer_under_forced_tool_choice_is_accepted():
+    """A model that accepts forced tool choice but answers with the JSON as
+    text (seen on GPT-OSS / Qwen, 10-11 bench) is accepted, not failed."""
     mock_client = MagicMock()
     mock_client.converse.return_value = _make_text_response('{"value": "x", "count": 1}')
 
     with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
-        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
-        with pytest.raises(ProviderError, match="no tool_use block"):
-            await provider.generate_structured("test", _SimpleModel)
+        provider = BedrockProvider(model="openai.gpt-oss-120b-1:0")
+        result = await provider.generate_structured("test", _SimpleModel)
 
+    assert result.value == "x"
     assert mock_client.converse.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_bedrock_prose_under_forced_tool_choice_switches_to_auto_and_retries():
+    """Prose (no tool call, no JSON) under forced tool choice is treated like a
+    rejection of forced choice: the retry and every later call on this
+    provider instance use auto tool choice plus the respond instruction."""
+    mock_client = MagicMock()
+    mock_client.converse.side_effect = [
+        _make_text_response("Here are the assets I identified: the API and the database."),
+        _make_tool_response({"value": "ok", "count": 2}),
+        _make_tool_response({"value": "later", "count": 3}),
+    ]
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-oss-20b-1:0")
+        result = await provider.generate_structured("test", _SimpleModel)
+        later = await provider.generate_structured("again", _SimpleModel)
+
+    assert (result.count, later.count) == (2, 3)
+    calls = mock_client.converse.call_args_list
+    assert calls[0].kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "respond"}}
+    for call in calls[1:]:
+        assert call.kwargs["toolConfig"]["toolChoice"] == {"auto": {}}
+        assert {"text": _AUTO_TOOL_INSTRUCTION} in call.kwargs["system"]
 
 
 # ---------------------------------------------------------------------------
@@ -1102,7 +1127,7 @@ async def test_bedrock_validation_failure_retries_with_field_names_restated():
     assert len(calls) == 2
     assert "system" not in calls[0]
     restated = calls[1]["system"][0]["text"]
-    assert "problem fields: assets" in restated
+    assert "- assets: Input should be a valid list" in restated
     assert "Public API" not in restated
 
 
@@ -1125,3 +1150,62 @@ async def test_bedrock_validation_retry_happens_even_at_the_budget_cap():
     assert result.count == 3
     assert len(calls) == 2
     assert calls[1]["inferenceConfig"]["maxTokens"] == 16384
+
+
+@pytest.mark.asyncio
+async def test_bedrock_unwraps_threats_nested_under_an_input_key():
+    """Sonnet 5 (10-11 bench): {'input': {'threats': [...]}} failed
+    "threats Field required" three times and fell back. It's unwrapped in one call."""
+    modules, calls = _provider_with_responses(
+        [_make_tool_response({"input": {"name": "x", "items": ["a"]}})]
+    )
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-v1:0")
+        result = await provider.generate_structured("test", _ListFieldModel)
+
+    assert result.items == ["a"]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_bedrock_restate_names_the_nested_path_and_allowed_values():
+    """DeepSeek (10-11 bench) sent CVSS attack_complexity 'M', which CVSS v3.1
+    doesn't have. The value is NOT accepted; the retry names the exact path
+    and the schema's allowed values (never the model's value)."""
+    from backend.models.state import ThreatsListCvss
+
+    def threat(ac: str) -> dict:
+        return {
+            "name": "SQL injection",
+            "stride_category": "Tampering",
+            "description": "An attacker sends crafted input that reaches a raw SQL query.",
+            "target": "Database",
+            "impact": "High",
+            "likelihood": "Medium",
+            "mitigations": ["Use parameterised queries", "Validate input"],
+            "cvss": {
+                "attack_vector": "N",
+                "attack_complexity": ac,
+                "privileges_required": "N",
+                "user_interaction": "N",
+                "scope": "U",
+                "confidentiality": "H",
+                "integrity": "H",
+                "availability": "N",
+            },
+        }
+
+    modules, calls = _provider_with_responses(
+        [
+            _make_tool_response({"threats": [threat("M")]}),
+            _make_tool_response({"threats": [threat("L")]}),
+        ]
+    )
+    with patch.dict(sys.modules, modules):
+        provider = BedrockProvider(model="deepseek.r1-v1:0")
+        result = await provider.generate_structured("test", ThreatsListCvss)
+
+    assert result.threats[0].cvss.attack_complexity == "L"
+    restated = calls[1]["system"][0]["text"]
+    assert "threats.0.cvss.attack_complexity" in restated
+    assert "'L' or 'H'" in restated

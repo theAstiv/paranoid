@@ -17,6 +17,11 @@ from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
 from backend.models.usage import UsageRecord
+from backend.providers._recovery import (
+    VALIDATION_RESTATE_INSTRUCTION,
+    coerce_tool_input,
+    describe_validation_errors,
+)
 from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
@@ -299,13 +304,17 @@ class AnthropicProvider:
             # ── Auto-bump retry loop ──────────────────────────────────────
             budget = max_tokens or 4096
             last_error: ProviderError | None = None
+            # Extra system block for one attempt after a validation failure
+            # (see VALIDATION_RESTATE_INSTRUCTION); appended after the cached
+            # schema block, so the cache prefix is unchanged.
+            restate: list[dict] = []
 
             for attempt in range(1 + _MAX_RETRIES):
                 response = await self._create_message(
                     temperature,
                     model=self._model,
                     max_tokens=budget,
-                    system=system,
+                    system=system + restate,
                     messages=[{"role": "user", "content": content}],
                 )
 
@@ -362,6 +371,7 @@ class AnthropicProvider:
                     # without escaping them, even though the content itself is
                     # otherwise valid.
                     data = json.loads(response_text, strict=False)
+                    data = coerce_tool_input(data, schema, model=self._model)
                     return response_model.model_validate(data)
                 except json.JSONDecodeError as e:
                     err_str = str(e)
@@ -371,6 +381,7 @@ class AnthropicProvider:
                     if "Extra data" in err_str:
                         try:
                             data = json.loads(response_text[: e.pos], strict=False)
+                            data = coerce_tool_input(data, schema, model=self._model)
                             return response_model.model_validate(data)
                         except (json.JSONDecodeError, ValidationError):
                             pass
@@ -435,11 +446,32 @@ class AnthropicProvider:
                         original_error=e,
                     )
                 except ValidationError as e:
-                    raise ProviderError(
+                    last_error = ProviderError(
                         provider=self.name,
                         message=f"Failed to parse structured output: {e}",
                         original_error=e,
                     )
+                    if attempt < _MAX_RETRIES:
+                        # Valid JSON in the wrong shape (a missing required
+                        # field, a value outside an enum): more tokens won't
+                        # help, telling the model what was wrong might.
+                        problems = describe_validation_errors(e)
+                        logger.warning(
+                            "Anthropic model %s returned JSON that failed validation (%s); "
+                            "retrying with the instruction restated (attempt %d/%d)",
+                            self._model,
+                            problems.replace("\n", " "),
+                            attempt + 1,
+                            1 + _MAX_RETRIES,
+                        )
+                        restate = [
+                            {
+                                "type": "text",
+                                "text": VALIDATION_RESTATE_INSTRUCTION.format(problems=problems),
+                            }
+                        ]
+                        continue
+                    raise last_error
 
             # Exhausted all retries — raise the last error
             if last_error:
