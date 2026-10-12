@@ -91,8 +91,8 @@ Each model ran as **both** main and fast, on the full fixture: description, 3 di
 | Fable 5.1 | 3/3 | 28 [17–34] | $3.32 | 759 s | 2 fallbacks recorded (detail not in the session report) |
 | Qwen | 3/3 | 27 [27–28] | $0.012 | 119 s | |
 | Haiku 5.5 | 3/3 | 17 [17–26] | $0.045 | 98 s | low yield as the only model; see §3.1 for it as the fast model |
-| GPT-OSS 120B | 0/3 | — | $0.016 | 137 s | no usable structured output ([§6.3](#63-what-still-fails)) |
-| GPT-OSS 20B | 0/3 | 0–26 | $0.020 | 192 s | one run produced LLM threats but the arm failed; see [§6.3](#63-what-still-fails) |
+| GPT-OSS 120B | 0/3 | — | $0.016 | 137 s | unsupported: wrong field names ([§6.3](#63-what-still-fails)) |
+| GPT-OSS 20B | 0/3 | 0–26 | $0.020 | 192 s | unsupported: wrong field names, flat CVSS ([§6.3](#63-what-still-fails)) |
 | OpenAI `gpt-4.1` (direct) | not run | — | — | — | the bench machine's API key was rejected |
 
 **Reading the table:**
@@ -282,7 +282,10 @@ What fixed each failure shape:
 
 ### 6.3 What still fails
 
-- **GPT-OSS 120B and 20B.** They call the tool but write field names in PascalCase (`Type`, `Name`, `Description`), and the 20B model also sends CVSS as a flat abbreviated object (`{'av': 'N', 'ac': 'L', …}`). The logs quoted for these failures predate #138, so a re-run on current `main` is pending.
+- **GPT-OSS 120B and 20B: schema adherence.** Re-run on 2026-10-12 at `main` @ `f8d904b` (after #138), 13 runs across `e2e-cli`, `e2e-web`, `e2e-enrich`, `e2e-degraded` and `mc`: **13 of 13 failed**, at $0.010–$0.020 per run.
+  - **Fixed by earlier PRs:** no run answered in prose instead of calling the tool (#138), and no run was sent an image it couldn't take (#128).
+  - **What remains:** the models call the tool but fill it in wrong. They write field names in PascalCase (`Type`, `Name`, `Description` instead of `type`, `name`, `description`) and send CVSS as a flat abbreviated object (`{'av': 'N', 'ac': 'L', …}`) instead of the nested metrics. The validation retry, which names the failing fields, doesn't get them to correct it within 3 attempts.
+  - Paranoid treats the GPT-OSS models as **unsupported** for structured output. Fixing them would mean rewriting keys the models got wrong, which isn't planned.
 - **OpenAI direct:** not measured this period (credential problem on the bench machine, not a product failure).
 
 ---
@@ -338,7 +341,7 @@ What fixed each failure shape:
 - **Real-malware recall** for the dependency engine: 10–20 real malicious npm samples, handled as inert data. Neither the samples nor the harness adapter exist yet.
 - **Threat quality:** model output against the 18-threat MediaDrop reference checklist. The checklist and its match threshold still need human review.
 - **Demo timings on the recommended model** (Sonnet 5.5) and after #138. §5.1 is Opus 5.5, before #138.
-- **GPT-OSS on current `main`**, and **OpenAI direct** at n ≥ 3.
+- **OpenAI direct** at n ≥ 3 (BM12 parity).
 - **Code as input** (`e2e-code`): needs the context-link binary on the bench machine.
 - **Per-iteration yield** (where the curve flattens) and **per-step routing with `--enrich`**.
 - **Prompt caching on Bedrock:** not implemented, so Bedrock costs here are without it.
