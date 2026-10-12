@@ -30,7 +30,7 @@ Model routing: each extraction step can run on a cheaper "fast" model, while `ge
 
 ### Results already on record (direct Anthropic API, before this harness)
 
-Use these as sanity baselines, not as the answer:
+Use these as sanity baselines, not as the answer. Curated results from this harness, with their dates and sample sizes, are in [`docs/benchmarks.md`](../../docs/benchmarks.md).
 
 | What | Result | n |
 |---|---|---|
@@ -70,7 +70,7 @@ python -m tests.bench list
 | `BENCH_ROUTING_MAIN`, `BENCH_ROUTING_FAST` | Slot *names* for the routing benchmarks (e.g. `OPUS_55` / `HAIKU_55`) |
 | `BENCH_PRICES_FILE` | Price table (§4) |
 | `BENCH_MAX_COST_USD` | Hard spend cap for one `run` invocation. **Required** for `run` |
-| `BENCH_EFFORT` | Effort for Claude runs (default `medium`). Today this only reaches the *direct* Anthropic provider, not Bedrock (§6) |
+| `BENCH_EFFORT` | Effort for Claude runs (default `medium`), on the direct Anthropic provider and Claude on Bedrock (since #129) |
 | `BENCH_RUN_TIMEOUT_S` | Per-run wall-clock limit (default 1800 s; enrich/web/flagship arms multiply it) |
 | `BENCH_CODE_REPO` | A small local git repo for code-as-input; those arms are skipped when unset |
 | `BENCH_MALWARE_DIR` | Inert malicious npm tarballs for the recall benchmark (§7); skipped when unset |
@@ -174,7 +174,7 @@ Each run directory (`data/benchmarks/<suite>/<arm>/rep-N/`) contains:
 | **No prompt caching on Bedrock** in Paranoid's provider | Bedrock costs are higher than the direct-API numbers on record; don't compare them directly | Open (optional enhancement) |
 | **SARIF from a saved-model export** (`paranoid models export`, web export) has no physical location for non-dependency threats | `exports_valid` fails on SARIF for those exports; `paranoid run --format sarif` is fine | Fixed in #131: `--source-file` on `models export` and `source_file` on the web export (default anchor `threat-model.md`) |
 | **Bedrock structured-output failures on Claude 5.x** (10-09: Opus 5.5, Sonnet 5, Haiku 5.5, Fable 5.1). Two shapes: a list field returned as a JSON string, and an empty tool input | The step fails, and before the iterations that means a whole-run fallback | Fixed in #130 (JSON-string list, empty input) and #136 (whole response buried in one field, malformed JSON retried with the instruction restated). `converse.jsonl` still records each failure's shape |
-| **MAESTRO categories were never saved** for LLM threats (threat generation used the STRIDE-only schema) | `e2e-maestro`'s `maestro_present` gate failed | Fixed: MAESTRO calls now require `maestro_category` and persistence writes it. Re-run `e2e-maestro` to confirm |
+| **MAESTRO categories were never saved** for LLM threats (threat generation used the STRIDE-only schema) | `e2e-maestro`'s `maestro_present` gate failed | Fixed in #137 and confirmed: `e2e-maestro` passed on 10-12 |
 | **Refusals looked like format errors.** A refusal or content filter showed up as "Bedrock returned no tool_use block" | Refusal counts were approximate | Fixed in #128: refusal and content-filter stop reasons raise `ProviderRefusalError` and are counted separately |
 | **`tests/test_pipeline_e2e.py` was broken.** It passed `diagram_data=`, which no longer exists | It failed if run | Fixed in #129 (`diagrams=`). Still skipped in CI (needs live keys + context-link) |
 

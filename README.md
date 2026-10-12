@@ -13,7 +13,7 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **DREAD + CVSS Risk Scoring**: automatic 5-dimension DREAD (0–10) and/or a standalone CVSS v3.1 base-score calculator, selectable per run
 - **ATT&CK / ATLAS Enrichment**: every threat — LLM-generated, rule-engine, or dependency — is mapped to MITRE ATT&CK/ATLAS techniques (deterministic rule table, pattern-ID regex, or embedding similarity depending on origin), never self-attributed by the LLM
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
-- **Model Routing**: per-pipeline-step fast/main model selection (e.g. Haiku for extraction, Sonnet for threat generation) to cut cost and latency without downgrading the steps that write the threat text
+- **Model Routing**: per-pipeline-step fast/main model selection (e.g. Haiku for extraction, Sonnet for threat generation); the routed extraction steps cost about two-thirds less ([measured](docs/benchmarks.md#2-model-routing)), and the steps that write the threat text never leave the main model
 - **Code-as-Input**: Semantic code extraction via context-link MCP (`--code /path/to/repo`)
 - **Image-as-Input**: Multiple architecture diagrams per run — up to 5 named views (deployment, data flow, etc.) via a repeatable `-d` on the CLI (`-d arch.png -d flow.mmd`) or the API's `diagrams[]` field, rendered with a proper ELK layout
 - **Deterministic Rule Engine**: 362 curated patterns (STRIDE, MAESTRO, OWASP, MITRE ATT&CK/ATLAS, CAPEC, cloud misconfigs) across 16 seed files
@@ -87,7 +87,7 @@ CLI runs are saved to the local database (`paranoid models list`); start the web
 | [API Reference](docs/api-reference.md) | REST API — 83 route handlers across 13 route modules, plus `/health` and `/` in `main.py` |
 | [GitHub Action](docs/github-action.md) | Automated threat modeling in CI/CD |
 | [Architecture](docs/architecture.md) | System design, pipeline, data model |
-| [Benchmarks](docs/benchmarks.md) | Measured routing savings, pipeline timings, dependency-engine gates, multi-diagram cost — dated, with sample sizes and caveats |
+| [Benchmarks](docs/benchmarks.md) | An 11-model comparison on AWS Bedrock, routing savings per step, multi-diagram extraction, iterations, wall time, reliability and dependency-engine gates — dated, with sample sizes and caveats |
 | [Deployment](docs/deployment.md) | Docker, PyPI, binary, production hardening |
 
 **Other docs:**

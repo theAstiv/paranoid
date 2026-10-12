@@ -87,12 +87,14 @@ async def generate_structured(
 ) -> BaseModel: ...
 ```
 
-| Provider | Structured output mechanism |
-|----------|-----------------------------|
-| Anthropic | Tool use (`tool_choice="any"`) + prompt caching |
-| OpenAI | Structured Outputs (`client.chat.completions.parse`) |
-| Ollama | `format=<json_schema>` |
-| Bedrock | Converse API `toolConfig`/`toolChoice`, via `boto3` (standard AWS credential chain) |
+| Provider | Structured output mechanism | When the response doesn't match the schema |
+|----------|-----------------------------|---------------------------------------------|
+| Anthropic | JSON schema in a cached system block; the JSON text reply is parsed. Prompt caching on the system block, shared context and images | Shape recovery, then a retry with the failing field paths restated (`backend/providers/_recovery.py`) |
+| OpenAI | Structured Outputs (`client.chat.completions.parse`): decoding is constrained to the schema | n/a |
+| Ollama | `format="json"`: the reply is valid JSON, but not constrained to the schema | One repair pass |
+| Bedrock | Converse API tool use (`toolConfig`), via `boto3` (standard AWS credential chain). Forced `toolChoice` first; models that reject or ignore it switch to `auto` plus an instruction for the rest of the provider instance | Shape recovery, then a retry with the failing field paths restated (`backend/providers/_recovery.py`) |
+
+"Shape recovery" undoes the malformed-but-recoverable shapes seen in benchmark runs: lists sent as JSON strings, the whole response encoded into one field or nested under an extra key. It only reshapes a value when the result has every required field, and it never accepts a value outside the schema (see [Benchmarks §6.2](benchmarks.md#62-structured-output-reliability-across-sessions)).
 
 All providers auto-bump `max_tokens` on truncation (up to 2× per step, max 2 retries).
 
