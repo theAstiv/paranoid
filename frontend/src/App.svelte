@@ -198,7 +198,7 @@
   <div class="flex min-h-screen bg-c-bg text-c-text">
 
     <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
-    <aside class="fixed inset-y-0 left-0 z-30 flex flex-col w-[264px] bg-c-sidebar border-r border-c-border-soft">
+    <aside class="fixed inset-y-0 left-0 {$menuOpen === 'project' || $menuOpen === 'user' ? 'z-50' : 'z-30'} flex flex-col w-[264px] bg-c-sidebar border-r border-c-border-soft">
 
       <!-- Brand -->
       <div class="flex items-center gap-2.5 px-5 h-[54px] border-b border-c-divider flex-shrink-0">
@@ -544,7 +544,7 @@
     <div class="flex-1 flex flex-col ml-[264px] min-h-screen">
 
       <!-- Topbar -->
-      <header class="sticky top-0 z-20 flex items-center justify-between h-[54px] px-6 bg-c-bg/70 backdrop-blur-md border-b border-c-divider">
+      <header class="sticky top-0 {$menuOpen === 'notif' ? 'z-50' : 'z-20'} flex items-center justify-between h-[54px] px-6 bg-c-bg/70 backdrop-blur-md border-b border-c-divider">
         <!-- Breadcrumb -->
         <div class="flex items-center gap-1.5 font-mono text-[12px] text-c-muted">
           <button
