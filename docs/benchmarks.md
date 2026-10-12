@@ -27,6 +27,7 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 | Routing's saving on a **whole run** | Not established: ~16% estimated on the direct API, not observed on Bedrock at n = 3 | [§2](#2-model-routing) |
 | Haiku 5.5 as the extraction model still reads every diagram | image-only and flow-only components found **3/3** with Haiku 5.5 and Sonnet 5.5 alike | [§3.1](#31-which-extraction-model-reads-the-diagrams) |
 | Most reliable main model, 3 benchmark sessions running | **Sonnet 5.5**: 3/3 runs, 34 threats, $0.49/run on Bedrock | [§1](#1-model-comparison) |
+| The three demo commands on Sonnet 5.5 (Bedrock) | **141–164 s** median, 15/15 runs clean, $0.41–$0.56 per run | [§5.1](#51-demo-commands-on-bedrock-bm10-demo) |
 | Models reliable on the full fixture (3/3 runs) | **8 of 11**; models producing any LLM output went from 4 of 10 (10-09) to 9 of 11 | [§6.2](#62-structured-output-reliability-across-sessions) |
 | 5 iterations instead of 3 (same model and inputs) | **+6 threats (+17%)** for **+81% cost** | [§4](#4-iterations) |
 | Dependency threats on the fixture | **7, identical** in every run | [§7.2](#72-determinism-volume-and-storage-2026-10-01) |
@@ -200,16 +201,30 @@ Both arms use the same model and inputs. Only the iteration count differs, and `
 
 ### 5.1 Demo commands on Bedrock (`bm10-demo`)
 
-**2026-10-11 · before #138 · Opus 5.5 main, Haiku 5.5 fast · n = 5 per command**
+**2026-10-12 · `main` @ `f8d904b` · Sonnet 5.5 main, Haiku 5.5 fast · n = 5 per command · 15 of 15 runs ok**
 
-| Command | Median | p90 | Cost/run | Threats (median) |
-|---|---:|---:|---:|---:|
-| Scenario 1: dependencies, deep mode, `-n 2` | 477 s | 780 s | $0.75 | 35 |
-| Scenario 2: 3 diagrams, extraction on main, `-n 2` | 347 s | 476 s | $0.47 | 17 |
-| Scenario 3: routing + SARIF, `-n 2` | 486 s | 943 s | $0.75 | 35 |
+| Command | Median [min–max] | Cost/run | Threats | LLM / rule engine / dependency | Diagram probes |
+|---|---:|---:|---:|---|---|
+| Scenario 1: dependencies, deep mode, `-n 2` | 164 s [140–166] | $0.412 | 34 [30–37] | 18 / 9 / 7 | — (no diagrams) |
+| Scenario 2: 3 diagrams, extraction on main, `-n 2` | 160 s [155–173] | $0.562 | 37 [34–38] | 21 / 9 / 7 | secrets manager 5/5, dead-letter queue 5/5 |
+| Scenario 3: routing + SARIF, `-n 2` | 141 s [135–154] | $0.425 | 34 [32–40] | 18 / 9 / 7 | — (no diagrams) |
 
-- **Measured on Opus 5.5, the slowest reliable model** (689 s per `mc` run vs 330 s for Sonnet 5.5). These are worst-case demo timings, not typical ones.
-- **Scenario 2's median of 17** matches the rule-engine baseline, and some of its runs fell back. This predates #138, which fixed the structured-output failures that cause such fallbacks. **Re-measure before quoting.**
+- **No retries and no fallbacks** in any run: 0 non-JSON retries, 0 token-budget bumps, 0 rule-engine fallbacks, 0 refusals, 0 timeouts.
+- **One expected switch per run:** Sonnet 5.5 rejects forced tool choice, so each run switches to `auto` tool choice once at its first structured call (#124). This shows as `forced_tool_fallback` 5/5 in the raw report. It's the designed behaviour, not a failure.
+- Total: $7.09 for the 15 runs.
+- **Harness note:** `bm10-demo` is defined on the Opus 5.5 slot. This run overrode that slot's model ID with `us.anthropic.claude-sonnet-5-5`, so raw results are labelled `OPUS_55` with the Sonnet 5.5 `model_id`.
+
+**For comparison, Opus 5.5 main** (2026-10-11, **before #138**, same commands, n = 5):
+
+| Command | Opus 5.5 median / p90 / cost / threats | Sonnet 5.5 vs Opus 5.5: time | cost |
+|---|---|---:|---:|
+| Scenario 1 | 477 s / 780 s / $0.75 / 35 | −66% | −45% |
+| Scenario 2 | 347 s / 476 s / $0.47 / 17 | −54% | +20% |
+| Scenario 3 | 486 s / 943 s / $0.75 / 35 | −71% | −43% |
+
+- On the demo commands, Sonnet 5.5 was **2.2–3.4× faster** than Opus 5.5, with a far tighter spread (slowest Sonnet run 173 s; Opus p90 up to 943 s).
+- **Scenario 2's comparison is confounded.** Several Opus runs fell back to the rule engine (a median of 17 threats is the fallback signature), and the structured-output failures behind such fallbacks were fixed by #138, between the two runs. Part of Sonnet's +20% cost is paying for LLM output that Opus's fallback runs didn't produce.
+- These are counts and timings, not a quality comparison.
 
 ### 5.2 Direct Anthropic API (2026-10-01)
 
@@ -340,7 +355,6 @@ What fixed each failure shape:
 
 - **Real-malware recall** for the dependency engine: 10–20 real malicious npm samples, handled as inert data. Neither the samples nor the harness adapter exist yet.
 - **Threat quality:** model output against the 18-threat MediaDrop reference checklist. The checklist and its match threshold still need human review.
-- **Demo timings on the recommended model** (Sonnet 5.5) and after #138. §5.1 is Opus 5.5, before #138.
 - **OpenAI direct** at n ≥ 3 (BM12 parity).
 - **Code as input** (`e2e-code`): needs the context-link binary on the bench machine.
 - **Per-iteration yield** (where the curve flattens) and **per-step routing with `--enrich`**.
