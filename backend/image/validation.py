@@ -7,6 +7,7 @@ UTF-8 decodability. Callers that run this from an event loop (the web route)
 should wrap calls in `asyncio.to_thread` since Pillow decoding is CPU-bound.
 """
 
+import logging
 import re
 import unicodedata
 from io import BytesIO
@@ -18,6 +19,8 @@ from backend.image.errors import DiagramValidationError
 from backend.models.enums import DiagramFormat
 from backend.models.extended import DiagramData
 
+
+logger = logging.getLogger(__name__)
 
 # Per-diagram and per-set limits. Constants, not env vars (keep the scope
 # basic). See .claude/tasks/week5a-plan.md S5 for the provider-limit
@@ -107,12 +110,18 @@ def _validate_image_bytes(raw: bytes, diagram_format: DiagramFormat) -> None:
         # Full decode (not verify() - verify() passes a truncated JPEG).
         # Safe from decompression bombs because the pixel check above runs first.
         img.load()
+    # Pillow's own message stays in the log, not the user-facing error: it can
+    # embed the in-memory file object's repr (`<_io.BytesIO object at 0x...>`),
+    # which leaks a process address and means nothing to the uploader.
     except UnidentifiedImageError as e:
-        raise DiagramValidationError(f"Not a valid {expected_pil_format} image: {e}") from e
+        logger.info("Diagram rejected, unreadable %s image: %s", expected_pil_format, e)
+        raise DiagramValidationError(f"Not a valid {expected_pil_format} image") from e
     except Image.DecompressionBombError as e:
-        raise DiagramValidationError(f"Image rejected as a decompression bomb: {e}") from e
+        logger.info("Diagram rejected as a decompression bomb: %s", e)
+        raise DiagramValidationError("Image rejected as a decompression bomb") from e
     except OSError as e:
-        raise DiagramValidationError(f"Image file is truncated or corrupt: {e}") from e
+        logger.info("Diagram rejected, truncated or corrupt image: %s", e)
+        raise DiagramValidationError("Image file is truncated or corrupt") from e
 
 
 def validate_diagram_bytes(filename: str, raw: bytes) -> DiagramFormat:
