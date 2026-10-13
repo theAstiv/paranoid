@@ -98,6 +98,25 @@ def test_validate_diagram_bytes_truncated_jpeg_rejected():
         validate_diagram_bytes("diagram.jpg", truncated)
 
 
+@pytest.mark.parametrize("filename", ["fake.png", "fake.jpg"])
+def test_validate_diagram_bytes_non_image_error_does_not_leak_internals(filename):
+    """A text file renamed to .png/.jpg used to surface Pillow's raw message,
+    which embeds `<_io.BytesIO object at 0x...>` (P13)."""
+    with pytest.raises(DiagramValidationError) as exc_info:
+        validate_diagram_bytes(filename, b"this is not an image at all")
+    message = str(exc_info.value)
+    assert "Not a valid" in message
+    assert "BytesIO" not in message
+    assert "0x" not in message
+
+
+def test_validate_diagram_bytes_truncated_error_does_not_leak_pillow_text():
+    raw = _jpeg_bytes(size=(200, 200))
+    with pytest.raises(DiagramValidationError) as exc_info:
+        validate_diagram_bytes("cut.jpg", raw[: int(len(raw) * 0.8)])
+    assert str(exc_info.value) == "Image file is truncated or corrupt"
+
+
 def test_validate_diagram_bytes_oversize_dimensions_rejected():
     mock_img = MagicMock()
     mock_img.format = "PNG"
