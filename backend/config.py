@@ -206,10 +206,13 @@ class Settings(BaseSettings):
     semgrep_binary: str = ""
 
     # Seed collection filter for the deterministic rule engine.
-    # Comma-separated list of collection names (see _KNOWN_SEED_COLLECTIONS).
+    # Comma-separated list of collection names (see backend.rules.engine.SEED_COLLECTIONS).
     # Empty list (default) loads all 16 collections — no behaviour change.
     # Example: SEED_COLLECTIONS=stride,auth,cloud
-    seed_collections: list[str] = Field(default_factory=list)
+    # NoDecode for the same reason as bedrock_image_models: otherwise
+    # pydantic-settings JSON-decodes the value and the documented comma form
+    # crashes every command at startup.
+    seed_collections: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @field_validator("bedrock_image_models", mode="before")
     @classmethod
@@ -254,6 +257,20 @@ class Settings(BaseSettings):
         if forbidden_fast:
             raise ValueError(f"Steps {forbidden_fast} can never be routed to the fast model")
         return v
+
+    @field_validator("seed_collections", mode="before")
+    @classmethod
+    def parse_seed_collections(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        stripped = v.strip()
+        # A JSON array was the only form that worked before NoDecode; keep it working.
+        if stripped.startswith("["):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"SEED_COLLECTIONS is not a valid JSON array: {exc}") from exc
+        return [item.strip() for item in stripped.split(",") if item.strip()]
 
     @field_validator("seed_collections")
     @classmethod
