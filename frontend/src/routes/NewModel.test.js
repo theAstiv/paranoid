@@ -60,6 +60,13 @@ describe('NewModel — step 0 (title & framework)', () => {
 })
 
 describe('NewModel — step 1 (description)', () => {
+  it('does not animate the description textarea', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await fireEvent.click(screen.getByText('Next'))
+    expect(screen.getByLabelText('System description').className).not.toMatch(/animate-/)
+  })
+
   it('disables Next until at least 10 characters are entered', async () => {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })

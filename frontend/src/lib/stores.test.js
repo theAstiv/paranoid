@@ -10,6 +10,8 @@ import {
   pendingCount,
   lastEvent,
   notify,
+  currentProject,
+  pickInitialProject,
 } from './stores.js'
 
 beforeEach(() => {
@@ -84,5 +86,37 @@ describe('notify', () => {
     vi.advanceTimersByTime(10000)
     expect(get(notification)).not.toBeNull()
     vi.useRealTimers()
+  })
+})
+
+describe('active project persistence', () => {
+  const list = [{ id: 'newest', name: 'zz' }, { id: 'demo', name: 'Demo' }]
+
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('falls back to the first project when nothing is remembered', () => {
+    expect(pickInitialProject(list)).toEqual(list[0])
+  })
+
+  it('restores the remembered project after it was selected', () => {
+    currentProject.set(list[1])
+    expect(pickInitialProject(list)).toEqual(list[1])
+  })
+
+  it('ignores a remembered project the user no longer belongs to', () => {
+    localStorage.setItem('paranoid_active_project', 'gone')
+    expect(pickInitialProject(list)).toEqual(list[0])
+  })
+
+  it('returns null for an empty list', () => {
+    expect(pickInitialProject([])).toBeNull()
+  })
+
+  it('does not forget the selection when the store is cleared', () => {
+    currentProject.set(list[1])
+    currentProject.set(null)
+    expect(pickInitialProject(list)).toEqual(list[1])
   })
 })

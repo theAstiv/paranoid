@@ -109,6 +109,28 @@ export function notify(type, message) {
  */
 export const currentProject = writable(null)
 
+const _PROJECT_KEY = 'paranoid_active_project'
+
+// Remember the selection across reloads; without this, every page load fell
+// back to the newest project the user belongs to.
+currentProject.subscribe(p => {
+  if (!p?.id) return
+  try { localStorage.setItem(_PROJECT_KEY, p.id) } catch { /* ignore */ }
+})
+
+/**
+ * The project to activate on page load: the remembered one if the user is
+ * still a member of it, otherwise the first in the list.
+ * @param {object[]} list
+ * @returns {object|null}
+ */
+export function pickInitialProject(list) {
+  if (!list.length) return null
+  let storedId = null
+  try { storedId = localStorage.getItem(_PROJECT_KEY) } catch { /* ignore */ }
+  return list.find(p => p.id === storedId) ?? list[0]
+}
+
 /**
  * All projects the current user is a member of.
  * @type {import('svelte/store').Writable<object[]>}

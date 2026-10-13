@@ -352,7 +352,7 @@
           <label class="{LABEL_CLASS}" for="description">System description</label>
           <textarea id="description" bind:value={description} rows="6"
             placeholder="Describe your system architecture, components, data flows, and trust boundaries. The more detail you provide, the more targeted the threat model will be."
-            class="{INPUT_CLASS} resize-none animate-blink"></textarea>
+            class="{INPUT_CLASS} resize-none"></textarea>
           <p class="mt-1 font-mono text-[11px] {description.trim().length < 10 ? 'text-c-critical' : 'text-c-faint'}">
             {description.trim().length} chars (min 10)
           </p>
