@@ -221,6 +221,63 @@ def test_run_manifest_sarif_export_uses_manifest_path(
     assert captured_sarif_kwargs["dependency_manifest_path"].endswith("apps/web/package.json")
 
 
+def test_run_manifest_sarif_anchor_is_workspace_relative_in_the_action(
+    runner, sample_input_file, tmp_path, monkeypatch, fake_settings
+):
+    """The GitHub Action passes absolute paths (/github/workspace/...). The
+    dependency anchor must come out repo-relative like the description's, or
+    GitHub can't place the dependency alerts on package.json."""
+    _patch_settings(monkeypatch, fake_settings)
+    workspace = tmp_path / "workspace"
+    manifest = workspace / "apps" / "web" / "package.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"dependencies": {"lodash": "^4.17.21"}}))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(workspace))
+
+    async def _fake_run_pipeline_for_model(*args, **kwargs):
+        return
+        yield  # pragma: no cover
+
+    class _EmptyResult:
+        is_sufficient = True
+        gaps: list = []
+
+    class _FakeBundle:
+        description = _EmptyResult()
+        assumptions = _EmptyResult()
+
+    async def _fake_analyze_bundle(*args, **kwargs):
+        return _FakeBundle()
+
+    captured_sarif_kwargs: dict = {}
+
+    def _spy_export_sarif(*args, **kwargs):
+        captured_sarif_kwargs.update(kwargs)
+        return "{}"
+
+    monkeypatch.setattr("cli.commands.run.run_pipeline_for_model", _fake_run_pipeline_for_model)
+    monkeypatch.setattr("cli.commands.run.analyze_bundle", _fake_analyze_bundle)
+    monkeypatch.setattr("cli.commands.run.export_sarif", _spy_export_sarif)
+
+    out = tmp_path / "out.sarif"
+    result = runner.invoke(
+        run,
+        [
+            str(sample_input_file),
+            "--manifest",
+            str(manifest),
+            "--format",
+            "sarif",
+            "--output",
+            str(out),
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_sarif_kwargs["dependency_manifest_path"] == "apps/web/package.json"
+
+
 def test_run_manifest_too_many_resolvable_dependencies_is_rejected(
     runner, sample_input_file, tmp_path, monkeypatch, fake_settings
 ):

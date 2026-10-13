@@ -41,16 +41,24 @@ jobs:
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `description-file` | Yes | — | Path to system description (`.md` or `.txt`), relative to repo root |
-| `provider` | No | `anthropic` | LLM provider: `anthropic`, `openai`, or `ollama` |
-| `api-key` | No* | — | Provider API key; omit for Ollama |
+| `provider` | No | `anthropic` | LLM provider: `anthropic`, `openai`, `ollama`, or `bedrock` |
+| `api-key` | No* | — | Provider API key; omit for Ollama and Bedrock |
 | `model` | No | provider default | Model override (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
 | `framework` | No | `STRIDE` | Threat framework: `STRIDE` or `MAESTRO` |
 | `iterations` | No | `3` | Pipeline iterations (1–15) |
 | `sarif-output` | No | `paranoid-results.sarif` | SARIF output file path |
 | `strict` | No | `false` | Exit code 2 on error-severity description gaps |
 | `fail-on-findings` | No | `false` | Fail the step if any threats are found |
+| `scoring-method` | No | `dread` | Severity scoring: `dread`, `cvss`, or `both` |
+| `manifest` | No | — | `package.json` for dependency capability analysis, relative to repo root. Dependency alerts are anchored on this file |
+| `lockfile` | No | — | Matching `package-lock.json` (requires `manifest`) |
+| `deps-source` | No | `npm` | `npm` (fast) or `both` (adds the npm-tarball vs GitHub-source drift check) |
+| `fast-model` | No | configured default | Fast model for the extraction steps; `none` runs every step on the main model |
+| `aws-region` | No | — | AWS region for `bedrock`; falls back to `AWS_REGION` already in the environment |
 
-*Required for `anthropic` and `openai` providers.
+*Required for `anthropic` and `openai` providers. Bedrock uses the AWS credential chain instead: configure credentials in an earlier step (see the example below).
+
+The action image ships Semgrep, which the dependency inputs need; nothing to install.
 
 ## Outputs
 
@@ -109,6 +117,37 @@ For high-security workflows where any new threat in a PR is a blocker:
     provider: openai
     api-key: ${{ secrets.OPENAI_API_KEY }}
     model: gpt-4o
+```
+
+### Dependency capabilities, CVSS + DREAD
+
+The `manifest`, `lockfile`, `deps-source`, `scoring-method`, `fast-model` and `aws-region` inputs and the `bedrock` provider need **v1.6.0 or later**.
+
+```yaml
+- uses: theAstiv/paranoid@v1.6.0
+  with:
+    description-file: docs/system.md
+    api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    manifest: package.json
+    lockfile: package-lock.json
+    scoring-method: both
+```
+
+### AWS Bedrock
+
+Untested in a real workflow so far: the provider is benchmarked, but credentials reaching the action's container through the step environment haven't been verified end to end.
+
+```yaml
+- uses: aws-actions/configure-aws-credentials@v4
+  with:
+    role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+    aws-region: us-east-2
+- uses: theAstiv/paranoid@v1.6.0
+  with:
+    description-file: docs/system.md
+    provider: bedrock
+    model: <Bedrock model ID or inference profile>
+    aws-region: us-east-2
 ```
 
 ## SARIF integration

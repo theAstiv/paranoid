@@ -831,10 +831,10 @@ def run(
                     raise ValueError(f"expected a JSON object, got {type(manifest_data).__name__}")
                 if not quiet:
                     click.secho(f"  Dependency manifest: {manifest.name}", fg="cyan")
-                # Forward slashes: SARIF URIs are resolved as web paths by
-                # viewers like GitHub, and --manifest is a Windows-native
-                # Path on this platform (backslashes).
-                dependency_manifest_path = str(manifest).replace("\\", "/")
+                # Repo-relative and forward-slashed, like the description's
+                # anchor: the GitHub Action passes absolute paths, which GitHub
+                # can't resolve against the uploaded repo.
+                dependency_manifest_path = _repo_relative_source_file(manifest)
             except Exception as e:
                 raise click.BadParameter(f"Invalid package.json: {e}", param_hint="'--manifest'")
 

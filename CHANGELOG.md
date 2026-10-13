@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **SARIF dependency alerts anchored outside the repo in the GitHub Action** — `paranoid run --manifest` used the manifest path as given, and the action passes absolute paths (`/github/workspace/...`), which GitHub can't resolve. The manifest anchor is now made repo-relative (against `GITHUB_WORKSPACE`, then the current directory), the same way the description file's already was
 - **Structured-output recovery, shared and extended (10-11 benchmark run; #138)** — the #130/#136 shape recovery moved to `backend/providers/_recovery.py` and now also covers the **direct Anthropic provider**, which had none of it and failed outright on valid-JSON-wrong-shape responses. New shapes: the whole response nested under an extra key, as a dict or JSON string (Sonnet 5 `{"input": {...}}`, DeepSeek `{"data": "{...}"}`). A validation failure now retries with the exact field paths and the schema's expectation restated (e.g. `threats.0.cvss.attack_complexity: Input should be 'L' or 'H'`, never the model's values) on both providers; out-of-range values such as CVSS v2's `M` are still rejected, not accepted. On Bedrock, a model that accepts forced tool choice but answers in text (GPT-OSS) has its JSON text accepted, or, if it's prose, the provider switches to auto tool choice and retries, the same as when forced choice is rejected. Measured on 10-12: Sonnet 5 went from 0/3 to 3/3 runs on Bedrock, DeepSeek from 1/3 to 3/3 ([docs/benchmarks.md](docs/benchmarks.md))
 - **Bedrock models that reject forced tool choice** (#124) — Opus 5.5, Sonnet 5.5 and Fable 5.1 return a 400 for forced `toolChoice`, so every structured step failed and the run fell back to the rule engine. On that `ValidationException` the provider now retries with `auto` tool choice plus an instruction to call the `respond` tool, and remembers it for the rest of the provider instance's calls
 - **Bedrock structured output on Claude 5.x** (#130) — a list/object field returned as a JSON-encoded string is parsed before validation when it parses to the expected shape, and an empty tool input retries once with the instruction restated instead of failing
@@ -29,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Version drift** — `paranoid --version` said 1.3.0, `paranoid version` 1.0.0 (it looked up a distribution named `paranoid`, not `paranoid-cli`) and SARIF's `tool.driver.version` 1.1.0. All now read `backend.__version__`, pinned to `pyproject.toml` by `tests/test_version.py`
 
 ### Added
+
+#### GitHub Action: dependency, scoring and Bedrock inputs
+
+- New inputs `manifest`, `lockfile`, `deps-source`, `scoring-method`, `fast-model` (`none` = every step on the main model) and `aws-region`; `provider: bedrock` is accepted without an `api-key` and uses the AWS credential chain (not yet verified in a real workflow)
+- The action image now ships Semgrep (pinned, isolated venv, `SEMGREP_BINARY`, same as the main image) and the `[bedrock]` extra, so the dependency inputs and the Bedrock provider work out of the box
+- `tests/test_action_entrypoint.py` runs `entrypoint.sh` with a stub `paranoid` to pin the input → flag mapping and the validation errors
 
 #### Multi-User Collaboration (Phases 0–7)
 
