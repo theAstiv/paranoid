@@ -3,18 +3,17 @@ detection, and debug logging — the Week 1 gaps `tests/test_pipeline_e2e.py` do
 cover (that file predates --seeded-*, the MAESTRO seeded-context fix, and
 zero-threat detection).
 
-Requires a real ANTHROPIC_API_KEY (set in .env or the environment) and is
-excluded by default (`-m "not live"` in pyproject.toml). Run explicitly:
+Runs on the direct Anthropic API by default (needs a real ANTHROPIC_API_KEY); set
+BENCH_LIVE_MODEL / BENCH_LIVE_PROVIDER to run on another provider such as Bedrock
+(see `tests/live/_provider.py`). Excluded by default (`-m "not live"` in
+pyproject.toml). Run explicitly:
 
     pytest -m live tests/live/test_pipeline_live.py -v
 """
 
 import logging
-import os
-from pathlib import Path
 
 import pytest
-from dotenv import dotenv_values
 
 import backend.pipeline.nodes as nodes_module
 from backend.export.sarif import export_sarif
@@ -29,19 +28,20 @@ from backend.models.state import (
     ThreatsList,
 )
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
-from backend.providers import create_provider
+from tests.live._provider import (
+    LIVE_ENV,
+    LIVE_LABEL,
+    LIVE_MODEL,
+    LIVE_PROVIDER,
+    LIVE_SKIP_REASON,
+    build_live_provider,
+)
 
-
-_dotenv = dotenv_values(Path(__file__).parent.parent.parent / ".env")
-_api_key = _dotenv.get("ANTHROPIC_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
 
 pytestmark = [
     pytest.mark.live,
     pytest.mark.timeout(1800),
-    pytest.mark.skipif(
-        not _api_key or _api_key.startswith("sk-ant-xxx"),
-        reason="Live pipeline tests require a real ANTHROPIC_API_KEY (set in .env or environment)",
-    ),
+    pytest.mark.skipif(LIVE_SKIP_REASON is not None, reason=f"{LIVE_LABEL}: {LIVE_SKIP_REASON}"),
 ]
 
 _DESCRIPTION = (
@@ -91,14 +91,8 @@ def _seeded_threats() -> ThreatsList:
 
 
 @pytest.fixture
-def anthropic_provider():
-    return create_provider(
-        provider_type="anthropic",
-        model=_dotenv.get("DEFAULT_MODEL", "claude-sonnet-4-20250514"),
-        api_key=_api_key,
-        max_retries=2,
-        timeout=120.0,
-    )
+def live_provider():
+    return build_live_provider(LIVE_PROVIDER, LIVE_MODEL, LIVE_ENV, timeout=240.0, max_retries=2)
 
 
 async def _run(provider, framework, *, max_iterations=1, has_ai_components=False, **seeds):
@@ -132,8 +126,8 @@ def _complete_event(events: list[PipelineEvent]) -> PipelineEvent:
     assert final.status == "completed"
     assert final.data["stopped_reason"] != "provider_offline", (
         "pipeline fell back to provider_offline — this run never actually "
-        "reached the LLM, so it proves nothing; check ANTHROPIC_API_KEY / "
-        "DEFAULT_MODEL"
+        f"reached the LLM, so it proves nothing; check the credentials and model "
+        f"for {LIVE_LABEL}"
     )
     return final
 
@@ -143,9 +137,9 @@ def _complete_event(events: list[PipelineEvent]) -> PipelineEvent:
 #    and extraction steps are skipped when seeded input is provided.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_seeded_inputs_survive_run_and_exports(anthropic_provider):
+async def test_seeded_inputs_survive_run_and_exports(live_provider):
     events = await _run(
-        anthropic_provider,
+        live_provider,
         Framework.STRIDE,
         max_iterations=1,
         seeded_assets=_seeded_assets(),
@@ -189,7 +183,7 @@ async def test_seeded_inputs_survive_run_and_exports(anthropic_provider):
 #    only and never exercises the dual-framework code path this fix is in.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_maestro_seeded_iteration_one_receives_seeds(anthropic_provider, monkeypatch):
+async def test_maestro_seeded_iteration_one_receives_seeds(live_provider, monkeypatch):
     # Seeds reaching the *final* catalog proves nothing about this fix on its
     # own — dedup appends unmatched seeds regardless of whether MAESTRO's
     # iteration-1 call ever saw them. Spy on nodes.generate_threats (the exact
@@ -211,7 +205,7 @@ async def test_maestro_seeded_iteration_one_receives_seeds(anthropic_provider, m
     monkeypatch.setattr(nodes_module, "generate_threats", _spy)
 
     events = await _run(
-        anthropic_provider,
+        live_provider,
         Framework.STRIDE,
         max_iterations=1,
         has_ai_components=True,
@@ -234,7 +228,7 @@ async def test_maestro_seeded_iteration_one_receives_seeds(anthropic_provider, m
 #    surface zero_threats warning events without the pipeline erroring out.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_zero_threat_path_emits_warning_events(anthropic_provider, monkeypatch):
+async def test_zero_threat_path_emits_warning_events(live_provider, monkeypatch):
     # A nonsense description does NOT reliably make a capable model return zero
     # threats (the rule engine also contributes independently of the LLM), so
     # gating the assertion on total_threats==0 made this a near-permanent
@@ -252,7 +246,7 @@ async def test_zero_threat_path_emits_warning_events(anthropic_provider, monkeyp
         model_id="live-test-zero",
         description=_NONSENSE_DESCRIPTION,
         framework=Framework.STRIDE,
-        provider=anthropic_provider,
+        provider=live_provider,
         max_iterations=3,
     ):
         events.append(event)
@@ -266,7 +260,7 @@ async def test_zero_threat_path_emits_warning_events(anthropic_provider, monkeyp
 # 4. LOG_LEVEL=debug: start/iteration/dedup/complete log lines are present.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_debug_logging_emits_lifecycle_lines(anthropic_provider, caplog, monkeypatch):
+async def test_debug_logging_emits_lifecycle_lines(live_provider, caplog, monkeypatch):
     # The env var -> Settings wiring and the DEBUG/ERROR gating mechanism
     # itself are covered deterministically and offline in
     # tests/test_logging_config.py (no need to duplicate that here, and no
@@ -287,7 +281,7 @@ async def test_debug_logging_emits_lifecycle_lines(anthropic_provider, caplog, m
     assert Settings().log_level == "debug", "LOG_LEVEL env var was not picked up by Settings"
 
     caplog.set_level(logging.DEBUG)
-    events = await _run(anthropic_provider, Framework.STRIDE, max_iterations=2)
+    events = await _run(live_provider, Framework.STRIDE, max_iterations=2)
     _complete_event(events)
 
     messages = "\n".join(r.message for r in caplog.records)
