@@ -114,6 +114,13 @@ python -m tests.bench list
    pytest -m live tests/live/test_deps_benchmark.py -v
    ```
    Run the dependency benchmark on Windows and Linux at the same time; Windows has an unresolved concurrent-run mismatch on 3 packages.
+7. **Pytest live suites on any provider** (`tests/live/test_pipeline_live.py`, `test_deps_pipeline_live.py`). They default to the direct Anthropic API; point them at a bench slot or a raw model instead:
+   ```bash
+   BENCH_LIVE_MODEL=SONNET_55 pytest -m live tests/live/test_pipeline_live.py tests/live/test_deps_pipeline_live.py -v -rs
+   # or a provider plus a raw model ID
+   BENCH_LIVE_PROVIDER=bedrock BENCH_LIVE_MODEL=<model id> pytest -m live tests/live/ -v -rs
+   ```
+   A slot name takes its provider and model ID from this file; credentials come from the usual chain (`AWS_PROFILE`/`AWS_REGION` here, or the shell). `-rs` prints why anything was skipped (no credentials, no model ID). Effort comes from `ANTHROPIC_EFFORT`, falling back to `BENCH_EFFORT`, and only reaches Claude models.
 
 ---
 
