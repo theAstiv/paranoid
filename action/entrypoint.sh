@@ -11,6 +11,11 @@ ITERATIONS="${INPUT_ITERATIONS:-3}"
 SARIF_OUTPUT="${INPUT_SARIF_OUTPUT:-paranoid-results.sarif}"
 STRICT="${INPUT_STRICT:-false}"
 FAIL_ON_FINDINGS="${INPUT_FAIL_ON_FINDINGS:-false}"
+MANIFEST="${INPUT_MANIFEST:-}"
+LOCKFILE="${INPUT_LOCKFILE:-}"
+DEPS_SOURCE="${INPUT_DEPS_SOURCE:-npm}"
+SCORING_METHOD="${INPUT_SCORING_METHOD:-dread}"
+FAST_MODEL="${INPUT_FAST_MODEL:-}"
 
 # Resolve relative paths against the workspace root.
 # Docker container actions mount the checked-out repository at $GITHUB_WORKSPACE.
@@ -19,6 +24,12 @@ if [[ "${DESCRIPTION_FILE}" != /* ]]; then
 fi
 if [[ "${SARIF_OUTPUT}" != /* ]]; then
   SARIF_OUTPUT="${GITHUB_WORKSPACE}/${SARIF_OUTPUT}"
+fi
+if [ -n "${MANIFEST}" ] && [[ "${MANIFEST}" != /* ]]; then
+  MANIFEST="${GITHUB_WORKSPACE}/${MANIFEST}"
+fi
+if [ -n "${LOCKFILE}" ] && [[ "${LOCKFILE}" != /* ]]; then
+  LOCKFILE="${GITHUB_WORKSPACE}/${LOCKFILE}"
 fi
 
 # Validate: description file must exist
@@ -31,7 +42,20 @@ if [ ! -f "${DESCRIPTION_FILE}" ]; then
   exit 1
 fi
 
-# Validate: API key required for cloud providers; Ollama runs locally without one
+# Validate: dependency inputs
+if [ -n "${LOCKFILE}" ] && [ -z "${MANIFEST}" ]; then
+  echo "::error::Input 'lockfile' requires 'manifest'."
+  exit 1
+fi
+for f in "${MANIFEST}" "${LOCKFILE}"; do
+  if [ -n "${f}" ] && [ ! -f "${f}" ]; then
+    echo "::error::Dependency file not found: ${f}"
+    exit 1
+  fi
+done
+
+# Validate: API key required for cloud providers; Ollama runs locally without one,
+# and Bedrock uses the AWS credential chain (env vars set by an earlier step)
 case "${PROVIDER}" in
   anthropic|openai)
     if [ -z "${INPUT_API_KEY}" ]; then
@@ -46,6 +70,9 @@ case "${PROVIDER}" in
   anthropic) export ANTHROPIC_API_KEY="${INPUT_API_KEY}" ;;
   openai)    export OPENAI_API_KEY="${INPUT_API_KEY}" ;;
 esac
+if [ -n "${INPUT_AWS_REGION:-}" ]; then
+  export AWS_REGION="${INPUT_AWS_REGION}"
+fi
 
 # Use a temp DB — no persistence needed for a single action run
 export DB_PATH="/tmp/paranoid-action.db"
@@ -58,6 +85,7 @@ ARGS=(
   --provider "${PROVIDER}"
   --framework "${FRAMEWORK}"
   --iterations "${ITERATIONS}"
+  --scoring-method "${SCORING_METHOD}"
   --quiet
 )
 
@@ -66,6 +94,16 @@ ARGS=(
 # the fail-on-findings block below — that is the intended behaviour.
 [ "${STRICT}" = "true" ] && ARGS+=(--strict)
 [ -n "${MODEL}" ]        && ARGS+=(--model "${MODEL}")
+if [ -n "${MANIFEST}" ]; then
+  ARGS+=(--manifest "${MANIFEST}" --deps-source "${DEPS_SOURCE}")
+  [ -n "${LOCKFILE}" ] && ARGS+=(--lockfile "${LOCKFILE}")
+fi
+# "none" disables routing (every step on the main model): the CLI's `--fast-model=` form.
+if [ "${FAST_MODEL}" = "none" ]; then
+  ARGS+=(--fast-model=)
+elif [ -n "${FAST_MODEL}" ]; then
+  ARGS+=(--fast-model "${FAST_MODEL}")
+fi
 
 echo "::group::Paranoid threat modeling"
 paranoid run "${ARGS[@]}"

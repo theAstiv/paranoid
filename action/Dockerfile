@@ -29,12 +29,22 @@ ARG PARANOID_VERSION=1.5.0
 # In CI, wheels-ctx is overridden with dist/ (local wheel built from checkout).
 # In production, wheels-ctx is the empty scratch stage above, so /tmp/wheels/ is empty.
 COPY --from=wheels-ctx . /tmp/wheels/
+# The [bedrock] extra (boto3) lets `provider: bedrock` work.
 RUN if ls /tmp/wheels/paranoid_cli*.whl 1>/dev/null 2>&1; then \
-      pip install --no-cache-dir /tmp/wheels/paranoid_cli*.whl; \
+      whl=$(ls /tmp/wheels/paranoid_cli*.whl | head -n1) && \
+      pip install --no-cache-dir "${whl}[bedrock]"; \
     else \
-      pip install --no-cache-dir paranoid-cli==${PARANOID_VERSION}; \
+      pip install --no-cache-dir "paranoid-cli[bedrock]==${PARANOID_VERSION}"; \
     fi && \
     rm -rf /tmp/wheels/
+
+# Semgrep powers the dependency capability scanner (the `manifest` input). Same
+# pin and isolated venv as the main Dockerfile: installed next to paranoid-cli,
+# its pinned transitive deps (opentelemetry, click, ...) would shift the app's.
+ARG SEMGREP_VERSION=1.178.0
+RUN python3 -m venv /opt/semgrep-venv && \
+    /opt/semgrep-venv/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}"
+ENV SEMGREP_BINARY=/opt/semgrep-venv/bin/semgrep
 
 # Pre-bake the default fastembed model so CI doesn't download it at runtime
 RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))" \

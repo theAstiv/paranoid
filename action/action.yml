@@ -11,11 +11,11 @@ inputs:
     description: 'Path to the system description file (.md or .txt), relative to the repository root'
     required: true
   provider:
-    description: 'LLM provider: anthropic, openai, or ollama'
+    description: 'LLM provider: anthropic, openai, ollama, or bedrock. Bedrock uses the AWS credential chain (e.g. aws-actions/configure-aws-credentials in an earlier step), not api-key.'
     required: false
     default: 'anthropic'
   api-key:
-    description: 'API key for the LLM provider. Required for anthropic and openai; omit for ollama.'
+    description: 'API key for the LLM provider. Required for anthropic and openai; omit for ollama and bedrock.'
     required: false
     default: ''
   model:
@@ -42,6 +42,30 @@ inputs:
     description: 'Fail the workflow step if any threats are identified'
     required: false
     default: 'false'
+  aws-region:
+    description: 'AWS region for the bedrock provider (e.g. us-east-2). Falls back to the AWS_REGION already in the environment.'
+    required: false
+    default: ''
+  manifest:
+    description: 'Path to a package.json for dependency capability analysis, relative to the repository root. Dependency findings are anchored on this file in the SARIF output.'
+    required: false
+    default: ''
+  lockfile:
+    description: 'Path to the matching package-lock.json (requires manifest)'
+    required: false
+    default: ''
+  deps-source:
+    description: 'Dependency analysis source: npm (fast) or both (adds the npm-tarball vs GitHub-source drift check)'
+    required: false
+    default: 'npm'
+  scoring-method:
+    description: 'Severity scoring: dread, cvss, or both'
+    required: false
+    default: 'dread'
+  fast-model:
+    description: 'Fast model for the extraction steps. Empty uses the configured default; "none" runs every step on the main model.'
+    required: false
+    default: ''
 
 outputs:
   sarif-file:
