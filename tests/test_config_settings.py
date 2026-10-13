@@ -13,7 +13,13 @@ def _clear_4a2_env(monkeypatch):
     """Settings() reads the real process env (and .env) by default. Clear
     the fields this file exercises so a developer's own .env / exported
     FAST_MODEL_OPENAI etc. can't change these tests' outcomes."""
-    for var in ("FAST_MODEL_OPENAI", "FAST_MODEL_BEDROCK", "FAST_MODEL_OLLAMA", "STEP_MODELS"):
+    for var in (
+        "FAST_MODEL_OPENAI",
+        "FAST_MODEL_BEDROCK",
+        "FAST_MODEL_OLLAMA",
+        "STEP_MODELS",
+        "SEED_COLLECTIONS",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -110,4 +116,39 @@ def test_step_models_rejects_non_llm_step_name(monkeypatch):
     silently do nothing — reject it instead of accepting dead config."""
     monkeypatch.setenv("STEP_MODELS", '{"rule_engine": "main"}')
     with pytest.raises(ValidationError, match="Unknown pipeline step"):
+        _settings()
+
+
+# ---------------------------------------------------------------------------
+# BB-06: SEED_COLLECTIONS in the documented comma-separated form
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("stride,auth,cloud", ["stride", "auth", "cloud"]),
+        ("stride", ["stride"]),
+        (" stride , auth ", ["stride", "auth"]),
+        ('["stride", "auth"]', ["stride", "auth"]),
+        ("", []),
+    ],
+)
+def test_seed_collections_env_var_forms(monkeypatch, raw, expected):
+    """The documented form (`.env.example`: SEED_COLLECTIONS=stride,auth,cloud)
+    crashed every command with a pydantic SettingsError; the JSON array form
+    that worked as a workaround must keep working."""
+    monkeypatch.setenv("SEED_COLLECTIONS", raw)
+    assert _settings().seed_collections == expected
+
+
+def test_seed_collections_unknown_name_is_a_clear_error(monkeypatch):
+    monkeypatch.setenv("SEED_COLLECTIONS", "stride,bogus")
+    with pytest.raises(ValidationError, match="Unknown seed collections"):
+        _settings()
+
+
+def test_seed_collections_malformed_json_is_a_clear_error(monkeypatch):
+    monkeypatch.setenv("SEED_COLLECTIONS", '["stride",')
+    with pytest.raises(ValidationError, match="not a valid JSON array"):
         _settings()

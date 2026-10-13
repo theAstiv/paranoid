@@ -86,16 +86,20 @@ def export_pdf(
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     # --- Header ---
-    story.append(Paragraph(f"Threat Model: {display_title}", styles["h1"]))
+    # Every user-supplied string goes through _escape_pdf_text: reportlab parses
+    # Paragraph text as markup, and its <img src=...> tag fetches the URL or file
+    # it names (server-side, synchronously), so an unescaped title was an SSRF and
+    # could hang the server.
+    story.append(Paragraph(f"Threat Model: {_escape_pdf_text(display_title)}", styles["h1"]))
     story.append(Spacer(1, 4))
 
     meta_parts = [
-        f"<b>Framework:</b> {framework}",
+        f"<b>Framework:</b> {_escape_pdf_text(framework)}",
         f"<b>Model ID:</b> {model_id[:8]}",
         f"<b>Generated:</b> {generated_at}",
     ]
     if source_file:
-        meta_parts.append(f"<b>Source:</b> {source_file}")
+        meta_parts.append(f"<b>Source:</b> {_escape_pdf_text(source_file)}")
     story.append(Paragraph("&nbsp;&nbsp;|&nbsp;&nbsp;".join(meta_parts), styles["meta"]))
     story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#374151")))
@@ -204,7 +208,7 @@ def export_pdf(
         grouped = _group_by_category(threats)
         global_idx = 1
         for category, category_threats in grouped.items():
-            story.append(Paragraph(category, styles["h3"]))
+            story.append(Paragraph(_escape_pdf_text(category), styles["h3"]))
             story.append(Spacer(1, 4))
             for t in category_threats:
                 tid = str(t.get("id") or "")

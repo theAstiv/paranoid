@@ -568,3 +568,50 @@ def test_pdf_attack_techniques_adds_content() -> None:
     pdf_without = export_pdf([_STRIDE_FLAT], "mid", "STRIDE")
     pdf_with = export_pdf([threat], "mid", "STRIDE")
     assert len(pdf_with) > len(pdf_without)
+
+
+# ---------------------------------------------------------------------------
+# BB-07: user text is escaped before reportlab parses it as markup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        '<img src=x onerror="alert(1)">',
+        "<b>unclosed bold",
+        "a < b & c > d",
+        "</para><para>",
+    ],
+)
+def test_pdf_title_with_markup_still_renders(title: str) -> None:
+    """A title that looks like reportlab markup used to raise a 500 (paraparser
+    syntax error) instead of being printed as text."""
+    result = export_pdf([_STRIDE_FLAT], "test-model-id", "STRIDE", title=title)
+    assert result[:4] == b"%PDF"
+
+
+def test_pdf_title_image_tag_is_never_fetched(monkeypatch) -> None:
+    """reportlab's <img src=...> loads its source synchronously, so an unescaped
+    title made the server fetch an arbitrary URL during export (SSRF) and could
+    hang it. The source must never be opened."""
+    opened: list[object] = []
+
+    def _no_fetch(*args, **kwargs):
+        opened.append(args[0] if args else kwargs)
+        raise AssertionError("export_pdf tried to load an image from user text")
+
+    monkeypatch.setattr("reportlab.platypus.paraparser.ImageReader", _no_fetch)
+    monkeypatch.setattr("reportlab.lib.utils.open_for_read", _no_fetch)
+
+    payload = '<img src="http://127.0.0.1:9/never" width="1" height="1"/>'
+    result = export_pdf(
+        [{**_STRIDE_FLAT, "stride_category": payload}],
+        "test-model-id",
+        payload,
+        title=payload,
+        source_file=payload,
+    )
+
+    assert result[:4] == b"%PDF"
+    assert opened == []
