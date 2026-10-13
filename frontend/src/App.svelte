@@ -22,7 +22,7 @@
   import ModelDiff from './routes/ModelDiff.svelte'
   import {
     config, notification, notify, currentUser,
-    currentProject, projects, notifications, notifUnread, menuOpen,
+    currentProject, projects, notifications, notifUnread, menuOpen, pickInitialProject,
   } from './lib/stores.js'
   import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
   import { initials, relativeTime } from './lib/utils.js'
@@ -178,7 +178,7 @@
       const [proj, notifs] = await Promise.all([listProjects(), listNotifications()])
       projects.set(proj)
       notifications.set(notifs)
-      if (proj.length > 0 && !get(currentProject)) currentProject.set(proj[0])
+      if (proj.length > 0 && !get(currentProject)) currentProject.set(pickInitialProject(proj))
     } catch { /* non-fatal */ }
   })
 </script>
