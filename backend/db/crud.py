@@ -194,8 +194,12 @@ async def list_threat_models(
     framework: str | None = None,
     status: str | None = None,
     project_id: str | None = None,
+    project_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """List threat models with per-model threat counts, optionally filtered.
+
+    project_ids restricts to those projects (empty list → no rows); it is applied
+    in SQL so that `limit` counts only visible models.
 
     Excludes seed-pattern buckets (provider = 'seed'), which are internal
     containers for RAG seed threats and not user-facing models.
@@ -214,6 +218,12 @@ async def list_threat_models(
     if project_id is not None:
         conditions.append("tm.project_id = ?")
         params.append(project_id)
+
+    if project_ids is not None:
+        if not project_ids:
+            return []
+        conditions.append(f"tm.project_id IN ({','.join('?' * len(project_ids))})")
+        params.extend(project_ids)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)

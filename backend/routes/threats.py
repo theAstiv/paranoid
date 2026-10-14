@@ -56,7 +56,7 @@ def _default_runner(model_id: str) -> PipelineRunner:
 @router.get("/{threat_id}")
 async def get_threat(
     threat_id: str,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "threat_id", "threat")),
 ) -> JSONResponse:
     """Get a single threat by ID."""
     threat = await crud.get_threat(threat_id)
@@ -314,7 +314,7 @@ async def generate_attack_tree(
 @router.get("/{threat_id}/attack-trees")
 async def list_attack_trees(
     threat_id: str,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "threat_id", "threat")),
 ) -> JSONResponse:
     """List all attack trees for a threat."""
     threat = await crud.get_threat(threat_id)
@@ -372,7 +372,7 @@ async def generate_test_cases(
 @router.get("/{threat_id}/test-cases")
 async def list_test_cases(
     threat_id: str,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "threat_id", "threat")),
 ) -> JSONResponse:
     """List all test cases for a threat."""
     threat = await crud.get_threat(threat_id)
