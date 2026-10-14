@@ -10,7 +10,7 @@ admin. Expected:
 - a role below the route's minimum → 403
 - the minimum role and above, and the instance admin → anything but 401/403
 
-KNOWN_GAPS lists the cells that are currently wrong (bug-bash-log.md BB-01..04).
+KNOWN_GAPS lists the cells that are currently wrong (bug-bash-log.md BB-03, BB-04).
 Each test asserts its wrong cells are *exactly* those, so a fix fails the test
 until its entry here is removed. Routes that would call an LLM only check the
 cells that must be denied, and the analyze handlers are stubbed regardless.
@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from backend.auth.tokens import create_access_token
 from backend.config import settings
+from backend.db import crud, crud_auth
 from backend.main import app
 from backend.models.api import (
     AnalyzeAssumptionsResponse,
@@ -54,26 +56,25 @@ class Route:
         return f"{self.method} {self.path}"
 
 
-_STRANGER_GAP = {"stranger", "pat_b"}  # BB-02 + BB-03
-_ANON_GAP = {"anon", "stranger", "pat_b"}  # BB-01 + BB-02 + BB-03
+_ANON_GAP = {"anon", "stranger", "pat_b"}  # BB-04 (analyze) + BB-03
 _PAT_GAP = {"pat_b"}  # BB-03
 
 ROUTES = [
     # --- model ---
-    Route("GET", "/api/models/{model}", "viewer", gaps=_STRANGER_GAP),
+    Route("GET", "/api/models/{model}", "viewer", gaps=_PAT_GAP),
     Route("PATCH", "/api/models/{model}", "editor", {"title": "renamed"}, gaps=_PAT_GAP),
     Route("DELETE", "/api/models/{model}", "owner", destructive=True, gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/assets", "viewer", gaps=_ANON_GAP),
-    Route("GET", "/api/models/{model}/flows", "viewer", gaps=_ANON_GAP),
-    Route("GET", "/api/models/{model}/threats", "viewer", gaps=_ANON_GAP),
-    Route("GET", "/api/models/{model}/trust-boundaries", "viewer", gaps=_ANON_GAP),
-    Route("GET", "/api/models/{model}/stats", "viewer", gaps=_ANON_GAP),
+    Route("GET", "/api/models/{model}/assets", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/models/{model}/flows", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/models/{model}/threats", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/models/{model}/trust-boundaries", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/models/{model}/stats", "viewer", gaps=_PAT_GAP),
     Route("POST", "/api/models/{model}/analyze", "viewer", spends=True, gaps=_ANON_GAP),
     Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True, gaps=_PAT_GAP),
     Route("POST", "/api/models/{model}/run", "editor", spends=True, gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer", gaps=_STRANGER_GAP),
-    Route("GET", "/api/export/{model}?format=json", "viewer", gaps=_STRANGER_GAP),
-    Route("GET", "/api/export/{model}?format=markdown", "viewer", gaps=_STRANGER_GAP),
+    Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/export/{model}?format=json", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/export/{model}?format=markdown", "viewer", gaps=_PAT_GAP),
     Route("POST", "/api/models/{model}/assets", "editor", {}, gaps=_PAT_GAP),
     Route("PATCH", "/api/models/{model}/assets/{asset}", "editor", {}, gaps=_PAT_GAP),
     Route(
@@ -109,12 +110,12 @@ ROUTES = [
     Route("GET", "/api/models/{model}/diagrams", "viewer", gaps=_PAT_GAP),
     Route("GET", "/api/models/{model}/diagrams/{diagram}", "viewer", gaps=_PAT_GAP),
     # --- threat ---
-    Route("GET", "/api/threats/{threat}", "viewer", gaps=_STRANGER_GAP),
+    Route("GET", "/api/threats/{threat}", "viewer", gaps=_PAT_GAP),
     Route("PATCH", "/api/threats/{threat}", "editor", {"name": "renamed"}, gaps=_PAT_GAP),
     Route("DELETE", "/api/threats/{threat}", "editor", destructive=True, gaps=_PAT_GAP),
-    Route("GET", "/api/threats/{threat}/attack-trees", "viewer", gaps=_STRANGER_GAP),
+    Route("GET", "/api/threats/{threat}/attack-trees", "viewer", gaps=_PAT_GAP),
     Route("POST", "/api/threats/{threat}/attack-tree", "editor", spends=True, gaps=_PAT_GAP),
-    Route("GET", "/api/threats/{threat}/test-cases", "viewer", gaps=_STRANGER_GAP),
+    Route("GET", "/api/threats/{threat}/test-cases", "viewer", gaps=_PAT_GAP),
     Route("POST", "/api/threats/{threat}/test-cases", "editor", spends=True, gaps=_PAT_GAP),
     Route(
         "POST",
@@ -274,22 +275,130 @@ async def test_route_enforces_project_roles(route, test_db, monkeypatch):
     )
 
 
+def _bearer(w: World, who: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {w.tokens[who]}"}
+
+
+def _client() -> AsyncClient:
+    return AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    )
+
+
+async def _model_in(project_id: str, title: str = "B model") -> str:
+    model_id = await crud.create_threat_model(
+        title=title,
+        description="d",
+        provider="anthropic",
+        model="m",
+        project_id=project_id,
+    )
+    await crud.update_threat_model(model_id, status="completed")
+    return model_id
+
+
+def _ids_in(r) -> set[str]:
+    assert r.status_code == 200
+    return {m["id"] for m in r.json()}
+
+
 @pytest.mark.asyncio
 async def test_model_list_hides_other_projects(test_db, monkeypatch):
-    """BB-02: a member of project B must not see project A's models in the list."""
+    """BB-02: the list only contains models from the caller's projects."""
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     w = await build_world()
-    async with AsyncClient(
-        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
-    ) as client:
+    model_b = await _model_in(w.project_b)
+    async with _client() as client:
+        stranger = _ids_in(await client.get("/api/models/", headers=_bearer(w, "stranger")))
+        assert stranger == {model_b}
+        assert w.model not in stranger
+        # owner owns A and views B
+        assert _ids_in(await client.get("/api/models/", headers=_bearer(w, "owner"))) == {
+            w.model,
+            model_b,
+        }
+        assert _ids_in(await client.get("/api/models/", headers=_bearer(w, "viewer"))) == {w.model}
+        assert _ids_in(await client.get("/api/models/", headers=_bearer(w, "admin"))) == {
+            w.model,
+            model_b,
+        }
         r = await client.get(
-            "/api/models/", headers={"Authorization": f"Bearer {w.tokens['stranger']}"}
+            f"/api/models/?project_id={w.project_a}", headers=_bearer(w, "stranger")
         )
+        assert r.status_code == 403
+        r = await client.get(f"/api/models/?project_id={w.project_a}", headers=_bearer(w, "viewer"))
+        assert _ids_in(r) == {w.model}
+
+
+@pytest.mark.asyncio
+async def test_model_list_limit_applies_after_project_filter(test_db, monkeypatch):
+    """A newer model the caller can't see must not use up their `limit`."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    await _model_in(w.project_b, "newer, hidden from viewer")
+    async with _client() as client:
+        r = await client.get("/api/models/?limit=1", headers=_bearer(w, "viewer"))
+    assert _ids_in(r) == {w.model}
+
+
+@pytest.mark.asyncio
+async def test_model_list_without_projects_is_empty(test_db, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    await crud_auth.create_user(
+        username="loner",
+        email="loner@test.local",
+        password_hash="unusable",  # noqa: S106
+    )
+    loner = await crud_auth.get_user_by_username("loner")
+    token = create_access_token(loner["id"], "loner", False)
+    async with _client() as client:
+        r = await client.get("/api/models/", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-    items = r.json() if isinstance(r.json(), list) else r.json().get("models", [])
-    leaked = any(m.get("id") == w.model for m in items)
-    # KNOWN GAP (BB-02): flip to `assert not leaked` when fixed.
-    assert leaked, "BB-02 looks fixed: assert `not leaked` here and update bug-bash-log.md"
+    assert r.json() == []
+    assert w.model  # world exists, so the empty list is the filter's doing
+
+
+@pytest.mark.asyncio
+async def test_diff_requires_both_models_readable(test_db, monkeypatch):
+    """BB-02: diff needs viewer on the head and on the base model."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    model_b = await _model_in(w.project_b)
+    async with _client() as client:
+
+        async def diff(who: str, head: str, base: str) -> int:
+            r = await client.get(f"/api/models/{head}/diff?base_id={base}", headers=_bearer(w, who))
+            return r.status_code
+
+        await crud.update_threat_model(w.model, status="completed")
+        # viewer of A only: head readable, base (project B) not
+        assert await diff("viewer", w.model, model_b) == 403
+        # stranger owns B only: head readable, base (project A) not
+        assert await diff("stranger", model_b, w.model) == 403
+        # head unreadable
+        assert await diff("stranger", w.model, model_b) == 403
+        # owner is a member of both A and B
+        assert await diff("owner", w.model, model_b) == 200
+        assert await diff("admin", w.model, model_b) == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_off_reads_every_project(test_db, monkeypatch):
+    """Auth off (the default) is unchanged: the anonymous admin sees everything."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", False)
+    w = await build_world()
+    model_b = await _model_in(w.project_b)
+    await crud.update_threat_model(w.model, status="completed")
+    async with _client() as client:
+        assert _ids_in(await client.get("/api/models/")) == {w.model, model_b}
+        for sub in ("assets", "flows", "threats", "trust-boundaries", "stats"):
+            r = await client.get(f"/api/models/{w.model}/{sub}")
+            assert r.status_code == 200, sub
+        assert (await client.get(f"/api/models/{w.model}")).status_code == 200
+        assert (await client.get(f"/api/threats/{w.threat}")).status_code == 200
+        r = await client.get(f"/api/models/{w.model}/diff?base_id={model_b}")
+        assert r.status_code == 200
 
 
 @pytest.mark.parametrize("path", ["/api/analyze/"])

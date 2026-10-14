@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
-from backend.auth.dependencies import get_current_user
+from backend.auth.dependencies import require_role
 from backend.db import crud
 from backend.db.gap_utils import decode_gap_summaries
 from backend.export.markdown import export_markdown
@@ -52,7 +52,7 @@ async def export_model(
     export_format: Annotated[ExportFormat, Query(alias="format")] = "markdown",
     status_filter: Annotated[str | None, Query()] = None,
     source_file: Annotated[str | None, Query()] = None,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> Response:
     """Export a threat model in the requested format.
 

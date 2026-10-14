@@ -210,12 +210,36 @@ async def resolve_project_id(entity_type: str, entity_id: str) -> str:
     return project_id
 
 
+async def check_project_role(user: dict[str, Any], project_id: str, min_role: str) -> None:
+    """Raise 403 unless `user` has at least `min_role` in `project_id`.
+
+    Instance admins bypass the membership check. Callers are responsible for the
+    PARANOID_REQUIRE_AUTH=false short-circuit (see require_role).
+    """
+    if user.get("is_admin"):
+        return
+
+    from backend.db.crud_projects import get_user_role_in_project
+
+    role = await get_user_role_in_project(project_id, user["id"])
+    if role is None:
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+
+    if ROLE_ORDER.get(role, 0) < ROLE_ORDER.get(min_role, 0):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Requires {min_role} role (you have {role})",
+        )
+
+
 def require_role(min_role: str, entity_param: str, entity_type: str):
     """Factory: returns a FastAPI dependency that checks project membership.
 
     When PARANOID_REQUIRE_AUTH is false, passes through (anon admin has all access).
-    When the entity's project_id is the Default Project sentinel, allows any
-    authenticated user with at least min_role (or any user if anon mode).
+    Otherwise the caller must be an instance admin or a member of the entity's
+    project with at least min_role. The Default Project has no special rule: it is
+    an ordinary project (the migration makes the admin its owner), so non-admin
+    users need to be added as members to reach models that predate projects.
 
     Usage:
         @router.patch("/{threat_id}")
@@ -239,22 +263,7 @@ def require_role(min_role: str, entity_param: str, entity_type: str):
             raise HTTPException(status_code=400, detail=f"Missing path param: {entity_param}")
 
         project_id = await resolve_project_id(entity_type, entity_id)
-
-        # Instance admins bypass project membership check
-        if user.get("is_admin"):
-            return
-
-        from backend.db.crud_projects import get_user_role_in_project
-
-        role = await get_user_role_in_project(project_id, user["id"])
-        if role is None:
-            raise HTTPException(status_code=403, detail="Not a member of this project")
-
-        if ROLE_ORDER.get(role, 0) < ROLE_ORDER.get(min_role, 0):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Requires {min_role} role (you have {role})",
-            )
+        await check_project_role(user, project_id, min_role)
 
     return _dep
 

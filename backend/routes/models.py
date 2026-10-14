@@ -464,14 +464,26 @@ async def list_models(
     framework: str | None = None,
     status: str | None = None,
     project_id: str | None = None,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    *,
+    user: Annotated[dict, Depends(get_current_user)],
 ) -> JSONResponse:
-    """List threat models, optionally filtered by framework, status, or project."""
+    """List threat models, optionally filtered by framework, status, or project.
+
+    Non-admin callers only see models from projects they belong to (the same
+    membership query as GET /projects). Auth off resolves to the instance admin.
+    """
+    project_ids: list[str] | None = None
+    if not user.get("is_admin"):
+        member_of = {p["id"] for p in await crud_projects.list_projects_for_user(user["id"])}
+        if project_id is not None and project_id not in member_of:
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        project_ids = sorted(member_of)
     rows = await crud.list_threat_models(
         limit=limit,
         framework=framework,
         status=status,
         project_id=project_id,
+        project_ids=project_ids,
     )
     for row in rows:
         row["gap_summaries"] = decode_gap_summaries(row.get("gap_summaries"))
@@ -482,7 +494,7 @@ async def list_models(
 @router.get("/{model_id}")
 async def get_model(
     model_id: str,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> JSONResponse:
     """Get a single threat model with its threats."""
     record = await crud.get_threat_model(model_id)
@@ -1013,6 +1025,7 @@ async def run_pipeline(
 async def list_model_threats(
     model_id: str,
     status: str | None = None,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> JSONResponse:
     """List threats for a model, optionally filtered by status."""
     record = await crud.get_threat_model(model_id)
@@ -1034,7 +1047,10 @@ async def list_model_threats(
 
 
 @router.get("/{model_id}/assets")
-async def list_model_assets(model_id: str) -> JSONResponse:
+async def list_model_assets(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
     """List extracted assets for a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1044,7 +1060,10 @@ async def list_model_assets(model_id: str) -> JSONResponse:
 
 
 @router.get("/{model_id}/flows")
-async def list_model_flows(model_id: str) -> JSONResponse:
+async def list_model_flows(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
     """List extracted data flows for a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1054,7 +1073,10 @@ async def list_model_flows(model_id: str) -> JSONResponse:
 
 
 @router.get("/{model_id}/trust-boundaries")
-async def list_model_trust_boundaries(model_id: str) -> JSONResponse:
+async def list_model_trust_boundaries(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
     """List extracted trust boundaries for a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1064,7 +1086,10 @@ async def list_model_trust_boundaries(model_id: str) -> JSONResponse:
 
 
 @router.get("/{model_id}/stats")
-async def get_model_stats(model_id: str) -> JSONResponse:
+async def get_model_stats(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
     """Get pipeline execution statistics for a model."""
     record = await crud.get_threat_model(model_id)
     if record is None:

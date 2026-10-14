@@ -6,7 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from backend.auth.dependencies import get_current_user
+from backend.auth.dependencies import (
+    check_project_role,
+    get_current_user,
+    require_role,
+    resolve_project_id,
+)
+from backend.config import settings
 from backend.db import crud
 from backend.db.crud_diff import compare_models
 
@@ -26,7 +32,9 @@ async def get_model_diff(
         le=1.0,
         description="Cosine similarity threshold for matching threats (0–1)",
     ),
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    *,
+    user: Annotated[dict, Depends(get_current_user)],
+    _authz: None = Depends(require_role("viewer", "head_id", "model")),
 ) -> JSONResponse:
     """Compare threats between two models.
 
@@ -41,6 +49,11 @@ async def get_model_diff(
     """
     if head_id == base_id:
         raise HTTPException(status_code=400, detail="head_id and base_id must be different models")
+
+    # head_id is covered by require_role; base_id is a query param, so check it here,
+    # before anything about it (existence, status) is revealed.
+    if settings.paranoid_require_auth:
+        await check_project_role(user, await resolve_project_id("model", base_id), "viewer")
 
     head = await crud.get_threat_model(head_id)
     if head is None:
@@ -60,10 +73,7 @@ async def get_model_diff(
             detail=f"Base model '{base_id}' is not completed (status: {base['status']})",
         )
 
-    # Cross-project diffing is intentionally allowed: users choose both models
-    # explicitly and both are already visible to them through the model list.
-    # If projects become strictly isolated namespaces in a future auth revision,
-    # add a project_id equality check here.
+    # Cross-project diffing works for a caller who can read both models.
 
     result = await compare_models(
         base_model_id=base_id,
