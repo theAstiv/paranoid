@@ -113,6 +113,18 @@ async def test_create_source_invalid_url_returns_422(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_source_with_credentials_in_url_returns_422_and_stores_nothing(
+    client, monkeypatch
+):
+    monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda sid: None)
+    resp = await _create(client, git_url="https://user:s3cret@github.com/o/r.git")
+    assert resp.status_code == 422
+    assert "s3cret" not in resp.text
+    assert "PAT" in resp.json()["detail"]
+    assert (await client.get("/api/sources")).json() == []
+
+
+@pytest.mark.asyncio
 async def test_create_source_non_allowlisted_host_returns_422(client, monkeypatch):
     monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda sid: None)
     resp = await _create(client, git_url="https://evil.com/repo.git")
@@ -224,6 +236,15 @@ async def test_reindex_returns_202_when_idle(client, monkeypatch):
 async def test_delete_source_not_found(client):
     resp = await client.delete("/api/sources/ghost")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_id", ["..%2f..%2fetc", "%2e%2e", "ABCDEF", "a" * 40])
+async def test_malformed_source_id_is_404_not_500(client, bad_id):
+    # The path helpers raise ValueError on a non-hex id; the row lookup must
+    # reject it first so the client never sees a 500.
+    assert (await client.delete(f"/api/sources/{bad_id}")).status_code == 404
+    assert (await client.get(f"/api/sources/{bad_id}")).status_code == 404
 
 
 @pytest.mark.asyncio

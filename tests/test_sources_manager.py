@@ -93,6 +93,21 @@ def test_validate_git_url_rejects_userinfo_spoofing():
         mgr.validate_git_url("https://github.com@evil.com/owner/repo.git")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:s3cret@github.com/owner/repo.git",
+        "https://ghp_s3cret@github.com/owner/repo.git",
+        "https://:s3cret@github.com/owner/repo.git",
+        "https://user:@github.com/owner/repo.git",
+    ],
+)
+def test_validate_git_url_rejects_embedded_credentials(url):
+    with pytest.raises(mgr.HostNotAllowedError, match="PAT") as exc_info:
+        mgr.validate_git_url(url)
+    assert "s3cret" not in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # PAT scrubbing
 # ---------------------------------------------------------------------------
