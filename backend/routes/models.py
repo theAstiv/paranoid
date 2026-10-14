@@ -1346,7 +1346,10 @@ async def delete_trust_boundary(
 
 
 @router.post("/{model_id}/analyze")
-async def analyze_model_description(model_id: str) -> AnalyzeDescriptionResponse:
+async def analyze_model_description(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> AnalyzeDescriptionResponse:
     """Analyze the model's description for completeness gaps.
 
     Runs fast deterministic checks plus an LLM pass to identify what is missing

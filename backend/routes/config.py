@@ -1,13 +1,15 @@
 """Config read/write endpoint — returns and optionally updates a safe subset of settings."""
 
+import hmac
 import logging
 import os
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
 
+from backend.auth.dependencies import get_current_user
 from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.crud import (
     delete_config_value,
@@ -174,6 +176,17 @@ async def _apply_key_update(provider: str, secret: SecretStr | None) -> None:
     setattr(settings, key, raw)
 
 
+def _check_config_secret(x_config_secret: str | None) -> None:
+    """403 unless CONFIG_SECRET is unset or the caller supplied it."""
+    if settings.config_secret and not hmac.compare_digest(
+        x_config_secret or "", settings.config_secret
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="X-Config-Secret header is missing or incorrect.",
+        )
+
+
 @router.patch("/")
 async def update_config(
     body: UpdateConfigRequest,
@@ -192,11 +205,7 @@ async def update_config(
     Cross-origin write protection is enforced by the CSRFMiddleware — see
     ``ALLOWED_ORIGINS``.
     """
-    if settings.config_secret and x_config_secret != settings.config_secret:
-        raise HTTPException(
-            status_code=403,
-            detail="X-Config-Secret header is missing or incorrect.",
-        )
+    _check_config_secret(x_config_secret)
     # model_fields_set — not `is not None` — because key fields need three
     # distinct outcomes: omitted (no change), explicit null (clear), and
     # non-empty string (upsert). The is-not-None pattern used for other
@@ -255,10 +264,34 @@ def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
 
 
 @router.post("/test-provider")
-async def test_provider(body: TestProviderRequest) -> JSONResponse:
+async def test_provider(
+    body: TestProviderRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+    x_config_secret: Annotated[str | None, Header()] = None,  # noqa: PT028 - route, not a test
+) -> JSONResponse:
     """Liveness probe for a provider. Always returns 200 with ``ok`` bool
     (unless rate-limited → 429). Never logs or echoes the supplied key.
+
+    Requires a login when auth is on. Probing an Ollama URL other than the
+    configured one makes the server fetch an address the caller chose, so it is
+    allowed only for a caller who could set that URL anyway: the CONFIG_SECRET
+    holder and, with auth on, an unscoped instance admin. Checked before the
+    rate limiter so a refused request costs nothing and contacts nothing.
     """
+    if (
+        body.provider == "ollama"
+        and body.ollama_base_url
+        and body.ollama_base_url != settings.ollama_base_url
+    ):
+        _check_config_secret(x_config_secret)
+        if settings.paranoid_require_auth and (
+            not user.get("is_admin") or user.get("pat_project_id")
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Testing a different Ollama URL requires an instance admin.",
+            )
+
     retry_after = await rate_limit_check()
     if retry_after is not None:
         retry_s = max(1, int(retry_after))

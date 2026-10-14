@@ -91,7 +91,7 @@
         payload.aws_region = draft.aws_region
         payload.aws_profile = draft.aws_profile
       }
-      const result = await testProvider(payload)
+      const result = await testProvider(payload, configSecret || undefined)
       keys[provider] = { ...keys[provider], testing: false, testResult: result }
     } catch (err) {
       keys[provider] = { ...keys[provider], testing: false, testResult: { ok: false, error: 'request_failed', message: err.message, latency_ms: 0 } }

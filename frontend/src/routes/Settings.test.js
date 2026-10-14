@@ -163,9 +163,39 @@ describe('Settings — API keys', () => {
     await fireEvent.click(screen.getByText('Test'))
 
     await waitFor(() => expect(testProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'anthropic', api_key: 'sk-ant-test' })
+      expect.objectContaining({ provider: 'anthropic', api_key: 'sk-ant-test' }),
+      undefined
     ))
     await waitFor(() => expect(screen.getByText('✓ Connected (42 ms)')).toBeInTheDocument())
+  })
+
+  it('sends the config secret with the connection test', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, config_secret_required: true })
+    testProvider.mockResolvedValue({ ok: true, latency_ms: 7 })
+    render(Settings)
+    await waitFor(() => expect(screen.getByPlaceholderText('sk-ant-…')).toBeInTheDocument())
+
+    await fireEvent.input(screen.getByPlaceholderText('sk-ant-…'), { target: { value: 'sk-ant-test' } })
+    await fireEvent.input(document.getElementById('cfg-secret'), { target: { value: 's3cret' } })
+    await fireEvent.click(screen.getByText('Test'))
+
+    await waitFor(() => expect(testProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'anthropic' }),
+      's3cret'
+    ))
+  })
+
+  it('shows the server message when the test is refused with a 403', async () => {
+    testProvider.mockRejectedValue(new Error('X-Config-Secret header is missing or incorrect.'))
+    render(Settings)
+    await waitFor(() => expect(screen.getByPlaceholderText('sk-ant-…')).toBeInTheDocument())
+
+    await fireEvent.input(screen.getByPlaceholderText('sk-ant-…'), { target: { value: 'sk-ant-test' } })
+    await fireEvent.click(screen.getByText('Test'))
+
+    await waitFor(() => expect(
+      screen.getByText('✗ X-Config-Secret header is missing or incorrect.')
+    ).toBeInTheDocument())
   })
 
   it('shows a failure message when the connection test fails', async () => {

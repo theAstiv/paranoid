@@ -765,10 +765,16 @@ export function updateConfig(body, secret) {
  * Always resolves with { ok, latency_ms, provider, error, message } unless
  * the backend rate-limits (throws Error with retry-after detail).
  *
+ * Testing an Ollama URL other than the configured one needs an instance admin
+ * (with auth on) and, when CONFIG_SECRET is set, the secret; otherwise the
+ * backend answers 403 and this throws with its message.
+ *
  * @param {{ provider: 'anthropic'|'openai'|'ollama', api_key?: string, model?: string, ollama_base_url?: string }} body
+ * @param {string} [secret] Value for X-Config-Secret header
  */
-export function testProvider(body) {
-  return request('POST', '/config/test-provider', body)
+export function testProvider(body, secret) {
+  const headers = secret ? { 'X-Config-Secret': secret } : {}
+  return request('POST', '/config/test-provider', body, headers)
 }
 
 export function getHealth() {
