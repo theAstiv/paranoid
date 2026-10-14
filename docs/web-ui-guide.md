@@ -123,6 +123,8 @@ Manage Git repositories for code-grounded threat modeling.
 
 Once `ready`, a source can be selected in the New Model Wizard.
 
+Sources belong to the active project: the page lists the current project's sources, and switching project reloads it. A model can only use a source from its own project. Put access tokens in the PAT field, not in the Git URL (URLs containing a username or password are rejected).
+
 **PAT storage**: encrypted at rest (Fernet, key derived from `CONFIG_SECRET`). The raw token is never shown after creation.
 
 ---

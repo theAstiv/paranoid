@@ -342,9 +342,11 @@ Delete a comment (author or owner).
 
 ## Sources (Code Sources)
 
+A source belongs to one project. With `PARANOID_REQUIRE_AUTH=true`, reading a source needs viewer on its project, creating or re-indexing one needs editor, and deleting or moving it needs owner. A project-scoped token only reaches its own project's sources. A model can only use a source from its own project (`POST /api/models/{id}/run` returns `403` otherwise). `(git_url, ref)` is unique across the whole instance, so adding a repository another project already added returns `409`.
+
 ### `GET /api/sources`
 
-List code sources.
+List the code sources in your projects (instance admins see all). Optional `?project_id=` limits the list to one project; a project you are not a member of returns `403`.
 
 ### `POST /api/sources`
 
@@ -357,15 +359,26 @@ Add and clone a git repository.
   "name": "My Repo",
   "git_url": "https://github.com/org/repo.git",
   "ref": "main",
-  "pat": "ghp_xxx"
+  "pat": "ghp_xxx",
+  "project_id": "…"
 }
 ```
 
+`project_id` is optional and defaults to the Default Project. The URL must not contain a username or password (`422`); put the token in `pat`, which is encrypted at rest.
+
 **Response:** `202 Accepted` — clone runs as a background task; track progress via SSE.
+
+### `GET /api/sources/{id}`
+
+One source (viewer on its project).
+
+### `PATCH /api/sources/{id}`
+
+Move a source to another project: `{"project_id": "…"}`. Needs owner on the source's current project and editor on the target (`404` for an unknown project). Sources that predate projects all sit in the Default Project, so use this to put them next to their models.
 
 ### `GET /api/sources/{id}/events`
 
-SSE stream of clone and index progress events.
+SSE stream of clone and index progress events (viewer on the source's project; refused before the stream opens).
 
 ### `POST /api/sources/{id}/reindex`
 
