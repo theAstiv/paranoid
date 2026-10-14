@@ -14,7 +14,7 @@
 
   /** @type {Array<Record<string, any>>} */
   export let items = []
-  /** @type {Array<{ key: string, label: string, type?: string, options?: string[] }>} */
+  /** @type {Array<{ key: string, label: string, type?: string, options?: string[], linkKey?: string }>} */
   export let fields = []
   /** @type {(draft: object) => Promise<object>} */
   export let onCreate
@@ -145,7 +145,10 @@
       <div class="flex items-start gap-2 group py-1 border-b border-c-divider last:border-0">
         <div class="flex-1 min-w-0">
           {#each fields as f, fi}
-            {#if fi === 0}
+            {#if f.linkKey}
+              <!-- Same size linked or not, so a mixed list doesn't make the plain rows look heavier -->
+              <span class="{fi === 0 ? '' : 'ml-1.5 '}whitespace-nowrap font-mono text-[11px] px-1.5 py-0.5 rounded-chip {item[f.linkKey] ? 'border chip-accent' : 'text-c-text2'}" title={item[f.linkKey] ? 'Linked to an asset in this model' : undefined}>{displayValue(item, f)}</span>
+            {:else if fi === 0}
               <span class="text-sm font-medium text-c-text2">{displayValue(item, f)}</span>
             {:else if f.type === 'badge' || f.display === 'badge'}
               <span class="ml-1.5 font-mono text-[10px] px-1.5 py-0.5 rounded-chip border chip-gray">

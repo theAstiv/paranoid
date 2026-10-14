@@ -417,7 +417,13 @@
   <!-- Target + Impact / Likelihood -->
   <div class="flex flex-wrap gap-2 text-xs">
     {#if threat.target}
-      <span class="text-c-faint">Target: <span class="font-medium text-c-text2">{threat.target}</span></span>
+      <span class="text-c-faint">Target:
+        {#if threat.target_asset_id}
+          <span class="font-mono text-[11px] px-1.5 py-0.5 rounded-chip border chip-accent" title="Linked to an asset in this model">{threat.target}</span>
+        {:else}
+          <span class="font-medium text-c-text2">{threat.target}</span>
+        {/if}
+      </span>
     {/if}
     {#if threat.impact}
       {@const impactKey = threat.impact?.toLowerCase()}
