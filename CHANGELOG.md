@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 1.5.1-dev
 
+### Added
+
+- **Flows, trust boundaries and threats link to their assets** (#13, migration 0013) — `flows` and `trust_boundaries` gain `source_asset_id` / `target_asset_id`, and `threats` gains `target_asset_id` (all `ON DELETE SET NULL`, so deleting an asset falls back to the original text). Links are derived after extraction by local name matching (exact, then normalised, then the asset named earliest in the text) — the LLM prompts and schemas are unchanged and a model can't set a link. A tie between two assets stays unlinked rather than guessed. Links are filled after each pipeline save and when flows, boundaries, assets or a threat's target are edited; models saved before this release are linked once at startup. The IDs appear in the flows/trust-boundaries/threats API responses and the JSON export; Results and the threat card show a linked endpoint as an accent chip, unlinked text as before. Measured on saved models: 90% of flow endpoints and 89% of boundary endpoints resolved on the messy dev database, 100% on clean runs; `scripts/measure_component_resolution.py <db copy>` reproduces it
+
 ### Security
 
 - **Mermaid sanitizer could rebuild what it removed** (BB-12, CodeQL #10–14) — the pre-render clean-up in `mermaid_sanitize.js` ran each strip once, so `<scr<script>ipt>`, `javajavascript:script:` and double-encoded entities such as `&amp;#106;avascript:` left a live tag or scheme, and `&amp;` was decoded before `&lt;`/`&gt;`. Decoding and stripping now repeat until the text stops changing (a string that never settles is rejected as empty). This is defence in depth: Mermaid's `strict` security level, its DOMPurify pass and the CSP already neutralised these in the 10-13 browser pass
