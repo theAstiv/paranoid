@@ -6,9 +6,11 @@ commits to a full pipeline run.
 """
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from backend.auth.dependencies import get_current_user
 from backend.config import settings
 from backend.models.api import AnalyzeBundleRequest, AnalyzeBundleResponse
 from backend.pipeline.pre_flight import analyze_bundle
@@ -25,6 +27,8 @@ router = APIRouter(prefix="/analyze", tags=["analyze"])
 @router.post("/", response_model=AnalyzeBundleResponse)
 async def analyze_description_and_assumptions(
     req: AnalyzeBundleRequest,
+    # Listed first so anonymous callers are refused before they use the rate-limit bucket.
+    _user: Annotated[dict, Depends(get_current_user)],
     _rate: None = Depends(analyze_rate_limit),
 ) -> AnalyzeBundleResponse:
     """Run pre-flight gap analysis on a description + assumptions bundle.

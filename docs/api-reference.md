@@ -98,7 +98,7 @@ Re-run only the extraction steps (summarize, extract_assets, extract_flows) with
 
 ### `POST /api/models/{id}/analyze`
 
-Run the pre-flight gap analysis against this model's own stored description — deterministic checks plus one LLM pass, returning gaps and `is_sufficient`. For analyzing a draft description that isn't saved as a model yet, use `POST /api/analyze` instead.
+Run the pre-flight gap analysis against this model's own stored description — deterministic checks plus one LLM pass, returning gaps and `is_sufficient`. Needs viewer on the model's project when auth is on. For analyzing a draft description that isn't saved as a model yet, use `POST /api/analyze` instead.
 
 ### `GET /api/models/{id}/stats`
 
@@ -211,6 +211,10 @@ Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secr
   "default_iterations": 5
 }
 ```
+
+### `POST /api/config/test-provider`
+
+Liveness probe for a provider (`anthropic`, `openai`, `ollama`, `bedrock`). Requires a login when `PARANOID_REQUIRE_AUTH=true`. Probing an `ollama_base_url` other than the configured `OLLAMA_BASE_URL` makes the server fetch that address, so it needs the `X-Config-Secret` header when `CONFIG_SECRET` is set and, with auth on, an unscoped instance admin; otherwise 403.
 
 ---
 
@@ -401,7 +405,7 @@ Aggregate statistics: total models, open threats by severity, recent activity, a
 
 ### `POST /api/analyze`
 
-Run the pre-flight gap analysis on a description without starting the full pipeline.
+Run the pre-flight gap analysis on a description without starting the full pipeline. Needs a login when `PARANOID_REQUIRE_AUTH=true`.
 
 **Body:** `{"description": "...", "framework": "STRIDE"}`
 

@@ -9,6 +9,7 @@ from backend.config import settings
 from backend.main import app
 from backend.providers import healthcheck
 from backend.security import source_key
+from tests._rbac_world import build_world
 
 
 @dataclass
@@ -219,3 +220,109 @@ async def test_test_provider_bedrock_falls_back_to_settings(client, monkeypatch)
     assert resp.status_code == 200
     assert seen["region"] == "ap-southeast-1"
     assert seen["profile"] == "myprofile"
+
+
+# --- BB-11: a caller-chosen Ollama URL (auth + CONFIG_SECRET) ---------------
+
+
+@pytest.fixture
+def probes(monkeypatch):
+    """Records every URL the route would contact; nothing touches the network."""
+    seen: list[str] = []
+
+    async def fake_ping(base_url):
+        seen.append(base_url)
+        return _FakeResult(ok=True)
+
+    monkeypatch.setattr("backend.routes.config.ping_ollama", fake_ping)
+    monkeypatch.setattr(settings, "ollama_base_url", "http://configured:11434")
+    return seen
+
+
+def _bearer(w, who):
+    return {"Authorization": f"Bearer {w.tokens[who]}"}
+
+
+FOREIGN = {"provider": "ollama", "ollama_base_url": "http://10.0.0.5:6379"}
+URL = "/api/config/test-provider"
+
+
+@pytest.mark.asyncio
+async def test_test_provider_anonymous_is_401_with_auth_on(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    for body in (FOREIGN, {"provider": "ollama"}):
+        assert (await client.post(URL, json=body)).status_code == 401
+    assert probes == []
+
+
+@pytest.mark.asyncio
+async def test_test_provider_foreign_url_refused_for_non_admin(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    for who in ("owner", "stranger", "pat_b"):
+        r = await client.post(URL, json=FOREIGN, headers=_bearer(w, who))
+        assert r.status_code == 403, who
+    assert probes == []
+
+
+@pytest.mark.asyncio
+async def test_test_provider_foreign_url_refused_for_scoped_admin_pat(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    r = await client.post(URL, json=FOREIGN, headers=_bearer(w, "pat_admin_b"))
+    assert r.status_code == 403
+    assert probes == []
+
+
+@pytest.mark.asyncio
+async def test_test_provider_foreign_url_allowed_for_admin(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    r = await client.post(URL, json=FOREIGN, headers=_bearer(w, "admin"))
+    assert r.status_code == 200
+    assert probes == [FOREIGN["ollama_base_url"]]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_configured_url_open_to_any_logged_in_user(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    bodies = (
+        {"provider": "ollama"},
+        {"provider": "ollama", "ollama_base_url": "http://configured:11434"},
+    )
+    for body in bodies:
+        r = await client.post(URL, json=body, headers=_bearer(w, "stranger"))
+        assert r.status_code == 200
+    assert probes == ["http://configured:11434", "http://configured:11434"]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_foreign_url_needs_config_secret(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "config_secret", "s3cret")
+    for headers in ({}, {"X-Config-Secret": "wrong"}):
+        r = await client.post(URL, json=FOREIGN, headers=headers)
+        assert r.status_code == 403
+    assert probes == []
+
+    r = await client.post(URL, json=FOREIGN, headers={"X-Config-Secret": "s3cret"})
+    assert r.status_code == 200
+    assert probes == [FOREIGN["ollama_base_url"]]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_secret_not_needed_for_configured_url(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "config_secret", "s3cret")
+    r = await client.post(URL, json={"provider": "ollama"})
+    assert r.status_code == 200
+    assert probes == ["http://configured:11434"]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_refusal_does_not_use_rate_limit(client, probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    for _ in range(30):
+        await client.post(URL, json=FOREIGN, headers=_bearer(w, "stranger"))
+    r = await client.post(URL, json={"provider": "ollama"}, headers=_bearer(w, "stranger"))
+    assert r.status_code == 200

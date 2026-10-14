@@ -10,7 +10,7 @@ admin. Expected:
 - a role below the route's minimum → 403
 - the minimum role and above, and the instance admin → anything but 401/403
 
-KNOWN_GAPS lists the cells that are currently wrong (bug-bash-log.md BB-04).
+KNOWN_GAPS lists the cells that are currently wrong (none at the moment).
 Each test asserts its wrong cells are *exactly* those, so a fix fails the test
 until its entry here is removed. Routes that would call an LLM only check the
 cells that must be denied, and the analyze handlers are stubbed regardless.
@@ -30,6 +30,7 @@ from backend.models.api import (
     AnalyzeBundleResponse,
     AnalyzeDescriptionResponse,
 )
+from backend.providers.base import ProviderError
 from tests._rbac_world import World, build_world
 
 
@@ -61,8 +62,6 @@ class Route:
         return f"{self.method} {self.path}"
 
 
-_ANON_GAP = {"anon", "stranger", "pat_b", "pat_admin_b"}  # BB-04 (analyze): no auth yet (A3)
-
 ROUTES = [
     Route(
         "POST",
@@ -79,7 +78,7 @@ ROUTES = [
     Route("GET", "/api/models/{model}/threats", "viewer"),
     Route("GET", "/api/models/{model}/trust-boundaries", "viewer"),
     Route("GET", "/api/models/{model}/stats", "viewer"),
-    Route("POST", "/api/models/{model}/analyze", "viewer", spends=True, gaps=_ANON_GAP),
+    Route("POST", "/api/models/{model}/analyze", "viewer", spends=True),
     Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True),
     Route("POST", "/api/models/{model}/run", "editor", spends=True),
     Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer"),
@@ -197,6 +196,19 @@ def _expected_cells(route: Route) -> list[tuple[str, str]]:
         allows = [r for r in [*ROLE_ORDER, "admin"] if r in allowed]
         cells += [(who, "allow") for who in (allows[:1] if route.destructive else allows)]
     return cells
+
+
+class _FakeProvider:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def generate_structured(self, *_args, **_kwargs):
+        # The filler description in these tests must never reach the LLM; if it does,
+        # fail loudly with the provider error the pre-flight fallback is built to catch.
+        raise ProviderError("LLM call not expected in the matrix")
 
 
 class _NoNetworkClient:
@@ -402,15 +414,31 @@ async def test_auth_off_reads_every_project(test_db, monkeypatch):
 @pytest.mark.parametrize("path", ["/api/analyze/"])
 @pytest.mark.asyncio
 async def test_llm_endpoint_requires_auth(path, test_db, monkeypatch):
-    """BB-04: anonymous callers can reach an endpoint that spends LLM tokens."""
+    """BB-04: an endpoint that spends LLM tokens needs a login when auth is on."""
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
     ) as client:
         r = await client.post(path, json={"description": "x" * 300, "assumptions": []})
-    # KNOWN GAP (BB-04): an anonymous caller gets past auth (200, or 500 here because the
-    # LLM client is stubbed to refuse construction). Expect 401 when fixed.
-    assert r.status_code != 401, "BB-04 looks fixed: expect 401 here and update bug-bash-log.md"
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_pre_flight_analyze_open_to_any_logged_in_user(test_db, monkeypatch):
+    """/analyze/ is project-independent: a member, a scoped PAT and an admin may call it."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    monkeypatch.setattr("backend.routes.analyze.create_provider", lambda **_kw: _FakeProvider())
+    w = await build_world()
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as client:
+        for who in ("viewer", "stranger", "pat_b", "admin"):
+            r = await client.post(
+                "/api/analyze/",
+                json={"description": "x" * 300, "assumptions": []},
+                headers=_bearer(w, who),
+            )
+            assert r.status_code == 200, (who, r.status_code)
 
 
 @pytest.mark.asyncio
