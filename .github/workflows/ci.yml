@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job only checks out, tests and builds; none pushes or writes to the repo.
+permissions:
+  contents: read
+
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   # Python
