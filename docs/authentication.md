@@ -33,6 +33,8 @@ PARANOID_ADMIN_PASSWORD=your-admin-password docker compose up
 
 Log in at `http://localhost:8000/app#/login` with username `admin` and the configured password.
 
+If `PARANOID_ADMIN_PASSWORD` is unset, the generated password is written to the server log once, so anyone who can read your container logs or log aggregator can read it. For any shared deployment, set `PARANOID_ADMIN_PASSWORD` and rotate the password after first login.
+
 ---
 
 ## Account management

@@ -163,6 +163,43 @@ describe('sanitizeMermaid', () => {
     expect(cleaned).not.toMatch(/\bonerror\s*=/i)
   })
 
+  // BB-12 — single-pass strips can rebuild the very thing they remove, and
+  // decoding &amp; before &lt;/&gt; double-decodes. Output must be a fixed point.
+  describe('nested / split payloads (BB-12)', () => {
+    const payloads = {
+      'nested script open tag': 'graph TD\nA --> B\n<scr<script>ipt>alert(1)</script>',
+      'nested script open tag, no closer': 'graph TD\nA --> B\n<scr<script>ipt>alert(1)',
+      'dash rewrite completes a tag': 'graph TD\nA --> B\n<script src=x---y',
+      'nested script block': 'graph TD\nA --> B\n<scr<script></script>ipt>alert(1)</script>',
+      'nested javascript scheme': 'graph TD\nA[javajavascript:script:alert(1)] --> B',
+      'double-encoded tags': 'graph TD\nA[&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;] --> B',
+      'double-encoded scheme': 'graph TD\nA[&amp;#106;avascript:alert(1)] --> B',
+      'nested vbscript scheme': 'graph TD\nA[vbvbscript:script:x] --> B',
+      'nested data scheme': 'graph TD\nA[data:text/data:text/htmlhtml,x] --> B',
+      'nested handler': 'graph TD\nA[x ononclick=1click=alert(1)] --> B',
+    }
+    const dangerous = [
+      /<script/i,
+      /javascript\s*:/i,
+      /vbscript\s*:/i,
+      /data\s*:\s*text\/html/i,
+      /\bon\w+\s*=/i,
+      /&#\d+;|&#x[0-9a-f]+;/i,
+    ]
+
+    for (const [name, raw] of Object.entries(payloads)) {
+      it(`leaves nothing dangerous: ${name}`, () => {
+        const cleaned = sanitizeMermaid(raw)
+        for (const re of dangerous) expect(cleaned).not.toMatch(re)
+      })
+
+      it(`is idempotent: ${name}`, () => {
+        const once = sanitizeMermaid(raw)
+        expect(sanitizeMermaid(once)).toBe(once)
+      })
+    }
+  })
+
   // Regression — legitimate diagrams must survive unchanged
   it('does not strip legitimate node labels containing the word "script"', () => {
     const raw = 'graph TD\nA[Run build script] --> B[Deploy]'
