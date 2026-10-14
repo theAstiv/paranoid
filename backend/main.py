@@ -146,6 +146,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Load seed patterns
     await load_all_seeds()
 
+    # Link flows/boundaries/threats saved before migration 0013 to their assets.
+    from backend.db.component_links import backfill_component_links
+
+    await backfill_component_links()
+
     # Bootstrap the initial admin user (runs only when users table is empty).
     await _bootstrap_admin_if_needed()
 

@@ -23,6 +23,11 @@ from backend.auth.dependencies import (
 )
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects
+from backend.db.component_links import (
+    relink_boundary,
+    relink_flow,
+    try_link_model_components,
+)
 from backend.db.gap_utils import decode_gap_summaries
 from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
@@ -649,6 +654,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         boundary.target_entity,
                         exc_info=True,
                     )
+            await try_link_model_components(model_id)
 
     elif event.step == PipelineStep.COMPLETE:
         threats_list: ThreatsList | None = event.data.get("threats")
@@ -701,6 +707,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         getattr(threat, "name", "unknown"),
                         exc_info=True,
                     )
+            await try_link_model_components(model_id)
 
         dependency_context = event.data.get("dependency_context")
         if dependency_context and hasattr(dependency_context, "packages"):
@@ -1173,6 +1180,8 @@ async def create_asset(
         name=body.name,
         description=body.description,
     )
+    # A new asset can resolve flows/threats that had no match before.
+    await try_link_model_components(model_id)
     asset = await crud.get_asset(asset_id)
     return JSONResponse(status_code=201, content=asset)
 
@@ -1194,6 +1203,8 @@ async def update_asset(
         description=body.description,
         asset_type=body.type,
     )
+    # A rename can make previously unmatched text resolve; existing links are kept.
+    await try_link_model_components(model_id)
     updated = await crud.get_asset(asset_id)
     return JSONResponse(content=updated)
 
@@ -1209,6 +1220,8 @@ async def delete_asset(
     if asset is None or asset.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found")
     await crud.delete_asset(asset_id)
+    # Deleting an asset can break a tie that left other text unlinked.
+    await try_link_model_components(model_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1233,6 +1246,7 @@ async def create_flow(
         source_entity=body.source_entity,
         target_entity=body.target_entity,
     )
+    await try_link_model_components(model_id)
     flow = await crud.get_flow(flow_id)
     return JSONResponse(status_code=201, content=flow)
 
@@ -1255,6 +1269,7 @@ async def update_flow(
         source_entity=body.source_entity,
         target_entity=body.target_entity,
     )
+    await relink_flow(flow_id, source=body.source_entity, target=body.target_entity)
     updated = await crud.get_flow(flow_id)
     return JSONResponse(content=updated)
 
@@ -1293,6 +1308,7 @@ async def create_trust_boundary(
         source_entity=body.source_entity,
         target_entity=body.target_entity,
     )
+    await try_link_model_components(model_id)
     boundary = await crud.get_trust_boundary(boundary_id)
     return JSONResponse(status_code=201, content=boundary)
 
@@ -1314,6 +1330,7 @@ async def update_trust_boundary(
         source_entity=body.source_entity,
         target_entity=body.target_entity,
     )
+    await relink_boundary(boundary_id, source=body.source_entity, target=body.target_entity)
     updated = await crud.get_trust_boundary(boundary_id)
     return JSONResponse(content=updated)
 

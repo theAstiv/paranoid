@@ -1067,3 +1067,180 @@ async def test_persist_pipeline_event_saves_usage_summary(saved_model, test_db, 
     resp = await client.get(f"/api/models/{saved_model['id']}")
     assert resp.status_code == 200
     assert resp.json()["usage"] == usage
+
+
+# ---------------------------------------------------------------------------
+# Component IDs (B1): routes keep asset links in step with the entity text
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_component_links_follow_route_edits(client, saved_model):
+    mid = saved_model["id"]
+    api = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "API Gateway", "description": "d"},
+        )
+    ).json()["id"]
+    flow = (
+        await client.post(
+            f"/api/models/{mid}/flows",
+            json={"source_entity": "API Gateway", "target_entity": "Redis cache"},
+        )
+    ).json()
+    assert flow["source_asset_id"] == api
+    assert flow["target_asset_id"] is None
+
+    # A new asset resolves the previously unmatched endpoint.
+    redis = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "Redis cache", "description": "d"},
+        )
+    ).json()["id"]
+    flows = (await client.get(f"/api/models/{mid}/flows")).json()
+    assert flows[0]["target_asset_id"] == redis
+
+    # Editing the text re-resolves only that side.
+    patched = (
+        await client.patch(
+            f"/api/models/{mid}/flows/{flow['id']}", json={"target_entity": "API Gateway"}
+        )
+    ).json()
+    assert patched["source_asset_id"] == api
+    assert patched["target_asset_id"] == api
+
+    boundary = (
+        await client.post(
+            f"/api/models/{mid}/trust-boundaries",
+            json={"source_entity": "API Gateway", "target_entity": "Redis cache"},
+        )
+    ).json()
+    assert (boundary["source_asset_id"], boundary["target_asset_id"]) == (api, redis)
+    edited = (
+        await client.patch(
+            f"/api/models/{mid}/trust-boundaries/{boundary['id']}",
+            json={"target_entity": "Nowhere"},
+        )
+    ).json()
+    assert edited["target_asset_id"] is None
+    assert edited["source_asset_id"] == api
+
+
+@pytest.mark.asyncio
+async def test_threat_patch_relinks_target(client, saved_model):
+    mid = saved_model["id"]
+    api = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "API Gateway", "description": "d"},
+        )
+    ).json()["id"]
+    threat_id = await crud.create_threat(
+        model_id=mid,
+        name="T",
+        description="An attacker does something to the target component.",
+        target="Unknown",
+        impact="High",
+        likelihood="High",
+        mitigations=["[P] fix"],
+        stride_category="Tampering",
+    )
+
+    resp = await client.patch(f"/api/threats/{threat_id}", json={"target": "API Gateway"})
+
+    assert resp.status_code == 200
+    assert resp.json()["target_asset_id"] == api
+
+
+@pytest.mark.asyncio
+async def test_asset_rename_route_links_text_that_now_matches(client, saved_model):
+    mid = saved_model["id"]
+    cache = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "Datastore", "description": "d"},
+        )
+    ).json()["id"]
+    flow = (
+        await client.post(
+            f"/api/models/{mid}/flows",
+            json={"source_entity": "Redis cache", "target_entity": "Redis cache"},
+        )
+    ).json()
+    assert flow["source_asset_id"] is None
+
+    await client.patch(f"/api/models/{mid}/assets/{cache}", json={"name": "Redis cache"})
+
+    flows = (await client.get(f"/api/models/{mid}/flows")).json()
+    assert flows[0]["source_asset_id"] == cache
+    assert flows[0]["target_asset_id"] == cache
+
+
+@pytest.mark.asyncio
+async def test_asset_rename_route_keeps_existing_links(client, saved_model):
+    mid = saved_model["id"]
+    api = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "API Gateway", "description": "d"},
+        )
+    ).json()["id"]
+    await client.post(
+        f"/api/models/{mid}/flows",
+        json={"source_entity": "API Gateway", "target_entity": "API Gateway"},
+    )
+
+    await client.patch(f"/api/models/{mid}/assets/{api}", json={"name": "Edge Proxy"})
+
+    flows = (await client.get(f"/api/models/{mid}/flows")).json()
+    assert flows[0]["source_asset_id"] == api
+
+
+@pytest.mark.asyncio
+async def test_asset_delete_route_resolves_a_tie_it_just_broke(client, saved_model):
+    mid = saved_model["id"]
+    first = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "Web Server", "description": "d"},
+        )
+    ).json()["id"]
+    second = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "Web Service", "description": "d"},
+        )
+    ).json()["id"]
+    await client.post(
+        f"/api/models/{mid}/flows",
+        json={"source_entity": "Web", "target_entity": "Web"},
+    )
+    flows = (await client.get(f"/api/models/{mid}/flows")).json()
+    assert flows[0]["source_asset_id"] is None  # tied: unlinked, not guessed
+
+    await client.delete(f"/api/models/{mid}/assets/{first}")
+
+    flows = (await client.get(f"/api/models/{mid}/flows")).json()
+    assert flows[0]["source_asset_id"] == second
+
+
+@pytest.mark.asyncio
+async def test_json_export_includes_component_links(client, saved_model):
+    mid = saved_model["id"]
+    api = (
+        await client.post(
+            f"/api/models/{mid}/assets",
+            json={"type": "Asset", "name": "API Gateway", "description": "d"},
+        )
+    ).json()["id"]
+    await client.post(
+        f"/api/models/{mid}/flows",
+        json={"source_entity": "API Gateway", "target_entity": "API Gateway"},
+    )
+
+    resp = await client.get(f"/api/export/{mid}?format=json")
+
+    assert resp.status_code == 200
+    assert resp.json()["flows"][0]["source_asset_id"] == api
