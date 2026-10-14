@@ -15,7 +15,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
-from backend.auth.dependencies import get_current_user, require_role
+from backend.auth.dependencies import (
+    check_pat_scope,
+    check_project_role,
+    get_current_user,
+    require_role,
+)
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects
 from backend.db.gap_utils import decode_gap_summaries
@@ -420,11 +425,14 @@ async def _detect_manifest_from_code_source(code_source_id: str) -> tuple[dict |
 @router.post("/", status_code=201)
 async def create_model(
     body: CreateModelRequest,
+    user: Annotated[dict, Depends(get_current_user)],
     _rate: None = Depends(write_rate_limit),
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """Create a new threat model record."""
-    project = await crud_projects.get_project(body.project_id or crud_projects.DEFAULT_PROJECT_ID)
+    target_project_id = body.project_id or crud_projects.DEFAULT_PROJECT_ID
+    if settings.paranoid_require_auth:
+        await check_project_role(user, target_project_id, "editor")
+    project = await crud_projects.get_project(target_project_id)
 
     provider_type, model_id_str = resolve_provider(
         body.provider.value if body.provider else None, body.model, project
@@ -449,7 +457,7 @@ async def create_model(
     record = await crud.get_threat_model(model_id)
     await crud_activity.safe_log_activity(
         project_id=record.get("project_id") if record else None,
-        user_id=_user["id"] if _user else None,
+        user_id=user["id"],
         entity_type="model",
         entity_id=model_id,
         action="created",
@@ -473,6 +481,9 @@ async def list_models(
     membership query as GET /projects). Auth off resolves to the instance admin.
     """
     project_ids: list[str] | None = None
+    scope = user.get("pat_project_id")
+    if scope and project_id is not None:
+        check_pat_scope(user, project_id)
     if not user.get("is_admin"):
         member_of = {p["id"] for p in await crud_projects.list_projects_for_user(user["id"])}
         if project_id is not None and project_id not in member_of:
@@ -480,7 +491,10 @@ async def list_models(
             raise HTTPException(
                 status_code=403, detail="Not a member of this project, or it is archived"
             )
-        project_ids = sorted(member_of)
+        project_ids = sorted(member_of & {scope} if scope else member_of)
+    elif scope:
+        # A project-scoped token sees only its project, even for an admin.
+        project_ids = [scope]
     rows = await crud.list_threat_models(
         limit=limit,
         framework=framework,

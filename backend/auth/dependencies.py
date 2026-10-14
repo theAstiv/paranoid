@@ -210,12 +210,35 @@ async def resolve_project_id(entity_type: str, entity_id: str) -> str:
     return project_id
 
 
+def check_pat_scope(user: dict[str, Any], project_id: str) -> None:
+    """Raise 403 if `user` authenticated with a PAT scoped to a different project.
+
+    Runs before any admin bypass: the scope is what the token's creator asked for,
+    and the owner's admin rights must not widen it. An unscoped PAT, a JWT session
+    and the anonymous auth-off user have no scope, so this is a no-op for them.
+    """
+    scope = user.get("pat_project_id")
+    if scope and scope != project_id:
+        raise HTTPException(status_code=403, detail="Token is scoped to a different project")
+
+
+def require_unscoped(user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    """Dependency: reject project-scoped PATs. Used on token management, where a
+    scoped token could otherwise mint an unscoped one for the same user, and on
+    creating projects, which are outside any one project's scope."""
+    if user.get("pat_project_id"):
+        raise HTTPException(status_code=403, detail="Not allowed for a project-scoped token")
+    return user
+
+
 async def check_project_role(user: dict[str, Any], project_id: str, min_role: str) -> None:
     """Raise 403 unless `user` has at least `min_role` in `project_id`.
 
-    Instance admins bypass the membership check. Callers are responsible for the
+    A project-scoped PAT is limited to its project (see check_pat_scope). Instance
+    admins otherwise bypass the membership check. Callers are responsible for the
     PARANOID_REQUIRE_AUTH=false short-circuit (see require_role).
     """
+    check_pat_scope(user, project_id)
     if user.get("is_admin"):
         return
 
@@ -269,7 +292,13 @@ def require_role(min_role: str, entity_param: str, entity_type: str):
 
 
 def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
-    """Dependency: require is_admin=True. Returns the user dict."""
+    """Dependency: require is_admin=True. Returns the user dict.
+
+    A project-scoped PAT is refused even for an admin: instance-wide routes are
+    outside any one project, and the scope must not be widened by admin rights.
+    """
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    if user.get("pat_project_id"):
+        raise HTTPException(status_code=403, detail="Not allowed for a project-scoped token")
     return user

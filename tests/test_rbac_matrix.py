@@ -10,7 +10,7 @@ admin. Expected:
 - a role below the route's minimum → 403
 - the minimum role and above, and the instance admin → anything but 401/403
 
-KNOWN_GAPS lists the cells that are currently wrong (bug-bash-log.md BB-03, BB-04).
+KNOWN_GAPS lists the cells that are currently wrong (bug-bash-log.md BB-04).
 Each test asserts its wrong cells are *exactly* those, so a fix fails the test
 until its entry here is removed. Routes that would call an LLM only check the
 cells that must be denied, and the analyze handlers are stubbed regardless.
@@ -34,7 +34,12 @@ from tests._rbac_world import World, build_world
 
 
 ROLE_ORDER = ["viewer", "editor", "owner"]
-DENIED = {"anon": {401}, "stranger": {403, 404}, "pat_b": {403, 404}}
+DENIED = {
+    "anon": {401},
+    "stranger": {403, 404},
+    "pat_b": {403, 404},
+    "pat_admin_b": {403, 404},
+}
 
 
 @dataclass
@@ -56,98 +61,78 @@ class Route:
         return f"{self.method} {self.path}"
 
 
-_ANON_GAP = {"anon", "stranger", "pat_b"}  # BB-04 (analyze) + BB-03
-_PAT_GAP = {"pat_b"}  # BB-03
+_ANON_GAP = {"anon", "stranger", "pat_b", "pat_admin_b"}  # BB-04 (analyze): no auth yet (A3)
 
 ROUTES = [
+    Route(
+        "POST",
+        "/api/models/",
+        "editor",
+        {"title": "t", "description": "a long enough description", "project_id": "{project_a}"},
+    ),
     # --- model ---
-    Route("GET", "/api/models/{model}", "viewer", gaps=_PAT_GAP),
-    Route("PATCH", "/api/models/{model}", "editor", {"title": "renamed"}, gaps=_PAT_GAP),
-    Route("DELETE", "/api/models/{model}", "owner", destructive=True, gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/assets", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/flows", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/threats", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/trust-boundaries", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/stats", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/models/{model}", "viewer"),
+    Route("PATCH", "/api/models/{model}", "editor", {"title": "renamed"}),
+    Route("DELETE", "/api/models/{model}", "owner", destructive=True),
+    Route("GET", "/api/models/{model}/assets", "viewer"),
+    Route("GET", "/api/models/{model}/flows", "viewer"),
+    Route("GET", "/api/models/{model}/threats", "viewer"),
+    Route("GET", "/api/models/{model}/trust-boundaries", "viewer"),
+    Route("GET", "/api/models/{model}/stats", "viewer"),
     Route("POST", "/api/models/{model}/analyze", "viewer", spends=True, gaps=_ANON_GAP),
-    Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True, gaps=_PAT_GAP),
-    Route("POST", "/api/models/{model}/run", "editor", spends=True, gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/export/{model}?format=json", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/export/{model}?format=markdown", "viewer", gaps=_PAT_GAP),
-    Route("POST", "/api/models/{model}/assets", "editor", {}, gaps=_PAT_GAP),
-    Route("PATCH", "/api/models/{model}/assets/{asset}", "editor", {}, gaps=_PAT_GAP),
-    Route(
-        "DELETE", "/api/models/{model}/assets/{asset}", "editor", destructive=True, gaps=_PAT_GAP
-    ),
-    Route("POST", "/api/models/{model}/flows", "editor", {}, gaps=_PAT_GAP),
-    Route("PATCH", "/api/models/{model}/flows/{flow}", "editor", {}, gaps=_PAT_GAP),
-    Route("DELETE", "/api/models/{model}/flows/{flow}", "editor", destructive=True, gaps=_PAT_GAP),
-    Route("POST", "/api/models/{model}/trust-boundaries", "editor", {}, gaps=_PAT_GAP),
-    Route("PATCH", "/api/models/{model}/trust-boundaries/{boundary}", "editor", {}, gaps=_PAT_GAP),
-    Route(
-        "DELETE",
-        "/api/models/{model}/trust-boundaries/{boundary}",
-        "editor",
-        destructive=True,
-        gaps=_PAT_GAP,
-    ),
-    Route("GET", "/api/models/{model}/assignees", "viewer", gaps=_PAT_GAP),
-    Route(
-        "POST", "/api/models/{model}/assignees", "editor", {"user_id": "{viewer_id}"}, gaps=_PAT_GAP
-    ),
-    Route(
-        "DELETE",
-        "/api/models/{model}/assignees/{viewer_id}",
-        "editor",
-        destructive=True,
-        gaps=_PAT_GAP,
-    ),
-    Route("GET", "/api/models/{model}/comments", "viewer", gaps=_PAT_GAP),
-    Route("POST", "/api/models/{model}/comments", "viewer", {"body": "hi"}, gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/comments/counts", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/dependencies", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/diagrams", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/models/{model}/diagrams/{diagram}", "viewer", gaps=_PAT_GAP),
+    Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True),
+    Route("POST", "/api/models/{model}/run", "editor", spends=True),
+    Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer"),
+    Route("GET", "/api/export/{model}?format=json", "viewer"),
+    Route("GET", "/api/export/{model}?format=markdown", "viewer"),
+    Route("POST", "/api/models/{model}/assets", "editor", {}),
+    Route("PATCH", "/api/models/{model}/assets/{asset}", "editor", {}),
+    Route("DELETE", "/api/models/{model}/assets/{asset}", "editor", destructive=True),
+    Route("POST", "/api/models/{model}/flows", "editor", {}),
+    Route("PATCH", "/api/models/{model}/flows/{flow}", "editor", {}),
+    Route("DELETE", "/api/models/{model}/flows/{flow}", "editor", destructive=True),
+    Route("POST", "/api/models/{model}/trust-boundaries", "editor", {}),
+    Route("PATCH", "/api/models/{model}/trust-boundaries/{boundary}", "editor", {}),
+    Route("DELETE", "/api/models/{model}/trust-boundaries/{boundary}", "editor", destructive=True),
+    Route("GET", "/api/models/{model}/assignees", "viewer"),
+    Route("POST", "/api/models/{model}/assignees", "editor", {"user_id": "{viewer_id}"}),
+    Route("DELETE", "/api/models/{model}/assignees/{viewer_id}", "editor", destructive=True),
+    Route("GET", "/api/models/{model}/comments", "viewer"),
+    Route("POST", "/api/models/{model}/comments", "viewer", {"body": "hi"}),
+    Route("GET", "/api/models/{model}/comments/counts", "viewer"),
+    Route("GET", "/api/models/{model}/dependencies", "viewer"),
+    Route("GET", "/api/models/{model}/diagrams", "viewer"),
+    Route("GET", "/api/models/{model}/diagrams/{diagram}", "viewer"),
     # --- threat ---
-    Route("GET", "/api/threats/{threat}", "viewer", gaps=_PAT_GAP),
-    Route("PATCH", "/api/threats/{threat}", "editor", {"name": "renamed"}, gaps=_PAT_GAP),
-    Route("DELETE", "/api/threats/{threat}", "editor", destructive=True, gaps=_PAT_GAP),
-    Route("GET", "/api/threats/{threat}/attack-trees", "viewer", gaps=_PAT_GAP),
-    Route("POST", "/api/threats/{threat}/attack-tree", "editor", spends=True, gaps=_PAT_GAP),
-    Route("GET", "/api/threats/{threat}/test-cases", "viewer", gaps=_PAT_GAP),
-    Route("POST", "/api/threats/{threat}/test-cases", "editor", spends=True, gaps=_PAT_GAP),
+    Route("GET", "/api/threats/{threat}", "viewer"),
+    Route("PATCH", "/api/threats/{threat}", "editor", {"name": "renamed"}),
+    Route("DELETE", "/api/threats/{threat}", "editor", destructive=True),
+    Route("GET", "/api/threats/{threat}/attack-trees", "viewer"),
+    Route("POST", "/api/threats/{threat}/attack-tree", "editor", spends=True),
+    Route("GET", "/api/threats/{threat}/test-cases", "viewer"),
+    Route("POST", "/api/threats/{threat}/test-cases", "editor", spends=True),
     Route(
         "POST",
         "/api/threats/bulk-status",
         "editor",
         {"threat_ids": ["{threat}"], "status": "approved"},
-        gaps=_PAT_GAP,
     ),
     # --- comment (edit: author only; delete: author or editor+) ---
-    Route(
-        "PATCH",
-        "/api/comments/{comment}",
-        "viewer",
-        {"body": "edited"},
-        allowed=["owner"],
-        gaps=_PAT_GAP,
-    ),
-    Route("DELETE", "/api/comments/{comment}", "editor", destructive=True, gaps=_PAT_GAP),
+    Route("PATCH", "/api/comments/{comment}", "viewer", {"body": "edited"}, allowed=["owner"]),
+    Route("DELETE", "/api/comments/{comment}", "editor", destructive=True),
     # --- project A ---
-    Route("GET", "/api/projects/{project_a}", "viewer", gaps=_PAT_GAP),
-    Route("PATCH", "/api/projects/{project_a}", "owner", {"name": "renamed"}, gaps=_PAT_GAP),
-    Route("DELETE", "/api/projects/{project_a}", "owner", destructive=True, gaps=_PAT_GAP),
-    Route("GET", "/api/projects/{project_a}/activity", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/projects/{project_a}/dashboard", "viewer", gaps=_PAT_GAP),
-    Route("GET", "/api/projects/{project_a}/members", "viewer", gaps=_PAT_GAP),
+    Route("GET", "/api/projects/{project_a}", "viewer"),
+    Route("PATCH", "/api/projects/{project_a}", "owner", {"name": "renamed"}),
+    Route("DELETE", "/api/projects/{project_a}", "owner", destructive=True),
+    Route("GET", "/api/projects/{project_a}/activity", "viewer"),
+    Route("GET", "/api/projects/{project_a}/dashboard", "viewer"),
+    Route("GET", "/api/projects/{project_a}/members", "viewer"),
     Route(
         "POST",
         "/api/projects/{project_a}/members",
         "owner",
         {"user_id": "{stranger_id}", "role": "viewer"},
         destructive=True,
-        gaps=_PAT_GAP,
     ),
     Route(
         "PATCH",
@@ -155,23 +140,15 @@ ROUTES = [
         "owner",
         {"role": "editor"},
         destructive=True,
-        gaps=_PAT_GAP,
     ),
-    Route(
-        "DELETE",
-        "/api/projects/{project_a}/members/{viewer_id}",
-        "owner",
-        destructive=True,
-        gaps=_PAT_GAP,
-    ),
-    Route("GET", "/api/projects/{project_a}/invitations", "owner", gaps=_PAT_GAP),
+    Route("DELETE", "/api/projects/{project_a}/members/{viewer_id}", "owner", destructive=True),
+    Route("GET", "/api/projects/{project_a}/invitations", "owner"),
     Route(
         "POST",
         "/api/projects/{project_a}/invitations",
         "owner",
         {"invited_email": "new@test.local", "role": "viewer"},
         destructive=True,
-        gaps=_PAT_GAP,
     ),
 ]
 
@@ -204,9 +181,9 @@ def _ids(w: World) -> dict[str, str]:
 def _expected_cells(route: Route) -> list[tuple[str, str]]:
     """(identity, "deny"|"allow") in call order.
 
-    The PAT comes after the role denials: while BB-03 is open it succeeds, and on a
-    destructive route that deletes the fixture, so it must only precede the allow
-    cells (which treat the resulting 404 as "got past auth").
+    The PAT comes after the role denials and before the allow cells: if its scope
+    were not enforced it would succeed, and on a destructive route that deletes the
+    fixture, which the allow cells treat as "got past auth" (a 404).
     """
     cells = [("anon", "deny"), ("stranger", "deny")]
     min_index = ROLE_ORDER.index(route.min_role)
@@ -214,7 +191,8 @@ def _expected_cells(route: Route) -> list[tuple[str, str]]:
     for role in ROLE_ORDER:
         if role not in allowed:
             cells.append((role, "deny"))
-    cells.append(("pat_b", "deny"))
+    # A PAT scoped to B, even one whose owner is an instance admin, is denied in A.
+    cells.extend([("pat_b", "deny"), ("pat_admin_b", "deny")])
     if not route.spends:
         allows = [r for r in [*ROLE_ORDER, "admin"] if r in allowed]
         cells += [(who, "allow") for who in (allows[:1] if route.destructive else allows)]
@@ -444,7 +422,7 @@ async def test_admin_only_routes(test_db, monkeypatch):
     ) as client:
         for path in ("/api/users", "/api/auth/users"):
             assert (await client.get(path)).status_code == 401
-            for who in ("owner", "pat_b", "stranger"):
+            for who in ("owner", "pat_b", "pat_admin_b", "stranger"):
                 r = await client.get(path, headers={"Authorization": f"Bearer {w.tokens[who]}"})
                 assert r.status_code == 403, (path, who, r.status_code)
             r = await client.get(path, headers={"Authorization": f"Bearer {w.tokens['admin']}"})

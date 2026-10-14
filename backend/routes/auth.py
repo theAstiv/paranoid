@@ -29,7 +29,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from backend.auth.dependencies import get_current_user
+from backend.auth.dependencies import (
+    check_project_role,
+    get_current_user,
+    require_admin,
+    require_unscoped,
+)
 from backend.auth.passwords import hash_password, verify_password
 from backend.auth.tokens import (
     create_access_token,
@@ -104,6 +109,9 @@ class UpdateMeRequest(BaseModel):
 class CreatePATRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     expires_in_days: int | None = Field(default=None, ge=1, le=365)
+    # Limits the token to one project; the caller must belong to it. None = all the
+    # caller's projects.
+    project_id: str | None = None
 
 
 def _user_response(user: dict[str, Any]) -> dict[str, Any]:
@@ -383,9 +391,17 @@ async def update_me(
 @router.post("/tokens", status_code=201)
 async def create_pat_token(
     body: CreatePATRequest,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[dict[str, Any], Depends(require_unscoped)],
 ) -> dict[str, Any]:
     """Create a new PAT.  Returns the raw token exactly once — store it safely."""
+    if body.project_id is not None:
+        from backend.config import settings
+        from backend.db import crud_projects
+
+        if await crud_projects.get_project(body.project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if settings.paranoid_require_auth:
+            await check_project_role(user, body.project_id, "viewer")
     token_id, raw_token, token_hash = create_pat()
 
     expires_at: str | None = None
@@ -397,6 +413,7 @@ async def create_pat_token(
         user_id=user["id"],
         name=body.name,
         token_hash=token_hash,
+        project_id=body.project_id,
         expires_at=expires_at,
     )
 
@@ -405,7 +422,7 @@ async def create_pat_token(
 
 @router.get("/tokens")
 async def list_pat_tokens(
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[dict[str, Any], Depends(require_unscoped)],
 ) -> list[dict[str, Any]]:
     """List PAT metadata for the current user.  token_hash is never returned."""
     return await list_pats(user["id"])
@@ -414,7 +431,7 @@ async def list_pat_tokens(
 @router.delete("/tokens/{token_id}", status_code=204)
 async def delete_pat_token(
     token_id: str,
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    user: Annotated[dict[str, Any], Depends(require_unscoped)],
 ) -> None:
     """Revoke a PAT owned by the current user."""
     pat = await get_pat_by_id(token_id)
@@ -431,10 +448,7 @@ async def delete_pat_token(
 
 @router.get("/users")
 async def list_all_users(
-    user: Annotated[dict[str, Any], Depends(get_current_user)],
+    _admin: Annotated[dict[str, Any], Depends(require_admin)],
 ) -> list[dict[str, Any]]:
     """List all users.  Admin only."""
-    if not user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     return await list_users()

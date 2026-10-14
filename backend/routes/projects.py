@@ -5,7 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.auth.dependencies import get_current_user, require_admin
+from backend.auth.dependencies import (
+    check_pat_scope,
+    get_current_user,
+    require_admin,
+    require_unscoped,
+)
 from backend.db import crud_activity, crud_projects
 from backend.db.crud_auth import get_user_by_email
 from backend.db.crud_auth import list_users as _list_users
@@ -30,7 +35,7 @@ router = APIRouter(tags=["projects"])
 @router.post("/projects", status_code=201)
 async def create_project(
     body: CreateProjectRequest,
-    user: Annotated[dict, Depends(get_current_user)],
+    user: Annotated[dict, Depends(require_unscoped)],
 ) -> dict:
     project = await crud_projects.create_project(
         name=body.name,
@@ -52,9 +57,15 @@ async def create_project(
 async def list_projects(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> list[dict]:
-    if user.get("is_admin"):
-        return await crud_projects.list_all_projects()
-    return await crud_projects.list_projects_for_user(user["id"])
+    projects = (
+        await crud_projects.list_all_projects()
+        if user.get("is_admin")
+        else await crud_projects.list_projects_for_user(user["id"])
+    )
+    scope = user.get("pat_project_id")
+    if scope:
+        projects = [p for p in projects if p["id"] == scope]
+    return projects
 
 
 @router.get("/projects/{project_id}")
@@ -65,8 +76,7 @@ async def get_project(
     project = await crud_projects.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if not user.get("is_admin"):
-        await _require_member(project_id, user)
+    await _require_member(project_id, user)
     return project
 
 
@@ -258,6 +268,7 @@ async def accept_invitation(
     inv = await crud_projects.get_invitation(invitation_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation not found")
+    check_pat_scope(user, inv["project_id"])
     try:
         member = await crud_projects.accept_invitation(
             invitation_id, user["id"], user.get("email", "")
@@ -286,6 +297,7 @@ async def decline_invitation(
     inv = await crud_projects.get_invitation(invitation_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Invitation not found")
+    check_pat_scope(user, inv["project_id"])
 
     # Authorization: project owner OR the invited person may decline.
     from backend.config import settings
@@ -329,6 +341,7 @@ async def list_users(
 
 
 async def _require_member(project_id: str, user: dict) -> None:
+    check_pat_scope(user, project_id)
     if user.get("is_admin"):
         return
     from backend.config import settings
@@ -341,6 +354,7 @@ async def _require_member(project_id: str, user: dict) -> None:
 
 
 async def _require_owner(project_id: str, user: dict) -> None:
+    check_pat_scope(user, project_id)
     if user.get("is_admin"):
         return
     from backend.config import settings
