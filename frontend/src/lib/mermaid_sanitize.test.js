@@ -170,6 +170,7 @@ describe('sanitizeMermaid', () => {
       'nested script open tag': 'graph TD\nA --> B\n<scr<script>ipt>alert(1)</script>',
       'nested script open tag, no closer': 'graph TD\nA --> B\n<scr<script>ipt>alert(1)',
       'dash rewrite completes a tag': 'graph TD\nA --> B\n<script src=x---y',
+      'closing tag with whitespace': 'graph TD\nA --> B\n<script>alert(1)</script >',
       'nested script block': 'graph TD\nA --> B\n<scr<script></script>ipt>alert(1)</script>',
       'nested javascript scheme': 'graph TD\nA[javajavascript:script:alert(1)] --> B',
       'double-encoded tags': 'graph TD\nA[&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;] --> B',

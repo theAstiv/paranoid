@@ -17,7 +17,7 @@ function decodeAndStrip(input) {
   s = s.replace(/vbscript\s*:/gi, '')
   s = s.replace(/data\s*:\s*text\/html/gi, '')
   // Embedded <script> blocks and stray opening tags.
-  s = s.replace(/<script[\s\S]*?<\/script>/gi, '')
+  s = s.replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
   s = s.replace(/<script[^>]*\/?>/gi, '')
   // on* event handler attributes (onclick=, onload=, onerror=, …).
   s = s.replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]*)/gi, '')
