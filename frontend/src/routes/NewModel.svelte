@@ -4,7 +4,7 @@
   import PreFlightPanel from '../components/PreFlightPanel.svelte'
   import { createModel, subscribeToRun, listCodeSources, analyzeBundle } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
-  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject } from '../lib/stores.js'
+  import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject, currentUser } from '../lib/stores.js'
 
   const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Dependencies', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
 
@@ -160,7 +160,9 @@
   $: nextDisabled = (() => {
     if (step === 0) return !title.trim() || title.length > 200
     if (step === 1) return description.trim().length < 10
-    if (step === 8) return submitting || strictBlocked || providerKeyMissing
+    // A signed-in user without a project can't create a model: the server would
+    // refuse it (403) because the target project would be the Default Project.
+    if (step === 8) return submitting || strictBlocked || providerKeyMissing || ($currentUser && !$currentProject)
     return false
   })()
 

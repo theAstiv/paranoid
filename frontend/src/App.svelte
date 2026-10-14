@@ -105,7 +105,7 @@
   }
 
   // Project name for display
-  $: projectName = $currentProject?.name ?? 'Default Project'
+  $: projectName = $currentProject?.name ?? 'No project'
 
   // Whether current user can manage (owner or admin)
   $: canManageProject = $currentProject?.member_role === 'owner' || $currentUser?.is_admin
@@ -172,15 +172,25 @@
 
     checkHealth()
     setInterval(checkHealth, 30000)
+  })
 
-    // Load project + notification stubs (Phase 2/5 will fill these)
+  // Projects and notifications need a session, so they 401 before login. Load
+  // them whenever a different user becomes current: page load (fetchMe, which
+  // also resolves the anonymous admin with auth off), login, register.
+  let workspaceUserId = null
+  $: if ($currentUser?.id && $currentUser.id !== workspaceUserId) {
+    workspaceUserId = $currentUser.id
+    loadWorkspace()
+  }
+
+  async function loadWorkspace() {
     try {
       const [proj, notifs] = await Promise.all([listProjects(), listNotifications()])
       projects.set(proj)
       notifications.set(notifs)
       if (proj.length > 0 && !get(currentProject)) currentProject.set(pickInitialProject(proj))
     } catch { /* non-fatal */ }
-  })
+  }
 </script>
 
 <!-- Full-bleed backdrop: closes any open overlay -->
