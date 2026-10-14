@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from backend.auth.dependencies import ROLE_ORDER, get_current_user, require_role
+from backend.auth.dependencies import check_project_role, get_current_user, require_role
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects, vectors
 from backend.models.api import BulkStatusRequest, UpdateThreatRequest
@@ -171,11 +171,9 @@ async def bulk_status(
         raise HTTPException(status_code=400, detail="All threats must belong to the same model")
     model_id = model_ids.pop()
 
-    if settings.paranoid_require_auth and not user.get("is_admin"):
-        project_id = await crud_projects.resolve_project_id_from_model(model_id)
-        role = await crud_projects.get_user_role_in_project(project_id, user["id"])
-        if role is None or ROLE_ORDER.get(role, 0) < ROLE_ORDER["editor"]:
-            raise HTTPException(status_code=403, detail="Requires editor role")
+    project_id = await crud_projects.resolve_project_id_from_model(model_id)
+    if settings.paranoid_require_auth:
+        await check_project_role(user, project_id, "editor")
 
     updated = await crud.bulk_update_threat_status(body.threat_ids, body.status.value)
 
@@ -190,7 +188,6 @@ async def bulk_status(
         elif was_approved and not is_approved:
             await _remove_threat_vector(prior["id"])
 
-    project_id = await crud_projects.resolve_project_id_from_model(model_id)
     await crud_activity.safe_log_activity(
         project_id=project_id,
         user_id=user["id"],

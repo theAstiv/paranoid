@@ -93,6 +93,16 @@ async def build_world() -> World:
         token_id, owner["id"], "scoped-to-b", token_hash, project_id=project_b
     )
     tokens["pat_b"] = raw
+    # The same owner's PAT with no project scope keeps the owner's memberships.
+    token_id, raw, token_hash = create_pat()
+    await crud_auth.create_pat(token_id, owner["id"], "unscoped", token_hash)
+    tokens["pat_free"] = raw
+    # An instance admin's PAT scoped to B is limited to B too.
+    token_id, raw, token_hash = create_pat()
+    await crud_auth.create_pat(
+        token_id, admin["id"], "admin-scoped-to-b", token_hash, project_id=project_b
+    )
+    tokens["pat_admin_b"] = raw
 
     return World(
         project_a=project_a,

@@ -23,7 +23,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 
 import { push } from 'svelte-spa-router'
 import { createModel, subscribeToRun, listCodeSources } from '../lib/api.js'
-import { notify, config, currentProject, pipelineRunning } from '../lib/stores.js'
+import { notify, config, currentProject, currentUser, pipelineRunning } from '../lib/stores.js'
 
 async function goToStep(n) {
   for (let i = 0; i < n; i++) {
@@ -377,6 +377,15 @@ describe('NewModel — step 8 (review & submit)', () => {
     await toReview()
     expect(screen.getByText(/No API key configured for anthropic/)).toBeInTheDocument()
     expect(screen.getByText('Create & Run')).toBeDisabled()
+  })
+
+  it('disables Create & Run for a signed-in user with no project, and enables it once one is set', async () => {
+    currentUser.set({ id: 'u1', username: 'member' })
+    await toReview()
+    expect(screen.getByText('Create & Run')).toBeDisabled()
+    currentProject.set({ id: 'p1', name: 'Demo' })
+    await waitFor(() => expect(screen.getByText('Create & Run')).not.toBeDisabled())
+    currentUser.set(null)
   })
 
   it('creates the model, subscribes to the run, and navigates to it', async () => {
