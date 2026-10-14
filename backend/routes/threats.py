@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from backend.auth.dependencies import check_project_role, get_current_user, require_role
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects, vectors
+from backend.db.component_links import relink_threat
 from backend.models.api import BulkStatusRequest, UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, create_provider
@@ -117,6 +118,8 @@ async def update_threat(
         cvss_severity=cvss_severity,
         clear_cvss=clear_cvss,
     )
+    if body.target is not None:
+        await relink_threat(threat_id, body.target)
 
     # Handle status separately (uses dedicated update function)
     if body.status is not None:

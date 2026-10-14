@@ -658,8 +658,8 @@
             bind:this={flowsList}
             bind:items={flows}
             fields={[
-              { key: 'source_entity', label: 'Source' },
-              { key: 'target_entity', label: 'Target' },
+              { key: 'source_entity', label: 'Source', linkKey: 'source_asset_id' },
+              { key: 'target_entity', label: 'Target', linkKey: 'target_asset_id' },
               { key: 'flow_description', label: 'Description', type: 'textarea', default: '' },
               { key: 'flow_type', label: 'Type', type: 'select', options: ['data', 'message', 'external', 'return'], default: 'data', display: 'badge' },
             ]}
@@ -688,8 +688,8 @@
             bind:this={boundariesList}
             bind:items={trustBoundaries}
             fields={[
-              { key: 'source_entity', label: 'Source' },
-              { key: 'target_entity', label: 'Target' },
+              { key: 'source_entity', label: 'Source', linkKey: 'source_asset_id' },
+              { key: 'target_entity', label: 'Target', linkKey: 'target_asset_id' },
               { key: 'purpose', label: 'Purpose', type: 'textarea', default: '' },
             ]}
             onCreate={(draft) => createTrustBoundary(params.id, draft)}

@@ -102,3 +102,28 @@ describe('ResourceList', () => {
     expect(screen.getByText('—')).toBeInTheDocument()
   })
 })
+
+describe('ResourceList asset links', () => {
+  const linkFields = [
+    { key: 'source_entity', label: 'Source', linkKey: 'source_asset_id' },
+    { key: 'target_entity', label: 'Target', linkKey: 'target_asset_id' },
+  ]
+  const noop = vi.fn()
+
+  it('renders a linked endpoint as a chip and an unlinked one as plain text', () => {
+    const rows = [{ id: 'f1', source_entity: 'API Gateway', target_entity: 'Mystery', source_asset_id: 'a1', target_asset_id: null }]
+    render(ResourceList, { props: { items: rows, fields: linkFields, onCreate: noop, onUpdate: noop, onDelete: noop } })
+    expect(screen.getByText('API Gateway')).toHaveClass('chip-accent')
+    expect(screen.getByText('Mystery')).not.toHaveClass('chip-accent')
+  })
+
+  it('keeps a linked chip on one line and sizes unlinked text the same', () => {
+    const rows = [{ id: 'f1', source_entity: 'Tool Allowlist / Enforcer', target_entity: 'Mystery', source_asset_id: 'a1', target_asset_id: null }]
+    render(ResourceList, { props: { items: rows, fields: linkFields, onCreate: noop, onUpdate: noop, onDelete: noop } })
+    const linked = screen.getByText('Tool Allowlist / Enforcer')
+    const plain = screen.getByText('Mystery')
+    expect(linked).toHaveClass('whitespace-nowrap')
+    expect(plain).toHaveClass('whitespace-nowrap')
+    expect(plain.className).toContain('text-[11px]')
+  })
+})

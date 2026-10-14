@@ -12,6 +12,7 @@ any DB error is logged as a warning and does not propagate to the caller.
 import json
 import logging
 
+from backend.db.component_links import try_link_model_components
 from backend.db.crud import (
     create_asset,
     create_attack_tree,
@@ -260,6 +261,8 @@ async def _persist(
             threat_db_ids.append(threat_db_id)
 
         logger.debug(f"Persisted {len(threats.threats)} threats")
+
+    await try_link_model_components(model_id)
 
     if dependency_context:
         rows = dependency_scan_rows(dependency_context)
