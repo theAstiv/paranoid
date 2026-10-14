@@ -191,8 +191,9 @@ async def test_threat_models_code_source_set_null_on_delete(test_db):
 
 def test_clone_dir_for_is_under_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "paranoid.db"))
-    path = clone_dir_for("abc123")
-    assert path == data_dir() / "sources" / "abc123"
+    sid = "0123456789abcdef0123456789abcdef"
+    path = clone_dir_for(sid)
+    assert path == data_dir() / "sources" / sid
     assert str(path).startswith(str(tmp_path))
 
 

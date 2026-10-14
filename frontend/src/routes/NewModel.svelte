@@ -81,6 +81,16 @@
   let readySources = []
   let loadingSources = false
   let sourcesLoaded = false
+  let sourcesProjectId = $currentProject?.id
+
+  // Sources belong to a project and a run refuses another project's source, so a
+  // sidebar project switch mid-wizard drops the list and the selection.
+  $: if ($currentProject?.id !== sourcesProjectId) {
+    sourcesProjectId = $currentProject?.id
+    sourcesLoaded = false
+    readySources = []
+    selectedCodeSourceId = null
+  }
 
   // Architecture diagrams — multi-file upload. Keep in sync with backend/image/validation.py.
   const MAX_DIAGRAMS = 5
@@ -128,16 +138,22 @@
 
   $: if (step === 3 && !sourcesLoaded) loadSources()
 
+  let sourcesSeq = 0
+
   async function loadSources() {
+    const seq = ++sourcesSeq
     loadingSources = true
     sourcesLoaded = true
     try {
-      const all = await listCodeSources()
+      const all = await listCodeSources({ project_id: $currentProject?.id })
+      // A project switch (or Retry) started a newer request; drop this stale list.
+      if (seq !== sourcesSeq) return
       readySources = all.filter(s => s.last_index_status === 'ready')
     } catch (err) {
+      if (seq !== sourcesSeq) return
       console.warn('NewModel: failed to load code sources', err)
     } finally {
-      loadingSources = false
+      if (seq === sourcesSeq) loadingSources = false
     }
   }
 

@@ -152,12 +152,21 @@ def validate_git_url(url: str) -> None:
 
     Only https:// is accepted — http:// would transmit PAT credentials in
     cleartext and is never appropriate for authenticated remote access.
+    Credentials in the URL are refused: they would be stored and returned in plain
+    text, whereas the PAT field is encrypted at rest.
     """
     if not url.startswith("https://"):
         raise HostNotAllowedError(
             f"URL must use https:// scheme (http://, SSH, and file:// are not supported): {url!r}"
         )
-    host = urlparse(url).hostname or ""
+    parsed = urlparse(url)
+    if "@" in parsed.netloc:
+        # Never echo the URL: it holds the secret being rejected.
+        raise HostNotAllowedError(
+            "The git URL must not contain a username or password. "
+            "Put the token in the PAT field instead."
+        )
+    host = parsed.hostname or ""
     if host not in allowed_hosts():
         raise HostNotAllowedError(
             f"Git host {host!r} is not in the allowlist. "

@@ -1,5 +1,5 @@
 """Shared fixture data for the auth-on route tests: users in every role, two
-projects, and one of each resource in project A. Used by tests/test_rbac_matrix.py."""
+projects, and one of each resource (including a ready code source) in project A. Used by tests/test_rbac_matrix.py."""
 
 from dataclasses import dataclass, field
 
@@ -19,6 +19,7 @@ class World:
     comment: str
     diagram: str
     attack_tree: str
+    source: str
     users: dict[str, dict] = field(default_factory=dict)
     tokens: dict[str, str] = field(default_factory=dict)
 
@@ -76,6 +77,15 @@ async def build_world() -> World:
         )
     )[0]
     attack_tree = await crud.create_attack_tree(threat, "graph TD; G-->A")
+    source = await crud.create_code_source(
+        name="repo-a",
+        git_url="https://github.com/acme/repo-a.git",
+        ref=None,
+        pat=None,
+        project_id=project_a,
+        created_by=owner["id"],
+    )
+    await crud.update_code_source_status(source, status="ready")
 
     users = {
         "owner": owner,
@@ -115,6 +125,7 @@ async def build_world() -> World:
         comment=comment,
         diagram=diagram,
         attack_tree=attack_tree,
+        source=source,
         users=users,
         tokens=tokens,
     )

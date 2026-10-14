@@ -471,8 +471,15 @@ class CodeSource(BaseModel):
     last_index_status: SourceStatus | None = None
     last_index_error: str | None = None
     resolved_sha: str | None = None
+    project_id: str | None = None
     created_at: str
     updated_at: str
+
+
+class MoveCodeSourceRequest(BaseModel):
+    """PATCH /api/sources/{id} body: move a source to another project."""
+
+    project_id: Annotated[str, Field(min_length=1)]
 
 
 class CreateCodeSourceRequest(BaseModel):
@@ -484,3 +491,7 @@ class CreateCodeSourceRequest(BaseModel):
     git_url: Annotated[str, Field(min_length=1)]
     ref: str | None = None
     pat: SecretStr | None = None
+    project_id: Annotated[
+        str | None,
+        Field(description="Project that owns the source; defaults to the Default Project"),
+    ] = None

@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import {
     listCodeSources,
     createCodeSource,
@@ -7,7 +7,7 @@
     reindexSource,
     subscribeToSourceEvents,
   } from '../lib/api.js'
-  import { notify } from '../lib/stores.js'
+  import { notify, currentProject, currentUser } from '../lib/stores.js'
 
   let sources = []
   let loading = true
@@ -24,22 +24,43 @@
 
   const TERMINAL = new Set(['ready', 'failed'])
 
-  onMount(load)
-  onDestroy(() => Object.values(aborts).forEach(f => f()))
+  $: projectId = $currentProject?.id
+  // A signed-in user without a project has nowhere to put a new source (mirrors NewModel).
+  $: noProject = Boolean($currentUser) && !$currentProject
 
-  async function load() {
+  // Runs on mount and whenever the active project changes (sidebar switch).
+  $: reload(projectId)
+  onDestroy(stopStreams)
+
+  let loadSeq = 0
+
+  function stopStreams() {
+    Object.values(aborts).forEach(f => f())
+    aborts = {}
+  }
+
+  function reload(pid) {
+    stopStreams()
+    load(pid)
+  }
+
+  async function load(pid) {
+    const seq = ++loadSeq
     loading = true
     try {
-      sources = await listCodeSources()
+      const list = await listCodeSources({ project_id: pid })
+      if (seq !== loadSeq) return // a newer project selection superseded this response
+      sources = list
       for (const src of sources) {
         if (!TERMINAL.has(src.last_index_status) && !aborts[src.id]) {
           attachSSE(src.id)
         }
       }
     } catch (err) {
+      if (seq !== loadSeq) return
       notify('error', `Failed to load code sources: ${err.message}`)
     } finally {
-      loading = false
+      if (seq === loadSeq) loading = false
     }
   }
 
@@ -66,6 +87,7 @@
         git_url: newUrl.trim(),
         ref: newRef.trim() || null,
         pat: newPat || null,
+        project_id: projectId,
       })
       sources = [...sources, src]
       if (!TERMINAL.has(src.last_index_status)) attachSSE(src.id)
@@ -99,7 +121,7 @@
       if (!aborts[id]) attachSSE(id)
     } catch (err) {
       notify('error', `Reindex failed: ${err.message}`)
-      try { sources = await listCodeSources() } catch { /* ignore */ }
+      try { sources = await listCodeSources({ project_id: projectId }) } catch { /* ignore */ }
     }
   }
 
@@ -176,7 +198,7 @@
         <button type="button" on:click={() => { showAdd = false }}
           class="btn-ghost text-sm px-3 py-1.5">Cancel</button>
         <button type="button" on:click={handleAdd}
-          disabled={adding || !newName.trim() || !newUrl.trim()}
+          disabled={adding || noProject || !newName.trim() || !newUrl.trim()}
           class="btn-primary text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
           {adding ? 'Adding…' : 'Add & clone'}
         </button>

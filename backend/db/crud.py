@@ -1585,13 +1585,18 @@ async def create_code_source(
     git_url: str,
     ref: str | None,
     pat: str | None,
+    project_id: str | None = None,
+    created_by: str | None = None,
 ) -> str:
     """Insert a new code_sources row. Returns the new UUID4 hex id.
 
     When ``pat`` is non-None it is encrypted under the active Fernet key
     and the deployment's key source is recorded for future switch
     detection. Callers should pass an already-stripped value.
+
+    ``project_id`` defaults to the Default Project, like ``create_threat_model``.
     """
+    from backend.db.crud_projects import DEFAULT_PROJECT_ID
     from backend.security.source_key import (
         assert_pat_key_source_matches,
         encrypt_pat,
@@ -1617,10 +1622,20 @@ async def create_code_source(
         INSERT INTO code_sources (
             id, name, git_url, ref, pat_ciphertext, pat_last_used_at,
             last_indexed_at, last_index_status, last_index_error,
-            resolved_sha, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', NULL, NULL, NULL, ?, ?)
+            resolved_sha, created_by, project_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'queued', NULL, NULL, ?, ?, ?, ?)
         """,
-        (source_id, name, git_url, stored_ref, pat_ciphertext, now, now),
+        (
+            source_id,
+            name,
+            git_url,
+            stored_ref,
+            pat_ciphertext,
+            created_by,
+            project_id or DEFAULT_PROJECT_ID,
+            now,
+            now,
+        ),
     )
     await conn.commit()
     logger.info(f"Created code source {source_id} ({git_url})")
@@ -1635,9 +1650,28 @@ async def get_code_source(source_id: str) -> dict[str, Any] | None:
     return _row_to_code_source(row) if row else None
 
 
-async def list_code_sources() -> list[dict[str, Any]]:
+async def list_code_sources(
+    project_id: str | None = None,
+    project_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """List sources, newest first. ``project_ids`` restricts to those projects
+    (empty list → no rows), mirroring ``list_threat_models``."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    if project_id is not None:
+        conditions.append("project_id = ?")
+        params.append(project_id)
+    if project_ids is not None:
+        if not project_ids:
+            return []
+        conditions.append(f"project_id IN ({','.join('?' * len(project_ids))})")
+        params.extend(project_ids)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
     conn = await db.get()
-    async with conn.execute("SELECT * FROM code_sources ORDER BY created_at DESC") as cursor:
+    async with conn.execute(
+        f"SELECT * FROM code_sources {where} ORDER BY created_at DESC", params
+    ) as cursor:
         rows = await cursor.fetchall()
     return [_row_to_code_source(r) for r in rows]
 
@@ -1692,6 +1726,17 @@ async def update_code_source_status(
     await conn.execute(
         f"UPDATE code_sources SET {', '.join(fields)} WHERE id = ?",
         params,
+    )
+    await conn.commit()
+
+
+async def update_code_source_project(source_id: str, project_id: str) -> None:
+    """Move a source to another project. The caller checks permissions and that
+    the project exists."""
+    conn = await db.get()
+    await conn.execute(
+        "UPDATE code_sources SET project_id = ?, updated_at = ? WHERE id = ?",
+        (project_id, now_iso(), source_id),
     )
     await conn.commit()
 

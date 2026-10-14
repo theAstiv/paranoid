@@ -255,6 +255,30 @@ async def check_project_role(user: dict[str, Any], project_id: str, min_role: st
         )
 
 
+async def visible_project_ids(user: dict[str, Any], project_id: str | None) -> list[str] | None:
+    """Project ids a list route may show `user`, or ``None`` for no restriction.
+
+    Non-admins see the projects they belong to; a project-scoped PAT sees only its
+    project (even for an admin). An explicit `project_id` filter must be one the
+    caller can see: archived projects are omitted from membership, so they 403 too.
+    Auth off resolves to the instance admin, i.e. no restriction.
+    """
+    scope = user.get("pat_project_id")
+    if scope and project_id is not None:
+        check_pat_scope(user, project_id)
+    if user.get("is_admin"):
+        return [scope] if scope else None
+
+    from backend.db.crud_projects import list_projects_for_user
+
+    member_of = {p["id"] for p in await list_projects_for_user(user["id"])}
+    if project_id is not None and project_id not in member_of:
+        raise HTTPException(
+            status_code=403, detail="Not a member of this project, or it is archived"
+        )
+    return sorted(member_of & {scope} if scope else member_of)
+
+
 def require_role(min_role: str, entity_param: str, entity_type: str):
     """Factory: returns a FastAPI dependency that checks project membership.
 

@@ -532,11 +532,15 @@ export function exportUrl(modelId, format, statusFilter) {
 
 // ── Code Sources ─────────────────────────────────────────────────────────────
 
-export function listCodeSources() {
-  return request('GET', '/sources')
+/** @param {{ project_id?: string }} [params] */
+export function listCodeSources(params = {}) {
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null))
+  ).toString()
+  return request('GET', `/sources${qs ? '?' + qs : ''}`)
 }
 
-/** @param {{ name: string, git_url: string, ref?: string|null, pat?: string|null }} body */
+/** @param {{ name: string, git_url: string, ref?: string|null, pat?: string|null, project_id?: string }} body */
 export function createCodeSource(body) {
   return request('POST', '/sources', body)
 }
