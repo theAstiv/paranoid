@@ -476,7 +476,10 @@ async def list_models(
     if not user.get("is_admin"):
         member_of = {p["id"] for p in await crud_projects.list_projects_for_user(user["id"])}
         if project_id is not None and project_id not in member_of:
-            raise HTTPException(status_code=403, detail="Not a member of this project")
+            # list_projects_for_user omits archived projects, so this also covers them
+            raise HTTPException(
+                status_code=403, detail="Not a member of this project, or it is archived"
+            )
         project_ids = sorted(member_of)
     rows = await crud.list_threat_models(
         limit=limit,
@@ -1103,13 +1106,7 @@ async def list_model_dependencies(
     model_id: str,
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> JSONResponse:
-    """List persisted dependency capability scans for a model, most recent first.
-
-    Gated at viewer (unlike the other GET sub-resource routes above, which
-    predate per-route RBAC): this endpoint exposes package names, versions,
-    and raw scanner evidence, which is more sensitive than a threat's own
-    text, so it doesn't copy the existing gap.
-    """
+    """List persisted dependency capability scans for a model, most recent first."""
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")

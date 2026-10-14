@@ -23,7 +23,7 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.auth.tokens import create_access_token
 from backend.config import settings
-from backend.db import crud, crud_auth
+from backend.db import crud, crud_auth, crud_projects
 from backend.main import app
 from backend.models.api import (
     AnalyzeAssumptionsResponse,
@@ -339,6 +339,26 @@ async def test_model_list_limit_applies_after_project_filter(test_db, monkeypatc
     async with _client() as client:
         r = await client.get("/api/models/?limit=1", headers=_bearer(w, "viewer"))
     assert _ids_in(r) == {w.model}
+
+
+@pytest.mark.asyncio
+async def test_archived_project_models_leave_the_list_but_stay_readable(test_db, monkeypatch):
+    """Deliberate: archived projects are hidden from a member's list (as in GET /projects)
+    and the explicit project filter says why; direct reads of their models still work
+    (archived = read-only, not secret). Admins still see everything."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    await crud_projects.archive_project(w.project_a)
+    async with _client() as client:
+        assert w.model not in _ids_in(
+            await client.get("/api/models/", headers=_bearer(w, "viewer"))
+        )
+        r = await client.get(f"/api/models/?project_id={w.project_a}", headers=_bearer(w, "viewer"))
+        assert r.status_code == 403
+        assert "archived" in r.json()["detail"]
+        r = await client.get(f"/api/models/{w.model}", headers=_bearer(w, "viewer"))
+        assert r.status_code == 200
+        assert w.model in _ids_in(await client.get("/api/models/", headers=_bearer(w, "admin")))
 
 
 @pytest.mark.asyncio
