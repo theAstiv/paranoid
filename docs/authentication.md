@@ -92,6 +92,8 @@ curl -X POST http://localhost:8000/api/auth/tokens \
 
 The raw token is returned **once** — store it securely.
 
+Add `"project_id": "<id>"` to limit the token to one project (you must belong to it). A project-scoped token can only act inside that project, **even if you are an instance admin**. It cannot create projects, create models in other projects, or create, list or revoke tokens. Without `project_id` the token has all your memberships. Limits: code-source list/create and your notifications are not filtered by the token's project.
+
 ### Use a PAT
 
 ```bash

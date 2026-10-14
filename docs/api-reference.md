@@ -250,7 +250,7 @@ Update display name or password.
 
 Create a PAT. Returns the raw token once.
 
-**Body:** `{"name": "ci", "expires_in_days": 365}`
+**Body:** `{"name": "ci", "expires_in_days": 365, "project_id": null}` — `project_id` is optional; when set, the token is limited to that project (403 if the caller isn't a member, 404 if it doesn't exist). Project-scoped tokens get 403 on all three token routes.
 
 ### `GET /api/auth/tokens`
 
