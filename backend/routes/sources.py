@@ -13,9 +13,15 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from backend.auth.dependencies import get_current_user, require_role
-from backend.db import crud
-from backend.models.extended import CodeSource, CreateCodeSourceRequest
+from backend.auth.dependencies import (
+    check_project_role,
+    get_current_user,
+    require_role,
+    visible_project_ids,
+)
+from backend.config import settings
+from backend.db import crud, crud_projects
+from backend.models.extended import CodeSource, CreateCodeSourceRequest, MoveCodeSourceRequest
 from backend.security.rate_limit import write_rate_limit
 from backend.security.source_key import (
     KeySourceChangedError,
@@ -51,10 +57,16 @@ def _source_response(row: dict, status_code: int = 200) -> JSONResponse:
 
 @router.get("")
 async def list_sources(
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    user: Annotated[dict, Depends(get_current_user)],
+    project_id: str | None = None,
 ) -> JSONResponse:
-    """List all code sources."""
-    rows = await crud.list_code_sources()
+    """List code sources, optionally for one project.
+
+    Non-admin callers only see sources from projects they belong to (the same
+    rule as GET /models/). Auth off resolves to the instance admin.
+    """
+    project_ids = await visible_project_ids(user, project_id)
+    rows = await crud.list_code_sources(project_id=project_id, project_ids=project_ids)
     items = [CodeSource(**r).model_dump() for r in rows]
     return JSONResponse(content=items)
 
@@ -62,10 +74,16 @@ async def list_sources(
 @router.post("", status_code=202)
 async def create_source(
     body: CreateCodeSourceRequest,
+    user: Annotated[dict, Depends(get_current_user)],
     _rate: None = Depends(write_rate_limit),
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
 ) -> JSONResponse:
     """Create a code source row and kick off a background clone + index."""
+    target_project_id = body.project_id or crud_projects.DEFAULT_PROJECT_ID
+    if settings.paranoid_require_auth:
+        await check_project_role(user, target_project_id, "editor")
+    if await crud_projects.get_project(target_project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
     # Validate URL before touching the DB — cheap fail-fast.
     try:
         mgr.validate_git_url(body.git_url)
@@ -80,6 +98,8 @@ async def create_source(
             git_url=body.git_url,
             ref=body.ref,
             pat=pat,
+            project_id=target_project_id,
+            created_by=user["id"],
         )
     except aiosqlite.IntegrityError as exc:
         raise HTTPException(
@@ -102,9 +122,33 @@ async def create_source(
 @router.get("/{source_id}")
 async def get_source(
     source_id: str,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "source_id", "source")),
 ) -> JSONResponse:
     """Get a single code source by ID."""
+    row = await crud.get_code_source(source_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    return _source_response(row)
+
+
+@router.patch("/{source_id}")
+async def move_source(
+    source_id: str,
+    body: MoveCodeSourceRequest,
+    user: Annotated[dict, Depends(get_current_user)],
+    _authz: None = Depends(require_role("owner", "source_id", "source")),
+) -> JSONResponse:
+    """Move a source to another project (owner of the current project, editor of the target).
+
+    Sources that predate projects all sit in the Default Project; a model can only
+    use a source from its own project, so this puts them where their models are.
+    """
+    if settings.paranoid_require_auth:
+        await check_project_role(user, body.project_id, "editor")
+    if await crud_projects.get_project(body.project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    await crud.update_code_source_project(source_id, body.project_id)
     row = await crud.get_code_source(source_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Source not found.")
@@ -180,7 +224,7 @@ async def delete_source(
 async def stream_source_events(
     source_id: str,
     request: Request,
-    _user: Annotated[dict | None, Depends(get_current_user)] = None,
+    _authz: None = Depends(require_role("viewer", "source_id", "source")),
 ) -> StreamingResponse:
     """SSE stream of clone/index progress events for a source.
 

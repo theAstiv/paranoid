@@ -102,6 +102,24 @@ ROUTES = [
     Route("GET", "/api/models/{model}/dependencies", "viewer"),
     Route("GET", "/api/models/{model}/diagrams", "viewer"),
     Route("GET", "/api/models/{model}/diagrams/{diagram}", "viewer"),
+    # --- code source (BB-19) ---
+    Route(
+        "POST",
+        "/api/sources",
+        "editor",
+        {
+            "name": "new",
+            "git_url": "https://github.com/acme/new.git",
+            "project_id": "{project_a}",
+        },
+    ),
+    Route("GET", "/api/sources/{source}", "viewer"),
+    Route(
+        "PATCH", "/api/sources/{source}", "owner", {"project_id": "{project_a}"}, destructive=True
+    ),
+    Route("GET", "/api/sources/{source}/events", "viewer"),
+    Route("POST", "/api/sources/{source}/reindex", "editor"),
+    Route("DELETE", "/api/sources/{source}", "owner", destructive=True),
     # --- threat ---
     Route("GET", "/api/threats/{threat}", "viewer"),
     Route("PATCH", "/api/threats/{threat}", "editor", {"name": "renamed"}),
@@ -171,6 +189,7 @@ def _ids(w: World) -> dict[str, str]:
         "boundary": w.boundary,
         "comment": w.comment,
         "diagram": w.diagram,
+        "source": w.source,
         "project_a": w.project_a,
         "viewer_id": w.users["viewer"]["id"],
         "stranger_id": w.users["stranger"]["id"],
@@ -234,6 +253,8 @@ def stub_llm(monkeypatch):
 
     monkeypatch.setattr("backend.routes.models.analyze_description_gaps", _description)
     monkeypatch.setattr("backend.routes.analyze.analyze_bundle", _bundle)
+    # An allowed source create/reindex must not start a real git clone.
+    monkeypatch.setattr("backend.sources.manager.schedule_clone_and_index", lambda _sid: None)
 
 
 @pytest.mark.parametrize("route", ROUTES, ids=lambda r: r.id)

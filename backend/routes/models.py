@@ -16,10 +16,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from backend.auth.dependencies import (
-    check_pat_scope,
     check_project_role,
     get_current_user,
     require_role,
+    visible_project_ids,
 )
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects
@@ -480,21 +480,7 @@ async def list_models(
     Non-admin callers only see models from projects they belong to (the same
     membership query as GET /projects). Auth off resolves to the instance admin.
     """
-    project_ids: list[str] | None = None
-    scope = user.get("pat_project_id")
-    if scope and project_id is not None:
-        check_pat_scope(user, project_id)
-    if not user.get("is_admin"):
-        member_of = {p["id"] for p in await crud_projects.list_projects_for_user(user["id"])}
-        if project_id is not None and project_id not in member_of:
-            # list_projects_for_user omits archived projects, so this also covers them
-            raise HTTPException(
-                status_code=403, detail="Not a member of this project, or it is archived"
-            )
-        project_ids = sorted(member_of & {scope} if scope else member_of)
-    elif scope:
-        # A project-scoped token sees only its project, even for an admin.
-        project_ids = [scope]
+    project_ids = await visible_project_ids(user, project_id)
     rows = await crud.list_threat_models(
         limit=limit,
         framework=framework,
@@ -844,6 +830,11 @@ async def run_pipeline(
         if source_row is None:
             raise HTTPException(
                 status_code=422, detail=f"Code source '{code_source_id}' not found."
+            )
+        # Otherwise an editor of project B could feed project A's code into a B model.
+        if source_row.get("project_id") != record.get("project_id"):
+            raise HTTPException(
+                status_code=403, detail="Code source belongs to a different project."
             )
         if source_row["last_index_status"] != "ready":
             raise HTTPException(
