@@ -204,6 +204,38 @@ describe('NewModel — step 3 (code source)', () => {
     expect(screen.queryByText('not-ready-repo')).toBeNull()
   })
 
+  it('asks only for the current project’s sources', async () => {
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(3)
+
+    await waitFor(() => expect(listCodeSources).toHaveBeenCalledWith({ project_id: 'p1' }))
+  })
+
+  it('ignores a source list that arrives after the project changed', async () => {
+    let resolveOld
+    listCodeSources.mockImplementationOnce(() => new Promise((r) => { resolveOld = r }))
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(3)
+    await waitFor(() => expect(listCodeSources).toHaveBeenCalledTimes(1))
+
+    listCodeSources.mockResolvedValueOnce([
+      { id: 'n', name: 'new-repo', git_url: 'https://github.com/x/n', last_index_status: 'ready' },
+    ])
+    currentProject.set({ id: 'p2', name: 'Beta' })
+    await waitFor(() => expect(screen.getByText('new-repo')).toBeInTheDocument())
+
+    resolveOld([
+      { id: 'o', name: 'old-repo', git_url: 'https://github.com/x/o', last_index_status: 'ready' },
+    ])
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('old-repo')).toBeNull()
+    expect(screen.getByText('new-repo')).toBeInTheDocument()
+  })
+
   it('shows an empty state when there are no ready sources', async () => {
     render(NewModel)
     await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })

@@ -18,7 +18,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 import {
   listCodeSources, createCodeSource, deleteCodeSource, reindexSource, subscribeToSourceEvents,
 } from '../lib/api.js'
-import { notify } from '../lib/stores.js'
+import { notify, currentProject, currentUser } from '../lib/stores.js'
 
 const readySource = {
   id: 's1', name: 'backend', git_url: 'https://github.com/x/y.git', ref: null,
@@ -27,8 +27,60 @@ const readySource = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  currentProject.set(null)
+  currentUser.set(null)
   subscribeToSourceEvents.mockReturnValue(vi.fn())
   listCodeSources.mockResolvedValue([])
+})
+
+describe('CodeSources — project scoping', () => {
+  it('lists the current project’s sources', async () => {
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    render(CodeSources)
+    await waitFor(() => expect(listCodeSources).toHaveBeenCalledWith({ project_id: 'p1' }))
+  })
+
+  it('reloads and stops the old progress streams when the project changes', async () => {
+    const stop = vi.fn()
+    subscribeToSourceEvents.mockReturnValue(stop)
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    listCodeSources.mockResolvedValueOnce([{ ...readySource, last_index_status: 'cloning' }])
+    render(CodeSources)
+    await waitFor(() => expect(subscribeToSourceEvents).toHaveBeenCalled())
+
+    listCodeSources.mockResolvedValueOnce([{ ...readySource, id: 's9', name: 'other-repo' }])
+    currentProject.set({ id: 'p2', name: 'Beta' })
+
+    await waitFor(() => expect(listCodeSources).toHaveBeenLastCalledWith({ project_id: 'p2' }))
+    await waitFor(() => expect(screen.getByText('other-repo')).toBeInTheDocument())
+    expect(screen.queryByText('backend')).toBeNull()
+    expect(stop).toHaveBeenCalled()
+  })
+
+  it('creates the source in the current project', async () => {
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    createCodeSource.mockResolvedValue({ ...readySource, id: 's-new' })
+    render(CodeSources)
+    await waitFor(() => expect(screen.getByText('Add source')).toBeInTheDocument())
+    await fireEvent.click(screen.getByText('Add source'))
+    await fireEvent.input(screen.getByLabelText(/Git URL/), { target: { value: 'https://github.com/x/y.git' } })
+    await fireEvent.input(screen.getByLabelText(/^Name/), { target: { value: 'backend' } })
+    await fireEvent.click(screen.getByText('Add & clone'))
+
+    await waitFor(() => expect(createCodeSource).toHaveBeenCalledWith({
+      name: 'backend', git_url: 'https://github.com/x/y.git', ref: null, pat: null, project_id: 'p1',
+    }))
+  })
+
+  it('blocks adding a source while a signed-in user has no project', async () => {
+    currentUser.set({ id: 'u1', username: 'ann' })
+    render(CodeSources)
+    await waitFor(() => expect(screen.getByText('Add source')).toBeInTheDocument())
+    await fireEvent.click(screen.getByText('Add source'))
+    await fireEvent.input(screen.getByLabelText(/Git URL/), { target: { value: 'https://github.com/x/y.git' } })
+    await fireEvent.input(screen.getByLabelText(/^Name/), { target: { value: 'backend' } })
+    expect(screen.getByText('Add & clone')).toBeDisabled()
+  })
 })
 
 describe('CodeSources — loading', () => {
