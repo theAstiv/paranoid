@@ -147,7 +147,7 @@ Every threat — LLM-generated, rule-engine, or dependency — is now tagged wit
 - A deterministic `map_techniques` pipeline step assigns technique references three ways depending on the threat's origin: a fixed `rule_id → technique` table for dependency-engine threats, a parenthesized-ID regex against the seed pattern name for rule-engine threats, and embedding similarity (cosine + keyword overlap, narrowed by a STRIDE-category tactic prior) for everything else, including LLM-generated threats
 - `Threat.attack_techniques` is schema-guarded the same way dependency provenance is — hidden from every provider's structured-output schema (`SkipJsonSchema`) and force-reset after every provider call, so an LLM can't forge its own technique attribution
 - Migration `0009_threats_attack_techniques.py`; SARIF `properties.tags`; a Markdown/PDF "ATT&CK/ATLAS:" line; `ThreatCard` chips linking to attack.mitre.org / atlas.mitre.org, with embedding-sourced matches shown as "suggested" rather than confirmed
-- Measured precision@3 on a golden set: 0.70 (7/10) after correcting a mislabeled case and crediting parent-technique matches; two genuine misses are tracked in `tests/live/test_attack_mapping_golden.py`
+- Measured precision@3 on a 10-case golden set: 0.70 (7/10) after correcting a mislabeled case and crediting parent-technique matches (0.50 exact-only). The labels were reviewed by a human on 2026-10-15 and all kept; the three misses (matcher weaknesses, not label errors) are tracked in `tests/live/test_attack_mapping_golden.py`
 
 #### CVSS v3.1 Scoring (alongside DREAD)
 

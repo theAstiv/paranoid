@@ -424,10 +424,11 @@ The samples are handled as inert files: never installed or run. Each is decrypte
   - On Bedrock (2026-10-12), the CVSS consistency gate (every vector parses and matches its stored score) passed in all 9 passing `e2e-cli` and `e2e-web` arms, including Opus 5.5 on the web path, which failed it on 10-09.
   - DREAD-only runs use a smaller response schema (2,788 vs 4,689 characters), which saves about 430–670 prompt tokens per `generate_threats` call.
 - **ATT&CK/ATLAS mapping coverage** (2026-10-06, one web run): technique matches were saved on 22 of 26 threats (6/10 LLM, 9/9 rule engine, 7/7 dependency). Matching costs ~9 s once per process to embed the catalog, then ~35 ms per threat.
-- **ATT&CK/ATLAS precision: provisional.**
-  - precision@3 = 0.70 (7/10) on a 10-case golden set, against a 0.6 bar; the 2026-10-12 re-run passed the same bar.
-  - The expected answers were drafted by Claude and **haven't been reviewed by a human yet**, so don't cite this number until they are.
-  - Below the bar, embedding-sourced matches are shown as "suggested".
+- **ATT&CK/ATLAS precision** (labels reviewed by a human 2026-10-15, re-run the same day, local embeddings):
+  - precision@3 = **0.70 (7/10)** on a 10-case golden set, against a 0.6 bar: 5 exact, 2 credited to the parent technique (e.g. T1496 for T1496.001), 3 misses. **0.50 counting exact matches only.**
+  - All 10 expected answers (drafted by Claude) were kept after review against the ATT&CK v19.2 + ATLAS catalog. n = 10, so each case moves the number 10 points.
+  - The three misses are matcher weaknesses, not label errors: stolen cloud credentials (expected T1078.004), an npm tarball-only file (T1195.002) and crafted adversarial inputs (AML.T0043). T1195.001, the more precise label for npm dependency compromise, isn't in the catalog yet.
+  - Embedding-sourced matches are shown as "suggested" in the UI regardless of this score. Quote it as **0.70 precision@3 with parent credit (0.50 exact-only), n = 10**.
 
 ---
 
