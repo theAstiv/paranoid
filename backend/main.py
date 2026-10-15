@@ -151,6 +151,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await backfill_component_links()
 
+    from backend.db.maestro_tags import backfill_maestro_tags
+
+    await backfill_maestro_tags()
+
     # Bootstrap the initial admin user (runs only when users table is empty).
     await _bootstrap_admin_if_needed()
 

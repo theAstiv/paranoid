@@ -30,6 +30,7 @@ from backend.db.crud import (
     update_threat_model,
     update_threat_model_status,
 )
+from backend.db.maestro_tags import try_tag_model_assets
 from backend.deps.analyze import dependency_scan_rows
 from backend.models.dependencies import DependencyContext
 from backend.models.enums import Framework
@@ -263,6 +264,7 @@ async def _persist(
         logger.debug(f"Persisted {len(threats.threats)} threats")
 
     await try_link_model_components(model_id)
+    await try_tag_model_assets(model_id)
 
     if dependency_context:
         rows = dependency_scan_rows(dependency_context)

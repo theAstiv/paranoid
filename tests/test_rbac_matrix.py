@@ -78,6 +78,7 @@ ROUTES = [
     Route("GET", "/api/models/{model}/threats", "viewer"),
     Route("GET", "/api/models/{model}/trust-boundaries", "viewer"),
     Route("GET", "/api/models/{model}/stats", "viewer"),
+    Route("GET", "/api/models/{model}/maestro-coverage", "viewer"),
     Route("POST", "/api/models/{model}/analyze", "viewer", spends=True),
     Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True),
     Route("POST", "/api/models/{model}/run", "editor", spends=True),
