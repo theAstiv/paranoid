@@ -474,6 +474,57 @@ describe('Results — run summary panel', () => {
     expect(screen.getByText('29% of tokens served by claude-haiku-4-5')).toBeInTheDocument()
   })
 
+  it('shows why the run stopped and what the coverage guard did, from the persisted model', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        stopped_reason: 'gap_satisfied',
+        coverage_guard: {
+          triggered: true,
+          iteration: 1,
+          targeted: ['Tampering'],
+          still_empty: ['Tampering'],
+          na_maestro: ['Privacy'],
+          unknown_maestro: false,
+        },
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('run-coverage')).toBeInTheDocument())
+    const panel = screen.getByTestId('run-coverage')
+    expect(panel).toHaveTextContent('Stopped: gap analysis satisfied')
+    expect(panel).toHaveTextContent('Coverage guard overrode the stop at iteration 1 for Tampering')
+    expect(panel).toHaveTextContent('No LLM threats: Tampering after a targeted pass')
+    expect(panel).toHaveTextContent('MAESTRO N/A (no matching component): Privacy')
+  })
+
+  it('says MAESTRO applicability is unknown when no component matched a rule', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        coverage_guard: { triggered: false, still_empty: [], na_maestro: [], unknown_maestro: true },
+      },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('run-coverage')).toBeInTheDocument())
+    expect(screen.getByTestId('run-coverage')).toHaveTextContent('not assessed')
+    expect(screen.queryByText(/overrode the stop/)).toBeNull()
+  })
+
+  it('has no coverage block for a model saved before the field existed', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: { by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }], total_tokens: 600 },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
+    expect(screen.queryByTestId('run-coverage')).toBeNull()
+  })
+
   it('omits the fast-model line when the run used no distinct fast model', async () => {
     getModel.mockResolvedValue({
       ...baseModel,

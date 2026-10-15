@@ -53,6 +53,9 @@ Input (description + 0-5 diagrams + optional code + optional dependency manifest
   └─ for iteration in 1..N:
        ├─ generate_threats  → ThreatsList (STRIDE or MAESTRO; always the main model)
        └─ gap_analysis      → GapSummary (feeds next iteration; always the main model)
+            coverage guard: a stop is overridden once per run (never on the last iteration)
+            while a STRIDE category, or an applicable MAESTRO category, has no LLM threats;
+            the extra pass is told which category is empty (backend/pipeline/coverage_guard.py)
   │
   ├─ Rule Engine (always runs in parallel with LLM)
   ├─ Dependency threat templates (deterministic, merged in)

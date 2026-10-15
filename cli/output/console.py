@@ -112,7 +112,29 @@ class ConsoleRenderer:
         if output_file:
             click.echo(f"Output:             {output_file}")
         self._render_usage(usage)
+        self._render_coverage((usage or {}).get("coverage_guard"))
         click.echo()
+
+    def _render_coverage(self, report: dict | None) -> None:
+        """Print what the coverage guard did and which categories ended empty."""
+        if not report:
+            return
+        if report.get("triggered"):
+            click.echo(
+                f"Coverage guard:     stop overridden at iteration {report.get('iteration')} "
+                f"for {', '.join(report.get('targeted') or [])}"
+            )
+        if report.get("still_empty"):
+            suffix = " after a targeted pass" if report.get("triggered") else ""
+            click.secho(
+                f"No LLM threats:     {', '.join(report['still_empty'])}{suffix}", fg="yellow"
+            )
+        if report.get("na_maestro"):
+            click.echo(
+                f"MAESTRO N/A:        {', '.join(report['na_maestro'])} (no matching component)"
+            )
+        elif report.get("unknown_maestro"):
+            click.echo("MAESTRO N/A:        not assessed (no component matched a rule)")
 
     def _render_usage(self, usage: dict | None) -> None:
         """Print the per-model token breakdown and fast-model share.

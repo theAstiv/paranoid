@@ -30,6 +30,7 @@ from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSu
 from backend.models.state import AssetsList, FlowsList, SummaryState, ThreatsList
 from backend.models.usage import StepRun
 from backend.pipeline import nodes
+from backend.pipeline.coverage_guard import applicable_maestro, build_report, plan_targeted_pass
 from backend.pipeline.nodes.helpers import build_shared_context
 from backend.providers.base import (
     LLMProvider,
@@ -237,6 +238,19 @@ class PipelineEvent:
             "timestamp": self.timestamp,
         }
         return f"data: {json.dumps(event_data)}\n\n"
+
+
+def _coverage_guard_event(iteration: int, targeted: list[str], gap: str) -> PipelineEvent:
+    return PipelineEvent(
+        step=PipelineStep.GAP_ANALYSIS,
+        status="completed",
+        message=(
+            "Gap analysis would stop, but no LLM threats exist for "
+            f"{', '.join(targeted)} - running one targeted pass"
+        ),
+        iteration=iteration,
+        data={"stop": False, "gap": gap, "coverage_guard": {"targeted": targeted}},
+    )
 
 
 @dataclass
@@ -1065,6 +1079,14 @@ class PipelineRunner:
             else:
                 rag_context = None
 
+            # Coverage guard state: one targeted extra pass per run when a stop
+            # would leave a category with no LLM threats (see coverage_guard.py).
+            check_maestro = framework == Framework.MAESTRO or self.config.has_ai_components
+            applicable = applicable_maestro(assets) if check_maestro else []
+            guard_used = False
+            guard_iteration: int | None = None
+            guard_targeted: list[str] = []
+
             if not provider_failed:
                 while iteration <= self.config.max_iterations:
                     logger.info(
@@ -1460,15 +1482,33 @@ class PipelineRunner:
                             and _is_stride_coverage_balanced(_llm_threats)
                             and iteration >= self.config.min_iterations
                         ):
+                            # STRIDE is balanced here, but in a hybrid run an
+                            # applicable MAESTRO category can still be empty.
+                            plan = (
+                                None
+                                if guard_used
+                                else plan_targeted_pass(
+                                    cumulative_threats,
+                                    assets,
+                                    check_maestro=check_maestro,
+                                    applicable=applicable,
+                                )
+                            )
+                            if plan is not None:
+                                guard_used, guard_iteration = True, iteration
+                                guard_targeted, gap_text = plan
+                                gaps.append(gap_text)
+                                yield _coverage_guard_event(iteration, guard_targeted, gap_text)
+                                iteration += 1
+                                continue
+                            balanced_text = "Coverage balanced across all STRIDE categories"
+                            gaps.append(balanced_text)
                             yield PipelineEvent(
                                 step=PipelineStep.GAP_ANALYSIS,
                                 status="completed",
                                 message="All STRIDE categories covered — skipping gap analysis",
                                 iteration=iteration,
-                                data={
-                                    "stop": True,
-                                    "gap": "Coverage balanced across all STRIDE categories",
-                                },
+                                data={"stop": True, "gap": balanced_text},
                             )
                             stopped_reason = "gap_satisfied"
                             break
@@ -1527,7 +1567,30 @@ class PipelineRunner:
                             )
                             break
 
-                        if gap_result.stop and iteration >= self.config.min_iterations:
+                        plan = (
+                            plan_targeted_pass(
+                                cumulative_threats,
+                                assets,
+                                check_maestro=check_maestro,
+                                applicable=applicable,
+                            )
+                            if gap_result.stop
+                            and iteration >= self.config.min_iterations
+                            and not guard_used
+                            else None
+                        )
+                        if plan is not None:
+                            # The model said stop, but a category has no LLM
+                            # threats: override once, and tell the next pass why.
+                            guard_used, guard_iteration = True, iteration
+                            guard_targeted, gap_text = plan
+                            if gap_result.gap:
+                                gap_text = f"{gap_result.gap} {gap_text}"
+                            gaps.append(gap_text)
+                            yield _coverage_guard_event(iteration, guard_targeted, gap_text)
+                        elif gap_result.stop and iteration >= self.config.min_iterations:
+                            if gap_result.gap:
+                                gaps.append(gap_result.gap)  # keep the stop text for audit
                             yield PipelineEvent(
                                 step=PipelineStep.GAP_ANALYSIS,
                                 status="completed",
@@ -1698,6 +1761,16 @@ class PipelineRunner:
             run_usage.fast_routing_disabled = self._fast_disabled
             run_usage.refusal_count = self._refusal_count
             run_usage.effort = self.provider.effort
+            run_usage.stopped_reason = stopped_reason
+            if stopped_reason != "provider_offline":
+                run_usage.coverage_guard = build_report(
+                    final_threats=cumulative_threats,
+                    check_maestro=check_maestro,
+                    applicable=applicable,
+                    triggered=guard_used,
+                    iteration=guard_iteration,
+                    targeted=guard_targeted,
+                )
 
             yield PipelineEvent(
                 step=PipelineStep.COMPLETE,

@@ -25,7 +25,7 @@ from backend.models.api import AnalyzeBundleResponse
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
-from backend.models.usage import StepRun
+from backend.models.usage import CoverageGuardReport, StepRun
 from backend.pipeline.pre_flight import analyze_bundle
 from backend.pipeline.runner import (
     PipelineConfig,
@@ -318,7 +318,13 @@ def _merge_pre_flight_usage(run_usage: dict | None, pre_flight_step: StepRun | N
         [pre_flight_step, *(StepRun(**s) for s in run_usage["steps"])],
         fast_model=run_usage.get("fast_model"),
     )
+    # Fields build_run_usage() doesn't compute must survive the rebuild.
     rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False)
+    rebuilt.refusal_count = run_usage.get("refusal_count", 0)
+    rebuilt.effort = run_usage.get("effort")
+    rebuilt.stopped_reason = run_usage.get("stopped_reason")
+    guard = run_usage.get("coverage_guard")
+    rebuilt.coverage_guard = CoverageGuardReport(**guard) if guard else None
     return rebuilt.model_dump()
 
 
