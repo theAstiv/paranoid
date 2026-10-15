@@ -439,6 +439,25 @@ async def test_export_json_structure(client, model_with_threats):
     assert len(data["threats"]) == 2
 
 
+@pytest.mark.asyncio
+async def test_export_json_carries_maestro_categories_and_coverage(client, model_with_threats):
+    from backend.db.maestro_tags import tag_model_assets
+
+    model_id = model_with_threats["id"]
+    await crud.create_asset(
+        model_id=model_id, asset_type="Asset", name="Support Chatbot", description="LLM assistant"
+    )
+    await tag_model_assets(model_id)
+
+    data = (await client.get(f"/api/export/{model_id}?format=json")).json()
+
+    chatbot = next(a for a in data["assets"] if a["name"] == "Support Chatbot")
+    assert chatbot["maestro_categories"] == ["LLM Security"]  # a list, not a JSON string
+    coverage = {c["category"]: c for c in data["maestro_coverage"]["categories"]}
+    assert data["maestro_coverage"]["assessed"] is True
+    assert coverage["Reinforcement Learning"]["status"] == "na"
+
+
 # ---------------------------------------------------------------------------
 # Status filter
 # ---------------------------------------------------------------------------
