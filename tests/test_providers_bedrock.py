@@ -1231,17 +1231,116 @@ async def test_bedrock_openai_model_sends_reasoning_effort_and_omits_temperature
 
 
 @pytest.mark.asyncio
-async def test_bedrock_openai_model_effort_none_keeps_temperature():
+async def test_bedrock_gpt_oss_effort_none_keeps_temperature():
     mock_client = MagicMock()
     mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
 
     with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
-        provider = BedrockProvider(model="openai.gpt-6-luna-v1:0", effort="none")
+        provider = BedrockProvider(model="openai.gpt-oss-120b-1:0", effort="none")
         await provider.generate_structured("test", _SimpleModel, temperature=0.2)
 
     kwargs = mock_client.converse.call_args.kwargs
     assert kwargs["additionalModelRequestFields"] == {"reasoning_effort": "none"}
     assert kwargs["inferenceConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_bedrock_gpt_oss_without_effort_keeps_temperature():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-oss-20b-1:0")
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    assert mock_client.converse.call_args.kwargs["inferenceConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.parametrize("effort", [None, "none", "low"])
+@pytest.mark.parametrize("model", ["us.openai.gpt-6-sol", "us.openai.gpt-6-luna"])
+@pytest.mark.asyncio
+async def test_bedrock_gpt6_never_sends_temperature(model, effort):
+    """GPT-6 on Bedrock rejects `temperature` whatever the effort, so it is
+    omitted up front — no call is burned discovering that."""
+    mock_client = MagicMock()
+    mock_client.converse.side_effect = [
+        _make_tool_response({"value": "ok", "count": 1}),
+        _make_text_response("ok"),
+    ]
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=model, effort=effort)
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+        await provider.generate("plain", temperature=0.2)
+
+    assert mock_client.converse.call_count == 2
+    for call in mock_client.converse.call_args_list:
+        assert "temperature" not in call.kwargs["inferenceConfig"]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_gpt6_reasoning_effort_rejection_retry_omits_temperature():
+    """The real Bedrock GPT-6 rejections (2026-10-15 probe): the retry after
+    `reasoning_effort` is dropped must not reintroduce `temperature`."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    effort_error = _make_client_error(
+        "ValidationException",
+        "The model returned the following errors: Unknown parameter: 'reasoning_effort'.",
+    )
+    temperature_error = _make_client_error(
+        "ValidationException",
+        "This model doesn't support the temperature field. Remove temperature and try again.",
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "temperature" in kwargs["inferenceConfig"]:
+            raise temperature_error
+        if "additionalModelRequestFields" in kwargs:
+            raise effort_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.openai.gpt-6-luna", effort="low")
+        result = await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert "additionalModelRequestFields" in calls[0]
+    assert "additionalModelRequestFields" not in calls[1]
+    assert all("temperature" not in c["inferenceConfig"] for c in calls)
+    assert provider.effort is None
+
+
+@pytest.mark.asyncio
+async def test_bedrock_doesnt_support_temperature_wording_triggers_fallback():
+    """The temperature detector recognises GPT-6's "doesn't support the
+    temperature field" phrasing for any model it wasn't omitted for up front."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    temperature_error = _make_client_error(
+        "ValidationException",
+        "This model doesn't support the temperature field. Remove temperature and try again.",
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "temperature" in kwargs["inferenceConfig"]:
+            raise temperature_error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-oss-120b-1:0")
+        result = await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert "temperature" not in calls[1]["inferenceConfig"]
 
 
 @pytest.mark.asyncio

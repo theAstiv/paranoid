@@ -106,13 +106,17 @@ class BedrockProvider:
     `effort` is opt-in and family-specific: Claude models get
     `output_config.effort` (ANTHROPIC_EFFORT), OpenAI-family models (GPT-6
     Sol/Luna, gpt-oss) get `reasoning_effort` (OPENAI_REASONING_EFFORT) in
-    `additionalModelRequestFields`, with `temperature` omitted unless the
-    effort is `none`. A model that rejects it falls back the same lazy way
-    `temperature` and forced tool choice do — one failed call, then never
-    sent again for the rest of this instance's calls. The `reasoning_effort`
-    field name is an assumption carried over from gpt-oss and has not been
-    verified against GPT-6 models on Bedrock; the fallback is what keeps a
-    wrong guess from failing the run.
+    `additionalModelRequestFields`. A model that rejects it falls back the
+    same lazy way `temperature` and forced tool choice do — one failed call,
+    then never sent again for the rest of this instance's calls. GPT-6 on
+    Bedrock rejects `reasoning_effort` as an unknown parameter (probed
+    2026-10-15), so effort is effectively unavailable there until the real
+    field name is known; the fallback keeps that from failing the run.
+
+    `temperature` is never sent to OpenAI reasoning models (every OpenAI
+    family model except gpt-oss): GPT-6 on Bedrock rejects it whatever the
+    effort ("This model doesn't support the temperature field"). gpt-oss
+    keeps it unless a reasoning effort other than `none` is set.
 
     Authentication follows the standard boto3 credential chain:
     environment variables → ~/.aws/credentials → IAM roles. No explicit
@@ -237,13 +241,18 @@ class BedrockProvider:
         if self._temperature_unsupported:
             config.pop("temperature", None)
 
+        # Decided independently of effort so that the retry after an effort
+        # rejection doesn't reintroduce a temperature the model also rejects.
+        if _is_openai_reasoning_model(self._model):
+            config.pop("temperature", None)
+
         call_kwargs = dict(kwargs)
         if self._effort and not self._effort_unsupported:
             if is_openai_family_model(self._model):
                 effort_field: dict[str, Any] = {"reasoning_effort": self._effort}
                 if self._effort != "none":
-                    # OpenAI reasoning models reject temperature once reasoning
-                    # is on; omit it up front instead of burning a failed call.
+                    # gpt-oss rejects temperature once reasoning is on; omit it
+                    # up front instead of burning a failed call.
                     config.pop("temperature", None)
             else:
                 effort_field = {"output_config": {"effort": self._effort}}
@@ -594,9 +603,24 @@ def _is_temperature_deprecated_error(exc: Exception) -> bool:
     if response.get("Error", {}).get("Code") != "ValidationException":
         return False
     message = str(exc).lower()
-    return "temperature" in message and (
-        "deprecated" in message or "not supported" in message or "unsupported" in message
+    return "temperature" in message and any(
+        phrase in message
+        for phrase in (
+            "deprecated",
+            "not supported",
+            "unsupported",
+            # GPT-6 on Bedrock: "This model doesn't support the temperature field."
+            "doesn't support",
+            "does not support",
+        )
     )
+
+
+def _is_openai_reasoning_model(model_id: str) -> bool:
+    """True for OpenAI-family Bedrock models that reject `temperature`
+    outright (GPT-6 Sol/Luna and later) — every OpenAI model except the
+    open-weight gpt-oss, which accepts it while reasoning is off."""
+    return is_openai_family_model(model_id) and "gpt-oss" not in model_id.lower()
 
 
 def _is_effort_unsupported_error(exc: Exception) -> bool:
