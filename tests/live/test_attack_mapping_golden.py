@@ -11,37 +11,31 @@ matcher only, not the pipeline. It is "live" because it needs network access
 for the embedding model, not an LLM provider.
 
 The expected technique per threat was drafted by Claude from the threat's
-description and MUST be reviewed by a human with security judgment before
-the precision number here is trusted (see arsenal-plan.md decision 4). The
-bar starts at 0.6 (precision@3): below it, the UI labels matches
-"suggested" rather than treating them as confident.
+description and reviewed by a human with security judgment on 2026-10-15
+(see arsenal-plan.md decision 4). The bar is 0.6 (precision@3): below it,
+the UI labels matches "suggested" rather than treating them as confident.
 
-KNOWN STATE (measured 2026-10-05, PR #115 review):
-- First pass measured precision@3 = 0.30 with the raw scorer (exact-ID
-  match only). Review of that result found one golden-set label was
-  simply wrong (AML.T0048 "External Harms" was expected for a model-
-  extraction threat; the matcher's AML.T0024.002 "Extract AI Model" was
-  the right answer — fixed below) and two misses were the correct
-  *parent* technique returned instead of the expected sub-technique
-  (T1496 vs T1496.001, AML.T0010 vs AML.T0010.003) — this scorer now
-  credits that case, flagged `(parent)` in the failure message so it
-  stays visible rather than silently inflating the number. One more miss
-  (AML.T0015 "Evade AI Model" returned for an AML.T0043 "Craft
-  Adversarial Data" case) is a defensible alternate answer for the same
-  underlying threat and is allow-listed via `accept_alternates` below.
-- With those corrections the measured score is ~6-7/10 (a human still
-  needs to confirm `accept_alternates` and the parent-credit cases are
-  genuinely acceptable, not just convenient). The two remaining real
-  misses are exactly the pair the Arsenal cloud demo needs — stolen
-  cloud credentials (T1078.004) and SSRF-to-instance-metadata
-  (T1552.005) — both score within ~0.04 cosine of a dozen sibling
-  "cloud X" techniques, a genuine bge-small disambiguation limit, not a
-  bug. Per the arsenal-plan decision, every embedding-sourced match
-  ships as "suggested" (TechniqueRef.method == "embedding") regardless
-  of this score, so a remaining miss here is a quality gap, not a
-  trust/labeling one.
-- The set is also 10 threats, not the ~20 originally planned, and still
-  needs your review before any number here is trusted.
+KNOWN STATE (human label review + re-run, 2026-10-15):
+- All 10 labels kept after review against seeds/techniques/*.json
+  (ATT&CK v19.2 + ATLAS). The 2026-10-05 corrections stand: case 9's label
+  is AML.T0024.002 (AML.T0048 was wrong), parent-technique credit is
+  flagged `(parent)` in the failure message, and `accept_alternates` is
+  reviewed case by case.
+- precision@3 = 0.70 (7/10): 5 exact, 2 credited to the parent technique,
+  3 misses. 0.50 counting exact matches only. n = 10, so each case moves
+  the number 10 points.
+- The three misses are matcher weaknesses, not label errors:
+  case 1 (stolen cloud credentials) -> T1606/T1606.001/T1535, expected
+  T1078.004; case 6 (npm tarball-only file) -> AML.T0109 only, expected
+  T1195.002; case 8 (crafted adversarial inputs) -> AML.T0048.004/
+  AML.T0080.001/AML.T0031, expected AML.T0043 (the AML.T0015 alternate is
+  no longer returned). Case 2 (SSRF to instance metadata) is a hit now.
+- Catalog gap: T1195.001 (Compromise Software Dependencies and Development
+  Tools) is not in the catalog (only cloud-tagged techniques plus an
+  include list), so case 6 can't get the more precise label yet.
+- Every embedding-sourced match ships as "suggested"
+  (TechniqueRef.method == "embedding") regardless of this score, so a miss
+  here is a quality gap, not a trust/labeling one.
 """
 
 from dataclasses import dataclass, field
@@ -86,8 +80,7 @@ def _threat(name: str, stride_category: str, description: str, target: str) -> T
 # Drafted by Claude from seeds/attack_cloud_patterns.json and
 # seeds/atlas_patterns.json descriptions (paraphrased, not verbatim, so this
 # is a genuine held-out test of the matcher rather than round-tripping the
-# seed's own embedded ID). NEEDS HUMAN REVIEW before the precision number is
-# trusted.
+# seed's own embedded ID). Labels reviewed by a human on 2026-10-15.
 GOLDEN_SET: list[GoldenCase] = [
     GoldenCase(
         _threat(
@@ -163,6 +156,9 @@ GOLDEN_SET: list[GoldenCase] = [
             "Public AI Model Repository",
         ),
         "AML.T0010.003",
+        # AML.T0058 "Publish Poisoned Models" also fits: the attacker publishes
+        # the backdoored model to the hub (reviewed 2026-10-15).
+        accept_alternates=("AML.T0058",),
     ),
     GoldenCase(
         _threat(
