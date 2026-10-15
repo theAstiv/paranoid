@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from backend.auth.dependencies import require_role
 from backend.db import crud
 from backend.db.gap_utils import decode_gap_summaries
+from backend.db.maestro_tags import get_model_coverage, parse_categories
 from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
 from backend.export.sarif import export_sarif, sanitize_source_file, threat_from_row
@@ -182,9 +183,13 @@ async def export_model(
         content={
             "model": model,
             "threats": threats,
-            "assets": assets,
+            "assets": [
+                {**a, "maestro_categories": parse_categories(a.get("maestro_categories"))}
+                for a in assets
+            ],
             "flows": flows,
             "trust_boundaries": trust_boundaries,
+            "maestro_coverage": await get_model_coverage(model_id),
         },
         headers={
             "Content-Disposition": f'attachment; filename="{safe_title}.json"',

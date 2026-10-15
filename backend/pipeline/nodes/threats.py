@@ -24,6 +24,7 @@ from backend.pipeline.nodes.helpers import (
     format_structured_component_for_prompt,
     parse_structured_input,
 )
+from backend.pipeline.nodes.maestro_tags import applicability_section
 from backend.pipeline.prompts import (
     cvss_scoring_section,
     maestro_gap_prompt,
@@ -194,6 +195,16 @@ async def generate_threats(
                 f"- {threat.name} [{threat.stride_category.value} → {threat.target}]: {gist}\n"
             )
         prompt_parts.append(build_xml_tag("threats", threats_text))
+
+    if framework == Framework.MAESTRO:
+        # Input only: the output schema is unchanged. Added to the dynamic part,
+        # not shared_context, so the cached prefix stays byte-identical.
+        prompt_parts.append(
+            build_xml_tag(
+                "applicable_maestro_categories",
+                applicability_section((a.name, a.description) for a in assets.assets),
+            )
+        )
 
     if gap_analysis:
         prompt_parts.append(build_xml_tag("gap", gap_analysis))

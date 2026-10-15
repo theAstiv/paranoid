@@ -7,9 +7,10 @@ to trigger ProviderError on specific response models (per RULES.md).
 import pytest
 from pydantic import ValidationError
 
-from backend.models.enums import Framework, MaestroCategory
+from backend.models.enums import AssetType, Framework, MaestroCategory
 from backend.models.extended import AttackTree, CodeContext, CodeFile, CodeSummary, TestSuite
 from backend.models.state import (
+    Asset,
     AssetsList,
     FlowsList,
     GapAnalysis,
@@ -1370,3 +1371,58 @@ async def test_extract_flows_with_two_image_diagrams():
     assert provider.last_images is not None
     assert len(provider.last_images) == 2
     assert [img.source for img in provider.last_images] == ["a", "b"]
+
+
+# --- MAESTRO applicability block (B2) ---------------------------------------
+
+
+def _ai_assets() -> AssetsList:
+    return AssetsList(
+        assets=[
+            Asset(type=AssetType.ASSET, name="Support Chatbot", description="LLM assistant"),
+            Asset(type=AssetType.ASSET, name="Postgres", description="orders database"),
+        ]
+    )
+
+
+async def _maestro_prompt(assets: AssetsList, framework: Framework = Framework.MAESTRO) -> str:
+    provider = MockProvider(framework=framework)
+    await nodes.generate_threats(
+        description="An LLM answers customer questions",
+        architecture_diagram=None,
+        assumptions=None,
+        assets=assets,
+        flows=make_flows(),
+        framework=framework,
+        provider=provider,
+    )
+    return provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_maestro_prompt_lists_applicable_and_not_applicable_categories():
+    prompt = await _maestro_prompt(_ai_assets())
+
+    block = prompt.split("<applicable_maestro_categories>")[1].split(
+        "</applicable_maestro_categories>"
+    )[0]
+    applicable, not_applicable = block.split("No matching component:")
+    assert "LLM Security" in applicable
+    assert "Reinforcement Learning" not in applicable
+    assert "Reinforcement Learning" in not_applicable
+    assert "LLM Security" not in not_applicable
+
+
+@pytest.mark.asyncio
+async def test_maestro_prompt_has_no_block_when_nothing_matches():
+    plain = AssetsList(
+        assets=[Asset(type=AssetType.ASSET, name="Postgres", description="orders database")]
+    )
+    prompt = await _maestro_prompt(plain)
+    assert "applicable_maestro_categories" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_stride_prompt_never_gets_the_maestro_block():
+    prompt = await _maestro_prompt(_ai_assets(), framework=Framework.STRIDE)
+    assert "applicable_maestro_categories" not in prompt

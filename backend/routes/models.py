@@ -29,6 +29,7 @@ from backend.db.component_links import (
     try_link_model_components,
 )
 from backend.db.gap_utils import decode_gap_summaries
+from backend.db.maestro_tags import get_model_coverage, parse_categories, try_tag_model_assets
 from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
     count_resolvable_direct_dependencies,
@@ -619,6 +620,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                     )
                 except Exception:
                     logger.warning("Failed to persist asset '%s'", asset.name, exc_info=True)
+            await try_tag_model_assets(model_id)
 
     elif event.step == PipelineStep.EXTRACT_FLOWS:
         flows_list: FlowsList | None = event.data.get("flows")
@@ -680,7 +682,9 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         stride_category=(
                             threat.stride_category.value if threat.stride_category else None
                         ),
-                        maestro_category=None,
+                        maestro_category=(
+                            threat.maestro_category.value if threat.maestro_category else None
+                        ),
                         dread_score=dread.score if dread else None,
                         dread_damage=dread.damage if dread else None,
                         dread_reproducibility=dread.reproducibility if dread else None,
@@ -1061,6 +1065,13 @@ async def list_model_threats(
     return JSONResponse(content=threats)
 
 
+def _decode_asset(asset: dict | None) -> dict | None:
+    """Return an asset row with `maestro_categories` as a list (None = not tagged)."""
+    if asset is None:
+        return None
+    return {**asset, "maestro_categories": parse_categories(asset.get("maestro_categories"))}
+
+
 @router.get("/{model_id}/assets")
 async def list_model_assets(
     model_id: str,
@@ -1071,7 +1082,7 @@ async def list_model_assets(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     assets = await crud.list_assets(model_id)
-    return JSONResponse(content=assets)
+    return JSONResponse(content=[_decode_asset(a) for a in assets])
 
 
 @router.get("/{model_id}/flows")
@@ -1111,6 +1122,18 @@ async def get_model_stats(
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     stats = await crud.get_pipeline_stats(model_id)
     return JSONResponse(content=stats)
+
+
+@router.get("/{model_id}/maestro-coverage")
+async def get_maestro_coverage(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
+    """Per-category MAESTRO coverage: covered, not covered, N/A or not assessed."""
+    record = await crud.get_threat_model(model_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    return JSONResponse(content=await get_model_coverage(model_id))
 
 
 @router.get("/{model_id}/dependencies")
@@ -1182,8 +1205,9 @@ async def create_asset(
     )
     # A new asset can resolve flows/threats that had no match before.
     await try_link_model_components(model_id)
+    await try_tag_model_assets(model_id)
     asset = await crud.get_asset(asset_id)
-    return JSONResponse(status_code=201, content=asset)
+    return JSONResponse(status_code=201, content=_decode_asset(asset))
 
 
 @router.patch("/{model_id}/assets/{asset_id}")
@@ -1205,8 +1229,9 @@ async def update_asset(
     )
     # A rename can make previously unmatched text resolve; existing links are kept.
     await try_link_model_components(model_id)
+    await try_tag_model_assets(model_id)
     updated = await crud.get_asset(asset_id)
-    return JSONResponse(content=updated)
+    return JSONResponse(content=_decode_asset(updated))
 
 
 @router.delete("/{model_id}/assets/{asset_id}", status_code=204)
