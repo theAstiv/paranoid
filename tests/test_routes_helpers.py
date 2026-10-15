@@ -296,3 +296,55 @@ def test_build_provider_missing_boto3_returns_422(monkeypatch):
 
     assert exc_info.value.status_code == 422
     assert "pip install paranoid-cli[bedrock]" in exc_info.value.detail
+
+
+def test_openai_reasoning_effort_reaches_direct_openai_only(monkeypatch):
+    monkeypatch.setattr(settings, "openai_reasoning_effort", "none")
+    monkeypatch.setattr(settings, "anthropic_effort", None)
+    assert effort_kwargs("openai", "gpt-6-luna") == {"reasoning_effort": "none"}
+    assert effort_kwargs("anthropic", "claude-sonnet-5") == {}
+    assert effort_kwargs("ollama", "llama3.1:8b") == {}
+
+
+def test_openai_reasoning_effort_unset_sends_nothing(monkeypatch):
+    monkeypatch.setattr(settings, "openai_reasoning_effort", None)
+    assert effort_kwargs("openai", "gpt-4.1") == {}
+    assert effort_kwargs("bedrock", "openai.gpt-6-luna-v1:0") == {}
+
+
+def test_openai_family_models_on_bedrock_get_the_openai_setting_not_the_anthropic_one(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "openai_reasoning_effort", "low")
+    monkeypatch.setattr(settings, "anthropic_effort", "medium")
+    assert effort_kwargs("bedrock", "openai.gpt-6-luna-v1:0") == {"effort": "low"}
+    assert effort_kwargs("bedrock", "us.openai.gpt-oss-120b-1:0") == {"effort": "low"}
+    # Claude on Bedrock still gets only the Anthropic setting, and other
+    # families still get nothing.
+    assert effort_kwargs("bedrock", "us.anthropic.claude-sonnet-5-v1:0") == {"effort": "medium"}
+    assert effort_kwargs("bedrock", "qwen.qwen3-32b-v1:0") == {}
+    assert effort_kwargs("bedrock", "amazon.nova-pro-v1:0") == {}
+
+
+def test_openai_effort_reaches_main_provider_but_not_fast_provider(monkeypatch):
+    monkeypatch.setattr(settings, "openai_reasoning_effort", "none")
+    monkeypatch.setattr(settings, "openai_api_key", "k")
+    monkeypatch.setattr(settings, "fast_model_openai", "gpt-6-luna")
+    record = {"provider": "openai", "model": "gpt-6-sol"}
+
+    assert build_provider_from_record(record)._effort == "none"
+    assert build_fast_provider(record)._effort is None
+
+
+def test_openai_reasoning_effort_setting_validates_and_treats_blank_as_unset(monkeypatch):
+    from pydantic import ValidationError
+
+    from backend.config import Settings
+
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "")
+    assert Settings().openai_reasoning_effort is None
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "none")
+    assert Settings().openai_reasoning_effort == "none"
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "bogus")
+    with pytest.raises(ValidationError):
+        Settings()

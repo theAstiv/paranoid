@@ -21,6 +21,7 @@ from backend.providers.base import (
     ProviderRefusalError,
     ProviderTimeoutError,
     ProviderTransientError,
+    is_openai_family_model,
     run_sync_in_executor,
     strip_markdown_fences,
 )
@@ -102,10 +103,16 @@ class BedrockProvider:
     `toolChoice: {"auto": {}}` plus a system instruction naming the tool, and
     accepts a JSON text answer if the model replies in text instead.
 
-    `effort` (ANTHROPIC_EFFORT) is opt-in and Claude-specific; a non-Claude
-    Bedrock model that rejects it falls back the same lazy way `temperature`
-    and forced tool choice do — one failed call, then never sent again for
-    the rest of this instance's calls.
+    `effort` is opt-in and family-specific: Claude models get
+    `output_config.effort` (ANTHROPIC_EFFORT), OpenAI-family models (GPT-6
+    Sol/Luna, gpt-oss) get `reasoning_effort` (OPENAI_REASONING_EFFORT) in
+    `additionalModelRequestFields`, with `temperature` omitted unless the
+    effort is `none`. A model that rejects it falls back the same lazy way
+    `temperature` and forced tool choice do — one failed call, then never
+    sent again for the rest of this instance's calls. The `reasoning_effort`
+    field name is an assumption carried over from gpt-oss and has not been
+    verified against GPT-6 models on Bedrock; the fallback is what keeps a
+    wrong guess from failing the run.
 
     Authentication follows the standard boto3 credential chain:
     environment variables → ~/.aws/credentials → IAM roles. No explicit
@@ -232,9 +239,17 @@ class BedrockProvider:
 
         call_kwargs = dict(kwargs)
         if self._effort and not self._effort_unsupported:
+            if is_openai_family_model(self._model):
+                effort_field: dict[str, Any] = {"reasoning_effort": self._effort}
+                if self._effort != "none":
+                    # OpenAI reasoning models reject temperature once reasoning
+                    # is on; omit it up front instead of burning a failed call.
+                    config.pop("temperature", None)
+            else:
+                effort_field = {"output_config": {"effort": self._effort}}
             call_kwargs["additionalModelRequestFields"] = {
                 **call_kwargs.get("additionalModelRequestFields", {}),
-                "output_config": {"effort": self._effort},
+                **effort_field,
             }
 
         try:

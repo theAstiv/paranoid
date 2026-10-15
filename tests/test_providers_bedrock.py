@@ -1209,3 +1209,78 @@ async def test_bedrock_restate_names_the_nested_path_and_allowed_values():
     restated = calls[1]["system"][0]["text"]
     assert "threats.0.cvss.attack_complexity" in restated
     assert "'L' or 'H'" in restated
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-family models on Bedrock (GPT-6 Sol/Luna, gpt-oss): reasoning_effort
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bedrock_openai_model_sends_reasoning_effort_and_omits_temperature():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-6-luna-v1:0", effort="medium")
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    kwargs = mock_client.converse.call_args.kwargs
+    assert kwargs["additionalModelRequestFields"] == {"reasoning_effort": "medium"}
+    assert "temperature" not in kwargs["inferenceConfig"]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_openai_model_effort_none_keeps_temperature():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-6-luna-v1:0", effort="none")
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    kwargs = mock_client.converse.call_args.kwargs
+    assert kwargs["additionalModelRequestFields"] == {"reasoning_effort": "none"}
+    assert kwargs["inferenceConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_bedrock_claude_effort_field_is_unchanged_by_the_openai_branch():
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-v1:0", effort="medium")
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    kwargs = mock_client.converse.call_args.kwargs
+    assert kwargs["additionalModelRequestFields"] == {"output_config": {"effort": "medium"}}
+    assert kwargs["inferenceConfig"]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_bedrock_openai_model_rejecting_reasoning_effort_falls_back_and_remembers():
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    error = _make_client_error(
+        "ValidationException", "reasoning_effort is not supported for this model"
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "additionalModelRequestFields" in kwargs:
+            raise error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="openai.gpt-6-sol-v1:0", effort="high")
+        await provider.generate_structured("test", _SimpleModel)
+        await provider.generate_structured("again", _SimpleModel)
+
+    assert len(calls) == 3
+    assert "additionalModelRequestFields" in calls[0]
+    assert "additionalModelRequestFields" not in calls[1]
+    assert "additionalModelRequestFields" not in calls[2]
+    assert provider.effort is None

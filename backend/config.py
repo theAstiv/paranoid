@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     # default overran 4096 tokens on threat JSON and truncated, `medium`
     # finished comfortably. Older models reject the parameter.
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    # Opt-in reasoning effort for the *main* model when it is an OpenAI model:
+    # direct OpenAI (`reasoning_effort`) and OpenAI-family models on Bedrock
+    # (GPT-6 Sol/Luna, gpt-oss). Unset sends nothing, which keeps gpt-4.1 and
+    # gpt-4o exactly as before (non-reasoning models reject the parameter).
+    # GPT-6 models default to `medium` and then reject `temperature`, so set
+    # `none` to keep temperature valid, or any other level (temperature is
+    # then omitted). Never applied to the fast model.
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] | None = None
     default_iterations: int = 3
     # Fast model per non-Anthropic provider (week 4a-2). FAST_MODEL above
     # covers Anthropic; these let "fast" routing apply under any provider.
@@ -221,7 +229,7 @@ class Settings(BaseSettings):
             return v
         return [item.strip() for item in v.split(",") if item.strip()]
 
-    @field_validator("anthropic_effort", mode="before")
+    @field_validator("anthropic_effort", "openai_reasoning_effort", mode="before")
     @classmethod
     def blank_effort_is_unset(cls, v: object) -> object:
         # `ANTHROPIC_EFFORT=` in .env arrives as "" rather than being absent.

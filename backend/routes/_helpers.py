@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from backend.config import Settings, settings
 from backend.db import crud_comments
-from backend.providers.base import LLMProvider, create_provider
+from backend.providers.base import LLMProvider, create_provider, is_openai_family_model
 
 
 logger = logging.getLogger(__name__)
@@ -41,22 +41,30 @@ def effort_kwargs(provider_type: str, model: str, settings_obj: Settings | None 
     """Return the opt-in effort kwarg for create_provider, for the main
     provider only (the fast/Haiku provider must never get it).
 
-    Applies to the direct Anthropic provider, and to Claude models on
-    Bedrock (model ID contains "anthropic.claude") — never Nova/gpt-oss/
-    Qwen/DeepSeek on Bedrock. Those models' rejection-message wording for
-    an unsupported `effort` field is unconfirmed, and BedrockProvider's
-    fallback only recognises the wording Claude uses; sending it
-    unconditionally would risk an unhandled failure that falls the whole
-    run back to the rule engine instead of just dropping the field.
+    Applies to the direct Anthropic provider (ANTHROPIC_EFFORT), Claude
+    models on Bedrock (model ID contains "anthropic.claude"), direct OpenAI
+    and OpenAI-family models on Bedrock (OPENAI_REASONING_EFFORT, a separate
+    setting: each family only ever sees its own). Never Nova/Qwen/DeepSeek on
+    Bedrock: their rejection-message wording for an unsupported field is
+    unconfirmed, and sending it unconditionally would risk an unhandled
+    failure that falls the whole run back to the rule engine instead of just
+    dropping the field.
     """
     s = settings_obj or settings
-    if not s.anthropic_effort:
-        return {}
-    if provider_type == "anthropic":
-        return {"effort": s.anthropic_effort}
-    if provider_type == "bedrock" and "anthropic.claude" in model.lower():
-        return {"effort": s.anthropic_effort}
-    return {}
+    model_lower = model.lower()
+    if provider_type == "openai":
+        effort = s.openai_reasoning_effort
+        return {"reasoning_effort": effort} if effort else {}
+    if provider_type == "bedrock" and is_openai_family_model(model_lower):
+        # OpenAI-family models on Bedrock take OPENAI_REASONING_EFFORT; the
+        # Anthropic setting must not reach them. BedrockProvider picks the
+        # request field from the model ID.
+        effort = s.openai_reasoning_effort
+        return {"effort": effort} if effort else {}
+    is_claude = provider_type == "anthropic" or (
+        provider_type == "bedrock" and "anthropic.claude" in model_lower
+    )
+    return {"effort": s.anthropic_effort} if is_claude and s.anthropic_effort else {}
 
 
 def resolve_provider(
