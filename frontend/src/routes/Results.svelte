@@ -78,6 +78,14 @@
   // pipelineEvents is cleared on mount unless a pipeline run is actively streaming
   // (see onMount), so a page reload after completion has no live SSE events.
   $: runUsage = $pipelineEvents.find(e => e.step === 'complete')?.data?.usage ?? model?.usage ?? null
+  $: guard = runUsage?.coverage_guard ?? null
+  const STOP_LABELS = {
+    gap_satisfied: 'gap analysis satisfied',
+    dedup_saturated: 'new threats were duplicates',
+    max_iterations: 'max iterations reached',
+    timeout: 'time limit reached',
+    provider_offline: 'provider offline',
+  }
   $: stepRows = (runUsage?.steps ?? []).map(s => ({ ...s, tokens: sumStepUsage(s.usage) }))
 
   // A step normally has one usage entry; a fast→main retry adds a second.
@@ -394,6 +402,33 @@
         {#if runUsage.fast_routing_disabled}
           <span class="inline-block mt-2 chip-amber font-mono text-[11px] px-2 py-0.5 rounded-chip">fast routing disabled mid-run</span>
         {/if}
+        {#if runUsage.stopped_reason || guard}
+          <div class="mt-3 pt-3 border-t border-c-border space-y-1 text-[11px]" data-testid="run-coverage">
+            {#if runUsage.stopped_reason}
+              <p class="text-c-muted">
+                Stopped: <span class="font-mono text-c-text2">{STOP_LABELS[runUsage.stopped_reason] ?? runUsage.stopped_reason}</span>
+              </p>
+            {/if}
+            {#if guard?.triggered}
+              <p class="text-c-muted">
+                Coverage guard overrode the stop at iteration {guard.iteration} for
+                <span class="font-mono text-c-text2">{guard.targeted.join(', ')}</span>
+              </p>
+            {/if}
+            {#if guard?.still_empty?.length}
+              <p class="text-c-high">
+                No LLM threats: <span class="font-mono">{guard.still_empty.join(', ')}</span>{guard.triggered ? ' after a targeted pass' : ''}
+              </p>
+            {/if}
+            {#if guard?.na_maestro?.length}
+              <p class="text-c-muted">
+                MAESTRO N/A (no matching component): <span class="font-mono">{guard.na_maestro.join(', ')}</span>
+              </p>
+            {:else if guard?.unknown_maestro}
+              <p class="text-c-muted">MAESTRO applicability not assessed (no component matched a rule)</p>
+            {/if}
+          </div>
+        {/if}
         {#if stepRows.length}
           <details class="mt-3 pt-3 border-t border-c-border">
             <summary class="text-xs text-c-muted cursor-pointer select-none">By step ({stepRows.length})</summary>
@@ -580,7 +615,7 @@
       {#if model.gap_summaries && model.gap_summaries.length > 0}
         <div class="card p-5">
           <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Iteration Gap Analysis</h2>
-          <p class="text-xs text-c-faint mt-1 mb-4">Each pass identified missing coverage that fed into the next iteration.</p>
+          <p class="text-xs text-c-faint mt-1 mb-4">Notes from the gap check after each pass. An entry before the last one identified missing coverage that fed into the next iteration; the final entry records why the run stopped.</p>
           {#each model.gap_summaries as gap, i}
             <div class="mt-3 pt-3 border-t border-c-border first:border-0 first:mt-0 first:pt-0">
               <p class="font-mono text-[11px] font-semibold text-c-accent uppercase tracking-wide">Iteration {i + 1}</p>
