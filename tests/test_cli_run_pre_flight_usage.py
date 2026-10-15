@@ -247,3 +247,25 @@ def test_no_fast_model_run_stays_without_a_fast_share():
 
     assert merged["fast_model"] is None
     assert merged["fast_model_share"] is None
+
+
+def test_stop_reason_and_coverage_report_survive_the_rebuild():
+    run_usage = _sample_run_usage()
+    run_usage["stopped_reason"] = "gap_satisfied"
+    run_usage["refusal_count"] = 2
+    run_usage["effort"] = "medium"
+    run_usage["coverage_guard"] = {
+        "triggered": True,
+        "iteration": 1,
+        "targeted": ["Tampering"],
+        "still_empty": [],
+        "na_maestro": [],
+        "unknown_maestro": False,
+    }
+
+    merged = _merge_pre_flight_usage(run_usage, _pre_flight_step())
+
+    assert merged["stopped_reason"] == "gap_satisfied"
+    assert merged["refusal_count"] == 2
+    assert merged["effort"] == "medium"
+    assert merged["coverage_guard"]["targeted"] == ["Tampering"]
