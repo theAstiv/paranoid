@@ -430,6 +430,6 @@ def build_suites(env: dict[str, str], settings: BenchSettings) -> dict[str, Suit
 EXTERNAL_SUITES = {
     "bm7-attack-golden": "pytest -m live tests/live/test_attack_mapping_golden.py -v",
     "bm9-deps-benchmark": "pytest -m live tests/live/test_deps_benchmark.py -v   (run on Windows and Linux at the same time)",
-    "bm1-malware-recall": "pending: needs BENCH_MALWARE_DIR samples and the scanner adapter (Phase 2)",
+    "bm1-malware-recall": "python -m tests.bench.malware   (Linux/WSL; BENCH_MALWARE_DIR from scripts/fetch_bm1_samples.py, BENCH_MALWARE_SCRATCH outside the repo)",
     "bm15-install": "manual: docker compose up --build on a clean machine (time, image size, cold start)",
 }
