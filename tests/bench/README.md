@@ -73,7 +73,8 @@ python -m tests.bench list
 | `BENCH_EFFORT` | Effort for Claude runs (default `medium`), on the direct Anthropic provider and Claude on Bedrock (since #129) |
 | `BENCH_RUN_TIMEOUT_S` | Per-run wall-clock limit (default 1800 s; enrich/web/flagship arms multiply it) |
 | `BENCH_CODE_REPO` | A small local git repo for code-as-input; those arms are skipped when unset |
-| `BENCH_MALWARE_DIR` | Inert malicious npm tarballs for the recall benchmark (§7); skipped when unset |
+| `BENCH_MALWARE_DIR` | Encrypted malware zips for the recall benchmark (§7), from `scripts/fetch_bm1_samples.py` |
+| `BENCH_MALWARE_SCRATCH` | Where BM1 decrypts one sample at a time (outside the repo; antivirus-excluded, WSL or a VM) |
 | `BENCH_OUT_DIR` | Results root (default `data/benchmarks/`, gitignored) |
 
 ---
@@ -194,7 +195,7 @@ Each run directory (`data/benchmarks/<suite>/<arm>/rep-N/`) contains:
   - The checklist is a **draft awaiting human review**, and its match threshold (0.75 cosine) is a **placeholder**. Calibrate it on one hand-graded run per model family before reporting recall.
   - Matching uses the local fastembed model (`BAAI/bge-small-en-v1.5`), not an LLM judge.
   - `python -m tests.bench spotcheck mc` writes a blinded CSV (plus a separate key file) for a human to grade.
-- **Malware recall** (`BENCH_MALWARE_DIR`): 10–20 known-malicious npm tarballs from public incident archives. **Handle them as inert files only:** never `npm install`, never extract into the repo, never execute, never commit. The scanner adapter for this benchmark isn't built yet (`list` shows it as pending).
+- **Malware recall** (`BENCH_MALWARE_DIR`): 20 known-malicious npm packages from the DataDog dataset, listed with hashes in `fixtures/bm1-samples.json` (14 hand-picked compromises across 9 campaigns + 6 seeded-random malicious-intent packages). `python scripts/fetch_bm1_samples.py` downloads them as the dataset's encrypted zips (password `infected`) into `BENCH_MALWARE_DIR`, refuses a folder inside the repo, and never extracts. **Handle them as inert files only:** never `npm install`, never extract into the repo, never execute, never commit. Decrypt only into a scratch dir that antivirus excludes (or a VM) at scan time. Run it with `python -m tests.bench.malware` (`tests/bench/malware.py`), on Linux or in WSL with the samples in the Linux filesystem: it decrypts one sample at a time into `BENCH_MALWARE_SCRATCH` (refused inside the repo), scans it as the npm tarball, compares a compromised release with GitHub (drift; the previous release's ref when the malicious version has no tag) and with the previous clean release (delta), scans that clean release as a control, then deletes the decrypted copy. A static finding only counts when the clean release lacks it. `results.json` and `report.md` land in `BENCH_OUT_DIR/bm1-malware/<timestamp>/` with rule ids, files and lines but no code snippets.
 
 ---
 

@@ -1,0 +1,37 @@
+{
+  "_comment": "BM1 real-malware recall corpus. Names, versions and hashes only; the samples themselves are never committed. Fetch them with scripts/fetch_bm1_samples.py into BENCH_MALWARE_DIR (outside the repo). Zips stay encrypted (password 'infected') at rest; nothing is installed or run.",
+  "source": {
+    "repo": "DataDog/malicious-software-packages-dataset",
+    "commit": "6ff638a69f0173fe064e2e6dc2173a0e43cec64e",
+    "commit_date": "2026-10-14",
+    "license": "Apache-2.0",
+    "zip_password": "infected"
+  },
+  "selection": {
+    "compromised_lib": "Hand-picked well-known compromises of real packages, at most three per campaign so one payload doesn't dominate k/N. Biased towards famous incidents; report per campaign.",
+    "malicious_intent": "random.Random(20261029).sample(sorted(names), 6) over the 12,847 package directories under samples/npm/malicious_intent at the pinned commit; first listed version of each. Not cherry-picked, so it includes low-capability spam.",
+    "known_gaps": "The 2018-2022 classics (event-stream 3.3.6, ua-parser-js 0.7.29, coa 2.0.3, rc 1.2.9) have no sample in this dataset. The dataset was mostly found by GuardDog (Semgrep-based heuristics), a selection bias to state next to the number."
+  },
+  "samples": [
+    {"kind": "compromised_lib", "name": "debug", "version": "4.4.2", "campaign": "2025-09 maintainer phish (browser crypto clipper)", "file": "2025-09-08-debug-v4.4.2.zip", "size": 88910, "git_sha": "331cfe6e3f7390ebcacdcde982ca042701efd434"},
+    {"kind": "compromised_lib", "name": "@duckdb/node-api", "version": "1.3.3", "campaign": "2025-09 maintainer phish (browser crypto clipper)", "file": "2025-09-09-@duckdb_node-api-v1.3.3.zip", "size": 166756, "git_sha": "72f5970d4f7f7fd59a6912fa782cabb5ce984645"},
+    {"kind": "compromised_lib", "name": "@ctrl/tinycolor", "version": "4.1.1", "campaign": "2025-09 Shai-Hulud worm", "file": "2025-09-15-@ctrl_tinycolor-v4.1.1.zip", "size": 948823, "git_sha": "880551a6fe3b44d92422d87a5f84c0be2346a184"},
+    {"kind": "compromised_lib", "name": "koa2-swagger-ui", "version": "5.11.1", "campaign": "2025-09 Shai-Hulud worm", "file": "2025-09-15-koa2-swagger-ui-v5.11.1.zip", "size": 902183, "git_sha": "ae0b1242e780d6943936c35cc79b26652bae74ee"},
+    {"kind": "compromised_lib", "name": "@crowdstrike/commitlint", "version": "8.1.1", "campaign": "2025-09 Shai-Hulud worm", "file": "2025-09-16-@crowdstrike_commitlint-v8.1.1.zip", "size": 846262, "git_sha": "5975060cbeb5ead02542a6d0970a7470ad999ed9"},
+    {"kind": "compromised_lib", "name": "@nx/devkit", "version": "21.5.0", "campaign": "2025-08 s1ngularity (postinstall stealer)", "file": "2025-08-26-@nx_devkit-v21.5.0.zip", "size": 550679, "git_sha": "f1cbbaa33aa059a538af535992fc025d018c7959"},
+    {"kind": "compromised_lib", "name": "eslint-config-prettier", "version": "8.10.1", "campaign": "2025-07 maintainer phish (install script, Windows loader)", "file": "2025-07-18-eslint-config-prettier-v8.10.1.zip", "size": 651299, "git_sha": "26ec66897349d20f6af1b21a4960cdb35583b5e3"},
+    {"kind": "compromised_lib", "name": "synckit", "version": "0.11.9", "campaign": "2025-07 maintainer phish (install script, Windows loader)", "file": "2025-07-18-synckit-v0.11.9.zip", "size": 649824, "git_sha": "0433d8aed967aa35f1d2de2158c1a1d2d55e6dfb"},
+    {"kind": "compromised_lib", "name": "is", "version": "3.3.1", "campaign": "2025-07 is compromise", "file": "2025-07-19-is-v3.3.1.zip", "size": 69644, "git_sha": "f5df19d652b755ae34141a5c51ddf8668a01e020"},
+    {"kind": "compromised_lib", "name": "xrpl", "version": "4.2.1", "campaign": "2025-04 xrpl.js backdoor (key exfiltration)", "file": "2025-04-21-xrpl-v4.2.1.zip", "size": 3064951, "git_sha": "00a0457f3169089fff59abeb933e950cba378c39"},
+    {"kind": "compromised_lib", "name": "@solana/web3.js", "version": "1.95.7", "campaign": "2024-12 solana web3.js backdoor (key exfiltration)", "file": "2024-12-03-@solana_web3.js-v1.95.7.zip", "size": 3305138, "git_sha": "fee554638593fdc881c446d34afae9fffb9a109a"},
+    {"kind": "compromised_lib", "name": "@rspack/core", "version": "1.1.7", "campaign": "2024-12 token theft (postinstall miner)", "file": "2024-12-20-@rspack_core-v1.1.7.zip", "size": 1170459, "git_sha": "d75e4a92cf2d7c7e979a3d1eee20aada487d05e6"},
+    {"kind": "compromised_lib", "name": "vant", "version": "2.13.3", "campaign": "2024-12 token theft (postinstall miner)", "file": "2024-12-20-vant-v2.13.3.zip", "size": 1157688, "git_sha": "94508a9665079c479df2bf0372acd6ac069e3bc2"},
+    {"kind": "compromised_lib", "name": "node-ipc", "version": "12.0.1", "campaign": "2026-05 node-ipc compromise (see dataset)", "file": "2026-05-14-node-ipc-v12.0.1.zip", "size": 98633, "git_sha": "c847639adc33e69e9b346c3b6942c54bb4c2c960"},
+    {"kind": "malicious_intent", "name": "phantom-powder-keg", "version": "9999.0.2", "campaign": "random pick", "file": "2026-03-05-phantom-powder-keg-v9999.0.2.zip", "size": 5825, "git_sha": "b6bac2d2d73bf70a73c12594ccda5ab4a828f844"},
+    {"kind": "malicious_intent", "name": "maya-nasicampur61-breki", "version": "3.2.1", "campaign": "random pick", "file": "2024-05-21-maya-nasicampur61-breki-v3.2.1.zip", "size": 23930, "git_sha": "537f47e29ada5248dd221b0b8933643ae28966a0"},
+    {"kind": "malicious_intent", "name": "dian-tapai59-sluey", "version": "1.2.4", "campaign": "random pick", "file": "2024-05-12-dian-tapai59-sluey-v1.2.4.zip", "size": 23912, "git_sha": "b6db09fa173d010437851f0d67ec308efa37cf04"},
+    {"kind": "malicious_intent", "name": "snapon-imageviewer-lw", "version": "17.0.0-LW-R", "campaign": "random pick", "file": "2025-01-19-snapon-imageviewer-lw-v17.0.0-LW-R.zip", "size": 3396, "git_sha": "773794ac24695268469cb62e4d4fcedea2fa32bd"},
+    {"kind": "malicious_intent", "name": "hayase-extensions", "version": "0.0.1", "campaign": "random pick", "file": "2025-10-25-hayase-extensions-v0.0.1.zip", "size": 8999, "git_sha": "9c783fc93c29ea9957810a62fa63d2c40d413dc7"},
+    {"kind": "malicious_intent", "name": "moodle-core_filepicker", "version": "1.2.0", "campaign": "random pick", "file": "2025-09-03-moodle-core_filepicker-v1.2.0.zip", "size": 3188, "git_sha": "ef5bc7a8a0fd2f6530432da9c83e016471cab74a"}
+  ]
+}

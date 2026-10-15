@@ -32,7 +32,7 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 | 5 iterations instead of 3 (same model and inputs) | **+6 threats (+17%)** for **+81% cost** | [§4](#4-iterations) |
 | Dependency threats on the fixture | **7, identical** in every run | [§7.2](#72-determinism-volume-and-storage-2026-10-01) |
 | LLM forging a dependency finding | **0** of 345 threats, including an adversarial prompt | [§7.3](#73-safety-checks-2026-10-01) |
-| Real-malware detection rate | **Not measured.** Don't read anything here as "catches supply-chain attacks" | [Not measured yet](#not-measured-yet) |
+| Real malicious npm packages flagged (static, no LLM) | **12/20**: compromised releases **9/14**, malicious-intent packages **3/6**; every hit through install-time behaviour, every miss named. Not "catches supply-chain attacks" | [§7.4](#74-real-malware-recall-2026-10-15) |
 
 ---
 
@@ -320,7 +320,7 @@ What fixed each failure shape:
 | Drift coverage: ≥ 85% of GitHub-resolved packages compared | pass (39/42, 93%) | pass (100%) |
 
 - **The 3 Windows misses** (dayjs, nanoid, ws: `github_package_mismatch`) didn't reproduce one package at a time. The suspected cause is a cache race in the concurrent run.
-- **This isn't a malware detection rate.** It shows the engine doesn't flag benign utilities and does see well-known real capabilities.
+- **This isn't a malware detection rate.** It shows the engine doesn't flag benign utilities and does see well-known real capabilities. For real malware see [§7.4](#74-real-malware-recall-2026-10-15).
 
 ### 7.2 Determinism, volume and storage (2026-10-01)
 
@@ -333,6 +333,51 @@ What fixed each failure shape:
 
 - **Provenance can't be forged by the LLM.** Across 13 saved models (345 threats: 78 dependency, 137 LLM, 130 rule engine): **0 violations**. Every dependency threat has a known rule and a `package@version` present in that model's scans, and no other threat carries a dependency reference. An adversarial description that told the model to label its threats as dependency findings produced 0 forged rows.
 - **No orphaned Semgrep processes.** After the analysis deadline, and after cancelling the task mid-scan, the Semgrep process count fell to 0 within 3 s. Partial results were kept. A real Ctrl+C on Windows wasn't tested directly.
+
+### 7.4 Real-malware recall (2026-10-15)
+
+**2026-10-15 · Linux (WSL Ubuntu 24.04) · Semgrep 1.178.0 · engine defaults · dependency engine as on `main` @ `3725ed8` · n = 20 · no LLM.**
+
+20 real malicious npm packages from the DataDog [`malicious-software-packages-dataset`](https://github.com/DataDog/malicious-software-packages-dataset) @ `6ff638a`, listed with hashes in [`tests/bench/fixtures/bm1-samples.json`](../tests/bench/fixtures/bm1-samples.json):
+
+- **14 compromised releases of real packages**, hand-picked famous incidents across 9 campaigns, at most 3 per campaign.
+- **6 malicious-intent packages** (published to deliver malware), drawn at random with a fixed seed from the 12,847 in the dataset, so not cherry-picked.
+
+The samples are handled as inert files: never installed or run. Each is decrypted into a scratch folder, scanned as the npm tarball and deleted again. For a compromised release the engine also compares it with its GitHub source (drift) and with the previous clean release (delta). That clean release is scanned as a **control**: a static finding or drift signal only counts when the clean release doesn't have it too. Malicious-intent packages have no clean release, so any finding counts.
+
+| Group | Flagged |
+|---|---|
+| Compromised releases | **9/14** |
+| Malicious-intent packages | **3/6** |
+| All | **12/20** |
+
+| Campaign (compromised releases) | Flagged |
+|---|---|
+| 2025-09 Shai-Hulud worm (`@ctrl/tinycolor`, `koa2-swagger-ui`, `@crowdstrike/commitlint`) | 3/3 |
+| 2025-07 maintainer phish, install-script loader (`eslint-config-prettier`, `synckit`) | 2/2 |
+| 2024-12 stolen tokens, postinstall miner (`@rspack/core`, `vant`) | 2/2 |
+| 2025-08 s1ngularity (`@nx/devkit`) | 1/1 |
+| 2025-07 `is` | 1/1 |
+| 2025-09 maintainer phish, browser crypto clipper (`debug`, `@duckdb/node-api`) | 0/2 |
+| 2025-04 `xrpl` backdoor | 0/1 |
+| 2024-12 `@solana/web3.js` backdoor | 0/1 |
+| 2026-05 `node-ipc` | 0/1 |
+
+- **Every hit came through install-time behaviour.** All 12 flagged samples have an install hook. Among the 9 compromised hits, delta flagged all 9 (`install_hook_added`, plus `suspicious_capability_addition` on 4), drift flagged 7, and 8 had a static finding their clean release lacks.
+- **Every miss is a payload in the package's own code, with no install hook:**
+
+| Missed | Why |
+|---|---|
+| `debug@4.4.2`, `@duckdb/node-api@1.3.3` | Obfuscated browser code injected into a file that also exists in the repo (`debug`'s `src/index.js` grew from 314 B to 76.7 KB). No capability rule matches it, and drift only checks such a file for new capability evidence, not for a change in size or content |
+| `xrpl@4.2.1`, `@solana/web3.js@1.95.7`, `node-ipc@12.0.1` | Key or data exfiltration through `network` code the clean release already had, so delta shows nothing new; `network` alone raises no finding |
+| `maya-nasicampur61-breki`, `dian-tapai59-sluey` (malicious-intent) | Placeholder Next.js projects: `filesystem` and `process` only, which raise no finding on their own |
+| `hayase-extensions` (malicious-intent) | `network` only |
+
+- **False-alarm baseline:** 6 of the 14 clean previous releases already have a static finding, and 1 of 13 shows a drift signal against its own GitHub source. Without the control the compromised-release number would look better than it is.
+- **Drift needs a GitHub ref, and attackers rarely push one.** Only 2 of the 14 malicious versions resolved to a ref of their own; the others fell back to the clean release's ref. Drift ran for 11 of 14. For 3 it didn't: `@nx/devkit`'s repo tarball exceeds the 50 MB download cap, `eslint-config-prettier` isn't found inside its repo at that commit, and `@duckdb/node-api` resolved no GitHub source.
+- **`@duckdb/node-api`'s control is a prerelease** (`1.3.2-alpha.26`), because the package has never published a stable release before 1.3.3.
+
+**Caveats:** n = 20, so each sample moves its group by 7 (compromised) or 17 (malicious-intent) points. The dataset was found mostly by GuardDog, a Semgrep-based tool, which biases it towards what this kind of scanner can see. The best-known older incidents (event-stream, ua-parser-js, coa, rc) aren't in it. This is static analysis only; payloads fetched at runtime are out of scope. Quote it as **k/N with the misses named**, never as "catches supply-chain attacks".
 
 ---
 
@@ -353,7 +398,6 @@ What fixed each failure shape:
 
 ## Not measured yet
 
-- **Real-malware recall** for the dependency engine: 10–20 real malicious npm samples, handled as inert data. Neither the samples nor the harness adapter exist yet.
 - **Threat quality:** model output against the 18-threat MediaDrop reference checklist. The checklist and its match threshold still need human review.
 - **OpenAI direct** at n ≥ 3 (BM12 parity).
 - **Code as input** (`e2e-code`): needs the context-link binary on the bench machine.
@@ -397,4 +441,11 @@ ANTHROPIC_EFFORT=medium paranoid run examples/arsenal-deps/description.md -n 1 \
 ```bash
 pytest -m live tests/live/test_deps_benchmark.py -v
 pytest -m live tests/live/test_attack_mapping_golden.py -v
+```
+
+**Real-malware recall** (§7.4; Linux or WSL with the samples in the Linux filesystem, `semgrep` and network). The fetch keeps the dataset's encrypted zips and refuses a folder inside the repo; the run decrypts one sample at a time into the scratch folder and deletes it afterwards. Details and handling rules: [`tests/bench/README.md`](../tests/bench/README.md) §7.
+
+```bash
+python scripts/fetch_bm1_samples.py ~/bench-malware
+python -m tests.bench.malware --dir ~/bench-malware --scratch ~/bench-scratch
 ```
