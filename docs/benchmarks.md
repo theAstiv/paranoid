@@ -25,6 +25,7 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 |---|---|---|
 | Routing extraction to a fast model cuts **those steps'** cost | **−65% to −67%** per step, on both providers measured | [§2](#2-model-routing) |
 | Routing's saving on a **whole run** | Not established: ~16% estimated on the direct API, not observed on Bedrock at n = 3 | [§2](#2-model-routing) |
+| OpenAI `gpt-6-luna` vs `gpt-4.1` (direct API, `mc`, n = 3 each) | **31 vs 24 threats** (15 vs 8 from the LLM), **$0.008 vs $0.073** per run, **200 s vs 130 s**; the sequence-diagram-only dead-letter queue found in 6/6 luna runs vs 0/6 | [§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15) |
 | Haiku 5.5 as the extraction model still reads every diagram | image-only and flow-only components found **3/3** with Haiku 5.5 and Sonnet 5.5 alike | [§3.1](#31-which-extraction-model-reads-the-diagrams) |
 | Most reliable main model, 3 benchmark sessions running | **Sonnet 5.5**: 3/3 runs, 34 threats, $0.49/run on Bedrock | [§1](#1-model-comparison) |
 | The three demo commands on Sonnet 5.5 (Bedrock) | **141–164 s** median, 15/15 runs clean, $0.41–$0.56 per run | [§5.1](#51-demo-commands-on-bedrock-bm10-demo) |
@@ -43,9 +44,10 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 | Period | Provider | How | Models |
 |---|---|---|---|
 | 2026-09-26 → 10-08 | Direct Anthropic API, plus one OpenAI run | Hand-run CLI and web sessions, scratch databases | `claude-sonnet-5` main, `claude-haiku-4-5-20251001` fast; OpenAI `gpt-4.1` / `gpt-4.1-mini` |
-| 2026-10-09 → 10-12 | AWS Bedrock (`us-east-2`) | The benchmark harness in [`tests/bench/`](../tests/bench/README.md), 3 sessions, 88 pipeline runs in the latest result set | Opus 5.5, Fable 5.1, Sonnet 5.5, Sonnet 5, Haiku 5.5, Haiku 4.5, GPT-OSS 120B / 20B, Qwen, DeepSeek; OpenAI `gpt-4.1` direct |
+| 2026-10-09 → 10-12 | AWS Bedrock (`us-east-2`) | The benchmark harness in [`tests/bench/`](../tests/bench/README.md), 3 sessions, 88 pipeline runs in the latest result set | Opus 5.5, Fable 5.1, Sonnet 5.5, Sonnet 5, Haiku 5.5, Haiku 4.5, GPT-OSS 120B / 20B, Qwen, DeepSeek |
+| 2026-10-13 → 10-15 | Direct OpenAI API | The same harness, direct OpenAI slots ([§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15)) | `gpt-4.1` (10-13), `gpt-6-luna` (10-15), each as main **and** fast |
 
-Numbers from the two periods **aren't directly comparable**. Bedrock has no prompt caching in Paranoid's provider (cache reads are a large discount on the direct API), and the model generations differ.
+Numbers from the periods **aren't directly comparable**. Bedrock has no prompt caching in Paranoid's provider (cache reads are a large discount on the direct API), and the model generations differ.
 
 ### The fixture
 
@@ -62,7 +64,7 @@ Results on other systems will differ. One fixture is a demo-sized system, not a 
 
 ### Settings
 
-- **Effort:** Claude models ran at `ANTHROPIC_EFFORT=medium` (on Bedrock since #129).
+- **Effort:** Claude models ran at `ANTHROPIC_EFFORT=medium` (on Bedrock since #129). `gpt-6-luna` ran with `OPENAI_REASONING_EFFORT=none` (the setting doesn't apply to `gpt-4.1`).
 - **Scoring:** `--scoring-method both` (DREAD and CVSS) unless stated.
 - **Routing:** "main" runs `summarize`, `generate_threats` and `gap_analysis`. "Fast" may run `extract_assets`, `extract_flows`, attack trees and test cases. `generate_threats` and `gap_analysis` never run on the fast model.
 
@@ -94,12 +96,43 @@ Each model ran as **both** main and fast, on the full fixture: description, 3 di
 | Haiku 5.5 | 3/3 | 17 [17–26] | $0.045 | 98 s | low yield as the only model; see §3.1 for it as the fast model |
 | GPT-OSS 120B | 0/3 | — | $0.016 | 137 s | unsupported: wrong field names ([§6.3](#63-what-still-fails)) |
 | GPT-OSS 20B | 0/3 | 0–26 | $0.020 | 192 s | unsupported: wrong field names, flat CVSS ([§6.3](#63-what-still-fails)) |
-| OpenAI `gpt-4.1` (direct) | not run | — | — | — | the bench machine's API key was rejected |
+| OpenAI `gpt-4.1` (direct) | 3/3 | 24 [24–25] | $0.073 | 131 s | measured 10-13 on the direct API, not in this Bedrock session: see [§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15) |
+| OpenAI `gpt-6-luna` (direct) | 3/3 | 31 [30–31] | $0.0078 | 200 s | measured 10-15 on the direct API: see [§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15) |
 
 **Reading the table:**
 - **Sonnet 5.5** is the recommended main model: 3/3 runs in all three sessions, the second-highest yield, and a third of Opus 5.5's wall time.
 - **More threats isn't automatically better.** Until quality scoring has run, Opus 5.5's 38 and Sonnet 5.5's 34 aren't evidence that one model finds *better* threats.
 - **The minimum of 17** for Haiku 4.5, Haiku 5.5 and Fable 5.1 equals the rule-engine baseline. Those runs passed the "LLM produced output" gate, so they contain LLM threats, but few of them.
+- **The two OpenAI rows are from other sessions** (direct API, 10-13 and 10-15), so their cost and time aren't comparable with the Bedrock rows above them. Cost in particular: the direct API has prompt caching, Bedrock in Paranoid doesn't.
+
+### 1.1 OpenAI direct: `gpt-4.1` and `gpt-6-luna` (2026-10-13 → 10-15)
+
+**Direct OpenAI API · the same fixture (description, 3 diagrams, manifest + lockfile, dependency mode `both`) · the harness's OpenAI slots, each model as both main and fast.** `gpt-4.1` ran on 10-13 at `main` @ `3154a3a`. `gpt-6-luna` ran on 10-15 at `main` @ `c14fd1f` plus the OpenAI reasoning-effort change (PR #156, uncommitted at run time; the harness reports name `c14fd1f`) with `OPENAI_REASONING_EFFORT=none`. Prices per 1M tokens (input / cached / output): `gpt-4.1` $2.00 / $0.50 / $8.00, read from OpenAI's pricing page on 10-13; `gpt-6-luna` $0.10 / $0.01 / $0.50 (cache writes $0.125), as recorded on 10-14 and **not re-read** on the day of the run.
+
+| | `gpt-4.1` (n) | `gpt-6-luna` (n) |
+|---|---|---|
+| `mc`: threats | 24 [24–25] (3) | 31 [30–31] (3) |
+| `mc`: from the LLM / rule engine / dependencies | 8 [8–9] / 9 / 7 | 15 [14–15] / 9 / 7 |
+| `mc`: iterations (of `-n 2`) | 1 [1–1] | 2 [2–2] |
+| `mc`: wall time | 130.5 s [120.1–135.6] | 200.4 s [192.2–206.5] |
+| `mc`: cost per run | $0.073 [0.065–0.080] | $0.0078 [0.0076–0.0085] |
+| `mc`: assets / flows | 15 [14–15] / 10 [8–16] | 17 [11–23] / 14 [13–16] |
+| `mc`: dead-letter queue (appears only in the sequence diagram) as asset or flow | **0/3** | **3/3** |
+| `mc`: secrets manager (appears only in the PNG) as an asset | 3/3 | 2/3 (in a flow or threat: 3/3) |
+| `e2e-cli`: threats, wall time, cost | 24 (8 / 9 / 7), 124 s, $0.066 (1) | 31 (15 / 9 / 7), 207 s, $0.008 (1) |
+| `e2e-web`: threats, wall time | 19 (10 / 9), 201 s (1) | 18 (9 / 9), 289 s (1) |
+| `e2e-enrich`: threats, wall time, cost | 24 (8 / 9 / 7), 377 s, $0.054 (1) | 25 (9 / 9 / 7), 500 s, $0.005 (1) |
+| Reliability (the 6 runs of each model in these four suites) | 0 JSON retries, auto-bumps, fallbacks, refusals or timeouts | the same |
+
+**Reading it:**
+- **Every harness gate passed for both models** in `mc`, `e2e-cli`, `e2e-web` and `e2e-enrich` (`e2e-degraded` doesn't depend on the model and wasn't re-run for luna). `gpt-6-luna`'s usage summary records `effort: none` in every run.
+- **`gpt-6-luna` found about twice as many LLM threats** (14–15 vs 8–9 in `mc`) and ran the second iteration in all three `mc` runs; `gpt-4.1` stopped after one in all three. It also found the dead-letter queue in all 6 of its runs across the four suites, where `gpt-4.1` found it in none of its 6. The PNG-only secrets manager was found as an asset in 4 of 6 luna runs and 5 of 6 `gpt-4.1` runs, which is no difference worth claiming.
+- **`gpt-6-luna` is slower** (about 1.5× in `mc`, 1.3–1.7× across the suites) and **about 8–12× cheaper per run** on the suites that are priced. The `e2e-web` arm is unpriced.
+- **Quantity isn't quality:** these are counts, not scored against the reference checklist.
+- **`gpt-4.1`'s lower counts are treated as a model limitation, not a pipeline bug** (decided 10-14). The early "stop" after iteration 1 wasn't hiding capacity: forced into a second iteration (`MIN_ITERATIONS=2`, one valid run), `gpt-4.1` produced 8 threats that were all duplicates and stopped on dedup saturation. It writes whole sentences into the flow `source_entity` / `target_entity` fields (seen in 4 of 5 runs), and in one forced-second-iteration retry `extract_flows` ran past its 32,768-token output ceiling, sending that run to the rule engine alone (0 LLM threats).
+- **Why `gpt-6-luna` needed a code change:** it rejects `max_tokens` (it needs `max_completion_tokens`) and rejects `temperature` once reasoning is on, which is its default (`medium`). Probed on 10-15 against the live API: with effort `none` and `max_completion_tokens`, `temperature` is accepted; with `medium`, `temperature=0.2` is refused. Before the reasoning-effort setting, every call to it would have failed and a run would have fallen back to the rule engine.
+- **Sample sizes:** `mc` is n = 3 per model; each `e2e-*` suite is a **single run, indicative only**. One fixture, one effort level for luna (`none`; higher efforts weren't tried).
+- **Not measured:** `gpt-6-sol` (no model ID yet), either GPT-6 model on Bedrock, and `gpt-6-luna` at effort above `none`.
 
 ---
 
@@ -272,6 +305,8 @@ Both arms use the same model and inputs. Only the iteration count differs, and `
 | `mc` | See [§1](#1-model-comparison) | 11 | 8 at 3/3; GPT-OSS ×2 and OpenAI direct fail |
 | `bm2`, `bm3`, `bm4`, `bm5`, `bm10`, `bm13` | See §2–§5 | 12 | all pass |
 
+The two OpenAI direct arms counted as failing on 10-12 were a rejected API key on the bench machine, not a product failure. Re-run on the direct API since: `gpt-4.1` (10-13) and `gpt-6-luna` (10-15) pass every gate they were run on, see [§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15).
+
 ### 6.2 Structured-output reliability across sessions
 
 Every non-environment failure in these sessions had the same effect: a model returned structured output the schema rejected, the step failed, and the run fell back to the rule engine.
@@ -301,7 +336,7 @@ What fixed each failure shape:
   - **Fixed by earlier PRs:** no run answered in prose instead of calling the tool (#138), and no run was sent an image it couldn't take (#128).
   - **What remains:** the models call the tool but fill it in wrong. They write field names in PascalCase (`Type`, `Name`, `Description` instead of `type`, `name`, `description`) and send CVSS as a flat abbreviated object (`{'av': 'N', 'ac': 'L', …}`) instead of the nested metrics. The validation retry, which names the failing fields, doesn't get them to correct it within 3 attempts.
   - Paranoid treats the GPT-OSS models as **unsupported** for structured output. Fixing them would mean rewriting keys the models got wrong, which isn't planned.
-- **OpenAI direct:** not measured this period (credential problem on the bench machine, not a product failure).
+- **OpenAI direct:** measured since, see [§1.1](#11-openai-direct-gpt-41-and-gpt-6-luna-2026-10-13--10-15). `gpt-4.1` is reliable on every path but yields fewer threats and puts whole sentences in flow entity fields; one forced-second-iteration `extract_flows` call hit the model's 32,768-token output ceiling. Both are treated as model limitations (decided 10-14). `gpt-6-luna` needs `OPENAI_REASONING_EFFORT` (it rejects `max_tokens` and, with reasoning on, `temperature`); with it set to `none` it passed every gate.
 
 ---
 
@@ -399,7 +434,7 @@ The samples are handled as inert files: never installed or run. Each is decrypte
 ## Not measured yet
 
 - **Threat quality:** model output against the 18-threat MediaDrop reference checklist. The checklist and its match threshold still need human review.
-- **OpenAI direct** at n ≥ 3 (BM12 parity).
+- **OpenAI direct:** the `e2e-*` suites at n ≥ 3 (only `mc` has n = 3), `gpt-6-sol`, either GPT-6 model on Bedrock, and `gpt-6-luna` above effort `none`.
 - **Code as input** (`e2e-code`): needs the context-link binary on the bench machine.
 - **Per-iteration yield** (where the curve flattens) and **per-step routing with `--enrich`**.
 - **Prompt caching on Bedrock:** not implemented, so Bedrock costs here are without it.
@@ -414,6 +449,16 @@ The samples are handled as inert files: never installed or run. Each is decrypte
 ```bash
 python -m tests.bench plan mc bm2-routing bm4-diagrams bm5-iterations
 python -m tests.bench run mc --yes --max-cost 20
+python -m tests.bench report mc
+```
+
+**OpenAI direct** (§1.1; needs `OPENAI_API_KEY`, in the shell or the repo's `.env`). The `gpt-4.1` slot defaults to that model; the GPT-6 slots have no default model ID. Give `gpt-6-luna` its own output folder and price file (`{"models": {"GPT_LUNA_DIRECT": {"input": …, "output": …, "cache_read": …, "cache_write": …}}}`, same keys as `tests/bench/prices.example.json`), and run only its arms with `--only`, so the `gpt-4.1` arms aren't started too:
+
+```bash
+export BENCH_MODEL_GPT_LUNA_DIRECT=gpt-6-luna OPENAI_REASONING_EFFORT=none
+export BENCH_OUT_DIR=data/benchmarks/gpt-6-luna BENCH_PRICES_FILE=data/benchmarks/gpt-6-luna/prices.json
+python -m tests.bench plan e2e-cli e2e-web e2e-enrich mc
+python -m tests.bench run mc --only mc-gpt_luna_direct --yes --max-cost 1
 python -m tests.bench report mc
 ```
 

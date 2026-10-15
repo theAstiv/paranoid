@@ -8,6 +8,7 @@ from openai import (
     APIError,
     APITimeoutError,
     AuthenticationError,
+    BadRequestError,
     LengthFinishReasonError,
     OpenAI,
     RateLimitError,
@@ -31,9 +32,9 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 # Auto-bump constants — mirror the Anthropic provider.
-# OpenAI's hard ceilings differ by model (gpt-4o: 16 384, gpt-4.1: 32 768),
-# but our retry logic just doubles the *requested* budget; the model will still
-# cap at its own maximum.
+# OpenAI's hard ceilings differ by model (gpt-4o: 16 384, gpt-4.1: 32 768,
+# GPT-6: far higher), but our retry logic just doubles the *requested* budget
+# up to this cap; the model will still cap at its own maximum.
 _MAX_AUTO_BUMP = 32768
 _MAX_RETRIES = 2
 
@@ -56,6 +57,7 @@ class OpenAIProvider:
         base_url: str | None = None,
         max_retries: int = 3,
         timeout: float = 240.0,
+        reasoning_effort: str | None = None,
     ):
         """Initialize OpenAI provider.
 
@@ -65,8 +67,21 @@ class OpenAIProvider:
             base_url: Custom API base URL (for Azure or compatible APIs)
             max_retries: Number of retry attempts for failed requests
             timeout: Request timeout in seconds
+            reasoning_effort: Optional `reasoning_effort` level (none/low/medium/
+                high/xhigh/max) for GPT-6-class reasoning models. None sends
+                nothing. Any level other than "none" also omits `temperature`,
+                which those models reject once reasoning is on. A model that
+                rejects the parameter loses it for the rest of this instance's
+                calls (see `_call`).
         """
         self._model = model
+        # Parameters a model may reject with a 400, detected lazily on the first
+        # rejection and remembered, so later calls skip the doomed round-trip
+        # (the same pattern the Anthropic and Bedrock providers use).
+        self._effort = reasoning_effort
+        self._effort_unsupported = False
+        self._temperature_unsupported = False
+        self._use_completion_tokens = False
         self._client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -118,8 +133,75 @@ class OpenAIProvider:
 
     @property
     def effort(self) -> str | None:
-        """OpenAI has no `output_config.effort` equivalent wired up."""
-        return None
+        """The `reasoning_effort` level actually in effect — None if never set,
+        or if the model rejected it (see `_effort_unsupported`)."""
+        return None if self._effort_unsupported else self._effort
+
+    def _request_params(self, budget: int | None, temperature: float) -> dict:
+        """Sampling/budget parameters for one request, minus anything this
+        model is already known to reject."""
+        params: dict = {}
+        if budget is not None:
+            key = "max_completion_tokens" if self._use_completion_tokens else "max_tokens"
+            params[key] = budget
+        effort = None if self._effort_unsupported else self._effort
+        if effort:
+            params["reasoning_effort"] = effort
+        # Reasoning models reject temperature unless effort is "none".
+        reasoning_on = bool(effort) and effort != "none"
+        if not self._temperature_unsupported and not reasoning_on:
+            params["temperature"] = temperature
+        return params
+
+    def _drop_rejected_param(self, e: BadRequestError) -> bool:
+        """Flip the flag for the parameter a 400 complains about. True if one
+        was flipped, so the caller should retry; False means a real error."""
+        message = str(e).lower()
+        if "reasoning_effort" in message and self._effort and not self._effort_unsupported:
+            self._effort_unsupported = True
+            logger.warning(
+                "Model %s rejects `reasoning_effort` — omitting it for the rest of "
+                "this provider instance's calls",
+                self._model,
+            )
+            return True
+        if "temperature" in message and not self._temperature_unsupported:
+            self._temperature_unsupported = True
+            logger.warning(
+                "Model %s rejects `temperature` — omitting it for the rest of "
+                "this provider instance's calls",
+                self._model,
+            )
+            return True
+        if (
+            "max_tokens" in message
+            and "max_completion_tokens" in message
+            and not self._use_completion_tokens
+        ):
+            self._use_completion_tokens = True
+            logger.warning(
+                "Model %s requires `max_completion_tokens` — switching for the rest of "
+                "this provider instance's calls",
+                self._model,
+            )
+            return True
+        return False
+
+    async def _call(self, func, *, budget: int | None, temperature: float, **kwargs):
+        """Call a chat-completions method, retrying without a parameter the model
+        rejects. Each rejection flips a per-instance flag, so the number of
+        retries is bounded by the number of flags."""
+        while True:
+            try:
+                return await run_sync_in_executor(
+                    func,
+                    model=self._model,
+                    **self._request_params(budget, temperature),
+                    **kwargs,
+                )
+            except BadRequestError as e:
+                if not self._drop_rejected_param(e):
+                    raise
 
     async def generate_structured(
         self,
@@ -180,10 +262,9 @@ class OpenAIProvider:
                     # Use Structured Outputs (Aug 2024+) — the SDK converts
                     # the Pydantic model to a strict JSON schema and enforces
                     # it server-side.  Requires gpt-4o-2024-08-06 or later.
-                    response = await run_sync_in_executor(
+                    response = await self._call(
                         self._client.chat.completions.parse,
-                        model=self._model,
-                        max_tokens=budget,
+                        budget=budget,
                         temperature=temperature,
                         response_format=response_model,
                         messages=[
@@ -232,8 +313,9 @@ class OpenAIProvider:
                         message=(
                             "Model hit the output token ceiling before completing the "
                             "response. Reduce input complexity or use a model with a "
-                            "higher output ceiling (gpt-4.1 supports 32 768 output "
-                            "tokens vs gpt-4o's 16 384)."
+                            "higher output ceiling (gpt-4.1: 32 768 output tokens, "
+                            "gpt-4o: 16 384). On a reasoning model, reasoning tokens "
+                            "count against the budget; try a lower reasoning effort."
                         ),
                         original_error=e,
                     )
@@ -274,10 +356,9 @@ class OpenAIProvider:
     ) -> str:
         """Generate plain text output."""
         try:
-            response = await run_sync_in_executor(
+            response = await self._call(
                 self._client.chat.completions.create,
-                model=self._model,
-                max_tokens=max_tokens,
+                budget=max_tokens,
                 temperature=temperature,
                 messages=[{"role": "user", "content": prompt}],
             )

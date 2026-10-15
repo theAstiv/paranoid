@@ -83,7 +83,10 @@ def _resolve(names: list[str], env: dict[str, str], skipped: list[str]) -> list[
     for name in names:
         model = resolve_slot(name, env)
         if model is None:
-            need = "OPENAI_API_KEY" if SLOTS[name].provider == "openai" else SLOTS[name].env_var
+            slot = SLOTS[name]
+            has_model_id = bool(env.get(slot.env_var, "").strip() or slot.default_id)
+            # A direct OpenAI slot with a model ID is only missing the API key.
+            need = "OPENAI_API_KEY" if slot.provider == "openai" and has_model_id else slot.env_var
             skipped.append(f"{name}: {need} not set")
         else:
             out.append(model)

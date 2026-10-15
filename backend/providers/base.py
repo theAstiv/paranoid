@@ -256,6 +256,18 @@ async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any
     )
 
 
+def is_openai_family_model(model_id: str) -> bool:
+    """True for OpenAI models served through Bedrock (gpt-oss, GPT-6 Sol/Luna).
+
+    Matched on the model ID: Bedrock IDs for them carry ``openai.`` (e.g.
+    ``openai.gpt-oss-120b-1:0``, possibly behind a ``us.`` inference-profile
+    prefix) or a ``gpt-`` name. Those models take a ``reasoning_effort``
+    request field instead of Claude's ``output_config.effort``.
+    """
+    lowered = model_id.lower()
+    return "openai." in lowered or "gpt-" in lowered
+
+
 def create_provider(
     provider_type: str,
     model: str,

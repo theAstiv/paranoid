@@ -92,6 +92,39 @@ SLOTS: dict[str, ModelSlot] = {
             family="openai",
             images_by_default=False,
         ),
+        # GPT-6 reasoning models, on Bedrock and direct. No default model IDs:
+        # a slot only runs once its BENCH_MODEL_* is set. Bedrock slots are
+        # text-only by default (override with BENCH_IMAGES_<SLOT>=true once the
+        # model card confirms vision); direct slots go through Chat Completions.
+        # Set OPENAI_REASONING_EFFORT per command (none = keep temperature).
+        ModelSlot(
+            name="GPT_SOL",
+            provider="bedrock",
+            env_var="BENCH_MODEL_GPT_SOL",
+            family="openai",
+            images_by_default=False,
+        ),
+        ModelSlot(
+            name="GPT_LUNA",
+            provider="bedrock",
+            env_var="BENCH_MODEL_GPT_LUNA",
+            family="openai",
+            images_by_default=False,
+        ),
+        ModelSlot(
+            name="GPT_SOL_DIRECT",
+            provider="openai",
+            env_var="BENCH_MODEL_GPT_SOL_DIRECT",
+            family="openai",
+            images_by_default=True,
+        ),
+        ModelSlot(
+            name="GPT_LUNA_DIRECT",
+            provider="openai",
+            env_var="BENCH_MODEL_GPT_LUNA_DIRECT",
+            family="openai",
+            images_by_default=True,
+        ),
         ModelSlot(
             name="QWEN",
             provider="bedrock",
@@ -123,6 +156,7 @@ ARTIFACT_SAFE_KEYS = (
     "AWS_REGION",
     "AWS_PROFILE",
     "ANTHROPIC_EFFORT",
+    "OPENAI_REASONING_EFFORT",
     "BENCH_EFFORT",
     "DEFAULT_PROVIDER",
     "FAST_MODEL",

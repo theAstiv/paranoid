@@ -640,3 +640,44 @@ def test_converse_shape_distinguishes_the_two_structured_output_failures():
     failed = converse_shape(kwargs, None, "ValidationException: tool_choice not supported")
     assert failed["error"].startswith("ValidationException")
     assert "stop_reason" not in failed
+
+
+# --- GPT-6 slots (Sol / Luna, Bedrock and direct) -----------------------------------
+
+
+def test_gpt6_bedrock_slots_need_their_model_id_and_are_text_only_by_default(no_repo_env):
+    assert resolve_slot("GPT_SOL", {}) is None
+    assert resolve_slot("GPT_LUNA", {}) is None
+    sol = resolve_slot("GPT_SOL", {"BENCH_MODEL_GPT_SOL": "openai.sol.id"})
+    assert (sol.provider, sol.family, sol.images) == ("bedrock", "openai", False)
+    luna = resolve_slot(
+        "GPT_LUNA", {"BENCH_MODEL_GPT_LUNA": "openai.luna.id", "BENCH_IMAGES_GPT_LUNA": "true"}
+    )
+    assert luna.images is True
+
+
+def test_gpt6_direct_slots_need_both_a_model_id_and_an_api_key(no_repo_env):
+    env = {"BENCH_MODEL_GPT_LUNA_DIRECT": "gpt-6-luna"}
+    assert resolve_slot("GPT_LUNA_DIRECT", env) is None  # no key
+    assert resolve_slot("GPT_LUNA_DIRECT", {"OPENAI_API_KEY": "sk-test"}) is None  # no model id
+    model = resolve_slot("GPT_LUNA_DIRECT", {**env, "OPENAI_API_KEY": "sk-test"})
+    assert (model.provider, model.model_id, model.images) == ("openai", "gpt-6-luna", True)
+
+
+def test_skip_message_names_the_missing_model_id_or_the_missing_key(no_repo_env):
+    env = {"BENCH_MODEL_GPT_LUNA_DIRECT": "gpt-6-luna"}
+    suites = build_suites(env, load_settings(env))
+    skipped = suites["e2e-cli"].skipped
+    assert "GPT_LUNA_DIRECT: OPENAI_API_KEY not set" in skipped
+    assert "GPT_SOL_DIRECT: BENCH_MODEL_GPT_SOL_DIRECT not set" in skipped
+    assert "GPT_SOL: BENCH_MODEL_GPT_SOL not set" in skipped
+    assert "OPENAI_DIRECT: OPENAI_API_KEY not set" in skipped
+
+
+def test_reasoning_effort_is_recorded_in_the_env_snapshot():
+    from tests.bench.runner import safe_env_snapshot
+
+    snapshot = safe_env_snapshot(
+        {"OPENAI_REASONING_EFFORT": "none", "OPENAI_API_KEY": "sk-secret", "PATH": "x"}
+    )
+    assert snapshot == {"OPENAI_REASONING_EFFORT": "none"}
