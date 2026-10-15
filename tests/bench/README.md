@@ -65,8 +65,9 @@ python -m tests.bench list
 |---|---|
 | `AWS_REGION`, `AWS_PROFILE` | Bedrock. Or the standard `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN` in the shell. Never written to any artifact |
 | `OPENAI_API_KEY` | Direct OpenAI (the light `OPENAI_DIRECT` arm). Also read from the repo's `.env` |
-| `BENCH_MODEL_<SLOT>` | The Bedrock model ID or inference profile for each slot: `OPUS_55`, `FABLE_51`, `SONNET_55`, `SONNET_5`, `HAIKU_55`, `HAIKU_45`, `GPT_OSS_120B`, `GPT_OSS_20B`, `QWEN`, `DEEPSEEK`. `BENCH_MODEL_OPENAI_DIRECT` defaults to `gpt-4.1`. **An empty slot is skipped, and the skip is reported** |
-| `BENCH_IMAGES_<SLOT>` | `true`/`false`: whether a slot is sent images. Defaults: Claude and OpenAI direct `true`; gpt-oss, Qwen and DeepSeek `false`. Set from the spike results |
+| `BENCH_MODEL_<SLOT>` | The Bedrock model ID or inference profile for each slot: `OPUS_55`, `FABLE_51`, `SONNET_55`, `SONNET_5`, `HAIKU_55`, `HAIKU_45`, `GPT_OSS_120B`, `GPT_OSS_20B`, `GPT_SOL`, `GPT_LUNA`, `QWEN`, `DEEPSEEK`. `BENCH_MODEL_OPENAI_DIRECT` defaults to `gpt-4.1`. The direct GPT-6 slots `GPT_SOL_DIRECT` and `GPT_LUNA_DIRECT` (provider `openai`, need `OPENAI_API_KEY`) have **no default model ID**: set `BENCH_MODEL_GPT_SOL_DIRECT` / `BENCH_MODEL_GPT_LUNA_DIRECT` (e.g. `gpt-6-luna`). **An empty slot is skipped, and the skip is reported** |
+| `OPENAI_REASONING_EFFORT` | `none`/`low`/`medium`/`high`/`xhigh`/`max` for OpenAI models, direct and on Bedrock; empty sends nothing. GPT-6 models default to `medium` and reject `temperature` unless effort is `none`, so start with `none`. Set it per command; non-reasoning slots (gpt-4.1) drop a rejected parameter and carry on. Recorded in each run's env snapshot. The Bedrock request field (`reasoning_effort` in `additionalModelRequestFields`) is unverified for GPT-6: check the first run's log for a "rejects `reasoning_effort`" warning |
+| `BENCH_IMAGES_<SLOT>` | `true`/`false`: whether a slot is sent images. Defaults: Claude and the direct OpenAI slots `true`; gpt-oss, GPT-6 on Bedrock, Qwen and DeepSeek `false`. Set from the spike results |
 | `BENCH_ROUTING_MAIN`, `BENCH_ROUTING_FAST` | Slot *names* for the routing benchmarks (e.g. `OPUS_55` / `HAIKU_55`) |
 | `BENCH_PRICES_FILE` | Price table (§4) |
 | `BENCH_MAX_COST_USD` | Hard spend cap for one `run` invocation. **Required** for `run` |
