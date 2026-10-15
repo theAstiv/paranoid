@@ -57,6 +57,22 @@ class StepRun(BaseModel):
     usage: list[ModelUsage]
 
 
+class CoverageGuardReport(BaseModel):
+    """What the coverage guard did and which categories ended with no LLM threats.
+
+    Counts LLM-generated threats only: rule-engine and dependency threats merge
+    after the iteration loop and can fill a category the LLM left empty.
+    Labels are STRIDE names ("Tampering") or "MAESTRO: <category>".
+    """
+
+    triggered: bool = False
+    iteration: int | None = None  # iteration whose stop was overridden
+    targeted: list[str] = []  # categories named in the extra pass
+    still_empty: list[str] = []  # categories with no LLM threats when the run ended
+    na_maestro: list[str] = []  # MAESTRO categories with no matching component
+    unknown_maestro: bool = False  # no asset matched any rule, so applicability is unknown
+
+
 class RunUsage(BaseModel):
     """Usage report for a whole pipeline run.
 
@@ -82,3 +98,8 @@ class RunUsage(BaseModel):
     # None when never configured, not applicable to this provider, or
     # dropped after the model rejected it (see LLMProvider.effort).
     effort: str | None = None
+    # Why the loop ended and what the coverage guard did. Kept here because this
+    # object is already persisted with the model (threat_models.usage_summary),
+    # so a reloaded Results page can still say why a run stopped.
+    stopped_reason: str | None = None
+    coverage_guard: CoverageGuardReport | None = None
