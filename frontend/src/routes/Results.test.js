@@ -35,6 +35,7 @@ vi.mock('../lib/api.js', () => ({
   deleteComment: vi.fn(),
   getCommentCounts: vi.fn().mockResolvedValue([]),
   getModelDependencies: vi.fn().mockResolvedValue([]),
+  getMaestroCoverage: vi.fn().mockResolvedValue(null),
   listModelDiagrams: vi.fn().mockResolvedValue([]),
   getModelDiagram: vi.fn(),
 }))
@@ -52,7 +53,7 @@ vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
-  getModelDependencies, listModelDiagrams, getModelDiagram,
+  getModelDependencies, listModelDiagrams, getModelDiagram, getMaestroCoverage,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -84,6 +85,7 @@ beforeEach(() => {
   getModelTrustBoundaries.mockResolvedValue([])
   getModelDependencies.mockResolvedValue([])
   listModelDiagrams.mockResolvedValue([])
+  getMaestroCoverage.mockResolvedValue(null)
 })
 
 describe('Results — loading', () => {
@@ -127,6 +129,48 @@ describe('Results — dependencies', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('lodash@4.17.21')).toBeInTheDocument())
     expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+})
+
+describe('Results — MAESTRO coverage', () => {
+  const coverage = {
+    assessed: true,
+    categories: [
+      { category: 'LLM Security', status: 'covered', threats: 2 },
+      { category: 'Reinforcement Learning', status: 'na', threats: 0 },
+    ],
+  }
+
+  it('shows the coverage panel for a MAESTRO model', async () => {
+    getModel.mockResolvedValue({ ...baseModel, framework: 'MAESTRO' })
+    getMaestroCoverage.mockResolvedValue(coverage)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('maestro-coverage')).toBeInTheDocument())
+    expect(screen.getByTestId('maestro-Reinforcement Learning')).toHaveTextContent('N/A')
+  })
+
+  it('hides the panel for a STRIDE model without MAESTRO threats', async () => {
+    getMaestroCoverage.mockResolvedValue({
+      assessed: false,
+      categories: [{ category: 'Privacy', status: 'not_assessed', threats: 0 }],
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getMaestroCoverage).toHaveBeenCalledWith('m1'))
+    expect(screen.queryByTestId('maestro-coverage')).toBeNull()
+  })
+
+  it('shows the panel for a STRIDE model that has MAESTRO threats', async () => {
+    getMaestroCoverage.mockResolvedValue(coverage)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('maestro-coverage')).toBeInTheDocument())
+  })
+
+  it('still renders the page when the coverage request fails', async () => {
+    getModel.mockResolvedValue({ ...baseModel, framework: 'MAESTRO' })
+    getMaestroCoverage.mockRejectedValue(new Error('boom'))
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+    expect(screen.queryByTestId('maestro-coverage')).toBeNull()
   })
 })
 

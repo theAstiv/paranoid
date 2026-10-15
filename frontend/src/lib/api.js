@@ -195,6 +195,14 @@ export function getModelTrustBoundaries(id) {
   return request('GET', `/models/${id}/trust-boundaries`)
 }
 
+/**
+ * MAESTRO coverage per category (covered / not_covered / na / not_assessed).
+ * @param {string} id
+ */
+export function getMaestroCoverage(id) {
+  return request('GET', `/models/${id}/maestro-coverage`)
+}
+
 /** @param {string} id */
 export function getModelStats(id) {
   return request('GET', `/models/${id}/stats`)

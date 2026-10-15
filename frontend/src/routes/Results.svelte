@@ -8,6 +8,7 @@
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
     subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams, getModelDiagram,
+    getMaestroCoverage,
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
@@ -19,6 +20,7 @@
   import Comments from '../components/Comments.svelte'
   import EntityComments from '../components/EntityComments.svelte'
   import DependencyHeatmap from '../components/DependencyHeatmap.svelte'
+  import MaestroCoverage from '../components/MaestroCoverage.svelte'
   import DiagramView from '../components/DiagramView.svelte'
 
   /** @type {{ id: string }} */
@@ -32,6 +34,7 @@
   let flowCommentCounts = {}
   let threatCommentCounts = {}
   let dependencyScans = []
+  let maestroCoverage = null
   let diagrams = []
   let selectedDiagramId = null
   let diagramContentCache = {} // { [diagramId]: { content, media_type } }
@@ -137,15 +140,17 @@
   }
 
   async function loadSupplementary() {
-    const [a, f, tb, rawCounts, deps, dgs] = await Promise.all([
+    const [a, f, tb, rawCounts, deps, dgs, mc] = await Promise.all([
       getModelAssets(params.id).catch(() => []),
       getModelFlows(params.id).catch(() => []),
       getModelTrustBoundaries(params.id).catch(() => []),
       getCommentCounts(params.id).catch(() => []),
       getModelDependencies(params.id).catch(() => []),
       listModelDiagrams(params.id).catch(() => []),
+      getMaestroCoverage(params.id).catch(() => null),
     ])
     assets = a; flows = f; trustBoundaries = tb
+    maestroCoverage = mc
     dependencyScans = deps
     diagrams = dgs
     selectedDiagramId = null
@@ -563,6 +568,11 @@
         </h2>
         <DependencyHeatmap scans={dependencyScans} />
       </div>
+    {/if}
+
+    <!-- MAESTRO coverage: MAESTRO/hybrid models, or any model that has MAESTRO threats -->
+    {#if !$pipelineRunning && (['MAESTRO', 'HYBRID'].includes(model.framework) || maestroCoverage?.categories?.some((c) => c.status === 'covered'))}
+      <MaestroCoverage coverage={maestroCoverage} />
     {/if}
 
     <!-- Gap analysis -->
