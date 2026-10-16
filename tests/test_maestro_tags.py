@@ -203,3 +203,50 @@ def test_rules_version_changes_when_a_rule_changes(monkeypatch):
     patched = {**maestro_tags._RULES, C.PRIVACY: (*maestro_tags._RULES[C.PRIVACY], "extra term")}
     monkeypatch.setattr(maestro_tags, "_RULES", patched)
     assert maestro_tags.rules_version() != before
+
+
+# --- 10-15 live runs: categories the tagger missed (Supply Chain, Monitoring, Fairness)
+# Asset names are from saved loan-agent / RAG extractions.
+@pytest.mark.parametrize(
+    ("name", "description", "expected"),
+    [
+        (
+            "Build Pipeline",
+            "GitHub Actions CI/CD that builds and pushes the container image",
+            C.SUPPLY_CHAIN,
+        ),
+        ("Python Dependencies", "Packages pulled from PyPI and npm at build time", C.SUPPLY_CHAIN),
+        ("Base Image", "Container registry image with the ML framework (PyTorch)", C.SUPPLY_CHAIN),
+        ("SBOM", "Software supply chain inventory of third-party packages", C.SUPPLY_CHAIN),
+        ("Monitoring Telemetry and Grafana Dashboards", "", C.MONITORING),
+        ("CloudWatch Logs and Metrics", "Operational telemetry for all components", C.MONITORING),
+        ("LLM Observability", "Traces of prompts and completions", C.MONITORING),
+        ("Loan Decision Engine", "Makes automated credit decisions about applicants", C.FAIRNESS),
+        ("Scoring Service", "Credit scoring and loan approval for retail applicants", C.FAIRNESS),
+        ("Screening Agent", "Candidate screening and hiring decisions", C.FAIRNESS),
+    ],
+)
+def test_tag_asset_matches_software_supply_chain_observability_and_decision_domains(
+    name, description, expected
+):
+    assert expected in tag_asset(name, description)
+
+
+@pytest.mark.parametrize(
+    ("name", "description"),
+    [
+        ("Policy", "Fair use policy for the shared drive"),
+        ("Invoices", "Quarterly audit of the invoice archive by finance"),
+        ("Cards", "Credit card number and billing address"),
+        ("People", "The hiring manager approves a new seat"),
+        ("Supplier", "Supply of office chairs and the supplier portal"),
+        ("Tool", "Runs npmx and mypypi helpers"),
+        ("Web UI", "Shows a dashboard of orders"),
+        # Audit logs are storage/compliance, not ML monitoring: these asset texts only
+        # mention them (10-15 loan-agent re-run tagged both as Monitoring).
+        ("User Profile Database", "Applicant profiles, loan history, KYC status and audit logs"),
+        ("KMS Encryption Keys", "Keys whose use is written to the audit trail"),
+    ],
+)
+def test_tag_asset_new_phrases_do_not_match_ordinary_words(name, description):
+    assert tag_asset(name, description) == []

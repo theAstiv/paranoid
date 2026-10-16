@@ -110,8 +110,12 @@ def build_report(
 ) -> CoverageGuardReport | None:
     """End-of-run report; None when there is nothing to say."""
     holes = empty_categories(final_threats, check_maestro=check_maestro, applicable=applicable)
+    # N/A needs no matching component AND no threats from any source: the tags can
+    # miss a component that the LLM, rule engine or dependency scan still produced
+    # threats for, and the coverage panel counts those categories as covered.
+    with_threats = {t.maestro_category for t in final_threats.threats if t.maestro_category}
     na = (
-        [c.value for c in MaestroCategory if c not in applicable]
+        [c.value for c in MaestroCategory if c not in applicable and c not in with_threats]
         if check_maestro and applicable
         else []
     )

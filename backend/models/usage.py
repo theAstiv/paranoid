@@ -69,7 +69,7 @@ class CoverageGuardReport(BaseModel):
     iteration: int | None = None  # iteration whose stop was overridden
     targeted: list[str] = []  # categories named in the extra pass
     still_empty: list[str] = []  # categories with no LLM threats when the run ended
-    na_maestro: list[str] = []  # MAESTRO categories with no matching component
+    na_maestro: list[str] = []  # MAESTRO categories with no matching component and no threats
     unknown_maestro: bool = False  # no asset matched any rule, so applicability is unknown
 
 

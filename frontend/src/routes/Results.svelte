@@ -79,6 +79,12 @@
   // (see onMount), so a page reload after completion has no live SSE events.
   $: runUsage = $pipelineEvents.find(e => e.step === 'complete')?.data?.usage ?? model?.usage ?? null
   $: guard = runUsage?.coverage_guard ?? null
+  // The run's N/A list is tag-based and saved with the run; the coverage panel is
+  // computed from the threats. Don't list a category the panel shows as covered.
+  $: coveredCategories = new Set(
+    (maestroCoverage?.categories ?? []).filter((c) => c.status === 'covered').map((c) => c.category),
+  )
+  $: naMaestro = (guard?.na_maestro ?? []).filter((c) => !coveredCategories.has(c))
   const STOP_LABELS = {
     gap_satisfied: 'gap analysis satisfied',
     dedup_saturated: 'new threats were duplicates',
@@ -422,9 +428,9 @@
                 No LLM threats: <span class="font-mono">{guard.still_empty.join(', ')}</span>{guard.triggered ? ' after a targeted pass' : ''}
               </p>
             {/if}
-            {#if guard?.na_maestro?.length}
+            {#if naMaestro.length}
               <p class="text-c-muted">
-                MAESTRO N/A (no matching component): <span class="font-mono">{guard.na_maestro.join(', ')}</span>
+                MAESTRO N/A (no matching component): <span class="font-mono">{naMaestro.join(', ')}</span>
               </p>
             {:else if guard?.unknown_maestro}
               <p class="text-c-muted">MAESTRO applicability not assessed (no component matched a rule)</p>
