@@ -304,7 +304,9 @@
     </div>
   {:else if model}
     <!-- Header -->
-    <div class="flex items-start justify-between gap-4">
+    <!-- flex-wrap: the 642px button group plus even a short title is wider than the column
+         at ~1024px; unwrapped, it widened the whole page (BB-28) -->
+    <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
         <h1 class="text-xl font-semibold text-c-text truncate">{model.title}</h1>
         <div class="flex items-center gap-2 mt-1">
@@ -314,7 +316,7 @@
           <span class="font-mono text-[11px] text-c-faint">{model.framework}</span>
         </div>
       </div>
-      <div class="flex items-center gap-3 flex-shrink-0">
+      <div class="flex flex-wrap items-center gap-3">
         <Assignees modelId={params.id} projectId={model.project_id} />
         <ExportMenu modelId={params.id} />
         <a href="/models/{params.id}/context" use:link class="btn-ghost text-xs px-3 py-1.5">
