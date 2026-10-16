@@ -1,5 +1,40 @@
 const MAX_PASSES = 10
 
+// Event names of the standard HTML/SVG handler attributes (`onclick` is `on` +
+// `click`). Matching only these keeps label text such as "online = true" or
+// "once=1" intact (BB-27). A handler missing from the list is not stripped here
+// and is left to Mermaid's `securityLevel: 'strict'` + DOMPurify + the CSP.
+const EVENT_NAMES = [
+  'abort', 'afterprint', 'animationcancel', 'animationend', 'animationiteration',
+  'animationstart', 'auxclick', 'beforeinput', 'beforeprint', 'beforetoggle',
+  'beforeunload', 'begin', 'blur', 'cancel', 'canplay', 'canplaythrough', 'change',
+  'click', 'close', 'contextmenu', 'copy', 'cuechange', 'cut', 'dblclick', 'drag',
+  'dragend', 'dragenter', 'dragleave', 'dragover', 'dragstart', 'drop',
+  'durationchange', 'emptied', 'end', 'ended', 'error', 'focus', 'focusin',
+  'focusout', 'formdata', 'fullscreenchange', 'fullscreenerror', 'gotpointercapture',
+  'hashchange', 'input', 'invalid', 'keydown', 'keypress', 'keyup', 'languagechange',
+  'load', 'loadeddata', 'loadedmetadata', 'loadstart', 'lostpointercapture',
+  'message', 'messageerror', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove',
+  'mouseout', 'mouseover', 'mouseup', 'mousewheel', 'offline', 'online', 'pagehide',
+  'pageshow', 'paste', 'pause', 'play', 'playing', 'pointercancel', 'pointerdown',
+  'pointerenter', 'pointerleave', 'pointermove', 'pointerout', 'pointerover',
+  'pointerrawupdate', 'pointerup', 'popstate', 'progress', 'ratechange',
+  'readystatechange', 'rejectionhandled', 'repeat', 'reset', 'resize', 'scroll',
+  'scrollend', 'securitypolicyviolation', 'seeked', 'seeking', 'select',
+  'selectionchange', 'selectstart', 'slotchange', 'stalled', 'storage', 'submit',
+  'suspend', 'timeupdate', 'toggle', 'touchcancel', 'touchend', 'touchmove',
+  'touchstart', 'transitioncancel', 'transitionend', 'transitionrun',
+  'transitionstart', 'unhandledrejection', 'unload', 'volumechange', 'waiting',
+  'webkitanimationend', 'webkitanimationiteration', 'webkitanimationstart',
+  'webkittransitionend', 'wheel',
+]
+// No leading word boundary: the BB-12 nested payloads (`ononclick=…`) rebuild a
+// handler from the pieces around a removed one; the next pass must still see it.
+const HANDLER_ATTR = new RegExp(
+  String.raw`on(?:${EVENT_NAMES.join('|')})\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]*)`,
+  'gi',
+)
+
 function decodeAndStrip(input) {
   let s = input
   // Numeric references first, then named ones. `&amp;` goes LAST so that
@@ -19,8 +54,8 @@ function decodeAndStrip(input) {
   // Embedded <script> blocks and stray opening tags.
   s = s.replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
   s = s.replace(/<script[^>]*\/?>/gi, '')
-  // on* event handler attributes (onclick=, onload=, onerror=, …).
-  s = s.replace(/\bon\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]*)/gi, '')
+  // Event handler attributes (onclick=, onload=, onerror=, …).
+  s = s.replace(HANDLER_ATTR, '')
   // `---` -> `-->` inside the loop: it can supply the `>` that completes a
   // tag (`<script src=x---y`), so the next pass must see its output.
   // Bare `---` at the start of a line is YAML front-matter (legal Mermaid)
@@ -38,7 +73,7 @@ function decodeAndStrip(input) {
  * Security note: this is defence in depth. The real protection is Mermaid's
  * `securityLevel: 'strict'` (its own DOMPurify pass) plus the CSP. We still
  * strip `click` directives, `javascript:`/`vbscript:`/`data:text/html` URI
- * schemes, `<script>` tags and `on*` handler attributes after entity-decoding,
+ * schemes, `<script>` tags and known event-handler attributes after entity-decoding,
  * so encoded payloads (e.g. `&#106;avascript:`) are caught before matching.
  *
  * Decoding and stripping repeat until the string stops changing: a single
