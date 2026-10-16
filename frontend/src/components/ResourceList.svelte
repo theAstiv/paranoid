@@ -148,7 +148,7 @@
             {#if f.linkKey}
               <!-- Same size linked or not, so a mixed list doesn't make the plain rows look heavier.
                    Wraps (no nowrap): extracted endpoint names can be whole sentences and would widen the page. -->
-              <span class="{fi === 0 ? '' : 'ml-1.5 '}inline-block max-w-full break-words font-mono text-[11px] px-1.5 py-0.5 rounded-chip {item[f.linkKey] ? 'border chip-accent' : 'text-c-text2'}" title={item[f.linkKey] ? 'Linked to an asset in this model' : undefined}>{displayValue(item, f)}</span>
+              <span class="{fi === 0 ? 'max-w-full ' : 'ml-1.5 max-w-[calc(100%-0.375rem)] '}inline-block break-words font-mono text-[11px] px-1.5 py-0.5 rounded-chip {item[f.linkKey] ? 'border chip-accent' : 'text-c-text2'}" title={item[f.linkKey] ? 'Linked to an asset in this model' : undefined}>{displayValue(item, f)}</span>
             {:else if fi === 0}
               <span class="text-sm font-medium text-c-text2">{displayValue(item, f)}</span>
             {:else if f.type === 'badge' || f.display === 'badge'}

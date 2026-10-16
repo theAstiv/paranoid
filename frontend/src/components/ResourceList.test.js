@@ -124,9 +124,12 @@ describe('ResourceList asset links', () => {
     render(ResourceList, { props: { items: rows, fields: linkFields, onCreate: noop, onUpdate: noop, onDelete: noop } })
     for (const chip of [screen.getByText('Tool Allowlist / Enforcer'), screen.getByText('Mystery')]) {
       expect(chip).not.toHaveClass('whitespace-nowrap')
-      expect(chip).toHaveClass('max-w-full')
       expect(chip).toHaveClass('break-words')
     }
+    // The target chip's left margin sits outside max-width, so it subtracts it
+    // (else a wrapped chip sticks out of its column by the margin).
+    expect(screen.getByText('Tool Allowlist / Enforcer')).toHaveClass('max-w-full')
+    expect(screen.getByText('Mystery')).toHaveClass('ml-1.5', 'max-w-[calc(100%-0.375rem)]')
   })
 
   it('sizes unlinked text the same as a linked chip', () => {
