@@ -117,13 +117,24 @@ describe('ResourceList asset links', () => {
     expect(screen.getByText('Mystery')).not.toHaveClass('chip-accent')
   })
 
-  it('keeps a linked chip on one line and sizes unlinked text the same', () => {
+  // BB-28: `whitespace-nowrap` let one long extracted endpoint name widen the
+  // whole Results page past the viewport. Chips must wrap inside their column.
+  it('lets a long endpoint wrap instead of widening the page, linked or not', () => {
+    const rows = [{ id: 'f1', source_entity: 'Tool Allowlist / Enforcer', target_entity: 'Mystery', source_asset_id: 'a1', target_asset_id: null }]
+    render(ResourceList, { props: { items: rows, fields: linkFields, onCreate: noop, onUpdate: noop, onDelete: noop } })
+    for (const chip of [screen.getByText('Tool Allowlist / Enforcer'), screen.getByText('Mystery')]) {
+      expect(chip).not.toHaveClass('whitespace-nowrap')
+      expect(chip).toHaveClass('max-w-full')
+      expect(chip).toHaveClass('break-words')
+    }
+  })
+
+  it('sizes unlinked text the same as a linked chip', () => {
     const rows = [{ id: 'f1', source_entity: 'Tool Allowlist / Enforcer', target_entity: 'Mystery', source_asset_id: 'a1', target_asset_id: null }]
     render(ResourceList, { props: { items: rows, fields: linkFields, onCreate: noop, onUpdate: noop, onDelete: noop } })
     const linked = screen.getByText('Tool Allowlist / Enforcer')
     const plain = screen.getByText('Mystery')
-    expect(linked).toHaveClass('whitespace-nowrap')
-    expect(plain).toHaveClass('whitespace-nowrap')
+    expect(linked.className).toContain('text-[11px]')
     expect(plain.className).toContain('text-[11px]')
   })
 })

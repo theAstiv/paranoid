@@ -146,8 +146,9 @@
         <div class="flex-1 min-w-0">
           {#each fields as f, fi}
             {#if f.linkKey}
-              <!-- Same size linked or not, so a mixed list doesn't make the plain rows look heavier -->
-              <span class="{fi === 0 ? '' : 'ml-1.5 '}whitespace-nowrap font-mono text-[11px] px-1.5 py-0.5 rounded-chip {item[f.linkKey] ? 'border chip-accent' : 'text-c-text2'}" title={item[f.linkKey] ? 'Linked to an asset in this model' : undefined}>{displayValue(item, f)}</span>
+              <!-- Same size linked or not, so a mixed list doesn't make the plain rows look heavier.
+                   Wraps (no nowrap): extracted endpoint names can be whole sentences and would widen the page. -->
+              <span class="{fi === 0 ? '' : 'ml-1.5 '}inline-block max-w-full break-words font-mono text-[11px] px-1.5 py-0.5 rounded-chip {item[f.linkKey] ? 'border chip-accent' : 'text-c-text2'}" title={item[f.linkKey] ? 'Linked to an asset in this model' : undefined}>{displayValue(item, f)}</span>
             {:else if fi === 0}
               <span class="text-sm font-medium text-c-text2">{displayValue(item, f)}</span>
             {:else if f.type === 'badge' || f.display === 'badge'}
