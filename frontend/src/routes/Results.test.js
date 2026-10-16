@@ -512,6 +512,58 @@ describe('Results — run summary panel', () => {
     expect(panel).toHaveTextContent('MAESTRO N/A (no matching component): Privacy')
   })
 
+  // Saved runs keep the tag-based na_maestro list; the panel below is computed
+  // from the threats, so the summary must not list what the panel shows covered.
+  it('drops a MAESTRO N/A category that the coverage panel shows as covered', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        coverage_guard: {
+          triggered: false,
+          still_empty: [],
+          na_maestro: ['Privacy', 'Supply Chain', 'Fairness'],
+          unknown_maestro: false,
+        },
+      },
+    })
+    getMaestroCoverage.mockResolvedValue({
+      assessed: true,
+      categories: [
+        { category: 'Privacy', status: 'covered', threats: 2 },
+        { category: 'Supply Chain', status: 'covered', threats: 1 },
+        { category: 'Fairness', status: 'na', threats: 0 },
+      ],
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('run-coverage')).toBeInTheDocument())
+    const panel = screen.getByTestId('run-coverage')
+    await waitFor(() => expect(panel).toHaveTextContent('MAESTRO N/A (no matching component): Fairness'))
+    expect(panel).not.toHaveTextContent('Privacy')
+    expect(panel).not.toHaveTextContent('Supply Chain')
+  })
+
+  it('shows no N/A line when every listed category is covered', async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      usage: {
+        by_model: [{ model: 'claude-sonnet-5', calls: 4, total_tokens: 600 }],
+        total_tokens: 600,
+        coverage_guard: { triggered: false, still_empty: [], na_maestro: ['Privacy'], unknown_maestro: false },
+        stopped_reason: 'max_iterations',
+      },
+    })
+    getMaestroCoverage.mockResolvedValue({
+      assessed: true,
+      categories: [{ category: 'Privacy', status: 'covered', threats: 1 }],
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByTestId('run-coverage')).toBeInTheDocument())
+    await waitFor(() => expect(getMaestroCoverage).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByText(/MAESTRO N\/A/)).toBeNull())
+  })
+
   it('says MAESTRO applicability is unknown when no component matched a rule', async () => {
     getModel.mockResolvedValue({
       ...baseModel,
