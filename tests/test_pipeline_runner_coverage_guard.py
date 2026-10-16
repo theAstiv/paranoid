@@ -239,7 +239,10 @@ async def test_applicable_maestro_category_with_no_threats_overrides_the_stride_
     assert _report(data)["targeted"] == ["MAESTRO: LLM Security"]
     assert _report(data)["still_empty"] == []
     assert "LLM Security" not in _report(data)["na_maestro"]
-    assert "Model Security" in _report(data)["na_maestro"]
+    # Model Security has a threat (pass "a"), so it is not N/A even though no
+    # component matched it; Privacy has neither a component nor a threat.
+    assert "Model Security" not in _report(data)["na_maestro"]
+    assert "Privacy" in _report(data)["na_maestro"]
 
 
 @pytest.mark.asyncio

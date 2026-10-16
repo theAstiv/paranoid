@@ -150,3 +150,51 @@ def test_report_lists_na_unknown_and_still_empty():
     assert unknown is not None
     assert unknown.unknown_maestro
     assert unknown.na_maestro == []
+
+
+def test_report_does_not_call_a_category_with_threats_not_applicable():
+    # A category the tagger missed can still hold threats from the LLM, the rule
+    # engine or the dependency scan; the report must not list it as N/A (the
+    # coverage panel shows it as covered).
+    threats = ThreatsList(
+        threats=[
+            *(_threat(c) for c in StrideCategory),
+            _threat(StrideCategory.TAMPERING, MaestroCategory.SUPPLY_CHAIN, source="rules"),
+            _threat(StrideCategory.SPOOFING, MaestroCategory.PRIVACY, source="llm"),
+            _threat(StrideCategory.SPOOFING, MaestroCategory.LLM_SECURITY, source="llm"),
+        ]
+    )
+    report = build_report(
+        final_threats=threats,
+        check_maestro=True,
+        applicable=[MaestroCategory.LLM_SECURITY],
+        triggered=False,
+        iteration=None,
+        targeted=[],
+    )
+    assert report is not None
+    assert "Supply Chain" not in report.na_maestro
+    assert "Privacy" not in report.na_maestro
+    assert "Fairness" in report.na_maestro  # no threats and no matching component
+
+
+def test_report_is_none_when_every_na_category_has_threats():
+    threats = ThreatsList(
+        threats=[
+            *(_threat(c, MaestroCategory.LLM_SECURITY) for c in StrideCategory),
+            *(
+                _threat(StrideCategory.TAMPERING, m, source="rules")
+                for m in MaestroCategory
+                if m is not MaestroCategory.LLM_SECURITY
+            ),
+        ]
+    )
+    report = build_report(
+        final_threats=threats,
+        check_maestro=True,
+        applicable=[MaestroCategory.LLM_SECURITY],
+        triggered=False,
+        iteration=None,
+        targeted=[],
+    )
+    assert report is None
