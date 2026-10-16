@@ -163,6 +163,35 @@ describe('sanitizeMermaid', () => {
     expect(cleaned).not.toMatch(/\bonerror\s*=/i)
   })
 
+  // BB-27 — the strip targets real event-handler attributes, not any word that
+  // starts with "on" (online, once, only, ongoing).
+  describe('on* handler strip (BB-27)', () => {
+    it.each(['online = true', 'once=1', 'only = "x"', 'ongoing = yes', 'onboarding=done'])(
+      'keeps label text: %s',
+      (text) => {
+        const raw = `graph TD\nA[status ${text}] --> B`
+        expect(sanitizeMermaid(raw)).toBe(raw)
+      },
+    )
+
+    // Hardcoded on purpose: a loop over the implementation's own list could not
+    // notice a handler missing from it.
+    it.each([
+      'onclick', 'ondblclick', 'onmouseover', 'onmouseenter', 'onmousedown', 'onkeydown', 'onkeyup',
+      'onload', 'onerror', 'onabort', 'onfocus', 'onblur', 'onchange', 'oninput', 'onsubmit',
+      'onreset', 'onselect', 'onscroll', 'onwheel', 'onresize', 'ontoggle', 'oncontextmenu',
+      'onpointerdown', 'onpointerover', 'ontouchstart', 'ondrag', 'ondrop', 'onanimationstart',
+      'onanimationend', 'ontransitionend', 'onpageshow', 'onhashchange', 'onmessage', 'onpopstate',
+      'onbeforeunload', 'onunload', 'onplay', 'onended', 'onbegin', 'onend', 'onrepeat',
+    ])('strips %s, bare or quoted, in any case', (name) => {
+      for (const attr of [`${name}=alert(1)`, `${name} = "alert(1)"`, `${name.toUpperCase()}='alert(1)'`]) {
+        const cleaned = sanitizeMermaid(`graph TD\nA[x ${attr}] --> B`)
+        expect(cleaned).not.toMatch(new RegExp(`${name}\\s*=`, 'i'))
+        expect(cleaned).not.toContain('alert(1)')
+      }
+    })
+  })
+
   // BB-12 — single-pass strips can rebuild the very thing they remove, and
   // decoding &amp; before &lt;/&gt; double-decodes. Output must be a fixed point.
   describe('nested / split payloads (BB-12)', () => {

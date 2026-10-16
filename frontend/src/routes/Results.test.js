@@ -95,6 +95,18 @@ describe('Results — loading', () => {
     await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
   })
 
+  // BB-28: an unwrappable header row (title + 642px button group) widened the page
+  // past a ~1024px window. Class check only; jsdom has no layout.
+  it('lets the header row and its button group wrap', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    const title = await screen.findByText('Payments Service')
+    const row = title.closest('.justify-between')
+    expect(row).toHaveClass('flex-wrap')
+    const group = row.querySelector('.gap-3')
+    expect(group).toHaveClass('flex-wrap')
+    expect(group).not.toHaveClass('flex-shrink-0')
+  })
+
   it('notifies on load failure', async () => {
     getModel.mockRejectedValue(new Error('not found'))
     render(Results, { props: { params: { id: 'm1' } } })

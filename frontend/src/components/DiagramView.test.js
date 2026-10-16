@@ -75,6 +75,22 @@ describe('DiagramView — mermaid', () => {
     expect(mermaidRender).not.toHaveBeenCalled()
   })
 
+  // BB-26: a payload that keeps rebuilding what the sanitizer strips never
+  // settles, so sanitizeMermaid returns '' — that is a rejection, not an empty source.
+  it('says a never-settling source was rejected, not that it is empty', async () => {
+    const unsettled = 'graph TD\nA --> B\n' + '<scr'.repeat(12) + '<script>' + 'ipt>'.repeat(12)
+    render(DiagramView, { props: { kind: 'mermaid', content: unsettled, name: 'arch' } })
+    await waitFor(() => expect(screen.getByText(/rejected during safety cleaning/i)).toBeInTheDocument())
+    expect(screen.queryByText('Mermaid source is empty.')).toBeNull()
+    expect(mermaidRender).not.toHaveBeenCalled()
+  })
+
+  it('still calls a whitespace-only source empty', async () => {
+    render(DiagramView, { props: { kind: 'mermaid', content: '  \n ', name: 'arch' } })
+    await waitFor(() => expect(screen.getByText('Mermaid source is empty.')).toBeInTheDocument())
+    expect(mermaidRender).not.toHaveBeenCalled()
+  })
+
   it('re-renders when content changes even if the length stays the same', async () => {
     const { rerender } = render(DiagramView, {
       props: { kind: 'mermaid', content: 'graph TD; A-->B', name: 'arch' },
