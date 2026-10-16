@@ -148,9 +148,6 @@ _RULES: dict[C, tuple[str, ...]] = {
         "telemetry",
         "grafana",
         "prometheus",
-        "audit trail",
-        "audit log",
-        "audit logs",
         "anomaly detection",
     ),
     C.INTERPRETABILITY: (

@@ -220,16 +220,6 @@ def test_rules_version_changes_when_a_rule_changes(monkeypatch):
         ("SBOM", "Software supply chain inventory of third-party packages", C.SUPPLY_CHAIN),
         ("Monitoring Telemetry and Grafana Dashboards", "", C.MONITORING),
         ("CloudWatch Logs and Metrics", "Operational telemetry for all components", C.MONITORING),
-        (
-            "Audit Trail",
-            "Immutable logs of all agent actions, tool calls, and decisions",
-            C.MONITORING,
-        ),
-        (
-            "KMS Audit Logs - S3 Object Lock",
-            "7-year immutable audit log of key operations",
-            C.MONITORING,
-        ),
         ("LLM Observability", "Traces of prompts and completions", C.MONITORING),
         ("Loan Decision Engine", "Makes automated credit decisions about applicants", C.FAIRNESS),
         ("Scoring Service", "Credit scoring and loan approval for retail applicants", C.FAIRNESS),
@@ -252,6 +242,10 @@ def test_tag_asset_matches_software_supply_chain_observability_and_decision_doma
         ("Supplier", "Supply of office chairs and the supplier portal"),
         ("Tool", "Runs npmx and mypypi helpers"),
         ("Web UI", "Shows a dashboard of orders"),
+        # Audit logs are storage/compliance, not ML monitoring: these asset texts only
+        # mention them (10-15 loan-agent re-run tagged both as Monitoring).
+        ("User Profile Database", "Applicant profiles, loan history, KYC status and audit logs"),
+        ("KMS Encryption Keys", "Keys whose use is written to the audit trail"),
     ],
 )
 def test_tag_asset_new_phrases_do_not_match_ordinary_words(name, description):
