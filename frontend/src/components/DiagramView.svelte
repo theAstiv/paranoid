@@ -74,7 +74,11 @@
     const cleaned = sanitizeMermaid(source)
     if (!cleaned) {
       if (seq !== renderSeq || !container) return
-      renderError = 'Mermaid source is empty.'
+      // sanitizeMermaid returns '' for a blank source and also for one it
+      // rejects (never settles, or nothing left after cleaning).
+      renderError = source?.trim()
+        ? "This diagram's source was rejected during safety cleaning, so it isn't shown."
+        : 'Mermaid source is empty.'
       container.innerHTML = ''
       return
     }
