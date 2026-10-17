@@ -95,8 +95,7 @@ _ATTACK_FALLBACK: list[dict[str, Any]] = [
         "id": "T1027",
         "name": "Obfuscated Files or Information",
         "tactics": ["Stealth"],
-        "description": "Obfuscation of content to make it harder to discover "
-        "or analyze.",
+        "description": "Obfuscation of content to make it harder to discover or analyze.",
         "url": "https://attack.mitre.org/techniques/T1027",
     },
     {
@@ -222,12 +221,17 @@ def build_attack_catalog(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], 
         resolved = resolve_active(raw_pattern)
         if resolved is None:
             if explicitly_wanted:
-                print(f"[warn] {eid} is revoked/deprecated with no replacement found", file=sys.stderr)
+                print(
+                    f"[warn] {eid} is revoked/deprecated with no replacement found", file=sys.stderr
+                )
             continue
         pattern = resolved
         if resolved is not raw_pattern:
             new_id = external_id(resolved)
-            print(f"[info] {eid} revoked -> using replacement {new_id} ({resolved.get('name')})", file=sys.stderr)
+            print(
+                f"[info] {eid} revoked -> using replacement {new_id} ({resolved.get('name')})",
+                file=sys.stderr,
+            )
             eid = new_id
             if not eid:
                 continue
@@ -257,7 +261,11 @@ def build_attack_catalog(bundle: dict[str, Any]) -> tuple[list[dict[str, Any]], 
 
     results.sort(key=lambda t: t["id"])
     version = next(
-        (o.get("x_mitre_version", "unknown") for o in objects if o.get("type") == "x-mitre-collection"),
+        (
+            o.get("x_mitre_version", "unknown")
+            for o in objects
+            if o.get("type") == "x-mitre-collection"
+        ),
         "unknown",
     )
     return results, version
@@ -315,7 +323,9 @@ def _embed_techniques(techniques: list[dict[str, Any]]) -> tuple[str, int] | Non
         from backend.config import settings
         from backend.db.vectors import embed_text
     except ImportError as e:
-        print(f"[warn] backend not importable ({e}); skipping embedding precompute", file=sys.stderr)
+        print(
+            f"[warn] backend not importable ({e}); skipping embedding precompute", file=sys.stderr
+        )
         return None
 
     dim = None
@@ -379,10 +389,15 @@ def main() -> None:
         atlas_data = yaml.safe_load(atlas_bytes)
         atlas_techniques, atlas_version = build_atlas_catalog(atlas_data)
     except ImportError:
-        print("[warn] PyYAML not installed (pip install pyyaml); skipping ATLAS live fetch", file=sys.stderr)
+        print(
+            "[warn] PyYAML not installed (pip install pyyaml); skipping ATLAS live fetch",
+            file=sys.stderr,
+        )
         atlas_techniques, atlas_version = [], "offline-fallback"
     except (urllib.error.URLError, OSError, KeyError) as e:
-        print(f"[warn] ATLAS live fetch failed ({e}); no offline fallback for ATLAS", file=sys.stderr)
+        print(
+            f"[warn] ATLAS live fetch failed ({e}); no offline fallback for ATLAS", file=sys.stderr
+        )
         atlas_techniques, atlas_version = [], "offline-fallback"
 
     atlas_embedding_info = _embed_techniques(atlas_techniques)

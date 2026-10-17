@@ -75,7 +75,7 @@ def main() -> int:
     for category, counter in sorted(tiers.items()):
         total = sum(counter.values())
         resolved = total - counter[0]
-        by_tier = ", ".join(f"tier {t}: {counter[t]}" for t in (1, 2, 3))
+        by_tier = ", ".join(f"tier {t}: {counter[t]}" for t in (1, 2, 3, 4))
         print(f"  {category:24} {_pct(resolved, total):>14}   {by_tier}, unresolved: {counter[0]}")
     if args.list_unresolved:
         print("\nUnresolved:")

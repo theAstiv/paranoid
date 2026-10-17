@@ -323,7 +323,42 @@ async def test_backfill_links_old_models_once(test_db):
     assert one["source_asset_id"] == api1
     assert one["target_asset_id"] is None
     assert two["source_asset_id"] is not None
-    assert await crud.get_config_value("component_links_backfilled") == "1"
+    assert await crud.get_config_value("component_links_backfilled") == "2"
+
+
+@pytest.mark.asyncio
+async def test_backfill_from_an_older_resolver_relinks_only_missing_links(test_db):
+    """A flag written by an older resolver (value "1") means the models were linked
+    with fewer tiers: run once more, filling NULLs and never touching a link."""
+    m = await _model()
+    express = await _asset(m, "Express API container")
+    await _asset(m, "Redis job queue")
+    f = await _flow(m, "API container", "Redis job queue")
+    conn = await db.get()
+    # The target was linked (say, by a user's edit) to a different asset than the text names.
+    await conn.execute("UPDATE flows SET target_asset_id = ? WHERE id = ?", (express, f))
+    await conn.commit()
+    await crud.set_config_value("component_links_backfilled", "1", encrypted=False)
+
+    await backfill_component_links()
+
+    row = await crud.get_flow(f)
+    assert row["source_asset_id"] == express  # newly resolvable by tier 4
+    assert row["target_asset_id"] == express  # existing link left alone
+    assert await crud.get_config_value("component_links_backfilled") == "2"
+
+
+@pytest.mark.asyncio
+async def test_backfill_with_the_current_version_does_nothing(test_db, monkeypatch):
+    await crud.set_config_value("component_links_backfilled", "2", encrypted=False)
+
+    async def boom(model_id):
+        raise AssertionError("current version must not rescan")
+
+    monkeypatch.setattr(component_links, "link_model_components", boom)
+    m = await _model()
+    await _asset(m, "API Gateway")
+    await backfill_component_links()
 
 
 @pytest.mark.asyncio

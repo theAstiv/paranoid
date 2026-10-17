@@ -13,6 +13,10 @@ Tiers, first hit wins:
      "Redis job queue -> Resize worker. ..." and composite threat targets such
      as "Admin UI / Partner API Keys" resolve to the leading entity (name length
      says nothing about which of two listed entities is the target)
+  4. the text is the tail of exactly one asset name: diagram labels drop the
+     leading modifiers ("API container" for "Express API container"). Only the
+     tail counts, never the start ("Admin" is not "Admin Credentials"), and
+     filler-only text ("container") never matches
 """
 
 import re
@@ -77,6 +81,19 @@ def _contained(text: str, assets: Sequence[AssetRef]) -> str | None:
     return next(iter(best_ids)) if len(best_ids) == 1 else None
 
 
+def _tail_of_one_name(text: str, assets: Sequence[AssetRef]) -> str | None:
+    """The asset whose name words end with the text's words, if exactly one does."""
+    words = _words(text).split()
+    if not words or all(w in _FILLER_WORDS for w in words):
+        return None
+    ids = []
+    for asset_id, name in assets:
+        name_words = _words(name).split()
+        if len(name_words) > len(words) and name_words[-len(words) :] == words:
+            ids.append(asset_id)
+    return _unique(ids)[0]
+
+
 def resolve_asset_with_tier(text: str, assets: Sequence[AssetRef]) -> tuple[str | None, int]:
     """Resolve text to an asset ID. Returns (asset_id, tier); (None, 0) if unresolved."""
     if not text or not text.strip():
@@ -95,7 +112,11 @@ def resolve_asset_with_tier(text: str, assets: Sequence[AssetRef]) -> tuple[str 
             return (found, 2) if found else (None, 0)
 
     found = _contained(text, named)
-    return (found, 3) if found else (None, 0)
+    if found:
+        return found, 3
+
+    found = _tail_of_one_name(text, named)
+    return (found, 4) if found else (None, 0)
 
 
 def resolve_asset(text: str, assets: Sequence[AssetRef]) -> str | None:

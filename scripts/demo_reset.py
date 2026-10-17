@@ -139,11 +139,10 @@ async def reset(db_path: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Reset Paranoid to a clean demo state"
-    )
+    parser = argparse.ArgumentParser(description="Reset Paranoid to a clean demo state")
     parser.add_argument(
-        "--yes", "-y",
+        "--yes",
+        "-y",
         action="store_true",
         help="Skip confirmation prompt",
     )
