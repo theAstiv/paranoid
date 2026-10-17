@@ -187,6 +187,96 @@ async def test_anthropic_temperature_deprecated_retries_without_it():
         assert "temperature" not in third_call_kwargs
 
 
+# BB-32: two calls in flight on one provider both carry `temperature`; the first
+# rejection flips the flag, and the second must still be retried, not raised.
+
+
+def _anthropic_400(message: str):
+    from anthropic import BadRequestError
+
+    response = MagicMock()
+    response.status_code = 400
+    return BadRequestError(message=message, response=response, body={"error": {"message": message}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "kwargs", "message", "param"),
+    [
+        (
+            "_temperature_unsupported",
+            {},
+            "`temperature` is deprecated for this model.",
+            "temperature",
+        ),
+        (
+            "_effort_unsupported",
+            {"effort": "medium"},
+            "output_config.effort is not supported for this model",
+            "extra_body",
+        ),
+    ],
+)
+async def test_anthropic_rejection_after_another_call_flipped_the_flag_is_still_retried(
+    flag, kwargs, message, param
+):
+    """The flag was flipped by the other in-flight call between this call's send and
+    its rejection: this call carried the parameter, so it retries without it."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        success = MagicMock()
+        success.content = [MagicMock(text="ok")]
+        calls: list[dict] = []
+        provider = None
+
+        def _create(**call):
+            calls.append(call)
+            if len(calls) == 1:
+                setattr(provider, flag, True)
+                raise _anthropic_400(message)
+            return success
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = _create
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k", **kwargs)
+
+        assert await provider.generate(prompt="Hello") == "ok"
+
+    assert len(calls) == 2
+    assert param in calls[0]
+    assert param not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_two_concurrent_calls_both_survive_a_temperature_rejection():
+    """The 10-16 live failure: both calls are in flight with `temperature` when the
+    model rejects it, so the second rejection arrives after the flag is already set."""
+    import asyncio
+    import threading
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        success = MagicMock()
+        success.content = [MagicMock(text="ok")]
+        barrier = threading.Barrier(2, timeout=10)
+
+        def _create(**call):
+            if "temperature" in call:
+                barrier.wait()  # both calls have sent `temperature` before either fails
+                raise _anthropic_400("`temperature` is deprecated for this model.")
+            return success
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = _create
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k")
+
+        results = await asyncio.gather(
+            provider.generate(prompt="one"), provider.generate(prompt="two")
+        )
+
+    assert results == ["ok", "ok"]
+
+
 def _text_response(text: str, stop_reason: str = "end_turn", extra_blocks=()):
     response = MagicMock()
     response.stop_reason = stop_reason

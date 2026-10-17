@@ -28,6 +28,7 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 | OpenAI `gpt-6-luna` vs `gpt-4.1` (direct API, `mc`, n = 3 each) | **31 vs 24 threats** (15 vs 8 from the LLM), **$0.008 vs $0.073** per run, **200 s vs 130 s**; the sequence-diagram-only dead-letter queue found in 6/6 luna runs vs 0/6 | [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15) |
 | OpenAI `gpt-6.1-sol` (direct API, effort `low`, `mc`, n = 3) | **36 threats** (20 from the LLM), **$0.225** per run, **392 s**; the dead-letter queue and the PNG-only secrets manager found in every run (3/3 `mc`, 1/1 `e2e-cli`) | [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15) |
 | GPT-6 Sol / Luna on AWS Bedrock (after #157, `mc`, n = 3 each) | **8/8 runs pass every gate**; Sol **32 threats, 171 s**, Luna **28 threats, 184 s**; unpriced, default effort, no PNG | [§1.2](#12-gpt-6-on-aws-bedrock-2026-10-16) |
+| Threat quality, hand-graded against the 21-item MediaDrop reference checklist (`mc`, n = 3 each) | Sonnet 5.5 (Bedrock) **17 / 15 / 18 of 21**, `gpt-4.1` (direct) **7 / 7 / 9 of 21**; one item (a webhook HMAC key shared by all partners) missed in all 6 runs. Two models only, one fixture | [§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17) |
 | Haiku 5.5 as the extraction model still reads every diagram | image-only and flow-only components found **3/3** with Haiku 5.5 and Sonnet 5.5 alike | [§3.1](#31-which-extraction-model-reads-the-diagrams) |
 | Most reliable main model, 3 benchmark sessions running | **Sonnet 5.5**: 3/3 runs, 34 threats, $0.49/run on Bedrock | [§1](#1-model-comparison) |
 | The three demo commands on Sonnet 5.5 (Bedrock) | **141–164 s** median, 15/15 runs clean, $0.41–$0.56 per run | [§5.1](#51-demo-commands-on-bedrock-bm10-demo) |
@@ -77,7 +78,7 @@ Results on other systems will differ. One fixture is a demo-sized system, not a 
 - **Cost is modelled, not billed:** recorded token counts × each provider's on-demand price per million tokens, read from the provider's pricing page on the date of the run. Bedrock rows use `us-east-2` prices.
 - **Whole-run cost differences at n = 3 are noise.** Whole-run cost varied ±17% within a single arm. Comparisons are made per pipeline step, where a step's model is the only thing that changed.
 - **A "fallback"** is a run where the LLM produced no threats and the pipeline completed on the rule engine alone. On the fixture that's **17 threats (10 rule-engine + 7 dependency)**. Every harness arm with a model has a gate that fails a run with zero LLM threats. A run total of 17 isn't proof of a fallback by itself: LLM threats can deduplicate against rule-engine ones.
-- **Quantity isn't quality.** Threat counts below are counts. Quality scoring against the reviewed MediaDrop reference checklist hasn't been run yet ([Not measured yet](#not-measured-yet)).
+- **Quantity isn't quality.** Threat counts below are counts. Quality against the reviewed MediaDrop reference checklist has been measured for two models only, Sonnet 5.5 and `gpt-4.1` ([§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17)).
 
 ---
 
@@ -107,7 +108,7 @@ Each model ran as **both** main and fast, on the full fixture: description, 3 di
 
 **Reading the table:**
 - **Sonnet 5.5** is the recommended main model: 3/3 runs in all three sessions, the second-highest yield, and a third of Opus 5.5's wall time.
-- **More threats isn't automatically better.** Until quality scoring has run, Opus 5.5's 38 and Sonnet 5.5's 34 aren't evidence that one model finds *better* threats.
+- **More threats isn't automatically better.** Quality has been scored for Sonnet 5.5 and `gpt-4.1` only ([§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17)), so Opus 5.5's 38 and Sonnet 5.5's 34 aren't evidence that one model finds *better* threats.
 - **The minimum of 17** for Haiku 4.5, Haiku 5.5 and Fable 5.1 equals the rule-engine baseline. Those runs passed the "LLM produced output" gate, so they contain LLM threats, but few of them.
 - **The OpenAI and GPT-6 rows are from other sessions** (direct API 10-13 and 10-15, Bedrock GPT-6 10-16), so their cost and time aren't comparable with the Bedrock rows above them. Cost in particular: the direct API has prompt caching, Bedrock in Paranoid doesn't.
 
@@ -134,7 +135,7 @@ Each model ran as **both** main and fast, on the full fixture: description, 3 di
 - **Every harness gate passed for both models** in `mc`, `e2e-cli`, `e2e-web` and `e2e-enrich` (`e2e-degraded` doesn't depend on the model and wasn't re-run for luna). `gpt-6-luna`'s usage summary records `effort: none` in every run.
 - **`gpt-6-luna` found about twice as many LLM threats** (14–15 vs 8–9 in `mc`) and ran the second iteration in all three `mc` runs; `gpt-4.1` stopped after one in all three. It also found the dead-letter queue in all 6 of its runs across the four suites, where `gpt-4.1` found it in none of its 6. The PNG-only secrets manager was found as an asset in 4 of 6 luna runs and 5 of 6 `gpt-4.1` runs, which is no difference worth claiming.
 - **`gpt-6-luna` is slower** (about 1.5× in `mc`, 1.3–1.7× across the suites) and **about 8–12× cheaper per run** on the suites that are priced. The `e2e-web` arm is unpriced.
-- **Quantity isn't quality:** these are counts, not scored against the reference checklist.
+- **Quantity isn't quality:** these are counts. Of the three, only `gpt-4.1` has been scored against the reference checklist ([§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17)).
 - **`gpt-4.1`'s lower counts are treated as a model limitation, not a pipeline bug** (decided 10-14). The early "stop" after iteration 1 wasn't hiding capacity: forced into a second iteration (`MIN_ITERATIONS=2`, one valid run), `gpt-4.1` produced 8 threats that were all duplicates and stopped on dedup saturation. It writes whole sentences into the flow `source_entity` / `target_entity` fields (seen in 4 of 5 runs), and in one forced-second-iteration retry `extract_flows` ran past its 32,768-token output ceiling, sending that run to the rule engine alone (0 LLM threats).
 - **Why `gpt-6-luna` needed a code change:** it rejects `max_tokens` (it needs `max_completion_tokens`) and rejects `temperature` once reasoning is on, which is its default (`medium`). Probed on 10-15 against the live API: with effort `none` and `max_completion_tokens`, `temperature` is accepted; with `medium`, `temperature=0.2` is refused. Before the reasoning-effort setting, every call to it would have failed and a run would have fallen back to the rule engine.
 - **`gpt-6.1-sol` passed every gate** in `mc` and `e2e-cli`, with `effort: low` recorded in every run and every run stopping on `max_iterations`. It found the most threats of the three (20 [20–22] LLM threats in `mc`), and both diagram-only components in all 4 of its runs. It is also the slowest (about 2× luna) and about 29× luna's cost per run; at $0.225 it is still under half of Sonnet 5.5's $0.49 on Bedrock, but that comparison crosses providers and caching ([§1](#1-model-comparison)).
@@ -166,6 +167,29 @@ Each model ran as **both** main and fast, on the full fixture: description, 3 di
 - **Don't use the auto-generated reports for these numbers.** `data/benchmarks/gpt6-bedrock/{e2e-cli,mc}-2026-10-16.md` also aggregate archived failed attempts from an overnight run whose AWS token expired (Sol shows 4 `mc` runs, Luna 6, a 29,599 s maximum). The table above uses the successful reps only.
 - **Harness note from that incident:** the `llm_produced_output` gate caught all 4 expired-token runs as failures, and `run`'s resume retried them on the next invocation.
 - **Not measured:** Bedrock GPT-6 effort control (the request field name is unknown), Bedrock GPT-6 vision (the PNG), prices, and the `e2e-web` / `e2e-enrich` suites.
+
+### 1.3 Threat quality against the reference checklist (2026-10-17)
+
+**`gpt-4.1`: the 10-13 direct-API `mc` reps from [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15). Sonnet 5.5: 2026-10-17 · `main` @ `41ccbe3` · AWS Bedrock `us-east-2` · `us.anthropic.claude-sonnet-5-5` as both main and fast · `mc` suite. n = 3 each, full fixture, `-n 2`.**
+
+The reference is [`tests/bench/fixtures/mediadrop-checklist.json`](../tests/bench/fixtures/mediadrop-checklist.json): 21 threats a reviewer expects for MediaDrop, drafted by Claude from the fixture and reviewed by hand on 10-15. Each run was **hand-graded** per item: Y if some threat in the run covers it, N if none does, P (partial) if one comes close but misses the point. P counts as not covered. Grades were made by reading every threat of the run, not just the best match.
+
+| | `gpt-4.1` (direct) | Sonnet 5.5 (Bedrock) |
+|---|---|---|
+| Items covered, per rep (hand-graded, of 21) | **7 / 7 / 9** | **17 / 15 / 18** |
+| Threats, per rep | 24 / 24 / 25 | 38 / 33 / 34 |
+| From the LLM, per rep (the rest: 9 rule engine + 7 dependency) | 8–9 | 22 / 17 / 18 |
+| Cost and wall time | $0.073, 131 s (medians) | $0.31 / $0.27 / $0.27, 188 / 163 / 162 s (per rep) |
+| Items covered in all 3 reps | 3: upload flooding (MD-04), WebSocket cross-partner leakage (MD-07), dependency supply chain (MD-16) | 15 |
+| Shared webhook HMAC key → one partner forges deliveries to others (MD-19) | N / N / P | P / P / P |
+
+**Reading it:**
+- **Sonnet 5.5 covered about twice as many items.** Items it covered in all 3 reps that `gpt-4.1` covered in none: cross-partner object access (IDOR, MD-05), the worker trusting queued job contents (MD-11), admin session compromise (MD-14), content-type spoofing and polyglot files (MD-17), decompression bombs (MD-03) and retry storms against partner endpoints (MD-13).
+- **Neither model found MD-19 in any of 6 runs.** HMAC is symmetric, so a single webhook key shared by all partners lets any partner forge deliveries to the others. Both models wrote "a leaked HMAC key allows forgery" (graded P) but never the cross-partner angle.
+- **Not a like-for-like comparison:** different provider (direct OpenAI vs Bedrock), dates and commits. The Sonnet 10-17 runs were also cheaper and faster than §1's 10-12 Sonnet row ($0.49, 330 s); same model, different session.
+- **Possible bias towards Claude:** Claude drafted the checklist items, and the grades weren't double-checked by a second person. A second read of the Sonnet runs disagreed with 4 of 63 grades (net −2 covered), which doesn't change the picture.
+- **The automatic score is approximate.** The quality module ([`tests/bench/quality.py`](../tests/bench/quality.py)) matches each item to its most similar threat (local embeddings, cosine **≥ 0.81**). The threshold was calibrated on the `gpt-4.1` grades (0 false matches, 3 misses) and checked on the Sonnet grades (0 false matches, 12 misses of 54 covered items); it is kept for both. At 0.81 it counts 5 / 6 / 10 for `gpt-4.1` and about 16 / 15 / 14 for Sonnet 5.5, so expect **±3 items per run** against a hand grade. It can't credit one threat for two items (Sonnet's decompression bombs sit inside its upload-flood threats, 0.69–0.71) and can't tell a generic leaked-key threat from MD-19 (0.80–0.84).
+- **Other models aren't scored.** Each needs its own hand-graded runs before its number is quoted, because the threshold depends on how a model phrases threats. That includes GPT-6, Opus 5.5 and the open-weight models.
 
 ---
 
@@ -468,7 +492,7 @@ The samples are handled as inert files: never installed or run. Each is decrypte
 
 ## Not measured yet
 
-- **Threat quality:** model output against the 18-threat MediaDrop reference checklist. The checklist and its match threshold still need human review.
+- **Threat quality for models other than Sonnet 5.5 and `gpt-4.1`** ([§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17)): each needs hand-graded runs first. Also not measured: quality on any system other than MediaDrop.
 - **OpenAI direct:** the `e2e-*` suites at n ≥ 3 (only `mc` has n = 3), `gpt-6-luna` above effort `none`, `gpt-6.1-sol` above `low` and in `e2e-web` / `e2e-enrich`.
 - **GPT-6 on Bedrock:** effort control (the request field name is unknown, so the setting has no effect), vision (the slots are text-only, so the PNG-only secrets manager is untested), prices (not in the AWS Price List API), and the `e2e-web` / `e2e-enrich` suites.
 - **Code as input** (`e2e-code`): needs the context-link binary on the bench machine.
@@ -539,6 +563,16 @@ ANTHROPIC_EFFORT=medium paranoid run examples/arsenal-deps/description.md -n 1 \
   -d examples/arsenal-deps/diagrams/architecture.mmd \
   -d examples/arsenal-deps/diagrams/upload-flow.mmd \
   -d examples/arsenal-deps/diagrams/deployment.png
+```
+
+**Threat quality** (§1.3): run `mc` for the model (Sonnet 5.5 on Bedrock shown), then grade each rep by hand against the checklist (Y/N/P per item, reading every threat of the run). The automatic best-match scores come from `tests.bench.quality`; the hand grades, not the automatic match, are the number to quote:
+
+```bash
+export AWS_REGION=us-east-2 BENCH_MODEL_SONNET_55=us.anthropic.claude-sonnet-5-5
+python -m tests.bench run mc --only mc-sonnet_55 --reps 3 --yes --max-cost 5
+sqlite3 data/benchmarks/mc/mc-sonnet_55/rep-1/paranoid.db "select source, name, description from threats"
+python -c "from pathlib import Path; from tests.bench.quality import *; \
+  [print(m.item_id, m.score, m.best_threat) for m in match_threats(run_threats(Path('data/benchmarks/mc/mc-sonnet_55/rep-1')), load_checklist(), default_embed())]"
 ```
 
 **No-LLM suites** (§7.1, §8; network and `semgrep` for the first, the embedding model for the second):

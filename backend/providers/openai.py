@@ -153,37 +153,40 @@ class OpenAIProvider:
             params["temperature"] = temperature
         return params
 
-    def _drop_rejected_param(self, e: BadRequestError) -> bool:
-        """Flip the flag for the parameter a 400 complains about. True if one
-        was flipped, so the caller should retry; False means a real error."""
+    def _drop_rejected_param(self, e: BadRequestError, sent: dict) -> bool:
+        """Flip the flag for the parameter a 400 complains about. True if the
+        caller should retry; False means a real error.
+
+        `sent` is what the failed request carried: a rejection of a parameter
+        this call sent is retriable even if a concurrent call already flipped
+        the flag (BB-32), and the flag is flipped and logged only once."""
         message = str(e).lower()
-        if "reasoning_effort" in message and self._effort and not self._effort_unsupported:
-            self._effort_unsupported = True
-            logger.warning(
-                "Model %s rejects `reasoning_effort` — omitting it for the rest of "
-                "this provider instance's calls",
-                self._model,
-            )
+        if "reasoning_effort" in message and "reasoning_effort" in sent:
+            if not self._effort_unsupported:
+                self._effort_unsupported = True
+                logger.warning(
+                    "Model %s rejects `reasoning_effort` — omitting it for the rest of "
+                    "this provider instance's calls",
+                    self._model,
+                )
             return True
-        if "temperature" in message and not self._temperature_unsupported:
-            self._temperature_unsupported = True
-            logger.warning(
-                "Model %s rejects `temperature` — omitting it for the rest of "
-                "this provider instance's calls",
-                self._model,
-            )
+        if "temperature" in message and "temperature" in sent:
+            if not self._temperature_unsupported:
+                self._temperature_unsupported = True
+                logger.warning(
+                    "Model %s rejects `temperature` — omitting it for the rest of "
+                    "this provider instance's calls",
+                    self._model,
+                )
             return True
-        if (
-            "max_tokens" in message
-            and "max_completion_tokens" in message
-            and not self._use_completion_tokens
-        ):
-            self._use_completion_tokens = True
-            logger.warning(
-                "Model %s requires `max_completion_tokens` — switching for the rest of "
-                "this provider instance's calls",
-                self._model,
-            )
+        if "max_tokens" in message and "max_completion_tokens" in message and "max_tokens" in sent:
+            if not self._use_completion_tokens:
+                self._use_completion_tokens = True
+                logger.warning(
+                    "Model %s requires `max_completion_tokens` — switching for the rest of "
+                    "this provider instance's calls",
+                    self._model,
+                )
             return True
         return False
 
@@ -192,15 +195,11 @@ class OpenAIProvider:
         rejects. Each rejection flips a per-instance flag, so the number of
         retries is bounded by the number of flags."""
         while True:
+            params = self._request_params(budget, temperature)
             try:
-                return await run_sync_in_executor(
-                    func,
-                    model=self._model,
-                    **self._request_params(budget, temperature),
-                    **kwargs,
-                )
+                return await run_sync_in_executor(func, model=self._model, **params, **kwargs)
             except BadRequestError as e:
-                if not self._drop_rejected_param(e):
+                if not self._drop_rejected_param(e, params):
                     raise
 
     async def generate_structured(

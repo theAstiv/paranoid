@@ -246,7 +246,8 @@ class BedrockProvider:
             config.pop("temperature", None)
 
         call_kwargs = dict(kwargs)
-        if self._effort and not self._effort_unsupported:
+        sent_effort = bool(self._effort) and not self._effort_unsupported
+        if sent_effort:
             if is_openai_family_model(self._model):
                 effort_field: dict[str, Any] = (
                     {"reasoning": {"effort": self._effort}}
@@ -264,26 +265,31 @@ class BedrockProvider:
                 **effort_field,
             }
 
+        # What THIS call carries decides whether a rejection is retriable: another
+        # in-flight call may already have flipped the flag (BB-32).
+        sent_temperature = "temperature" in config
         try:
             return await run_sync_in_executor(
                 self._client.converse, inferenceConfig=config, **call_kwargs
             )
         except Exception as e:
-            if not self._temperature_unsupported and _is_temperature_deprecated_error(e):
-                self._temperature_unsupported = True
-                logger.warning(
-                    "Model %s rejects the `temperature` parameter — omitting it "
-                    "for the rest of this provider instance's calls",
-                    self._model,
-                )
+            if sent_temperature and _is_temperature_deprecated_error(e):
+                if not self._temperature_unsupported:
+                    self._temperature_unsupported = True
+                    logger.warning(
+                        "Model %s rejects the `temperature` parameter — omitting it "
+                        "for the rest of this provider instance's calls",
+                        self._model,
+                    )
                 return await self._converse(inference_config, **kwargs)
-            if self._effort and not self._effort_unsupported and _is_effort_unsupported_error(e):
-                self._effort_unsupported = True
-                logger.warning(
-                    "Model %s rejects the `effort` parameter — omitting it "
-                    "for the rest of this provider instance's calls",
-                    self._model,
-                )
+            if sent_effort and _is_effort_unsupported_error(e):
+                if not self._effort_unsupported:
+                    self._effort_unsupported = True
+                    logger.warning(
+                        "Model %s rejects the `effort` parameter — omitting it "
+                        "for the rest of this provider instance's calls",
+                        self._model,
+                    )
                 return await self._converse(inference_config, **kwargs)
             raise
 
