@@ -326,3 +326,78 @@ async def test_test_provider_refusal_does_not_use_rate_limit(client, probes, mon
         await client.post(URL, json=FOREIGN, headers=_bearer(w, "stranger"))
     r = await client.post(URL, json={"provider": "ollama"}, headers=_bearer(w, "stranger"))
     assert r.status_code == 200
+
+
+# --- BB-20: a caller-chosen AWS profile / region (same rule as the Ollama URL) ---
+
+
+@pytest.fixture
+def aws_probes(monkeypatch):
+    """Records the (region, profile) each Bedrock probe would use; no AWS call."""
+    seen: list[tuple[str, str]] = []
+
+    async def fake_ping(model, region, profile):
+        seen.append((region, profile))
+        return _FakeResult(ok=True)
+
+    monkeypatch.setattr("backend.routes.config.ping_bedrock", fake_ping)
+    monkeypatch.setattr(settings, "aws_region", "us-east-1")
+    monkeypatch.setattr(settings, "aws_profile", "prod")
+    return seen
+
+
+OTHER_PROFILE = {"provider": "bedrock", "aws_profile": "other-team"}
+OTHER_REGION = {"provider": "bedrock", "aws_region": "eu-central-1"}
+
+
+@pytest.mark.asyncio
+async def test_test_provider_other_aws_profile_or_region_refused_for_non_admin(
+    client, aws_probes, monkeypatch
+):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    for who in ("owner", "stranger", "pat_b", "pat_admin_b"):
+        for body in (OTHER_PROFILE, OTHER_REGION):
+            r = await client.post(URL, json=body, headers=_bearer(w, who))
+            assert r.status_code == 403, (who, body)
+    assert aws_probes == []
+
+
+@pytest.mark.asyncio
+async def test_test_provider_other_aws_profile_allowed_for_admin(client, aws_probes, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    r = await client.post(URL, json=OTHER_PROFILE, headers=_bearer(w, "admin"))
+    assert r.status_code == 200
+    assert aws_probes == [("us-east-1", "other-team")]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_configured_aws_settings_open_to_any_logged_in_user(
+    client, aws_probes, monkeypatch
+):
+    """Settings sends the current region and profile back with the probe; that
+    (or omitting them) must keep working for every logged-in user."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    bodies = (
+        {"provider": "bedrock"},
+        {"provider": "bedrock", "aws_region": "us-east-1", "aws_profile": "prod"},
+    )
+    for body in bodies:
+        r = await client.post(URL, json=body, headers=_bearer(w, "stranger"))
+        assert r.status_code == 200
+    assert aws_probes == [("us-east-1", "prod"), ("us-east-1", "prod")]
+
+
+@pytest.mark.asyncio
+async def test_test_provider_other_aws_profile_needs_config_secret(client, aws_probes, monkeypatch):
+    monkeypatch.setattr(settings, "config_secret", "s3cret")
+    for headers in ({}, {"X-Config-Secret": "wrong"}):
+        r = await client.post(URL, json=OTHER_PROFILE, headers=headers)
+        assert r.status_code == 403
+    assert aws_probes == []
+
+    r = await client.post(URL, json=OTHER_PROFILE, headers={"X-Config-Secret": "s3cret"})
+    assert r.status_code == 200
+    assert aws_probes == [("us-east-1", "other-team")]

@@ -214,7 +214,7 @@ Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secr
 
 ### `POST /api/config/test-provider`
 
-Liveness probe for a provider (`anthropic`, `openai`, `ollama`, `bedrock`). Requires a login when `PARANOID_REQUIRE_AUTH=true`. Probing an `ollama_base_url` other than the configured `OLLAMA_BASE_URL` makes the server fetch that address, so it needs the `X-Config-Secret` header when `CONFIG_SECRET` is set and, with auth on, an unscoped instance admin; otherwise 403.
+Liveness probe for a provider (`anthropic`, `openai`, `ollama`, `bedrock`). Requires a login when `PARANOID_REQUIRE_AUTH=true`. Probing an `ollama_base_url` other than the configured `OLLAMA_BASE_URL` makes the server fetch that address, and an `aws_profile` or `aws_region` other than the configured one makes it load credentials the operator didn't choose. Either needs the `X-Config-Secret` header when `CONFIG_SECRET` is set and, with auth on, an unscoped instance admin; otherwise 403. Sending the configured values, or leaving them out, works for any logged-in user.
 
 ---
 
@@ -420,6 +420,32 @@ Aggregate statistics: total models, open threats by severity, recent activity, a
 
 Run the pre-flight gap analysis on a description without starting the full pipeline. Needs a login when `PARANOID_REQUIRE_AUTH=true`.
 
-**Body:** `{"description": "...", "framework": "STRIDE"}`
+**Body:** `AnalyzeBundleRequest`
 
-**Response:** `AnalyzeDescriptionResponse` — list of gaps with severity and suggestions.
+```json
+{
+  "description": "...",
+  "assumptions": ["TLS terminates at the load balancer", "..."],
+  "framework": "STRIDE",
+  "has_ai_components": false
+}
+```
+
+Only `description` is required (1–50,000 characters). `assumptions` defaults to `[]` (at most 200 entries), `framework` to `STRIDE` (`STRIDE`, `MAESTRO` or `HYBRID`), `has_ai_components` to `false`.
+
+**Response:** `AnalyzeBundleResponse`, one result for each part:
+
+```json
+{
+  "description": {
+    "gaps": [{"field": "trust_boundaries", "severity": "warning", "message": "..."}],
+    "is_sufficient": true
+  },
+  "assumptions": {
+    "gaps": [{"field": "out_of_scope", "severity": "info", "message": "..."}],
+    "is_sufficient": true
+  }
+}
+```
+
+Description gaps have severity `warning` or `error`; assumption gaps can also be `info`. `is_sufficient` is `true` when that part has no `error` gap.
