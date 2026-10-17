@@ -28,6 +28,10 @@ _LINK_TARGETS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 
 
 _BACKFILL_FLAG = "component_links_backfilled"
+# Bump when the resolver learns to link more text, so models saved earlier get one
+# more pass. 1 = tiers 1-3; 2 = adds the tail-of-a-name tier. The pass only fills
+# NULL links, so existing and edited links are never touched.
+_BACKFILL_VERSION = "2"
 
 
 async def _asset_refs(model_id: str) -> list[AssetRef]:
@@ -136,14 +140,15 @@ async def relink_threat(threat_id: str, target: str) -> None:
 
 
 async def backfill_component_links() -> None:
-    """Link models saved before migration 0013, once. Never raises.
+    """Link models saved before migration 0013 or before a resolver upgrade, once
+    per resolver version. Never raises.
 
     Rows written since then are linked on save, so this only has to run on the
-    first startup after the upgrade; a config flag records that it did. A failure
-    leaves the flag unset so the next startup retries.
+    first startup after an upgrade; a config flag records the version it ran at.
+    A failure leaves the flag as it was so the next startup retries.
     """
     try:
-        if await crud.get_config_value(_BACKFILL_FLAG):
+        if await crud.get_config_value(_BACKFILL_FLAG) == _BACKFILL_VERSION:
             return
         conn = await db.get()
         async with conn.execute("SELECT DISTINCT model_id FROM assets") as cur:
@@ -151,7 +156,7 @@ async def backfill_component_links() -> None:
         linked = 0
         for model_id in model_ids:
             linked += (await link_model_components(model_id))["linked"]
-        await crud.set_config_value(_BACKFILL_FLAG, "1", encrypted=False)
+        await crud.set_config_value(_BACKFILL_FLAG, _BACKFILL_VERSION, encrypted=False)
         logger.info(
             "Component link backfill: %d link(s) added across %d model(s)", linked, len(model_ids)
         )
