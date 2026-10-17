@@ -1226,8 +1226,58 @@ async def test_bedrock_openai_model_sends_reasoning_effort_and_omits_temperature
         await provider.generate_structured("test", _SimpleModel, temperature=0.2)
 
     kwargs = mock_client.converse.call_args.kwargs
-    assert kwargs["additionalModelRequestFields"] == {"reasoning_effort": "medium"}
+    # GPT-6 takes the nested form (live-verified 2026-10-17); the flat
+    # `reasoning_effort` it used to get is an unknown parameter there.
+    assert kwargs["additionalModelRequestFields"] == {"reasoning": {"effort": "medium"}}
     assert "temperature" not in kwargs["inferenceConfig"]
+
+
+@pytest.mark.parametrize(
+    "model", ["us.openai.gpt-6-luna", "us.openai.gpt-6.1-sol", "openai.gpt-6-sol-v1:0"]
+)
+@pytest.mark.parametrize("effort", ["none", "low", "max"])
+@pytest.mark.asyncio
+async def test_bedrock_gpt6_sends_nested_reasoning_effort(model, effort):
+    mock_client = MagicMock()
+    mock_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model=model, effort=effort)
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    kwargs = mock_client.converse.call_args.kwargs
+    assert kwargs["additionalModelRequestFields"] == {"reasoning": {"effort": effort}}
+    assert "temperature" not in kwargs["inferenceConfig"]
+    assert provider.effort == effort
+
+
+@pytest.mark.asyncio
+async def test_bedrock_gpt6_rejecting_the_nested_field_falls_back_without_effort():
+    """A rejection that names `reasoning` but not `effort` (e.g. a model that
+    takes neither form) must still hit the one-retry-without-effort fallback."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    error = _make_client_error(
+        "ValidationException",
+        "The model returned the following errors: Unknown parameter: 'reasoning'.",
+    )
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if "additionalModelRequestFields" in kwargs:
+            raise error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.openai.gpt-6-astra", effort="none")
+        await provider.generate_structured("test", _SimpleModel, temperature=0.2)
+
+    assert len(calls) == 2
+    assert "additionalModelRequestFields" not in calls[1]
+    assert all("temperature" not in c["inferenceConfig"] for c in calls)
+    assert provider.effort is None
 
 
 @pytest.mark.asyncio
