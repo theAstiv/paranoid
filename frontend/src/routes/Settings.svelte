@@ -282,6 +282,7 @@
           <div class="col-span-2 space-y-1.5">
             <div class="flex items-center gap-2">
               <input id="cfg-ollama" type="url" bind:value={draft.ollama_base_url}
+                on:input={() => { keys.ollama = { ...keys.ollama, testResult: null } }}
                 placeholder="http://host.docker.internal:11434"
                 class="flex-1 {FIELD_CLASS} font-mono" />
               {#if draft.ollama_base_url}

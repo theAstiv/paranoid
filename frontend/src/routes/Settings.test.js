@@ -226,6 +226,19 @@ describe('Settings — API keys', () => {
     ).toBeInTheDocument())
   })
 
+  it('clears the Ollama test result when the URL is edited', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, ollama_base_url: 'http://localhost:11434' })
+    testProvider.mockResolvedValue({ ok: true, latency_ms: 9 })
+    render(Settings)
+    await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
+    await fireEvent.click(screen.getByRole('button', { name: 'Test Ollama connection' }))
+    await waitFor(() => expect(screen.getByText('✓ Connected (9 ms)')).toBeInTheDocument())
+
+    await fireEvent.input(document.getElementById('cfg-ollama'), { target: { value: '' } })
+
+    expect(screen.queryByText('✓ Connected (9 ms)')).toBeNull()
+  })
+
   it('has no Ollama Test button while the URL is empty', async () => {
     render(Settings)
     await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
