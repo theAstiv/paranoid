@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from backend.auth.dependencies import (
     check_project_role,
     get_current_user,
+    require_active_project,
     require_role,
     visible_project_ids,
 )
@@ -81,8 +82,10 @@ async def create_source(
     target_project_id = body.project_id or crud_projects.DEFAULT_PROJECT_ID
     if settings.paranoid_require_auth:
         await check_project_role(user, target_project_id, "editor")
-    if await crud_projects.get_project(target_project_id) is None:
+    project = await crud_projects.get_project(target_project_id)
+    if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
+    require_active_project(project)
 
     # Validate URL before touching the DB — cheap fail-fast.
     try:

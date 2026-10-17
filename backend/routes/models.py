@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from backend.auth.dependencies import (
     check_project_role,
     get_current_user,
+    require_active_project,
     require_role,
     visible_project_ids,
 )
@@ -439,6 +440,7 @@ async def create_model(
     if settings.paranoid_require_auth:
         await check_project_role(user, target_project_id, "editor")
     project = await crud_projects.get_project(target_project_id)
+    require_active_project(project)
 
     provider_type, model_id_str = resolve_provider(
         body.provider.value if body.provider else None, body.model, project

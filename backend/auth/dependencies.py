@@ -255,6 +255,17 @@ async def check_project_role(user: dict[str, Any], project_id: str, min_role: st
         )
 
 
+def require_active_project(project: dict[str, Any] | None) -> None:
+    """Raise 403 when `project` is archived. A missing project is the caller's to handle.
+
+    check_project_role looks only at membership, and an admin bypasses it, so create
+    routes call this too: a source or model created in an archived project would be
+    hidden from every list a non-admin can see. It applies to admins and with auth off.
+    """
+    if project and project.get("is_archived"):
+        raise HTTPException(status_code=403, detail="This project is archived.")
+
+
 async def visible_project_ids(user: dict[str, Any], project_id: str | None) -> list[str] | None:
     """Project ids a list route may show `user`, or ``None`` for no restriction.
 
