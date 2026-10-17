@@ -104,14 +104,13 @@ class BedrockProvider:
     accepts a JSON text answer if the model replies in text instead.
 
     `effort` is opt-in and family-specific: Claude models get
-    `output_config.effort` (ANTHROPIC_EFFORT), OpenAI-family models (GPT-6
-    Sol/Luna, gpt-oss) get `reasoning_effort` (OPENAI_REASONING_EFFORT) in
-    `additionalModelRequestFields`. A model that rejects it falls back the
-    same lazy way `temperature` and forced tool choice do — one failed call,
-    then never sent again for the rest of this instance's calls. GPT-6 on
-    Bedrock rejects `reasoning_effort` as an unknown parameter (probed
-    2026-10-15), so effort is effectively unavailable there until the real
-    field name is known; the fallback keeps that from failing the run.
+    `output_config.effort` (ANTHROPIC_EFFORT); OpenAI-family models take
+    OPENAI_REASONING_EFFORT in `additionalModelRequestFields`: GPT-6 Sol/Luna
+    as the nested `reasoning.effort` (live-verified 2026-10-17; the flat
+    `reasoning_effort` is an unknown parameter there), gpt-oss as the flat
+    `reasoning_effort`. A model that rejects it falls back the same lazy way
+    `temperature` and forced tool choice do — one failed call, then never
+    sent again for the rest of this instance's calls.
 
     `temperature` is never sent to OpenAI reasoning models (every OpenAI
     family model except gpt-oss): GPT-6 on Bedrock rejects it whatever the
@@ -249,7 +248,11 @@ class BedrockProvider:
         call_kwargs = dict(kwargs)
         if self._effort and not self._effort_unsupported:
             if is_openai_family_model(self._model):
-                effort_field: dict[str, Any] = {"reasoning_effort": self._effort}
+                effort_field: dict[str, Any] = (
+                    {"reasoning": {"effort": self._effort}}
+                    if _is_openai_reasoning_model(self._model)
+                    else {"reasoning_effort": self._effort}
+                )
                 if self._effort != "none":
                     # gpt-oss rejects temperature once reasoning is on; omit it
                     # up front instead of burning a failed call.
@@ -626,15 +629,15 @@ def _is_openai_reasoning_model(model_id: str) -> bool:
 def _is_effort_unsupported_error(exc: Exception) -> bool:
     """True when `exc` is a botocore `ClientError` whose Bedrock
     `ValidationException` complains about the `effort` /
-    `additionalModelRequestFields.output_config` field, mirroring the direct
-    Anthropic provider's `_is_effort_unsupported_error`."""
+    `additionalModelRequestFields.output_config` / `reasoning` field,
+    mirroring the direct Anthropic provider's `_is_effort_unsupported_error`."""
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
         return False
     if response.get("Error", {}).get("Code") != "ValidationException":
         return False
     message = str(exc).lower()
-    return "effort" in message or "output_config" in message
+    return "effort" in message or "output_config" in message or "reasoning" in message
 
 
 _CLIENT_ERROR_CLASSES: dict[str, type[ProviderError]] = {
