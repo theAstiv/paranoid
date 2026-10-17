@@ -136,7 +136,11 @@ class AnthropicProvider:
             call = dict(kwargs)
             if not self._temperature_unsupported:
                 call["temperature"] = temperature
-            if self._effort and not self._effort_unsupported:
+            # What THIS call carries decides whether a rejection is retriable: another
+            # in-flight call may already have flipped the flag (BB-32).
+            sent_temperature = "temperature" in call
+            sent_effort = bool(self._effort) and not self._effort_unsupported
+            if sent_effort:
                 # extra_body rather than the typed `output_config` argument so
                 # this works on every SDK version the `anthropic>=` pin allows.
                 call["extra_body"] = {
@@ -148,24 +152,22 @@ class AnthropicProvider:
                 self._record_usage(response)
                 return response
             except BadRequestError as e:
-                if not self._temperature_unsupported and self._is_temperature_deprecated_error(e):
-                    self._temperature_unsupported = True
-                    logger.warning(
-                        "Model %s rejects the `temperature` parameter — omitting it "
-                        "for the rest of this provider instance's calls",
-                        self._model,
-                    )
-                elif (
-                    self._effort
-                    and not self._effort_unsupported
-                    and (self._is_effort_unsupported_error(e))
-                ):
-                    self._effort_unsupported = True
-                    logger.warning(
-                        "Model %s rejects the `effort` parameter — omitting it "
-                        "for the rest of this provider instance's calls",
-                        self._model,
-                    )
+                if sent_temperature and self._is_temperature_deprecated_error(e):
+                    if not self._temperature_unsupported:
+                        self._temperature_unsupported = True
+                        logger.warning(
+                            "Model %s rejects the `temperature` parameter — omitting it "
+                            "for the rest of this provider instance's calls",
+                            self._model,
+                        )
+                elif sent_effort and self._is_effort_unsupported_error(e):
+                    if not self._effort_unsupported:
+                        self._effort_unsupported = True
+                        logger.warning(
+                            "Model %s rejects the `effort` parameter — omitting it "
+                            "for the rest of this provider instance's calls",
+                            self._model,
+                        )
                 else:
                     raise
 
