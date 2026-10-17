@@ -509,13 +509,26 @@ def _bag_embed(text: str) -> list[float]:
     return [float(sum(w.startswith(v) for w in words)) for v in vocab]
 
 
-def test_checklist_is_marked_draft_and_well_formed():
+def test_checklist_is_reviewed_and_well_formed():
     checklist = load_checklist()
-    assert checklist["status"].startswith("DRAFT")
+    assert checklist["status"].startswith("reviewed")
     ids = [i["id"] for i in checklist["items"]]
-    assert len(ids) == len(set(ids)) == 18
+    assert len(ids) == len(set(ids)) == 21
+    assert {"MD-19", "MD-20", "MD-21"} <= set(ids)
     assert any("deployment.png (only)" in i["from"] for i in checklist["items"])
     assert any("upload-flow.mmd (only)" in i["from"] for i in checklist["items"])
+    for item in checklist["items"]:
+        assert item["title"].strip(), item["id"]
+        assert item["description"].strip(), item["id"]
+        assert item["stride"], item["id"]
+
+
+def test_checklist_threshold_records_which_model_family_it_was_calibrated_on():
+    # A calibration done on one family must not read as a general one.
+    match = load_checklist()["match"]
+    assert 0.5 < match["threshold"] < 1.0
+    assert "gpt-4.1" in match["threshold_status"]
+    assert "Claude family pending" in match["threshold_status"]
 
 
 def test_match_threats_uses_threshold():
