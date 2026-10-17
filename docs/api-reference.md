@@ -26,7 +26,7 @@ List threat models. Returns most recent first.
 
 ### `POST /api/models`
 
-Create a new threat model record (without running the pipeline).
+Create a new threat model record (without running the pipeline). Returns `403` when `project_id` names an archived project.
 
 **Body:**
 
@@ -342,7 +342,7 @@ Delete a comment (author or owner).
 
 ## Sources (Code Sources)
 
-A source belongs to one project. With `PARANOID_REQUIRE_AUTH=true`, reading a source needs viewer on its project, creating or re-indexing one needs editor, and deleting or moving it needs owner. A project-scoped token only reaches its own project's sources. A model can only use a source from its own project (`POST /api/models/{id}/run` returns `403` otherwise). `(git_url, ref)` is unique across the whole instance, so adding a repository another project already added returns `409`.
+A source belongs to one project, and creating one in an archived project returns `403` (with or without auth). With `PARANOID_REQUIRE_AUTH=true`, reading a source needs viewer on its project, creating or re-indexing one needs editor, and deleting or moving it needs owner. A project-scoped token only reaches its own project's sources. A model can only use a source from its own project (`POST /api/models/{id}/run` returns `403` otherwise). `(git_url, ref)` is unique across the whole instance, so adding a repository another project already added returns `409`.
 
 ### `GET /api/sources`
 
