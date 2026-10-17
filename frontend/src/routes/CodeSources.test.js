@@ -83,6 +83,69 @@ describe('CodeSources — project scoping', () => {
   })
 })
 
+// BB-24: the server needs editor to add/re-index and owner to delete; the buttons
+// follow it. A role that is not known yet keeps them (the server still enforces).
+describe('CodeSources — role gating', () => {
+  const ADD = 'Add source'
+  const REINDEX = 'Re-clone and re-index'
+  const DELETE = 'Delete source'
+
+  async function renderAs(role, user = { id: 'u1', username: 'ann' }) {
+    currentUser.set(user)
+    currentProject.set({ id: 'p1', name: 'Alpha', member_role: role })
+    listCodeSources.mockResolvedValue([readySource])
+    render(CodeSources)
+    await waitFor(() => expect(screen.getByText('backend')).toBeInTheDocument())
+  }
+
+  it('shows a viewer the list but no Add, re-index or delete', async () => {
+    await renderAs('viewer')
+    expect(screen.queryByText(ADD)).toBeNull()
+    expect(screen.queryByTitle(REINDEX)).toBeNull()
+    expect(screen.queryByTitle(DELETE)).toBeNull()
+  })
+
+  it('tells a viewer to ask an editor when the project has no sources', async () => {
+    currentUser.set({ id: 'u1', username: 'ann' })
+    currentProject.set({ id: 'p1', name: 'Alpha', member_role: 'viewer' })
+    render(CodeSources)
+    await waitFor(() => expect(screen.getByText('No code sources yet.')).toBeInTheDocument())
+    expect(screen.getByText(/ask a project editor/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Add a Git repository/)).toBeNull()
+  })
+
+  it('lets an editor add and re-index but not delete', async () => {
+    await renderAs('editor')
+    expect(screen.getByText(ADD)).toBeInTheDocument()
+    expect(screen.getByTitle(REINDEX)).toBeInTheDocument()
+    expect(screen.queryByTitle(DELETE)).toBeNull()
+  })
+
+  it('lets an owner do everything', async () => {
+    await renderAs('owner')
+    expect(screen.getByText(ADD)).toBeInTheDocument()
+    expect(screen.getByTitle(REINDEX)).toBeInTheDocument()
+    expect(screen.getByTitle(DELETE)).toBeInTheDocument()
+  })
+
+  it('lets an instance admin do everything whatever their project role', async () => {
+    await renderAs('viewer', { id: 'u2', username: 'root', is_admin: true })
+    expect(screen.getByText(ADD)).toBeInTheDocument()
+    expect(screen.getByTitle(REINDEX)).toBeInTheDocument()
+    expect(screen.getByTitle(DELETE)).toBeInTheDocument()
+  })
+
+  it('keeps the buttons while the role is not known', async () => {
+    currentProject.set({ id: 'p1', name: 'Alpha' })
+    listCodeSources.mockResolvedValue([readySource])
+    render(CodeSources)
+    await waitFor(() => expect(screen.getByText('backend')).toBeInTheDocument())
+    expect(screen.getByText(ADD)).toBeInTheDocument()
+    expect(screen.getByTitle(REINDEX)).toBeInTheDocument()
+    expect(screen.getByTitle(DELETE)).toBeInTheDocument()
+  })
+})
+
 describe('CodeSources — loading', () => {
   it('loads sources on mount', async () => {
     render(CodeSources)

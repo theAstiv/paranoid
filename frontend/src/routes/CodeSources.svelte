@@ -28,6 +28,14 @@
   // A signed-in user without a project has nowhere to put a new source (mirrors NewModel).
   $: noProject = Boolean($currentUser) && !$currentProject
 
+  // The server needs editor to add or re-index and owner to delete. Hide a control only
+  // when the role is known and too low: an unknown role (not loaded yet, or auth off) keeps
+  // it, and the server still refuses what the role can't do.
+  $: role = $currentProject?.member_role
+  $: isAdmin = Boolean($currentUser?.is_admin)
+  $: canAdd = isAdmin || !role || role === 'owner' || role === 'editor'
+  $: canDelete = isAdmin || !role || role === 'owner'
+
   // Runs on mount and whenever the active project changes (sidebar switch).
   $: reload(projectId)
   onDestroy(stopStreams)
@@ -148,13 +156,15 @@
       <h1 class="text-xl font-semibold text-c-text">Code Sources</h1>
       <p class="text-sm text-c-muted mt-1">Git repositories cloned and indexed for code context during threat modeling.</p>
     </div>
-    <button on:click={() => { showAdd = !showAdd }}
-      class="btn-primary text-sm px-3 py-1.5">
-      {showAdd ? 'Cancel' : 'Add source'}
-    </button>
+    {#if canAdd}
+      <button on:click={() => { showAdd = !showAdd }}
+        class="btn-primary text-sm px-3 py-1.5">
+        {showAdd ? 'Cancel' : 'Add source'}
+      </button>
+    {/if}
   </div>
 
-  {#if showAdd}
+  {#if showAdd && canAdd}
     <div class="card p-5 space-y-4">
       <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Add repository</h2>
       <div class="grid grid-cols-2 gap-4">
@@ -214,7 +224,11 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v1M3 7v10a2 2 0 002 2h14a2 2 0 002-2V7M3 7h18M8 21v-4a1 1 0 011-1h6a1 1 0 011 1v4"/>
       </svg>
       <p class="text-sm text-c-muted">No code sources yet.</p>
-      <p class="text-xs text-c-faint">Add a Git repository to enable code context during threat modeling.</p>
+      <p class="text-xs text-c-faint">
+        {canAdd
+          ? 'Add a Git repository to enable code context during threat modeling.'
+          : 'Ask a project editor to add a Git repository for code context.'}
+      </p>
     </div>
   {:else}
     <div class="space-y-3">
@@ -252,7 +266,7 @@
               {/if}
             </div>
             <div class="flex items-center gap-1 flex-shrink-0">
-              {#if TERMINAL.has(src.last_index_status)}
+              {#if canAdd && TERMINAL.has(src.last_index_status)}
                 <button on:click={() => handleReindex(src.id)} title="Re-clone and re-index"
                   class="p-1.5 rounded text-c-faint hover:text-c-accent hover:bg-c-accent/10 transition-colors">
                   <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -260,15 +274,17 @@
                   </svg>
                 </button>
               {/if}
-              <button on:click={() => handleDelete(src.id)} title="Delete source"
-                class="p-1.5 rounded text-c-faint hover:text-c-critical hover:bg-c-critical/10 transition-colors">
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-1 14H6L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                  <path d="M9 6V4h6v2"/>
-                </svg>
-              </button>
+              {#if canDelete}
+                <button on:click={() => handleDelete(src.id)} title="Delete source"
+                  class="p-1.5 rounded text-c-faint hover:text-c-critical hover:bg-c-critical/10 transition-colors">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              {/if}
             </div>
           </div>
         </div>
