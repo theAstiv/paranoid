@@ -261,8 +261,9 @@ def is_openai_family_model(model_id: str) -> bool:
 
     Matched on the model ID: Bedrock IDs for them carry ``openai.`` (e.g.
     ``openai.gpt-oss-120b-1:0``, possibly behind a ``us.`` inference-profile
-    prefix) or a ``gpt-`` name. Those models take a ``reasoning_effort``
-    request field instead of Claude's ``output_config.effort``.
+    prefix) or a ``gpt-`` name. Those models take a reasoning effort field
+    (GPT-6: nested ``reasoning.effort``; gpt-oss: ``reasoning_effort``)
+    instead of Claude's ``output_config.effort``.
     """
     lowered = model_id.lower()
     return "openai." in lowered or "gpt-" in lowered

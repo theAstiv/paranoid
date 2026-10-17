@@ -370,7 +370,7 @@ What fixed each failure shape:
   - **What remains:** the models call the tool but fill it in wrong. They write field names in PascalCase (`Type`, `Name`, `Description` instead of `type`, `name`, `description`) and send CVSS as a flat abbreviated object (`{'av': 'N', 'ac': 'L', …}`) instead of the nested metrics. The validation retry, which names the failing fields, doesn't get them to correct it within 3 attempts.
   - Paranoid treats the GPT-OSS models as **unsupported** for structured output. Fixing them would mean rewriting keys the models got wrong, which isn't planned.
 - **OpenAI direct:** measured since, see [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15). `gpt-4.1` is reliable on every path but yields fewer threats and puts whole sentences in flow entity fields; one forced-second-iteration `extract_flows` call hit the model's 32,768-token output ceiling. Both are treated as model limitations (decided 10-14). `gpt-6-luna` needs `OPENAI_REASONING_EFFORT` (it rejects `max_tokens` and, with reasoning on, `temperature`); with it set to `none` it passed every gate. `gpt-6.1-sol` refuses `none` and passed every gate at `low`.
-- **GPT-6 on Bedrock:** passes since #157 ([§1.2](#12-gpt-6-on-aws-bedrock-2026-10-16)), but runs at its default effort only (`reasoning_effort` is rejected as an unknown field and the right name isn't known) and isn't sent images.
+- **GPT-6 on Bedrock:** passes since #157 ([§1.2](#12-gpt-6-on-aws-bedrock-2026-10-16)), but the 10-16 runs are at default effort only (they sent the flat `reasoning_effort`, an unknown field there; the nested `reasoning.effort` is sent since the effort-field fix and has not been benchmarked yet) and aren't sent images.
 
 ---
 
