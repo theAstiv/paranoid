@@ -133,6 +133,67 @@ async def test_max_tokens_rejection_switches_to_max_completion_tokens():
     assert calls[2].kwargs["max_completion_tokens"] == 1000
 
 
+# BB-32: two calls in flight on one provider both carry the parameter; the first
+# rejection flips the flag, and the second must still be retried, not raised.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "ctor", "message", "gone", "kept"),
+    [
+        (
+            "_temperature_unsupported",
+            {},
+            "Unsupported parameter: 'temperature' is not supported with this model",
+            "temperature",
+            None,
+        ),
+        (
+            "_effort_unsupported",
+            {"reasoning_effort": "medium"},
+            "Unsupported parameter: 'reasoning_effort' is not supported",
+            "reasoning_effort",
+            None,
+        ),
+        (
+            "_use_completion_tokens",
+            {},
+            (
+                "Unsupported parameter: 'max_tokens' is not supported with this model. "
+                "Use 'max_completion_tokens' instead."
+            ),
+            "max_tokens",
+            "max_completion_tokens",
+        ),
+    ],
+)
+async def test_rejection_after_another_call_flipped_the_flag_is_still_retried(
+    flag, ctor, message, gone, kept
+):
+    """The flag was flipped by the other in-flight call between this call's send and
+    its rejection: this call carried the parameter, so it retries without it."""
+    calls: list[dict] = []
+    provider = None
+
+    def _parse(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            setattr(provider, flag, True)
+            raise _bad_request(message)
+        return _parse_response("ok")
+
+    with patch("backend.providers.openai.OpenAI") as mock_openai:
+        provider, client = _provider(mock_openai, [], **ctor)
+        client.chat.completions.parse.side_effect = _parse
+        assert (await _structured(provider)).value == "ok"
+
+    assert len(calls) == 2
+    assert gone in calls[0]
+    assert gone not in calls[1]
+    if kept:
+        assert kept in calls[1]
+
+
 @pytest.mark.asyncio
 async def test_all_three_rejections_in_one_call_still_succeed():
     errors = [
