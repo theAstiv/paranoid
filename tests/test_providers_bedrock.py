@@ -496,6 +496,90 @@ async def test_bedrock_effort_rejected_retries_without_it_and_remembers():
     assert "additionalModelRequestFields" not in calls[2]
 
 
+# BB-32: two calls in flight on one provider both carry the parameter; the first
+# rejection flips the flag, and the second must still be retried, not raised.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flag", "provider_kwargs", "message", "present_in_first_call"),
+    [
+        (
+            "_temperature_unsupported",
+            {},
+            "temperature is not supported for this model",
+            lambda kw: "temperature" in kw["inferenceConfig"],
+        ),
+        (
+            "_effort_unsupported",
+            {"effort": "medium"},
+            "output_config.effort is not supported for this model",
+            lambda kw: "additionalModelRequestFields" in kw,
+        ),
+    ],
+)
+async def test_bedrock_rejection_after_another_call_flipped_the_flag_is_still_retried(
+    flag, provider_kwargs, message, present_in_first_call
+):
+    """The flag was flipped by the other in-flight call between this call's send and
+    its rejection: this call carried the parameter, so it retries without it."""
+    mock_client = MagicMock()
+    calls: list[dict] = []
+    error = _make_client_error("ValidationException", message)
+    provider = None
+
+    def _converse(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            setattr(provider, flag, True)
+            raise error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(
+            model="us.anthropic.claude-sonnet-4-20250514-v1:0", **provider_kwargs
+        )
+        result = await provider.generate_structured("test", _SimpleModel)
+
+    assert result.value == "ok"
+    assert len(calls) == 2
+    assert present_in_first_call(calls[0])
+    assert not present_in_first_call(calls[1])
+
+
+@pytest.mark.asyncio
+async def test_bedrock_two_concurrent_calls_both_survive_a_temperature_rejection():
+    """The 10-16 live failure: both calls are in flight with `temperature` when the
+    model rejects it, so the second rejection arrives after the flag is already set."""
+    import asyncio
+    import threading
+
+    mock_client = MagicMock()
+    error = _make_client_error(
+        "ValidationException", "This model doesn't support the temperature field."
+    )
+    barrier = threading.Barrier(2, timeout=10)
+
+    def _converse(**kwargs):
+        if "temperature" in kwargs["inferenceConfig"]:
+            barrier.wait()  # both calls have sent `temperature` before either fails
+            raise error
+        return _make_tool_response({"value": "ok", "count": 1})
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(sys.modules, _patched_modules(_mock_boto3_with_client(mock_client))):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-4-20250514-v1:0")
+        results = await asyncio.gather(
+            provider.generate_structured("one", _SimpleModel),
+            provider.generate_structured("two", _SimpleModel),
+        )
+
+    assert [r.value for r in results] == ["ok", "ok"]
+
+
 @pytest.mark.asyncio
 async def test_bedrock_effort_and_temperature_rejections_both_fall_back():
     """A model that rejects both `temperature` and `effort` ends up with
