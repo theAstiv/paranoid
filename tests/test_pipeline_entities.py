@@ -83,8 +83,9 @@ def test_known_leftover_single_word_names_of_five_or_more_characters_still_match
 
 
 def test_asset_name_longer_than_the_text_is_not_matched():
-    # "Intent Classifier" does not resolve to "Intent Classifier Model": the matcher only
-    # looks for an asset name inside the text, never the reverse.
+    # "Intent Classifier" does not resolve to "Intent Classifier Model": tiers 1-3 look for
+    # an asset name inside the text, and tier 4 only accepts the text as the *tail* of a name
+    # (a prefix such as this names something else more often than not).
     assert resolve_asset("Intent Classifier", [("a1", "Intent Classifier Model")]) is None
 
 
@@ -105,6 +106,58 @@ def test_generic_short_name_does_not_beat_the_real_target_in_a_threat_sentence()
 def test_composite_target_resolves_to_the_leading_entity():
     assets = [("a-ui", "Admin UI"), ("a-keys", "Partner API Keys")]
     assert resolve_asset("Admin UI / Partner API Keys", assets) == "a-ui"
+
+
+# --- tier 4: the text is the tail of an asset name ---------------------------
+# Diagram-label shorthand drops the leading modifiers of the extracted name.
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("API container", "Express API container"),
+        ("Worker container", "Resize worker container"),
+        ("Redis", "Session Memory - Redis"),
+        ("API container", "Express API (API container)"),
+        ("pgvector", "Policy RAG Vector Database - pgvector"),
+    ],
+)
+def test_text_that_is_the_tail_of_one_asset_name_resolves_at_tier_four(text, name):
+    assets = [("a-target", name), ("a-other", "Admin Console"), ("a-db", "PostgreSQL Database")]
+    assert resolve_asset_with_tier(text, assets) == ("a-target", 4)
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("Admin", "Admin Credentials"),
+        ("User", "User Profile Database"),
+        ("Client", "Client Secret"),
+        ("Redis", "Redis job queue"),
+    ],
+)
+def test_text_that_is_the_start_of_an_asset_name_does_not_resolve(text, name):
+    assert resolve_asset_with_tier(text, [("a1", name)]) == (None, 0)
+
+
+def test_two_assets_with_the_same_tail_stay_unlinked():
+    assets = [("a1", "Express API container"), ("a2", "Admin API container")]
+    assert resolve_asset_with_tier("API container", assets) == (None, 0)
+
+
+@pytest.mark.parametrize("text", ["container", "service", "The Container", "server component"])
+def test_filler_only_text_never_resolves_by_tail(text):
+    assets = [("a1", "Express API container"), ("a2", "Billing service component")]
+    assert resolve_asset_with_tier(text, assets) == (None, 0)
+
+
+def test_tail_match_is_not_used_when_an_earlier_tier_matches():
+    assets = [("a1", "Express API container"), ("a2", "API container")]
+    assert resolve_asset_with_tier("API container", assets) == ("a2", 1)
+
+
+def test_tail_match_needs_whole_words():
+    assert resolve_asset_with_tier("PI container", [("a1", "Express API container")]) == (None, 0)
 
 
 # --- ambiguity and misses --------------------------------------------------
