@@ -528,7 +528,8 @@ def test_checklist_threshold_records_which_model_family_it_was_calibrated_on():
     match = load_checklist()["match"]
     assert 0.5 < match["threshold"] < 1.0
     assert "gpt-4.1" in match["threshold_status"]
-    assert "Claude family pending" in match["threshold_status"]
+    assert "Sonnet 5.5" in match["threshold_status"]
+    assert "GPT-6, are unchecked" in match["threshold_status"]
 
 
 def test_match_threats_uses_threshold():
