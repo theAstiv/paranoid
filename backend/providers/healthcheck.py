@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 import httpx
@@ -301,30 +301,34 @@ def _elapsed(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
 
-# Token bucket — simple in-process timestamp deque, no Redis / middleware.
-# 10 requests / 60 seconds / process. The rate lives at module level so a
-# single backend process (the only kind we run) applies the same budget
-# across all clients; this is a single-user tool, per-IP buckets would add
-# complexity without meaningful security benefit.
+# Sliding window per caller key (a user id with auth on, a client IP with auth
+# off), so one caller using up its budget can't lock an admin out of the Test
+# button (BB-21). In-process only, like the other rate-limit tiers.
 _RATE_WINDOW_S = 60.0
 _RATE_MAX = 10
-_bucket: deque[float] = deque()
+# Bounds memory under many distinct callers; the least recently used key goes first.
+_MAX_KEYS = 2_000
+_buckets: OrderedDict[str, deque[float]] = OrderedDict()
 _bucket_lock = asyncio.Lock()
 
 
-async def rate_limit_check() -> float | None:
-    """Returns ``None`` if under budget, else the retry-after delay in seconds."""
+async def rate_limit_check(key: str = "") -> float | None:
+    """Returns ``None`` if ``key`` is under budget, else the retry-after delay in seconds."""
     async with _bucket_lock:
         now = time.monotonic()
+        if key not in _buckets and len(_buckets) >= _MAX_KEYS:
+            _buckets.popitem(last=False)
+        bucket = _buckets.setdefault(key, deque())
+        _buckets.move_to_end(key)
         # Drop timestamps that have fallen out of the window.
         cutoff = now - _RATE_WINDOW_S
-        while _bucket and _bucket[0] < cutoff:
-            _bucket.popleft()
-        if len(_bucket) >= _RATE_MAX:
-            return _RATE_WINDOW_S - (now - _bucket[0])
-        _bucket.append(now)
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _RATE_MAX:
+            return _RATE_WINDOW_S - (now - bucket[0])
+        bucket.append(now)
         return None
 
 
 def _reset_rate_limit_for_tests() -> None:
-    _bucket.clear()
+    _buckets.clear()

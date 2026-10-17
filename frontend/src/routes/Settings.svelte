@@ -27,6 +27,7 @@
     anthropic: { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
     openai:    { set: false, source: null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
     bedrock:   { set: false, source: null, testing: false, testResult: null },
+    ollama:    { testing: false, testResult: null },
   }
 
   let draft = {
@@ -76,6 +77,7 @@
       anthropic: { set: cfg.anthropic_api_key_set ?? false, source: cfg.anthropic_api_key_source ?? null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
       openai:    { set: cfg.openai_api_key_set ?? false, source: cfg.openai_api_key_source ?? null, input: '', replacing: false, clearPending: false, testing: false, testResult: null },
       bedrock:   { set: false, source: null, testing: false, testResult: null },
+      ollama:    { testing: false, testResult: null },
     }
   }
 
@@ -277,9 +279,30 @@
 
         <div class="grid grid-cols-3 items-center gap-4">
           <label for="cfg-ollama" class="{LABEL_CLASS}">Ollama URL</label>
-          <input id="cfg-ollama" type="url" bind:value={draft.ollama_base_url}
-            placeholder="http://host.docker.internal:11434"
-            class="col-span-2 {FIELD_CLASS} font-mono" />
+          <div class="col-span-2 space-y-1.5">
+            <div class="flex items-center gap-2">
+              <input id="cfg-ollama" type="url" bind:value={draft.ollama_base_url}
+                placeholder="http://host.docker.internal:11434"
+                class="flex-1 {FIELD_CLASS} font-mono" />
+              {#if draft.ollama_base_url}
+                <button type="button" on:click={() => testButtonClick('ollama')}
+                  disabled={keys.ollama.testing}
+                  aria-label="Test Ollama connection"
+                  class="text-xs font-medium text-c-muted hover:text-c-accent transition-colors disabled:opacity-50">
+                  {keys.ollama.testing ? 'Testing…' : 'Test'}
+                </button>
+              {/if}
+            </div>
+            {#if keys.ollama.testResult}
+              <div class="font-mono text-[11px]">
+                {#if keys.ollama.testResult.ok}
+                  <span class="text-c-green">✓ Connected ({keys.ollama.testResult.latency_ms} ms)</span>
+                {:else}
+                  <span class="text-c-critical">✗ {keys.ollama.testResult.message || keys.ollama.testResult.error || 'Connection failed'}</span>
+                {/if}
+              </div>
+            {/if}
+          </div>
         </div>
 
         <!-- Bedrock settings -->

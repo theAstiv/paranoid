@@ -319,6 +319,31 @@ async def test_test_provider_secret_not_needed_for_configured_url(client, probes
 
 
 @pytest.mark.asyncio
+async def test_test_provider_rate_limit_is_per_user_with_auth_on(client, probes, monkeypatch):
+    """BB-21: one user using up their budget doesn't lock out another."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    body = {"provider": "ollama"}
+    for _ in range(healthcheck._RATE_MAX):
+        r = await client.post(URL, json=body, headers=_bearer(w, "stranger"))
+        assert r.status_code == 200
+    assert (await client.post(URL, json=body, headers=_bearer(w, "stranger"))).status_code == 429
+    assert (await client.post(URL, json=body, headers=_bearer(w, "admin"))).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_test_provider_rate_limit_is_per_ip_with_auth_off(client, probes):
+    """BB-21: with auth off every caller is the anonymous admin, so the IP is the key."""
+    body = {"provider": "ollama"}
+    first = {"X-Forwarded-For": "203.0.113.1"}
+    for _ in range(healthcheck._RATE_MAX):
+        assert (await client.post(URL, json=body, headers=first)).status_code == 200
+    assert (await client.post(URL, json=body, headers=first)).status_code == 429
+    other = {"X-Forwarded-For": "203.0.113.2"}
+    assert (await client.post(URL, json=body, headers=other)).status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_test_provider_refusal_does_not_use_rate_limit(client, probes, monkeypatch):
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     w = await build_world()
