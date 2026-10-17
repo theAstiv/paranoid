@@ -23,6 +23,7 @@ from backend.providers.base import (
     ProviderTransientError,
     is_openai_family_model,
     run_sync_in_executor,
+    scaled_timeout,
     strip_markdown_fences,
 )
 from backend.providers.usage import as_token_count, record_usage
@@ -32,8 +33,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-_MAX_AUTO_BUMP = 16384
+# Above generate_threats' 16,384 up-front budget, so a response that thinking
+# plus the tool input pushed past it gets one bigger attempt (BB-33).
+_MAX_AUTO_BUMP = 32768
 _MAX_RETRIES = 2
+_READ_TIMEOUT = 240
 
 # Module-level schema cache — deterministic per class, computed once.
 _schema_cache: dict[type, dict] = {}
@@ -176,20 +180,36 @@ class BedrockProvider:
         self._effort = effort
         self._effort_unsupported = False
 
-        session = boto3.Session(profile_name=profile or None)
+        self._session = boto3.Session(profile_name=profile or None)
+        self._config_cls = botocore.config.Config
         # Omit region_name when empty so boto3's own resolution runs
         # (AWS_DEFAULT_REGION → profile → instance metadata service).
-        client_kwargs: dict = {}
+        self._client_kwargs: dict = {}
         if region:
-            client_kwargs["region_name"] = region
-        self._client = session.client(
+            self._client_kwargs["region_name"] = region
+        self._client = self._new_client(_READ_TIMEOUT)
+        # botocore has no per-call read timeout, so a call allowed more output
+        # than the default timeout covers gets its own client (BB-33).
+        self._long_clients: dict[float, Any] = {}
+
+    def _new_client(self, read_timeout: float) -> Any:
+        return self._session.client(
             "bedrock-runtime",
-            **client_kwargs,
-            config=botocore.config.Config(
-                read_timeout=240,
+            **self._client_kwargs,
+            config=self._config_cls(
+                read_timeout=read_timeout,
                 retries={"max_attempts": 3, "mode": "adaptive"},
             ),
         )
+
+    def _client_for(self, max_tokens: int) -> Any:
+        """The client whose read timeout covers a response of ``max_tokens``."""
+        read_timeout = scaled_timeout(_READ_TIMEOUT, max_tokens)
+        if read_timeout <= _READ_TIMEOUT:
+            return self._client
+        if read_timeout not in self._long_clients:
+            self._long_clients[read_timeout] = self._new_client(read_timeout)
+        return self._long_clients[read_timeout]
 
     def _record_usage(self, response: dict) -> None:
         """Record this response's token usage from the Converse API's `usage` block."""
@@ -269,8 +289,9 @@ class BedrockProvider:
         # in-flight call may already have flipped the flag (BB-32).
         sent_temperature = "temperature" in config
         try:
+            client = self._client_for(config.get("maxTokens", 0))
             return await run_sync_in_executor(
-                self._client.converse, inferenceConfig=config, **call_kwargs
+                client.converse, inferenceConfig=config, **call_kwargs
             )
         except Exception as e:
             if sent_temperature and _is_temperature_deprecated_error(e):
@@ -388,11 +409,27 @@ class BedrockProvider:
                         message=f"Bedrock refused the request (stopReason={stop_reason!r})",
                     )
 
-                if stop_reason == "max_tokens" and budget < _MAX_AUTO_BUMP:
+                if stop_reason == "max_tokens":
+                    output_content = (
+                        response.get("output", {}).get("message", {}).get("content", [])
+                    )
+                    blocks = [next(iter(b), "?") for b in output_content]
+                    if budget >= _MAX_AUTO_BUMP:
+                        # Asking again at the same budget can't complete it.
+                        raise ProviderError(
+                            provider=self.name,
+                            message=(
+                                f"Output exceeded the {_MAX_AUTO_BUMP}-token ceiling "
+                                f"(stopReason=max_tokens, blocks={blocks})"
+                            ),
+                        )
                     old = budget
                     budget = min(budget * 2, _MAX_AUTO_BUMP)
+                    # Block types show whether reasoning filled the budget.
                     logger.warning(
-                        "Bedrock output truncated (max_tokens) at %d, bumping to %d (attempt %d/%d)",
+                        "Bedrock output truncated (max_tokens, blocks=%s) at %d, "
+                        "bumping to %d (attempt %d/%d)",
+                        blocks,
                         old,
                         budget,
                         attempt + 1,

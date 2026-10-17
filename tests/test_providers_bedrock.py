@@ -24,6 +24,7 @@ from backend.providers.base import (
 from backend.providers.bedrock import (
     _AUTO_TOOL_INSTRUCTION,
     _EMPTY_TOOL_INPUT_RESTATE_INSTRUCTION,
+    _MAX_AUTO_BUMP,
     _MAX_RETRIES,
     BedrockProvider,
     _build_content_blocks,
@@ -176,6 +177,68 @@ async def test_bedrock_auto_bump():
     assert call_count == 2
     assert max_tokens_seen[1] == 1024  # 512 * 2
     assert result.value == "ok"
+
+
+@pytest.mark.asyncio
+async def test_bedrock_truncation_at_16384_is_retried_with_a_longer_read_timeout():
+    """BB-33: generate_threats asks for 16,384 tokens up front, which was also the
+    auto-bump ceiling, so a cut-off response was never given more room. The bigger
+    attempt goes through a client whose read timeout scales with the budget
+    (240 s covers 16,384 tokens), or it would time out instead of finishing."""
+    mock_boto3 = MagicMock()
+    mock_botocore = MagicMock()
+    mock_session = MagicMock()
+    default_client = MagicMock(name="default_client")
+    long_client = MagicMock(name="long_client")
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.side_effect = [default_client, long_client]
+
+    default_client.converse.return_value = {
+        "stopReason": "max_tokens",
+        "output": {"message": {"content": []}},
+    }
+    long_client.converse.return_value = _make_tool_response({"value": "ok", "count": 1})
+
+    with patch.dict(
+        sys.modules,
+        {"boto3": mock_boto3, "botocore": mock_botocore, "botocore.config": MagicMock()},
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-5-v1:0")
+        result = await provider.generate_structured("test", _SimpleModel, max_tokens=16384)
+
+    assert result.value == "ok"
+    assert default_client.converse.call_args.kwargs["inferenceConfig"]["maxTokens"] == 16384
+    assert long_client.converse.call_args.kwargs["inferenceConfig"]["maxTokens"] == 32768
+    read_timeouts = [c.kwargs["read_timeout"] for c in mock_botocore.config.Config.call_args_list]
+    assert read_timeouts == [240, 480]
+
+
+@pytest.mark.asyncio
+async def test_bedrock_truncation_at_the_ceiling_fails_without_a_same_budget_retry():
+    """A response cut off at the ceiling can't be completed by asking again at the
+    same budget: fail at once, saying the ceiling was hit."""
+    mock_boto3 = MagicMock()
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+    mock_boto3.Session.return_value = mock_session
+    mock_session.client.return_value = mock_client
+
+    budgets: list[int] = []
+
+    def _converse(**kwargs):
+        budgets.append(kwargs["inferenceConfig"]["maxTokens"])
+        return _make_tool_response({"value": "cut off"}, stop_reason="max_tokens")
+
+    mock_client.converse.side_effect = _converse
+
+    with patch.dict(
+        sys.modules, {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}
+    ):
+        provider = BedrockProvider(model="us.anthropic.claude-sonnet-5-5-v1:0")
+        with pytest.raises(ProviderError, match="32768-token ceiling"):
+            await provider.generate_structured("test", _SimpleModel, max_tokens=16384)
+
+    assert budgets == [16384, 32768]
 
 
 @pytest.mark.asyncio
@@ -1229,11 +1292,11 @@ async def test_bedrock_validation_retry_happens_even_at_the_budget_cap():
 
     with patch.dict(sys.modules, modules):
         provider = BedrockProvider(model="us.anthropic.claude-haiku-5-5-v1:0")
-        result = await provider.generate_structured("test", _SimpleModel, max_tokens=16384)
+        result = await provider.generate_structured("test", _SimpleModel, max_tokens=_MAX_AUTO_BUMP)
 
     assert result.count == 3
     assert len(calls) == 2
-    assert calls[1]["inferenceConfig"]["maxTokens"] == 16384
+    assert calls[1]["inferenceConfig"]["maxTokens"] == _MAX_AUTO_BUMP
 
 
 @pytest.mark.asyncio

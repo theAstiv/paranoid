@@ -256,6 +256,21 @@ async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any
     )
 
 
+# Output budget a provider's base request timeout is known to cover: live
+# Claude runs finished 16,384-token generate_threats calls inside 240 s.
+TIMEOUT_COVERED_TOKENS = 16384
+
+
+def scaled_timeout(base_timeout: float, max_tokens: int) -> float:
+    """Request timeout for a call allowed ``max_tokens`` of output.
+
+    ``base_timeout`` up to ``TIMEOUT_COVERED_TOKENS``, then proportionally
+    longer, so a bigger auto-bumped attempt has time to finish rather than
+    timing out where the smaller one was cut off (BB-33).
+    """
+    return base_timeout * max(1.0, max_tokens / TIMEOUT_COVERED_TOKENS)
+
+
 def is_openai_family_model(model_id: str) -> bool:
     """True for OpenAI models served through Bedrock (gpt-oss, GPT-6 Sol/Luna).
 
