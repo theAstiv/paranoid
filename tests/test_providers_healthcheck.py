@@ -48,6 +48,20 @@ class TestRateLimit:
         assert 0 < retry <= healthcheck._RATE_WINDOW_S
 
     @pytest.mark.asyncio
+    async def test_keys_have_independent_budgets(self):
+        for _ in range(healthcheck._RATE_MAX):
+            assert await rate_limit_check("user:a") is None
+        assert await rate_limit_check("user:a") is not None
+        assert await rate_limit_check("user:b") is None
+
+    @pytest.mark.asyncio
+    async def test_oldest_key_evicted_at_capacity(self, monkeypatch):
+        monkeypatch.setattr(healthcheck, "_MAX_KEYS", 2)
+        for key in ("k1", "k2", "k3"):
+            await rate_limit_check(key)
+        assert list(healthcheck._buckets) == ["k2", "k3"]
+
+    @pytest.mark.asyncio
     async def test_window_expiry_frees_slots(self, monkeypatch):
         """Timestamps older than the window are dropped via popleft()."""
         import time as time_mod

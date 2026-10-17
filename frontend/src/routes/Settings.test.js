@@ -198,6 +198,53 @@ describe('Settings — API keys', () => {
     ).toBeInTheDocument())
   })
 
+  it('tests the Ollama URL from its own Test button (BB-22)', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, ollama_base_url: 'http://localhost:11434' })
+    testProvider.mockResolvedValue({ ok: true, latency_ms: 9 })
+    render(Settings)
+    await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Test Ollama connection' }))
+
+    await waitFor(() => expect(testProvider).toHaveBeenCalledWith(
+      { provider: 'ollama', ollama_base_url: 'http://localhost:11434' },
+      undefined
+    ))
+    await waitFor(() => expect(screen.getByText('✓ Connected (9 ms)')).toBeInTheDocument())
+  })
+
+  it('shows the 403 message when the Ollama test is refused', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, ollama_base_url: 'http://localhost:11434' })
+    testProvider.mockRejectedValue(new Error('X-Config-Secret header is missing or incorrect.'))
+    render(Settings)
+    await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Test Ollama connection' }))
+
+    await waitFor(() => expect(
+      screen.getByText('✗ X-Config-Secret header is missing or incorrect.')
+    ).toBeInTheDocument())
+  })
+
+  it('clears the Ollama test result when the URL is edited', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig, ollama_base_url: 'http://localhost:11434' })
+    testProvider.mockResolvedValue({ ok: true, latency_ms: 9 })
+    render(Settings)
+    await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
+    await fireEvent.click(screen.getByRole('button', { name: 'Test Ollama connection' }))
+    await waitFor(() => expect(screen.getByText('✓ Connected (9 ms)')).toBeInTheDocument())
+
+    await fireEvent.input(document.getElementById('cfg-ollama'), { target: { value: '' } })
+
+    expect(screen.queryByText('✓ Connected (9 ms)')).toBeNull()
+  })
+
+  it('has no Ollama Test button while the URL is empty', async () => {
+    render(Settings)
+    await waitFor(() => expect(document.getElementById('cfg-ollama')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Test Ollama connection' })).toBeNull()
+  })
+
   it('shows a failure message when the connection test fails', async () => {
     testProvider.mockResolvedValue({ ok: false, message: 'invalid key' })
     render(Settings)

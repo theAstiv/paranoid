@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
 
@@ -25,6 +25,7 @@ from backend.providers.healthcheck import (
     rate_limit_check,
 )
 from backend.routes._helpers import FAST_MODEL_FIELDS, get_api_key
+from backend.security.rate_limit import _get_client_ip
 from backend.security.source_key import PATDecryptionError
 
 
@@ -277,6 +278,7 @@ def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
 @router.post("/test-provider")
 async def test_provider(
     body: TestProviderRequest,
+    request: Request,
     user: Annotated[dict, Depends(get_current_user)],
     x_config_secret: Annotated[str | None, Header()] = None,  # noqa: PT028 - route, not a test
 ) -> JSONResponse:
@@ -303,7 +305,12 @@ async def test_provider(
     ):
         _require_config_writer(user, x_config_secret, "a different AWS profile or region")
 
-    retry_after = await rate_limit_check()
+    # With auth off every caller resolves to the same anonymous admin, so the
+    # user id can't tell them apart; fall back to the client IP.
+    limit_key = (
+        f"user:{user['id']}" if settings.paranoid_require_auth else f"ip:{_get_client_ip(request)}"
+    )
+    retry_after = await rate_limit_check(limit_key)
     if retry_after is not None:
         retry_s = max(1, int(retry_after))
         raise HTTPException(
