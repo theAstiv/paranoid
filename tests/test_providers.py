@@ -336,6 +336,80 @@ async def test_anthropic_persistent_empty_response_reports_why(caplog):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_truncation_at_16384_is_retried_with_a_bigger_budget(caplog):
+    """BB-33 (live, 10-16): generate_threats asks for 16,384 tokens up front, which
+    was also the auto-bump ceiling, so a response cut off there (adaptive thinking
+    counts toward max_tokens) failed the step with no retry and the run fell back
+    to the rule engine. It must get one bigger attempt, and the warning must show
+    what filled the budget."""
+    import logging
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        thinking = MagicMock(type="thinking", text=None)
+        truncated = _text_response(
+            '{"assets": [', stop_reason="max_tokens", extra_blocks=[thinking]
+        )
+        ok = _text_response('{"assets": []}')
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [truncated, ok]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k")
+        with caplog.at_level(logging.WARNING, logger="backend.providers.anthropic"):
+            result = await provider.generate_structured(
+                prompt="x", response_model=AssetsList, max_tokens=16384
+            )
+
+    assert result.assets == []
+    budgets = [c.kwargs["max_tokens"] for c in mock_client.messages.create.call_args_list]
+    assert budgets == [16384, 32768]
+    assert any("thinking" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_timeout_scales_with_a_budget_above_16384():
+    """240 s is known to cover a 16,384-token response; a call allowed twice that
+    output gets twice the time, or the bigger attempt would time out instead of
+    finishing. Calls within 16,384 keep the client's own timeout."""
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        truncated = _text_response('{"assets": [', stop_reason="max_tokens")
+        ok = _text_response('{"assets": []}')
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [truncated, ok]
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k")
+        await provider.generate_structured(prompt="x", response_model=AssetsList, max_tokens=16384)
+
+    first, second = mock_client.messages.create.call_args_list
+    assert "timeout" not in first.kwargs
+    assert second.kwargs["timeout"] == 480.0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_truncation_at_the_ceiling_fails_without_a_same_budget_retry():
+    """A response cut off at the ceiling can't be completed by asking again at the
+    same budget: fail at once, saying the ceiling was hit."""
+    from backend.providers import ProviderError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = lambda **_: _text_response(
+            '{"assets": [', stop_reason="max_tokens"
+        )
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k")
+        with pytest.raises(ProviderError, match="32768-token ceiling"):
+            await provider.generate_structured(
+                prompt="x", response_model=AssetsList, max_tokens=16384
+            )
+
+    budgets = [c.kwargs["max_tokens"] for c in mock_client.messages.create.call_args_list]
+    assert budgets == [16384, 32768]
+
+
+@pytest.mark.asyncio
 async def test_anthropic_non_json_response_is_retried_at_the_same_budget(caplog):
     """B4/B5 (live): gap analysis intermittently came back as non-JSON text
     (`Expecting value: line 1 column 1`), which failed the whole step on the first

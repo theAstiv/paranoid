@@ -23,11 +23,13 @@ from backend.providers._recovery import (
     describe_validation_errors,
 )
 from backend.providers.base import (
+    TIMEOUT_COVERED_TOKENS,
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
     map_sdk_api_error,
     run_sync_in_executor,
+    scaled_timeout,
     strip_markdown_fences,
 )
 from backend.providers.usage import as_token_count, record_usage
@@ -40,8 +42,9 @@ T = TypeVar("T", bound=BaseModel)
 # Auto-bump: when the model's output is truncated (stop_reason == "max_tokens"
 # or the JSON fails to parse with a truncation-specific pattern), retry with
 # 2x the token budget.  At most _MAX_RETRIES additional attempts; hard ceiling
-# to avoid runaway costs.
-_MAX_AUTO_BUMP = 16384
+# to avoid runaway costs. Above generate_threats' 16,384 up-front budget, so a
+# response that thinking plus JSON pushed past it gets one bigger attempt (BB-33).
+_MAX_AUTO_BUMP = 32768
 _MAX_RETRIES = 2
 _TRUNCATION_PATTERNS = ("Extra data", "Unterminated string", "Expecting ',' delimiter")
 
@@ -81,6 +84,7 @@ class AnthropicProvider:
                 reject the parameter, so it is strictly opt-in.
         """
         self._model = model
+        self._timeout = timeout
         self._client = Anthropic(
             api_key=api_key,
             max_retries=max_retries,
@@ -312,21 +316,37 @@ class AnthropicProvider:
             restate: list[dict] = []
 
             for attempt in range(1 + _MAX_RETRIES):
+                call_kwargs: dict = {}
+                if budget > TIMEOUT_COVERED_TOKENS:
+                    call_kwargs["timeout"] = scaled_timeout(self._timeout, budget)
                 response = await self._create_message(
                     temperature,
                     model=self._model,
                     max_tokens=budget,
                     system=system + restate,
                     messages=[{"role": "user", "content": content}],
+                    **call_kwargs,
                 )
 
                 # ── Check for explicit truncation ─────────────────────────
-                if response.stop_reason == "max_tokens" and budget < _MAX_AUTO_BUMP:
+                if response.stop_reason == "max_tokens":
+                    blocks = [getattr(b, "type", type(b).__name__) for b in response.content]
+                    if budget >= _MAX_AUTO_BUMP:
+                        # Asking again at the same budget can't complete it.
+                        raise ProviderError(
+                            provider=self.name,
+                            message=(
+                                f"Output exceeded the {_MAX_AUTO_BUMP}-token ceiling "
+                                f"(stop_reason=max_tokens, blocks={blocks})"
+                            ),
+                        )
                     old = budget
                     budget = min(budget * 2, _MAX_AUTO_BUMP)
+                    # Block types show whether thinking filled the budget.
                     logger.warning(
-                        "Output truncated (stop_reason=max_tokens) at %d tokens, "
+                        "Output truncated (stop_reason=max_tokens, blocks=%s) at %d tokens, "
                         "auto-bumping to %d (attempt %d/%d)",
+                        blocks,
                         old,
                         budget,
                         attempt + 1,
