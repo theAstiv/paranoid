@@ -22,7 +22,7 @@
   import ModelDiff from './routes/ModelDiff.svelte'
   import {
     config, notification, notify, currentUser,
-    currentProject, projects, notifications, notifUnread, menuOpen, pickInitialProject,
+    currentProject, projects, notifications, notifUnread, menuOpen, reconcileProject,
   } from './lib/stores.js'
   import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
   import { initials, relativeTime } from './lib/utils.js'
@@ -188,7 +188,9 @@
       const [proj, notifs] = await Promise.all([listProjects(), listNotifications()])
       projects.set(proj)
       notifications.set(notifs)
-      if (proj.length > 0 && !get(currentProject)) currentProject.set(pickInitialProject(proj))
+      // Re-pick from the new list: a previous user's project object carries
+      // their member_role, and may be one this user isn't in.
+      currentProject.set(reconcileProject(get(currentProject), proj))
     } catch { /* non-fatal */ }
   }
 </script>
