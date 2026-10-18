@@ -591,3 +591,77 @@ def test_markdown_embedding_matches_shown_as_suggested() -> None:
 def test_markdown_no_attack_techniques_line_when_absent() -> None:
     md = export_markdown([_STRIDE_THREAT_FLAT], "tech", "STRIDE")
     assert "ATT&CK/ATLAS" not in md
+
+
+_XSS = "<img src=x onerror=alert(1)>"
+
+
+def test_user_text_html_is_escaped_everywhere():
+    """BB-09: raw HTML in user or LLM text must not reach a Markdown viewer that
+    renders HTML. Every free-text field carries the payload."""
+    threat = {
+        **_STRIDE_THREAT_FLAT,
+        "name": f"Name {_XSS}",
+        "stride_category": f"Cat {_XSS}",
+        "target": f"Target {_XSS}",
+        "likelihood": f"High {_XSS}",
+        "impact": f"Impact {_XSS}",
+        "description": f"Desc {_XSS}",
+        "mitigations": [f"[P] Mitigate {_XSS}", f"Plain {_XSS}"],
+    }
+    md = export_markdown(
+        [threat],
+        model_id="abcdef1234567890",
+        framework="STRIDE",
+        title=f"Title {_XSS}",
+        description=f"A web app {_XSS}",
+        assumptions=[f"Assume {_XSS}"],
+        assets=[{"name": f"A {_XSS}", "type": f"T {_XSS}", "description": f"D {_XSS}"}],
+        flows=[
+            {
+                "source_entity": f"S {_XSS}",
+                "target_entity": f"T {_XSS}",
+                "flow_type": f"F {_XSS}",
+                "flow_description": f"D {_XSS}",
+            }
+        ],
+        trust_boundaries=[
+            {"source_entity": f"S {_XSS}", "target_entity": f"T {_XSS}", "purpose": f"P {_XSS}"}
+        ],
+        gap_summaries=[f"Gap {_XSS}"],
+    )
+    assert "<img" not in md
+    assert "&lt;img src=x onerror=alert(1)&gt;" in md
+    assert md.startswith("# Threat Model: Title &lt;img")
+    # 1 title + description + assumption + 3 asset + 4 flow + 3 boundary cells, 4 summary
+    # cells, category heading, name, target, likelihood, impact, description, 2
+    # mitigations and the gap: one escaped payload each.
+    assert md.count("&lt;img") == 26
+
+
+def test_escaped_cells_still_escape_pipes():
+    md = export_markdown(
+        [{**_STRIDE_THREAT_FLAT, "name": "a|b <i>", "target": "x|y"}],
+        model_id="abcdef1234567890",
+        framework="STRIDE",
+        assets=[{"name": "n|<b>", "type": "t", "description": "d"}],
+    )
+    assert r"| n\|&lt;b&gt; | t | d |" in md
+    assert r"| a\|b &lt;i&gt; |" in md
+    assert r"x\|y" in md
+
+
+def test_ampersands_round_trip_as_entities():
+    md = export_markdown(
+        [{**_STRIDE_THREAT_FLAT, "name": "R&D &lt;literal&gt;"}],
+        model_id="abcdef1234567890",
+        framework="STRIDE",
+    )
+    # A literal entity in user text stays literal text once rendered.
+    assert "R&amp;D &amp;lt;literal&amp;gt;" in md
+
+
+def test_mermaid_description_stays_unescaped_inside_its_fence():
+    src = 'graph TD; A["<b>x</b>"]-->B'
+    md = export_markdown([], model_id="abcdef1234567890", framework="STRIDE", description=src)
+    assert f"```mermaid\n{src}\n```" in md
