@@ -137,7 +137,8 @@ def _parse_trusted_proxies(raw: str) -> list[ipaddress.IPv4Network | ipaddress.I
         try:
             networks.append(ipaddress.ip_network(item, strict=False))
         except ValueError:
-            logger.warning(f"Ignoring invalid TRUSTED_PROXIES entry {item!r}")
+            # The value is not logged: CodeQL treats anything read from settings as a secret.
+            logger.warning("Ignoring an invalid TRUSTED_PROXIES entry (not an IP or CIDR)")
     return networks
 
 
