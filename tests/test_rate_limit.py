@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import backend.security.rate_limit as rl
+from backend.config import settings
 from backend.security.rate_limit import (
     ENRICHMENT_RATE_LIMIT,
     ENRICHMENT_RATE_WINDOW,
@@ -108,18 +109,40 @@ async def test_distinct_ips_have_independent_buckets():
         await analyze_rate_limit(req_b)
 
 
-@pytest.mark.asyncio
-async def test_x_forwarded_for_is_used_when_present():
-    """X-Forwarded-For overrides the socket IP for bucket keying."""
+def _forwarded_request(peer: str, forwarded_for: str) -> MagicMock:
     req = MagicMock()
-    req.headers = {"X-Forwarded-For": "203.0.113.5, 10.0.0.1"}
+    req.headers = {"X-Forwarded-For": forwarded_for}
     req.client = MagicMock()
-    req.client.host = "10.0.0.1"
+    req.client.host = peer
+    return req
 
-    # Should bucket on 203.0.113.5, not 10.0.0.1
-    await analyze_rate_limit(req)
-    assert "203.0.113.5" in rl._buckets
-    assert "10.0.0.1" not in rl._buckets
+
+def test_x_forwarded_for_is_ignored_without_trusted_proxies(monkeypatch):
+    """BB-45: a client-sent header must not choose its own bucket."""
+    monkeypatch.setattr(settings, "trusted_proxies", "")
+    assert rl._get_client_ip(_forwarded_request("10.0.0.1", "203.0.113.5")) == "10.0.0.1"
+
+
+def test_x_forwarded_for_is_ignored_from_an_untrusted_peer(monkeypatch):
+    monkeypatch.setattr(settings, "trusted_proxies", "10.0.0.0/24")
+    assert rl._get_client_ip(_forwarded_request("198.51.100.9", "203.0.113.5")) == "198.51.100.9"
+
+
+def test_x_forwarded_for_is_used_when_the_peer_is_a_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(settings, "trusted_proxies", "10.0.0.0/24")
+    assert rl._get_client_ip(_forwarded_request("10.0.0.1", "203.0.113.5")) == "203.0.113.5"
+
+
+def test_x_forwarded_for_takes_the_rightmost_untrusted_hop(monkeypatch):
+    """A proxy appends to the client's header, so left-hand entries are spoofable."""
+    monkeypatch.setattr(settings, "trusted_proxies", "10.0.0.0/24")
+    req = _forwarded_request("10.0.0.1", "1.2.3.4, 203.0.113.5, 10.0.0.2")
+    assert rl._get_client_ip(req) == "203.0.113.5"
+
+
+def test_invalid_trusted_proxy_entry_is_ignored(monkeypatch):
+    monkeypatch.setattr(settings, "trusted_proxies", "not-an-ip, 10.0.0.1")
+    assert rl._get_client_ip(_forwarded_request("10.0.0.1", "203.0.113.5")) == "203.0.113.5"
 
 
 @pytest.mark.asyncio
