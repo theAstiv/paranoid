@@ -585,11 +585,6 @@ async def test_config_patch_with_the_right_secret_is_200(test_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: with PARANOID_REQUIRE_AUTH=true and no CONFIG_SECRET, PATCH /api/config "
-    "needs no login, so anyone on the network can change providers, base URLs and API keys",
-)
 async def test_config_patch_needs_a_login_when_auth_is_on(test_db, auth_on, monkeypatch):
     monkeypatch.setattr(settings, "config_secret", "")
     monkeypatch.setattr(settings, "default_iterations", 3)

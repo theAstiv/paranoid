@@ -195,13 +195,14 @@ def _require_config_writer(user: dict, x_config_secret: str | None, what: str) -
     if settings.paranoid_require_auth and (not user.get("is_admin") or user.get("pat_project_id")):
         raise HTTPException(
             status_code=403,
-            detail=f"Testing {what} requires an instance admin.",
+            detail=f"{what} requires an instance admin.",
         )
 
 
 @router.patch("/")
 async def update_config(
     body: UpdateConfigRequest,
+    user: Annotated[dict, Depends(get_current_user)],
     x_config_secret: str | None = Header(default=None),
 ) -> JSONResponse:
     """Mutate a subset of runtime settings without restarting the backend.
@@ -209,15 +210,15 @@ async def update_config(
     Non-key fields are in-memory only (they reset on next restart). API keys
     are persisted to the ``config`` table (encrypted) and survive restarts.
 
-    Security: This endpoint is unauthenticated by default, suitable for local
-    and single-user Docker deployments. To restrict access, set the
-    CONFIG_SECRET environment variable. Callers must then supply a matching
-    X-Config-Secret header; requests without it receive 403.
+    Security: with PARANOID_REQUIRE_AUTH=false every caller is the instance
+    admin, suitable for local and single-user Docker deployments. With auth on
+    the caller must be an unscoped instance admin. Independently, setting
+    CONFIG_SECRET requires a matching X-Config-Secret header (403 otherwise).
 
     Cross-origin write protection is enforced by the CSRFMiddleware — see
     ``ALLOWED_ORIGINS``.
     """
-    _check_config_secret(x_config_secret)
+    _require_config_writer(user, x_config_secret, "Changing the instance configuration")
     # model_fields_set — not `is not None` — because key fields need three
     # distinct outcomes: omitted (no change), explicit null (clear), and
     # non-empty string (upsert). The is-not-None pattern used for other
@@ -298,12 +299,12 @@ async def test_provider(
         and body.ollama_base_url
         and body.ollama_base_url != settings.ollama_base_url
     ):
-        _require_config_writer(user, x_config_secret, "a different Ollama URL")
+        _require_config_writer(user, x_config_secret, "Testing a different Ollama URL")
     if body.provider == "bedrock" and (
         (body.aws_region is not None and body.aws_region != settings.aws_region)
         or (body.aws_profile is not None and body.aws_profile != settings.aws_profile)
     ):
-        _require_config_writer(user, x_config_secret, "a different AWS profile or region")
+        _require_config_writer(user, x_config_secret, "Testing a different AWS profile or region")
 
     # With auth off every caller resolves to the same anonymous admin, so the
     # user id can't tell them apart; fall back to the client IP.

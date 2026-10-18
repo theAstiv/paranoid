@@ -114,6 +114,7 @@ The Run Summary on the Results page lists each step's model and its input / outp
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONTEXT_LINK_BINARY` | auto | Explicit path to the `context-link` binary; if unset, Paranoid searches `./bin/context-link` then `PATH` |
+| `TRUSTED_PROXIES` | — | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is believed for rate limiting; empty = header ignored, limits key on the socket peer |
 | `ADDITIONAL_GIT_HOSTS` | — | Extra git clone hosts beyond `github.com`, `gitlab.com`, `bitbucket.org`; comma-separated exact hostnames (no wildcards); e.g. `git.company.com,git.internal.net` |
 | `SEED_COLLECTIONS` | all 16 | Comma-separated subset of rule engine seed collections to load; unknown names raise a startup error; e.g. `stride,auth,cloud` |
 

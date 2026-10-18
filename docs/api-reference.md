@@ -200,7 +200,7 @@ Get current runtime configuration (provider, model, iterations, etc.).
 
 ### `PATCH /api/config`
 
-Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secret` header.
+Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secret` header. With `PARANOID_REQUIRE_AUTH=true` it also requires an unscoped instance admin (401 without a login, 403 otherwise).
 
 **Body:**
 

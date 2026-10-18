@@ -332,8 +332,9 @@ async def test_test_provider_rate_limit_is_per_user_with_auth_on(client, probes,
 
 
 @pytest.mark.asyncio
-async def test_test_provider_rate_limit_is_per_ip_with_auth_off(client, probes):
+async def test_test_provider_rate_limit_is_per_ip_with_auth_off(client, probes, monkeypatch):
     """BB-21: with auth off every caller is the anonymous admin, so the IP is the key."""
+    monkeypatch.setattr(settings, "trusted_proxies", "127.0.0.1")
     body = {"provider": "ollama"}
     first = {"X-Forwarded-For": "203.0.113.1"}
     for _ in range(healthcheck._RATE_MAX):
@@ -426,3 +427,41 @@ async def test_test_provider_other_aws_profile_needs_config_secret(client, aws_p
     r = await client.post(URL, json=OTHER_PROFILE, headers={"X-Config-Secret": "s3cret"})
     assert r.status_code == 200
     assert aws_probes == [("us-east-1", "other-team")]
+
+
+# --- BB-46: PATCH /api/config needs an instance admin with auth on ---
+
+ITERATIONS_4 = {"default_iterations": 4}
+
+
+@pytest.mark.asyncio
+async def test_patch_config_refused_for_non_admin_and_scoped_pat_with_auth_on(client, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    monkeypatch.setattr(settings, "default_iterations", 3)
+    w = await build_world()
+    for who in ("owner", "stranger", "pat_b", "pat_admin_b"):
+        r = await client.patch("/api/config/", json=ITERATIONS_4, headers=_bearer(w, who))
+        assert r.status_code == 403, who
+    assert settings.default_iterations == 3
+
+
+@pytest.mark.asyncio
+async def test_patch_config_allowed_for_admin_with_auth_on(client, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    monkeypatch.setattr(settings, "default_iterations", 3)
+    w = await build_world()
+    r = await client.patch("/api/config/", json=ITERATIONS_4, headers=_bearer(w, "admin"))
+    assert r.status_code == 200
+    assert settings.default_iterations == 4
+
+
+@pytest.mark.asyncio
+async def test_patch_config_with_auth_on_also_needs_the_secret_when_set(client, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    monkeypatch.setattr(settings, "config_secret", "s3cret")
+    w = await build_world()
+    r = await client.patch("/api/config/", json=ITERATIONS_4, headers=_bearer(w, "admin"))
+    assert r.status_code == 403
+    headers = {**_bearer(w, "admin"), "X-Config-Secret": "s3cret"}
+    r = await client.patch("/api/config/", json=ITERATIONS_4, headers=headers)
+    assert r.status_code == 200

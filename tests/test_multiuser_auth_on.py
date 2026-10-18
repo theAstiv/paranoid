@@ -175,11 +175,6 @@ async def test_refresh_brute_force_gets_429_after_ten_attempts(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: the rate limiter keys on the client-supplied X-Forwarded-For header "
-    "with no trusted-proxy setting, so rotating it bypasses the login limit",
-)
 async def test_login_limit_is_not_bypassed_by_a_spoofed_forwarded_for(test_db):
     await _make_user("alice")
     async with _client() as client:

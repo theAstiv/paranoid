@@ -129,6 +129,7 @@ Backend: `http://localhost:8000`
 - [ ] Set `ALLOWED_ORIGINS` to your concrete public origin(s)
 - [ ] Put the container behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik)
 - [ ] Set `CORS_ORIGINS` to your frontend origin(s)
+- [ ] Set `TRUSTED_PROXIES` to the proxy's IP or CIDR (e.g. `172.18.0.0/16`); without it `X-Forwarded-For` is ignored and every request is rate-limited as the proxy's address
 - [ ] Bind the port to `0.0.0.0` only if needed; prefer a reverse proxy instead
 - [ ] Mount `./data` as a named volume with regular backups
 - [ ] Pin `CONTEXT_LINK_VERSION` to a specific release in `docker-compose.yml`

@@ -26,12 +26,18 @@ Usage in a route:
 """
 
 import asyncio
+import ipaddress
+import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
+from backend.config import settings
+
+
+logger = logging.getLogger(__name__)
 
 # Maximum number of distinct IPs to track before evicting the oldest entries.
 # Prevents unbounded memory growth under a slow-drip scan from many sources.
@@ -103,16 +109,45 @@ _pipeline_buckets = _PIPELINE_TIER.buckets
 def _get_client_ip(request: Request) -> str:
     """Extract the best-available client IP from the request.
 
-    Prefers X-Forwarded-For (set by reverse proxies) over the raw socket address.
-    Only the first forwarded-for entry is used — the leftmost is the original
-    client when the proxy chain is trusted.
+    X-Forwarded-For is honoured only when the socket peer is listed in
+    ``settings.trusted_proxies``; otherwise any client could rotate the header
+    to dodge every rate-limit tier. The chain is walked right to left, because
+    a proxy appends to whatever the client sent, so the leftmost entries are
+    attacker-controlled. The first entry that is not itself a trusted proxy is
+    the client.
     """
+    peer = request.client.host if request.client else "unknown"
+    trusted = _parse_trusted_proxies(settings.trusted_proxies)
+    if not trusted or not _in_networks(peer, trusted):
+        return peer
     forwarded_for = request.headers.get("X-Forwarded-For", "")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
+    hops = [h.strip() for h in forwarded_for.split(",") if h.strip()]
+    for hop in reversed(hops):
+        if not _in_networks(hop, trusted):
+            return hop
+    return peer
+
+
+def _parse_trusted_proxies(raw: str) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for entry in raw.split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            # The value is not logged: CodeQL treats anything read from settings as a secret.
+            logger.warning("Ignoring an invalid TRUSTED_PROXIES entry (not an IP or CIDR)")
+    return networks
+
+
+def _in_networks(ip: str, networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in networks)
 
 
 async def _check_bucket(ip: str, tier: _RateLimitTier) -> None:

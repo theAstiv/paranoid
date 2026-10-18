@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     # required (default; safe for local / Docker single-user deployments).
     config_secret: str = ""
 
+    # Comma-separated IPs/CIDRs of reverse proxies whose X-Forwarded-For header
+    # is believed (e.g. TRUSTED_PROXIES=172.18.0.0/16,10.0.0.5). Empty = the
+    # header is ignored and rate limits key on the socket peer.
+    trusted_proxies: str = ""
+
     # Auth settings (Phase 0 foundation)
     # JWT signing key. When empty, falls back to PBKDF2 derivation from
     # config_secret (salt "paranoid:jwt:v1"). If config_secret is also empty,
