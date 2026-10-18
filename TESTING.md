@@ -139,7 +139,7 @@ git push --no-verify
 | `docker` | `frontend-test`, `frontend-build` | Builds `--target frontend-builder` (hard fail); then builds full multi-stage image |
 
 **Notes:**
-- `tests/test_pipeline_e2e.py` is excluded from the `test` job — it requires a live LLM provider (`ANTHROPIC_API_KEY`) and the `context-link` binary, neither of which are present in CI runners
+- `tests/test_pipeline_e2e.py` is excluded from the `test` job — it requires a live LLM provider and the `context-link` binary, neither of which are present in CI runners. It is also marked `live`, so it only runs with `-m live`: on the direct Anthropic API by default (`ANTHROPIC_API_KEY`), or on any provider via `BENCH_LIVE_MODEL` / `BENCH_LIVE_PROVIDER` (e.g. `BENCH_LIVE_MODEL=SONNET_55 pytest -m live tests/test_pipeline_e2e.py -v -rs` for Bedrock; see `tests/live/_provider.py`)
 - The Docker `frontend-builder` stage build also validates Dockerfile syntax across all stages
 - The full Docker build includes the `context-link` binary download from GitHub Releases; if that URL becomes unreachable, update `CONTEXT_LINK_VERSION` in the Dockerfile
 - **`action-docker-build`** builds a local wheel from the checkout via `build-contexts: wheels-ctx=dist`, so it never depends on PyPI — version-bump PRs go green before the release is published
