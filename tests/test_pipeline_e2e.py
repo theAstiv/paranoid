@@ -1,20 +1,22 @@
 """End-to-end pipeline tests with real LLM calls and real inputs.
 
 These tests validate the full pipeline with:
-- Real Anthropic API calls (requires ANTHROPIC_API_KEY)
+- Real LLM calls: the direct Anthropic API by default (needs ANTHROPIC_API_KEY); set
+  BENCH_LIVE_MODEL / BENCH_LIVE_PROVIDER to run on another provider such as Bedrock
+  (see `tests/live/_provider.py`)
 - Real diagram files from examples/ (PNG + Mermaid)
 - Real code extraction via context-link MCP server
 - Real GitHub repos cloned to temp directories
 
-Run:
-    pytest tests/test_pipeline_e2e.py -v
+Excluded by default (`-m "not live"` in pyproject.toml). Run explicitly:
+    pytest -m live tests/test_pipeline_e2e.py -v
+    BENCH_LIVE_MODEL=SONNET_55 pytest -m live tests/test_pipeline_e2e.py -v -rs   # Bedrock
 
-Skip condition: auto-skips if ANTHROPIC_API_KEY not set.
+Skip condition: auto-skips when the selected provider has no credentials or model.
 Cleanup: all temp files (repos, binary) auto-deleted after session.
 """
 
 import logging
-import os
 import platform
 import shutil
 import subprocess
@@ -24,27 +26,29 @@ from pathlib import Path
 
 import httpx
 import pytest
-from dotenv import dotenv_values
 
 from backend.models.enums import DiagramFormat, Framework
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
-from backend.providers import create_provider
 from cli.input.diagram_loader import load_diagram_file
+from tests.live._provider import (
+    LIVE_ENV,
+    LIVE_LABEL,
+    LIVE_MODEL,
+    LIVE_PROVIDER,
+    LIVE_SKIP_REASON,
+    build_live_provider,
+)
 
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Load .env values for skip guard — dotenv_values reads the file directly
-# without depending on pydantic-settings or os.environ
-# ---------------------------------------------------------------------------
-_dotenv = dotenv_values(Path(__file__).parent.parent / ".env")
-_api_key = _dotenv.get("ANTHROPIC_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
-
-pytestmark = pytest.mark.skipif(
-    not _api_key or _api_key.startswith("sk-ant-xxx"),
-    reason="E2E tests require a real ANTHROPIC_API_KEY (set in .env or environment)",
-)
+# Marked live so a plain `pytest tests/` never makes paid calls, whichever provider
+# the environment points at.
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.timeout(1800),
+    pytest.mark.skipif(LIVE_SKIP_REASON is not None, reason=f"{LIVE_LABEL}: {LIVE_SKIP_REASON}"),
+]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -271,22 +275,16 @@ def maestro_repo(tmp_path_factory):
 
 
 @pytest.fixture
-def anthropic_provider():
-    """Create a real Anthropic provider using API key from .env."""
-    return create_provider(
-        provider_type="anthropic",
-        model=_dotenv.get("DEFAULT_MODEL", "claude-sonnet-4-20250514"),
-        api_key=_api_key,
-        max_retries=2,
-        timeout=120.0,
-    )
+def live_provider():
+    """The real provider selected by BENCH_LIVE_MODEL / BENCH_LIVE_PROVIDER (default: Anthropic)."""
+    return build_live_provider(LIVE_PROVIDER, LIVE_MODEL, LIVE_ENV, timeout=240.0, max_retries=2)
 
 
 # ---------------------------------------------------------------------------
 # Test 1: STRIDE + code-as-input
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_stride_code_as_input(anthropic_provider, stride_repo, context_link_binary):
+async def test_e2e_stride_code_as_input(live_provider, stride_repo, context_link_binary):
     """Full pipeline: STRIDE framework with real code extraction via context-link."""
     from backend.mcp.client import MCPCodeExtractor
 
@@ -308,7 +306,7 @@ async def test_e2e_stride_code_as_input(anthropic_provider, stride_repo, context
 
     # Run pipeline
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.STRIDE,
         code_context=code_context,
@@ -335,7 +333,7 @@ async def test_e2e_stride_code_as_input(anthropic_provider, stride_repo, context
 # Test 2: MAESTRO + code-as-input
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_maestro_code_as_input(anthropic_provider, maestro_repo, context_link_binary):
+async def test_e2e_maestro_code_as_input(live_provider, maestro_repo, context_link_binary):
     """Full pipeline: MAESTRO framework with real code extraction via context-link."""
     from backend.mcp.client import MCPCodeExtractor
 
@@ -357,7 +355,7 @@ async def test_e2e_maestro_code_as_input(anthropic_provider, maestro_repo, conte
 
     # Run pipeline
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.MAESTRO,
         code_context=code_context,
@@ -384,7 +382,7 @@ async def test_e2e_maestro_code_as_input(anthropic_provider, maestro_repo, conte
 # Test 3: STRIDE + PNG diagram
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_stride_png_diagram(anthropic_provider):
+async def test_e2e_stride_png_diagram(live_provider):
     """Full pipeline: STRIDE framework with real PNG architecture diagram."""
     description = _read_example("stride-example-api-gateway.md")
     diagram_data = await load_diagram_file(EXAMPLES_DIR / "stride-api-gateway-architecture.png")
@@ -396,7 +394,7 @@ async def test_e2e_stride_png_diagram(anthropic_provider):
     assert diagram_data.size_bytes > 0
 
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.STRIDE,
         diagram_data=diagram_data,
@@ -421,7 +419,7 @@ async def test_e2e_stride_png_diagram(anthropic_provider):
 # Test 4: STRIDE + Mermaid diagram
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_stride_mermaid_diagram(anthropic_provider):
+async def test_e2e_stride_mermaid_diagram(live_provider):
     """Full pipeline: STRIDE framework with real Mermaid architecture diagram."""
     description = _read_example("stride-example-api-gateway.md")
     diagram_data = await load_diagram_file(EXAMPLES_DIR / "stride-api-gateway-architecture.mmd")
@@ -433,7 +431,7 @@ async def test_e2e_stride_mermaid_diagram(anthropic_provider):
     assert diagram_data.base64_data is None  # Mermaid is text, not encoded image
 
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.STRIDE,
         diagram_data=diagram_data,
@@ -458,7 +456,7 @@ async def test_e2e_stride_mermaid_diagram(anthropic_provider):
 # Test 5: MAESTRO + PNG diagram
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_maestro_png_diagram(anthropic_provider):
+async def test_e2e_maestro_png_diagram(live_provider):
     """Full pipeline: MAESTRO framework with real PNG architecture diagram."""
     description = _read_example("maestro-example-rag-chatbot.md")
     diagram_data = await load_diagram_file(EXAMPLES_DIR / "maestro-rag-chatbot-architecture.png")
@@ -469,7 +467,7 @@ async def test_e2e_maestro_png_diagram(anthropic_provider):
     assert diagram_data.media_type == "image/png"
 
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.MAESTRO,
         diagram_data=diagram_data,
@@ -490,7 +488,7 @@ async def test_e2e_maestro_png_diagram(anthropic_provider):
 # Test 6: MAESTRO + Mermaid diagram
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_e2e_maestro_mermaid_diagram(anthropic_provider):
+async def test_e2e_maestro_mermaid_diagram(live_provider):
     """Full pipeline: MAESTRO framework with real Mermaid architecture diagram."""
     description = _read_example("maestro-example-rag-chatbot.md")
     diagram_data = await load_diagram_file(EXAMPLES_DIR / "maestro-rag-chatbot-architecture.mmd")
@@ -502,7 +500,7 @@ async def test_e2e_maestro_mermaid_diagram(anthropic_provider):
     assert diagram_data.base64_data is None
 
     events = await _collect_events(
-        anthropic_provider,
+        live_provider,
         description,
         Framework.MAESTRO,
         diagram_data=diagram_data,
