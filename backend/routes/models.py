@@ -693,6 +693,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         dread_exploitability=dread.exploitability if dread else None,
                         dread_affected_users=dread.affected_users if dread else None,
                         dread_discoverability=dread.discoverability if dread else None,
+                        iteration_number=threat.iteration_number or 1,
                         source=threat.source,
                         confidence=confidence,
                         dependency_ref=(

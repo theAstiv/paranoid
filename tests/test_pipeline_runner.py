@@ -154,6 +154,35 @@ async def test_runner_three_iterations():
 
 
 @pytest.mark.asyncio
+async def test_runner_stamps_each_threat_with_its_iteration(monkeypatch):
+    """BB-30: threats from iteration 2 must not be saved as iteration 1."""
+    from backend import dedup as dedup_module
+    from backend.pipeline import runner as runner_module
+
+    # MockProvider returns the same threats every pass, which real dedup would drop
+    # from iteration 2; keep them so the stamp can be seen.
+    monkeypatch.setattr(
+        runner_module,
+        "deduplicate_threats",
+        lambda new_threats, existing_threats, threshold: dedup_module.DedupResult(
+            threats=new_threats, removed_count=0
+        ),
+    )
+    provider = MockProvider(gap_call_threshold=10)
+    config = PipelineConfig(max_iterations=2, dedup_saturation_threshold=1.1)
+    runner = PipelineRunner(provider=provider, config=config, model_id="test-iteration-stamp")
+
+    events = await _collect_events(runner, "A document sharing app", Framework.STRIDE)
+
+    complete = events[-1]
+    assert complete.data["iterations_completed"] == 2
+    llm = [t for t in complete.data["threats"].threats if t.source == "llm"]
+    assert {t.iteration_number for t in llm} == {1, 2}
+    per_iteration = {n: sum(1 for t in llm if t.iteration_number == n) for n in (1, 2)}
+    assert per_iteration[1] == per_iteration[2] > 0
+
+
+@pytest.mark.asyncio
 async def test_runner_stops_on_gap_satisfied():
     """Runner should stop early when gap analysis returns stop=True."""
     provider = MockProvider(gap_call_threshold=1)  # Stop after 1st gap call

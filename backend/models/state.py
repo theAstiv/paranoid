@@ -235,6 +235,10 @@ class Threat(BaseModel):
     # formula applied to the metrics, never a value a provider invented.
     cvss_score: SkipJsonSchema[float | None] = None
     cvss_severity: SkipJsonSchema[str | None] = None
+    # The pipeline iteration that produced the threat, stamped by the runner (never
+    # by a provider, hence hidden from the schema). None for threats that don't come
+    # from an iteration (rule engine, dependencies, seeds); the save step stores 1.
+    iteration_number: SkipJsonSchema[int | None] = None
 
 
 class ThreatsList(BaseModel):

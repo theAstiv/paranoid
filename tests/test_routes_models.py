@@ -858,6 +858,39 @@ async def test_persist_pipeline_event_saves_threat_dependency_ref(saved_model, t
 
 
 @pytest.mark.asyncio
+async def test_persist_pipeline_event_saves_threat_iteration_number(saved_model, test_db):
+    """BB-30: the web SSE save path stores the iteration the runner stamped, and 1
+    for a threat with no iteration (rule engine)."""
+    from backend.models.state import StrideCategory, Threat, ThreatsList
+    from backend.pipeline.runner import PipelineEvent, PipelineStep
+    from backend.routes.models import _persist_pipeline_event
+
+    def make(name: str, iteration: int | None) -> Threat:
+        return Threat(
+            name=name,
+            stride_category=StrideCategory.TAMPERING,
+            description="x" * 60,
+            target="API",
+            impact="High",
+            likelihood="Medium",
+            mitigations=["Validate input", "Log access"],
+            iteration_number=iteration,
+        )
+
+    event = PipelineEvent(
+        step=PipelineStep.COMPLETE,
+        status="completed",
+        message="done",
+        data={"threats": ThreatsList(threats=[make("second", 2), make("rule", None)])},
+    )
+
+    await _persist_pipeline_event(saved_model["id"], event)
+
+    saved = {t["name"]: t["iteration_number"] for t in await crud.list_threats(saved_model["id"])}
+    assert saved == {"second": 2, "rule": 1}
+
+
+@pytest.mark.asyncio
 async def test_persist_pipeline_event_saves_threat_cvss_fields(saved_model, test_db):
     """A COMPLETE event's threat with cvss metrics persists cvss_vector/
     cvss_score/cvss_severity through the web SSE path — this is the path
