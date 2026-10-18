@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import CodeSources from './CodeSources.svelte'
 
 vi.mock('../lib/api.js', () => ({
@@ -28,7 +29,7 @@ const readySource = {
 beforeEach(() => {
   vi.clearAllMocks()
   currentProject.set(null)
-  currentUser.set(null)
+  currentUser.set({ id: 'u1' })
   subscribeToSourceEvents.mockReturnValue(vi.fn())
   listCodeSources.mockResolvedValue([])
 })
@@ -179,6 +180,27 @@ describe('CodeSources — loading', () => {
   })
 })
 
+// BB-41: signing out nulls the user and project; the page's reload used to call the API
+// without a token and toast "Session expired", which the next login still showed.
+describe('CodeSources — signed out', () => {
+  it('does not load sources, or toast, while nobody is signed in', async () => {
+    currentUser.set(null)
+    listCodeSources.mockRejectedValue(new Error('Session expired'))
+    render(CodeSources)
+    await tick()
+    expect(listCodeSources).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('loads once a user signs in', async () => {
+    currentUser.set(null)
+    render(CodeSources)
+    await tick()
+    currentUser.set({ id: 'u1' })
+    await waitFor(() => expect(listCodeSources).toHaveBeenCalledTimes(1))
+  })
+})
+
 describe('CodeSources — rendering', () => {
   it('renders the source name, status chip, and git URL', async () => {
     listCodeSources.mockResolvedValue([readySource])
@@ -241,6 +263,7 @@ describe('CodeSources — add form', () => {
   })
 
   it('disables Add & clone until name and URL are filled', async () => {
+    currentProject.set({ id: 'p1', name: 'Alpha' })
     render(CodeSources)
     await waitFor(() => expect(screen.getByText('Add source')).toBeInTheDocument())
     await fireEvent.click(screen.getByText('Add source'))

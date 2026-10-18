@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Results now reloads when only the model in the URL changes** (BB-29) — going from `#/models/a` to `#/models/b` kept the first model's page (MAESTRO panel included) because the page loaded only on mount. It now loads whenever the id changes, clears the old model's assets, flows, diagrams and coverage first, and ignores a slow response for a model that is no longer open. Frontend only
+
+- **No pointless "Retry" on a rejected or empty diagram** (BB-38) — a diagram source the safety cleaning rejects, or a blank one, rendered the same way every time, so the Retry button could not help. It is now hidden for those two cases and kept for render errors that can be transient. Frontend only
+
+- **No stale "Session expired" toast after signing out on Code Sources** (BB-41) — signing out cleared the project, which re-ran the page's list call without a token and left a red toast that the next login still showed. The page now waits for a signed-in user before loading. Frontend only
+
 - **A very long model title no longer widens the page** (BB-31) — a 90+ character title made Results (and any page) wider than a ~1020px window, because the content wrapper in `App.svelte` could not shrink below its text. The wrapper now has `min-w-0`, so the title truncates instead. Frontend only
 
 - **Signing in as another user kept the previous user's project and role** (BB-40) — with auth on, logging in again without signing out left the old `currentProject` selected, so a viewer could see an editor's Add/reindex buttons on Code Sources (the server still refused them with 403), and a project the new user isn't in could stay selected. The project is now re-picked from the new user's list, keeping the same project only if they are a member, with their own role. Frontend only

@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { get } from 'svelte/store'
   import { link } from 'svelte-spa-router'
   import {
@@ -76,7 +76,7 @@
   // by model and the fast-model share, no price fields (decided 2026-10-01). Falls
   // back to the persisted `usage` field (threat_models.usage_summary) since
   // pipelineEvents is cleared on mount unless a pipeline run is actively streaming
-  // (see onMount), so a page reload after completion has no live SSE events.
+  // (see switchModel), so a page reload after completion has no live SSE events.
   $: runUsage = $pipelineEvents.find(e => e.step === 'complete')?.data?.usage ?? model?.usage ?? null
   $: guard = runUsage?.coverage_guard ?? null
   // The run's N/A list is tag-based and saved with the run; the coverage panel is
@@ -109,25 +109,51 @@
     _wasRunning = $pipelineRunning
   }
 
-  onMount(async () => {
+  // Load on mount and whenever only the route param changes: #/models/a -> #/models/b
+  // keeps this component instance, so loading only on mount left model a showing.
+  let loadedId = null
+  $: if (params.id && params.id !== loadedId) switchModel(params.id)
+
+  function resetForModel() {
+    stopPolling()
+    model = null
+    loading = true
+    assets = []; flows = []; trustBoundaries = []
+    assetCommentCounts = {}; flowCommentCounts = {}; threatCommentCounts = {}
+    dependencyScans = []
+    maestroCoverage = null
+    diagrams = []
+    selectedDiagramId = null
+    diagramContentCache = {}
+    diagramContentError = {}
+  }
+
+  async function switchModel(id) {
+    if (loadedId !== null) resetForModel()
+    loadedId = id
     const alreadyRunning = get(pipelineRunning)
     if (!alreadyRunning) pipelineEvents.set([])
+    let loaded
     try {
-      model = await getModel(params.id)
-      currentModel.set(model)
-      threats.set(model.threats ?? [])
+      loaded = await getModel(id)
     } catch (err) {
+      if (id !== params.id) return
       notify('error', `Failed to load model: ${err.message}`)
       loading = false
       return
     }
+    if (id !== params.id) return // another model was opened while this one loaded
+    model = loaded
+    currentModel.set(model)
+    threats.set(model.threats ?? [])
     loading = false
     if (alreadyRunning) return
     if (model.status === 'in_progress') {
       polling = true
       pollTimer = setInterval(async () => {
         try {
-          const refreshed = await getModel(params.id)
+          const refreshed = await getModel(id)
+          if (id !== params.id) return
           model = refreshed
           currentModel.set(model)
           threats.set(model.threats ?? [])
@@ -140,7 +166,7 @@
     } else if (model.status === 'completed' || model.status === 'failed') {
       await loadSupplementary()
     }
-  })
+  }
 
   onDestroy(() => {
     stopPolling()
@@ -154,6 +180,7 @@
   }
 
   async function loadSupplementary() {
+    const id = params.id
     const [a, f, tb, rawCounts, deps, dgs, mc] = await Promise.all([
       getModelAssets(params.id).catch(() => []),
       getModelFlows(params.id).catch(() => []),
@@ -163,6 +190,7 @@
       listModelDiagrams(params.id).catch(() => []),
       getMaestroCoverage(params.id).catch(() => null),
     ])
+    if (id !== params.id) return
     assets = a; flows = f; trustBoundaries = tb
     maestroCoverage = mc
     dependencyScans = deps

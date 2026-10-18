@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte'
 import { tick } from 'svelte'
+import { get } from 'svelte/store'
 import Results from './Results.svelte'
 
 vi.mock('svelte-spa-router', () => ({
@@ -93,6 +94,39 @@ describe('Results — loading', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
     await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+  })
+
+  // BB-29: #/models/a -> #/models/b changes only the param; the instance is kept.
+  it('loads the new model when only params.id changes', async () => {
+    const other = { ...baseModel, id: 'm2', title: 'Search Service' }
+    getModel.mockImplementation(async (id) => (id === 'm2' ? other : baseModel))
+    const { rerender } = render(Results, { props: { params: { id: 'm1' } } })
+    await screen.findByText('Payments Service')
+
+    await rerender({ params: { id: 'm2' } })
+
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m2'))
+    await screen.findByText('Search Service')
+    expect(screen.queryByText('Payments Service')).toBeNull()
+    expect(getModelAssets).toHaveBeenCalledWith('m2')
+  })
+
+  it('ignores a slow response for a model that was navigated away from', async () => {
+    let releaseFirst
+    const other = { ...baseModel, id: 'm2', title: 'Search Service' }
+    getModel.mockImplementation((id) => (id === 'm2'
+      ? Promise.resolve(other)
+      : new Promise((resolve) => { releaseFirst = () => resolve(baseModel) })))
+    const { rerender } = render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledWith('m1'))
+
+    await rerender({ params: { id: 'm2' } })
+    await screen.findByText('Search Service')
+    releaseFirst()
+    await tick()
+
+    expect(screen.queryByText('Payments Service')).toBeNull()
+    expect(get(currentModel).id).toBe('m2')
   })
 
   // BB-28: an unwrappable header row (title + 642px button group) widened the page
