@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A very long model title no longer widens the page** (BB-31) — a 90+ character title made Results (and any page) wider than a ~1020px window, because the content wrapper in `App.svelte` could not shrink below its text. The wrapper now has `min-w-0`, so the title truncates instead. Frontend only
+
 - **Signing in as another user kept the previous user's project and role** (BB-40) — with auth on, logging in again without signing out left the old `currentProject` selected, so a viewer could see an editor's Add/reindex buttons on Code Sources (the server still refused them with 403), and a project the new user isn't in could stay selected. The project is now re-picked from the new user's list, keeping the same project only if they are a member, with their own role. Frontend only
 
 - **One caller could lock everyone else out of the provider Test button** (BB-21) — the `POST /api/config/test-provider` rate limit (10 per 60 s) was one bucket for the whole process. It is now per caller: the user id with auth on, the client IP with auth off.

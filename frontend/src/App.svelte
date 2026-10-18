@@ -553,7 +553,7 @@
     </aside>
 
     <!-- ── Main column (offset by sidebar) ──────────────────────────────── -->
-    <div class="flex-1 flex flex-col ml-[264px] min-h-screen">
+    <div class="flex-1 min-w-0 flex flex-col ml-[264px] min-h-screen">
 
       <!-- Topbar -->
       <header class="sticky top-0 {$menuOpen === 'notif' ? 'z-50' : 'z-20'} flex items-center justify-between h-[54px] px-6 bg-c-bg/70 backdrop-blur-md border-b border-c-divider">
