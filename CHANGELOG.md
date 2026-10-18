@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Threats now record the iteration that produced them** (BB-30) — `threats.iteration_number` was 1 for every threat, including ones a second iteration or the coverage guard's extra pass produced, because no save path set it. The runner now stamps each LLM threat with its iteration before it joins the cumulative list, and both save paths (CLI/API and the web SSE path) store it. Rule-engine, dependency and seeded threats have no iteration and keep the default of 1. Applies to new runs only; saved models keep 1. No schema change (the column already existed)
+
+- **A diagram whose payload was stripped now says it was rejected** (BB-39) — when safety cleaning removed a script, event handler or dangerous URI scheme and what was left no longer parsed (for example a label emptied to `A[""]`), the page showed a Mermaid parse error. It now shows the same "rejected during safety cleaning" message as other rejections, without Retry. Benign repairs (fences, entities, `---`, `click` directives) don't count. Frontend only
+
 - **Results now reloads when only the model in the URL changes** (BB-29) — going from `#/models/a` to `#/models/b` kept the first model's page (MAESTRO panel included) because the page loaded only on mount. It now loads whenever the id changes, clears the old model's assets, flows, diagrams and coverage first, and ignores a slow response for a model that is no longer open. Frontend only
 
 - **No pointless "Retry" on a rejected or empty diagram** (BB-38) — a diagram source the safety cleaning rejects, or a blank one, rendered the same way every time, so the Retry button could not help. It is now hidden for those two cases and kept for render errors that can be transient. Frontend only

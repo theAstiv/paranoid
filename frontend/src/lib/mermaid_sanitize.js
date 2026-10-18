@@ -35,8 +35,17 @@ const HANDLER_ATTR = new RegExp(
   'gi',
 )
 
+// Returns the cleaned text and whether a security strip (script, handler or URI
+// scheme) removed anything. Entity decoding and the `---` rewrite are benign
+// repairs and don't count.
 function decodeAndStrip(input) {
   let s = input
+  let removedUnsafe = false
+  const strip = (re) => {
+    const next = s.replace(re, '')
+    if (next !== s) removedUnsafe = true
+    s = next
+  }
   // Numeric references first, then named ones. `&amp;` goes LAST so that
   // `&amp;lt;` is left as `&lt;` for the next pass instead of being expanded
   // to `<` in the same pass.
@@ -48,20 +57,20 @@ function decodeAndStrip(input) {
     .replace(/&gt;/gi, '>')
     .replace(/&amp;/gi, '&')
   // Dangerous URI schemes.
-  s = s.replace(/javascript\s*:/gi, '')
-  s = s.replace(/vbscript\s*:/gi, '')
-  s = s.replace(/data\s*:\s*text\/html/gi, '')
+  strip(/javascript\s*:/gi)
+  strip(/vbscript\s*:/gi)
+  strip(/data\s*:\s*text\/html/gi)
   // Embedded <script> blocks and stray opening tags.
-  s = s.replace(/<script[\s\S]*?<\/script[^>]*>/gi, '')
-  s = s.replace(/<script[^>]*\/?>/gi, '')
+  strip(/<script[\s\S]*?<\/script[^>]*>/gi)
+  strip(/<script[^>]*\/?>/gi)
   // Event handler attributes (onclick=, onload=, onerror=, …).
-  s = s.replace(HANDLER_ATTR, '')
+  strip(HANDLER_ATTR)
   // `---` -> `-->` inside the loop: it can supply the `>` that completes a
   // tag (`<script src=x---y`), so the next pass must see its output.
   // Bare `---` at the start of a line is YAML front-matter (legal Mermaid)
   // and is left alone: the rewrite needs a non-space character before it.
   s = s.replace(/(\S)\s*---\s*(\S)/g, '$1 --> $2')
-  return s
+  return { text: s, removedUnsafe }
 }
 
 /**
@@ -84,27 +93,42 @@ function decodeAndStrip(input) {
  * @returns {string} Cleaned Mermaid source, or '' if it never settles.
  */
 export function sanitizeMermaid(source) {
-  if (!source) return ''
+  return sanitizeMermaidDetailed(source).text
+}
+
+/**
+ * Like sanitizeMermaid, and also reports whether a payload (script, event handler or
+ * dangerous URI scheme) was stripped. Stripping can leave source Mermaid can't parse
+ * (a label emptied to `A[""]`), and the caller can then say the diagram was rejected
+ * instead of showing a parse error (BB-39).
+ *
+ * @param {string} source
+ * @returns {{ text: string, removedUnsafe: boolean }}
+ */
+export function sanitizeMermaidDetailed(source) {
+  if (!source) return { text: '', removedUnsafe: false }
   let s = String(source)
   // Strip ```mermaid ... ``` fences (LLMs often wrap output)
   s = s.replace(/^\s*```(?:mermaid)?\s*/i, '').replace(/```\s*$/i, '')
 
   let settled = false
+  let removedUnsafe = false
   for (let i = 0; i < MAX_PASSES; i++) {
     const next = decodeAndStrip(s)
-    if (next === s) {
+    removedUnsafe ||= next.removedUnsafe
+    if (next.text === s) {
       settled = true
       break
     }
-    s = next
+    s = next.text
   }
   // Never hand a string that is still changing to the renderer.
-  if (!settled) return ''
+  if (!settled) return { text: '', removedUnsafe: true }
 
   // Strip `click` directives — these can call JavaScript or open URLs and are
   // an XSS vector when securityLevel is not 'strict'. LLMs sometimes emit them.
   // A click directive looks like:  click NodeId callback "tooltip"
   //                            or: click NodeId href "url" [_blank]
   s = s.replace(/^\s*click\s+.*/gim, '')
-  return s.trim()
+  return { text: s.trim(), removedUnsafe }
 }

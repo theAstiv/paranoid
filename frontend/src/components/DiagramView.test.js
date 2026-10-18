@@ -85,6 +85,25 @@ describe('DiagramView — mermaid', () => {
     expect(mermaidRender).not.toHaveBeenCalled()
   })
 
+  // BB-39: stripping a payload can leave a label Mermaid can't parse. That is the
+  // rejection, so say so instead of showing the parse error.
+  it('says a stripped payload was rejected when Mermaid then fails to parse it', async () => {
+    mermaidRender.mockRejectedValue(new Error('Parse error on line 2: A[""]'))
+    render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD\nA[<script>x</script>] --> B', name: 'arch' },
+    })
+    await waitFor(() => expect(screen.getByText(/rejected during safety cleaning/i)).toBeInTheDocument())
+    expect(screen.queryByText(/Parse error/)).toBeNull()
+    expect(screen.queryByText('Retry')).toBeNull()
+  })
+
+  it('still shows the parse error, with Retry, when nothing unsafe was stripped', async () => {
+    mermaidRender.mockRejectedValue(new Error('Parse error on line 2'))
+    render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD\nA -->', name: 'arch' } })
+    await waitFor(() => expect(screen.getByText(/Parse error on line 2/)).toBeInTheDocument())
+    expect(screen.getByText('Retry')).toBeInTheDocument()
+  })
+
   // BB-38: retrying a rejected or blank source renders the same input again.
   it('offers no Retry for a rejected or a blank source', async () => {
     const unsettled = 'graph TD\nA --> B\n' + '<scr'.repeat(12) + '<script>' + 'ipt>'.repeat(12)

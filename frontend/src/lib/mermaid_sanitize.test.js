@@ -1,5 +1,35 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeMermaid } from './mermaid_sanitize.js'
+import { sanitizeMermaid, sanitizeMermaidDetailed } from './mermaid_sanitize.js'
+
+// BB-39: callers need to know a payload was stripped, as opposed to a benign repair.
+describe('sanitizeMermaidDetailed — removedUnsafe', () => {
+  it.each([
+    ['a script block', 'graph TD\nA[<script>alert(1)</script>] --> B'],
+    ['a nested script tag', 'graph TD\nA[<scr<script>ipt>x] --> B'],
+    ['an event handler', 'graph TD\nA[x onclick=alert(1)] --> B'],
+    ['a javascript: scheme', 'graph TD\nA[javascript:alert(1)] --> B'],
+    ['a source that never settles', 'graph TD\n' + '<scr'.repeat(12) + '<script>' + 'ipt>'.repeat(12)],
+  ])('is true for %s', (_name, source) => {
+    expect(sanitizeMermaidDetailed(source).removedUnsafe).toBe(true)
+  })
+
+  it.each([
+    ['plain source', 'graph TD\nA --> B'],
+    ['markdown fences', '```mermaid\ngraph TD\nA --> B\n```'],
+    ['HTML entities', 'graph TD\nA[a &amp; b] --> B'],
+    ['a --- separator', 'graph TD\nA --- B'],
+    ['label text like "online = true"', 'graph TD\nA[online = true] --> B'],
+    ['a click directive', 'graph TD\nA --> B\nclick A callback "tip"'],
+    ['a blank source', ''],
+  ])('is false for %s', (_name, source) => {
+    expect(sanitizeMermaidDetailed(source).removedUnsafe).toBe(false)
+  })
+
+  it('returns the same text as sanitizeMermaid', () => {
+    const source = '```mermaid\ngraph TD\nA[<script>x</script>] --> B\nclick A cb\n```'
+    expect(sanitizeMermaidDetailed(source).text).toBe(sanitizeMermaid(source))
+  })
+})
 
 describe('sanitizeMermaid', () => {
   it('returns empty string for nullish input', () => {

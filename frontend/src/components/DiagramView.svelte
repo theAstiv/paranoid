@@ -14,7 +14,7 @@
 </script>
 
 <script>
-  import { sanitizeMermaid } from '../lib/mermaid_sanitize.js'
+  import { sanitizeMermaidDetailed } from '../lib/mermaid_sanitize.js'
   import { diagramInitConfig, diagramThemeVariables } from '../lib/diagram_theme.js'
 
   /** @type {'mermaid'|'png'|'jpeg'} */
@@ -41,6 +41,8 @@
   let dragStartX = 0
   let dragStartY = 0
 
+  const REJECTED_MESSAGE =
+    "This diagram's source was rejected during safety cleaning, so it isn't shown."
   const MIN_SCALE = 0.25
   const MAX_SCALE = 4
 
@@ -74,15 +76,13 @@
     renderError = null
     retryable = true
     resetView()
-    const cleaned = sanitizeMermaid(source)
+    const { text: cleaned, removedUnsafe } = sanitizeMermaidDetailed(source)
     if (!cleaned) {
       if (seq !== renderSeq || !container) return
       retryable = false
       // sanitizeMermaid returns '' for a blank source and also for one it
       // rejects (never settles, or nothing left after cleaning).
-      renderError = source?.trim()
-        ? "This diagram's source was rejected during safety cleaning, so it isn't shown."
-        : 'Mermaid source is empty.'
+      renderError = source?.trim() ? REJECTED_MESSAGE : 'Mermaid source is empty.'
       container.innerHTML = ''
       return
     }
@@ -118,7 +118,14 @@
       elkRegisterPromise = null
       if (seq !== renderSeq || !container) return
       container.innerHTML = ''
-      renderError = err?.message || 'Mermaid rendering failed.'
+      if (removedUnsafe) {
+        // Stripping a payload can leave source Mermaid can't parse (a label emptied
+        // to `A[""]`); that is the rejection, not a syntax error worth showing (BB-39).
+        retryable = false
+        renderError = REJECTED_MESSAGE
+      } else {
+        renderError = err?.message || 'Mermaid rendering failed.'
+      }
     }
   }
 

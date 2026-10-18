@@ -287,6 +287,28 @@ async def test_persist_saves_threats_with_mitigations(test_db):
 
 
 @pytest.mark.asyncio
+async def test_persist_saves_the_iteration_that_produced_each_threat(test_db):
+    """BB-30: the stamped iteration is stored; an unstamped threat keeps the default of 1."""
+    threats = _make_threats()
+    threats.threats[0].iteration_number = 2
+
+    model_id = await persist_pipeline_result(
+        title="test",
+        description="desc",
+        provider="anthropic",
+        model_name="claude-sonnet-4",
+        framework=Framework.STRIDE,
+        iterations_completed=2,
+        assets=None,
+        flows=None,
+        threats=threats,
+    )
+
+    saved = {t["name"]: t["iteration_number"] for t in await crud.list_threats(model_id)}
+    assert saved == {"SQL Injection": 2, "Session Hijacking": 1}
+
+
+@pytest.mark.asyncio
 async def test_persist_saves_individual_dread_fields(test_db):
     """All 5 individual DREAD fields and the aggregate score are stored."""
     model_id = await persist_pipeline_result(

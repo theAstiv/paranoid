@@ -90,6 +90,12 @@ def _hash_value(value: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _stamp_iteration(threats: ThreatsList, iteration: int) -> None:
+    """Record which iteration produced each threat, before it joins the cumulative list."""
+    for threat in threats.threats:
+        threat.iteration_number = iteration
+
+
 def _is_stride_coverage_balanced(threats: ThreatsList, min_per_category: int = 2) -> bool:
     """Return True when all STRIDE categories have at least min_per_category threats.
 
@@ -1230,6 +1236,7 @@ class PipelineRunner:
                             stopped_reason = "provider_offline"
                             # Preserve STRIDE threats from this iteration before yielding
                             # so the event stream is monotonic (state updated, then announced).
+                            _stamp_iteration(stride_threats, iteration)
                             cumulative_threats.threats.extend(stride_threats.threats)
                             logger.warning(
                                 "Provider unavailable during MAESTRO generation (iteration %d): %s",
@@ -1390,6 +1397,8 @@ class PipelineRunner:
                             )
                     else:
                         consecutive_zero = 0
+
+                    _stamp_iteration(current_threats, iteration)
 
                     # Deduplicate against cumulative threats (prior iterations or seeded threats).
                     # When seeded threats were pre-loaded, cumulative_threats is non-empty even on

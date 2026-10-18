@@ -245,6 +245,7 @@ async def _persist(
                 dread_exploitability=dread_exploitability,
                 dread_affected_users=dread_affected_users,
                 dread_discoverability=dread_discoverability,
+                iteration_number=threat.iteration_number or 1,
                 source=threat.source,
                 confidence=confidence,
                 dependency_ref=(
