@@ -28,7 +28,7 @@ Measured cost, time, reliability and output of Paranoid's pipeline, model routin
 | OpenAI `gpt-6-luna` vs `gpt-4.1` (direct API, `mc`, n = 3 each) | **31 vs 24 threats** (15 vs 8 from the LLM), **$0.008 vs $0.073** per run, **200 s vs 130 s**; the sequence-diagram-only dead-letter queue found in 6/6 luna runs vs 0/6 | [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15) |
 | OpenAI `gpt-6.1-sol` (direct API, effort `low`, `mc`, n = 3) | **36 threats** (20 from the LLM), **$0.225** per run, **392 s**; the dead-letter queue and the PNG-only secrets manager found in every run (3/3 `mc`, 1/1 `e2e-cli`) | [§1.1](#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15) |
 | GPT-6 Sol / Luna on AWS Bedrock (after #157, `mc`, n = 3 each) | **8/8 runs pass every gate**; Sol **32 threats, 171 s**, Luna **28 threats, 184 s**; unpriced, default effort, no PNG | [§1.2](#12-gpt-6-on-aws-bedrock-2026-10-16) |
-| Threat quality, hand-graded against the 21-item MediaDrop reference checklist (`mc`, n = 3 each) | Sonnet 5.5 (Bedrock) **17 / 15 / 18 of 21**, `gpt-4.1` (direct) **7 / 7 / 9 of 21**; one item (a webhook HMAC key shared by all partners) missed in all 6 runs. Two models only, one fixture | [§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17) |
+| Threat quality, hand-graded against the 21-item MediaDrop reference checklist (`mc`, n = 3 each) | Sonnet 5.5 (Bedrock) **18 / 16 / 20 of 21**, `gpt-4.1` (direct) **7 / 7 / 9 of 21**; one item (a webhook HMAC key shared by all partners) missed in all 6 runs. Two models only, one fixture | [§1.3](#13-threat-quality-against-the-reference-checklist-2026-10-17) |
 | Haiku 5.5 as the extraction model still reads every diagram | image-only and flow-only components found **3/3** with Haiku 5.5 and Sonnet 5.5 alike | [§3.1](#31-which-extraction-model-reads-the-diagrams) |
 | Most reliable main model, 3 benchmark sessions running | **Sonnet 5.5**: 3/3 runs, 34 threats, $0.49/run on Bedrock | [§1](#1-model-comparison) |
 | The three demo commands on Sonnet 5.5 (Bedrock) | **141–164 s** median, 15/15 runs clean, $0.41–$0.56 per run | [§5.1](#51-demo-commands-on-bedrock-bm10-demo) |
@@ -177,7 +177,7 @@ The reference is [`tests/bench/fixtures/mediadrop-checklist.json`](../tests/benc
 
 | | `gpt-4.1` (direct) | Sonnet 5.5 (Bedrock) |
 |---|---|---|
-| Items covered, per rep (hand-graded, of 21) | **7 / 7 / 9** | **17 / 15 / 18** |
+| Items covered, per rep (hand-graded, of 21) | **7 / 7 / 9** | **18 / 16 / 20** |
 | Threats, per rep | 24 / 24 / 25 | 38 / 33 / 34 |
 | From the LLM, per rep (the rest: 9 rule engine + 7 dependency) | 8–9 | 22 / 17 / 18 |
 | Cost and wall time | $0.073, 131 s (medians) | $0.31 / $0.27 / $0.27, 188 / 163 / 162 s (per rep) |
@@ -185,11 +185,11 @@ The reference is [`tests/bench/fixtures/mediadrop-checklist.json`](../tests/benc
 | Shared webhook HMAC key → one partner forges deliveries to others (MD-19) | N / N / P | P / P / P |
 
 **Reading it:**
-- **Sonnet 5.5 covered about twice as many items.** Items it covered in all 3 reps that `gpt-4.1` covered in none: cross-partner object access (IDOR, MD-05), the worker trusting queued job contents (MD-11), admin session compromise (MD-14), content-type spoofing and polyglot files (MD-17), decompression bombs (MD-03) and retry storms against partner endpoints (MD-13).
+- **Sonnet 5.5 covered more than twice as many items.** Items it covered in all 3 reps that `gpt-4.1` covered in none: cross-partner object access (IDOR, MD-05), the worker trusting queued job contents (MD-11), admin session compromise (MD-14), content-type spoofing and polyglot files (MD-17), decompression bombs (MD-03) and retry storms against partner endpoints (MD-13).
 - **Neither model found MD-19 in any of 6 runs.** HMAC is symmetric, so a single webhook key shared by all partners lets any partner forge deliveries to the others. Both models wrote "a leaked HMAC key allows forgery" (graded P) but never the cross-partner angle.
 - **Not a like-for-like comparison:** different provider (direct OpenAI vs Bedrock), dates and commits. The Sonnet 10-17 runs were also cheaper and faster than §1's 10-12 Sonnet row ($0.49, 330 s); same model, different session.
 - **Possible bias towards Claude:** Claude drafted the checklist items, and the grades weren't double-checked by a second person. A second read of the Sonnet runs disagreed with 4 of 63 grades (net −2 covered), which doesn't change the picture.
-- **The automatic score is approximate.** The quality module ([`tests/bench/quality.py`](../tests/bench/quality.py)) matches each item to its most similar threat (local embeddings, cosine **≥ 0.81**). The threshold was calibrated on the `gpt-4.1` grades (0 false matches, 3 misses) and checked on the Sonnet grades (0 false matches, 12 misses of 54 covered items); it is kept for both. At 0.81 it counts 5 / 6 / 10 for `gpt-4.1` and about 16 / 15 / 14 for Sonnet 5.5, so expect **±3 items per run** against a hand grade. It can't credit one threat for two items (Sonnet's decompression bombs sit inside its upload-flood threats, 0.69–0.71) and can't tell a generic leaked-key threat from MD-19 (0.80–0.84).
+- **The automatic score is approximate.** The quality module ([`tests/bench/quality.py`](../tests/bench/quality.py)) matches each item to its most similar threat (local embeddings, cosine **≥ 0.81**). The threshold was calibrated on the `gpt-4.1` grades (0 false matches, 3 misses) and checked on the Sonnet grades (0 false matches, 12 misses of 54 covered items); it is kept for both. At 0.81 it counts 5 / 6 / 10 for `gpt-4.1` (hand: 7 / 7 / 9) and 16 / 15 / 14 for Sonnet 5.5 (hand: 18 / 16 / 20), so it can be **off by up to 6 items per run** against a hand grade, mostly under-counting. *(Corrected 2026-10-18: the Sonnet hand counts were first published as 17 / 15 / 18, an arithmetic slip; the per-item grades and the threshold check are unchanged.)* It can't credit one threat for two items (Sonnet's decompression bombs sit inside its upload-flood threats, 0.69–0.71) and can't tell a generic leaked-key threat from MD-19 (0.80–0.84).
 - **Other models aren't scored.** Each needs its own hand-graded runs before its number is quoted, because the threshold depends on how a model phrases threats. That includes GPT-6, Opus 5.5 and the open-weight models.
 
 ---
