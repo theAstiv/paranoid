@@ -3,6 +3,7 @@
 Produces clean Markdown suitable for PRs, Confluence, Notion, and security review docs.
 """
 
+import html
 from datetime import UTC, datetime
 from typing import Any
 
@@ -57,7 +58,7 @@ def export_markdown(
     """
     lines: list[str] = []
 
-    display_title = title or model_id[:8]
+    display_title = _esc(title or model_id[:8])
     generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     if include_header:
@@ -83,7 +84,7 @@ def export_markdown(
             lines.append(stripped)
             lines.append("```")
         else:
-            lines.append(description)
+            lines.append(_esc(description))
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -93,7 +94,7 @@ def export_markdown(
         lines.append("## Assumptions")
         lines.append("")
         for a in assumptions:
-            lines.append(f"- {a}")
+            lines.append(f"- {_esc(a)}")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -105,9 +106,9 @@ def export_markdown(
         lines.append("| Name | Type | Description |")
         lines.append("|------|------|-------------|")
         for a in assets:
-            name = (a.get("name") or "—").replace("|", "\\|")
-            atype = (a.get("type") or "—").replace("|", "\\|")
-            desc = (a.get("description") or "—").replace("|", "\\|")
+            name = _cell(a.get("name") or "—")
+            atype = _cell(a.get("type") or "—")
+            desc = _cell(a.get("description") or "—")
             lines.append(f"| {name} | {atype} | {desc} |")
         lines.append("")
         lines.append("---")
@@ -120,10 +121,10 @@ def export_markdown(
         lines.append("| Source | Target | Type | Description |")
         lines.append("|--------|--------|------|-------------|")
         for f in flows:
-            src = (f.get("source_entity") or "—").replace("|", "\\|")
-            tgt = (f.get("target_entity") or "—").replace("|", "\\|")
-            ftype = (f.get("flow_type") or "—").replace("|", "\\|")
-            desc = (f.get("flow_description") or "—").replace("|", "\\|")
+            src = _cell(f.get("source_entity") or "—")
+            tgt = _cell(f.get("target_entity") or "—")
+            ftype = _cell(f.get("flow_type") or "—")
+            desc = _cell(f.get("flow_description") or "—")
             lines.append(f"| {src} | {tgt} | {ftype} | {desc} |")
         lines.append("")
         lines.append("---")
@@ -136,9 +137,9 @@ def export_markdown(
         lines.append("| Source | Target | Purpose |")
         lines.append("|--------|--------|---------|")
         for tb in trust_boundaries:
-            src = (tb.get("source_entity") or "—").replace("|", "\\|")
-            tgt = (tb.get("target_entity") or "—").replace("|", "\\|")
-            purpose = (tb.get("purpose") or "—").replace("|", "\\|")
+            src = _cell(tb.get("source_entity") or "—")
+            tgt = _cell(tb.get("target_entity") or "—")
+            purpose = _cell(tb.get("purpose") or "—")
             lines.append(f"| {src} | {tgt} | {purpose} |")
         lines.append("")
         lines.append("---")
@@ -197,10 +198,10 @@ def export_markdown(
         return "\n".join(lines)
 
     for i, t in enumerate(threats, 1):
-        name = t.get("name") or "—"
-        category = _category_from_row(t)
-        target = t.get("target") or "—"
-        likelihood = t.get("likelihood") or "—"
+        name = _cell(t.get("name") or "—")
+        category = _cell(_category_from_row(t))
+        target = _cell(t.get("target") or "—")
+        likelihood = _cell(t.get("likelihood") or "—")
         row = [str(i), name, category, target, likelihood]
         if show_dread:
             row.append(_dread_score_cell(t))
@@ -225,15 +226,15 @@ def export_markdown(
     global_idx = 1
 
     for category, category_threats in grouped.items():
-        lines.append(f"### {category}")
+        lines.append(f"### {_esc(category)}")
         lines.append("")
 
         for t in category_threats:
-            name = t.get("name") or "unnamed"
-            target = t.get("target") or "—"
-            likelihood = t.get("likelihood") or "—"
-            impact = t.get("impact") or "—"
-            description = (t.get("description") or "").strip()
+            name = _esc(t.get("name") or "unnamed")
+            target = _esc(t.get("target") or "—")
+            likelihood = _esc(t.get("likelihood") or "—")
+            impact = _esc(t.get("impact") or "—")
+            description = _esc((t.get("description") or "").strip())
 
             lines.append(f"#### {global_idx}. {name}")
             lines.append("")
@@ -264,6 +265,7 @@ def export_markdown(
                 lines.append("**Mitigations:**")
                 for m in mitigations:
                     label, clean = _mitigation_label(m)
+                    clean = _esc(clean)
                     if label != "Mitigation":
                         lines.append(f"- [{label[0]}] {clean}")
                     else:
@@ -307,10 +309,26 @@ def _append_gap_section(lines: list[str], gap_summaries: list[str]) -> None:
     for i, gap in enumerate(gap_summaries, 1):
         lines.append(f"### Iteration {i}")
         lines.append("")
-        lines.append(gap.strip() or "*(empty)*")
+        lines.append(_esc(gap.strip()) or "*(empty)*")
         lines.append("")
     lines.append("---")
     lines.append("")
+
+
+def _esc(text: str) -> str:
+    """Escape HTML in user or LLM text (BB-09).
+
+    Markdown passes raw HTML through, so a title like ``<img src=x onerror=...>``
+    would run in any viewer that renders it. Fenced blocks (Mermaid, Gherkin) and
+    code spans are already inert and are left alone, or their source would show
+    entities.
+    """
+    return html.escape(text, quote=False)
+
+
+def _cell(text: str) -> str:
+    """`_esc` plus the table-cell escape for "|"."""
+    return _esc(text).replace("|", "\\|")
 
 
 def _category_from_row(row: dict[str, Any]) -> str:
