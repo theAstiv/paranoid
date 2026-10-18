@@ -29,6 +29,8 @@
   let container
   let viewport
   let renderError = null
+  // Retrying a rejected or blank source renders the same input and fails the same way.
+  let retryable = true
   let showRawSource = false
 
   // Pan/zoom state — in-house, no new dependency.
@@ -70,10 +72,12 @@
   async function renderMermaid(source) {
     const seq = ++renderSeq
     renderError = null
+    retryable = true
     resetView()
     const cleaned = sanitizeMermaid(source)
     if (!cleaned) {
       if (seq !== renderSeq || !container) return
+      retryable = false
       // sanitizeMermaid returns '' for a blank source and also for one it
       // rejects (never settles, or nothing left after cleaning).
       renderError = source?.trim()
@@ -224,9 +228,11 @@
       <p class="text-sm font-medium text-c-high">Diagram rendering failed</p>
       <p class="text-xs text-c-muted">{renderError}</p>
       <div class="flex gap-2">
-        <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => renderMermaid(content)}>
-          Retry
-        </button>
+        {#if retryable}
+          <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => renderMermaid(content)}>
+            Retry
+          </button>
+        {/if}
         <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => (showRawSource = !showRawSource)}>
           {showRawSource ? 'Hide' : 'Show'} raw source
         </button>

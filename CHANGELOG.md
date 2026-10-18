@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Results now reloads when only the model in the URL changes** (BB-29) — going from `#/models/a` to `#/models/b` kept the first model's page (MAESTRO panel included) because the page loaded only on mount. It now loads whenever the id changes, clears the old model's assets, flows, diagrams and coverage first, and ignores a slow response for a model that is no longer open. Frontend only
+
+- **No pointless "Retry" on a rejected or empty diagram** (BB-38) — a diagram source the safety cleaning rejects, or a blank one, rendered the same way every time, so the Retry button could not help. It is now hidden for those two cases and kept for render errors that can be transient. Frontend only
+
+- **No stale "Session expired" toast after signing out on Code Sources** (BB-41) — signing out cleared the project, which re-ran the page's list call without a token and left a red toast that the next login still showed. The page now waits for a signed-in user before loading. Frontend only
+
+- **A very long model title no longer widens the page** (BB-31) — a 90+ character title made Results (and any page) wider than a ~1020px window, because the content wrapper in `App.svelte` could not shrink below its text. The wrapper now has `min-w-0`, so the title truncates instead. Frontend only
+
+- **Signing in as another user kept the previous user's project and role** (BB-40) — with auth on, logging in again without signing out left the old `currentProject` selected, so a viewer could see an editor's Add/reindex buttons on Code Sources (the server still refused them with 403), and a project the new user isn't in could stay selected. The project is now re-picked from the new user's list, keeping the same project only if they are a member, with their own role. Frontend only
+
 - **One caller could lock everyone else out of the provider Test button** (BB-21) — the `POST /api/config/test-provider` rate limit (10 per 60 s) was one bucket for the whole process. It is now per caller: the user id with auth on, the client IP with auth off.
 - **Settings had no way to test the Ollama URL** (BB-22) — the Ollama URL field now has its own Test button (shown when the field has a value); a refused custom URL shows the server's 403 message.
 - **Threat generation could fail outright when its response ran past 16,384 tokens** (BB-33) — `generate_threats` asks for 16,384 output tokens up front, which was also the Anthropic and Bedrock auto-bump ceiling, so a response cut off there (adaptive thinking counts toward `max_tokens`) was never given more room: the step failed, and on 10-16 a live Sonnet 5.5 run lost its second iteration and ended `provider_offline`. The ceiling is now 32,768 (as for OpenAI and Ollama), so such a call gets one bigger attempt; a call allowed more than 16,384 tokens gets a proportionally longer timeout (480 s at 32,768, from 240 s), including `extract_flows`, which starts at 32,768; a response cut off at the new ceiling fails at once with "exceeded the 32768-token ceiling" instead of being retried at the same budget; and the truncation warning names the response's block types, so a future cut-off shows whether thinking filled the budget. Cost changes only when the bigger attempt runs.

@@ -132,6 +132,18 @@ export function pickInitialProject(list) {
 }
 
 /**
+ * The project to show once `list` (re)loads for a possibly different user:
+ * the current selection if it's in the list, as the list's own object so
+ * `member_role` is the new user's, otherwise the initial pick.
+ * @param {object|null} current
+ * @param {object[]} list
+ * @returns {object|null}
+ */
+export function reconcileProject(current, list) {
+  return list.find(p => p.id === current?.id) ?? pickInitialProject(list)
+}
+
+/**
  * All projects the current user is a member of.
  * @type {import('svelte/store').Writable<object[]>}
  */

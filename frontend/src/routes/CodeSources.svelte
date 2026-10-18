@@ -36,8 +36,9 @@
   $: canAdd = isAdmin || !role || role === 'owner' || role === 'editor'
   $: canDelete = isAdmin || !role || role === 'owner'
 
-  // Runs on mount and whenever the active project changes (sidebar switch).
-  $: reload(projectId)
+  // Runs on mount and whenever the active project or the signed-in user changes.
+  // Without a user the call would 401, and that toast outlives a sign-out.
+  $: reload(projectId, Boolean($currentUser))
   onDestroy(stopStreams)
 
   let loadSeq = 0
@@ -47,8 +48,12 @@
     aborts = {}
   }
 
-  function reload(pid) {
+  function reload(pid, signedIn) {
     stopStreams()
+    if (!signedIn) {
+      loadSeq++ // drop any response still in flight
+      return
+    }
     load(pid)
   }
 

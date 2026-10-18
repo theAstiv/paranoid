@@ -12,6 +12,7 @@ import {
   notify,
   currentProject,
   pickInitialProject,
+  reconcileProject,
 } from './stores.js'
 
 beforeEach(() => {
@@ -112,6 +113,20 @@ describe('active project persistence', () => {
 
   it('returns null for an empty list', () => {
     expect(pickInitialProject([])).toBeNull()
+  })
+
+  it('reconcile keeps the selection but takes the new list\'s object (role)', () => {
+    const editor = { id: 'demo', member_role: 'editor' }
+    const viewer = { id: 'demo', member_role: 'viewer' }
+    expect(reconcileProject(editor, [viewer])).toBe(viewer)
+  })
+
+  it('reconcile drops a selection the new user is not a member of', () => {
+    expect(reconcileProject({ id: 'other' }, list)).toEqual(list[0])
+  })
+
+  it('reconcile gives null when the new user has no projects', () => {
+    expect(reconcileProject({ id: 'demo' }, [])).toBeNull()
   })
 
   it('does not forget the selection when the store is cleared', () => {

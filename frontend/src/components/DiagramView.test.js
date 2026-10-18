@@ -85,6 +85,20 @@ describe('DiagramView — mermaid', () => {
     expect(mermaidRender).not.toHaveBeenCalled()
   })
 
+  // BB-38: retrying a rejected or blank source renders the same input again.
+  it('offers no Retry for a rejected or a blank source', async () => {
+    const unsettled = 'graph TD\nA --> B\n' + '<scr'.repeat(12) + '<script>' + 'ipt>'.repeat(12)
+    const { unmount } = render(DiagramView, { props: { kind: 'mermaid', content: unsettled, name: 'arch' } })
+    await waitFor(() => expect(screen.getByText(/rejected during safety cleaning/i)).toBeInTheDocument())
+    expect(screen.queryByText('Retry')).toBeNull()
+    expect(screen.getByText(/raw source/i)).toBeInTheDocument()
+    unmount()
+
+    render(DiagramView, { props: { kind: 'mermaid', content: '', name: 'arch' } })
+    await waitFor(() => expect(screen.getByText('Mermaid source is empty.')).toBeInTheDocument())
+    expect(screen.queryByText('Retry')).toBeNull()
+  })
+
   it('still calls a whitespace-only source empty', async () => {
     render(DiagramView, { props: { kind: 'mermaid', content: '  \n ', name: 'arch' } })
     await waitFor(() => expect(screen.getByText('Mermaid source is empty.')).toBeInTheDocument())
