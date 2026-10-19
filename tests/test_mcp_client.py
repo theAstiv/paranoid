@@ -222,6 +222,24 @@ async def test_one_query_with_no_matches_keeps_symbols_found_by_the_others():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [[None, "x", 3], {"results": [None, ["y"], "x"]}])
+async def test_search_symbols_drops_non_dict_items(payload):
+    """A non-dict item in the results must not reach extract_context's .get() (BB-56)."""
+    extractor = MCPCodeExtractor(
+        project_root="/test/repo",
+        binary_path="/usr/local/bin/context-link",
+    )
+    hit = {"symbol_name": "login", "file_path": "auth.py"}
+    extractor._call_tool = AsyncMock(
+        return_value=[*payload, hit]
+        if isinstance(payload, list)
+        else {"results": [*payload["results"], hit]}
+    )
+
+    assert await extractor.search_symbols("anything") == [hit]
+
+
+@pytest.mark.asyncio
 async def test_extract_context_survives_a_search_symbols_that_returns_none():
     """Defence in depth: even a None from search_symbols must not abort extraction (BB-56)."""
     extractor = MCPCodeExtractor(
@@ -250,6 +268,9 @@ async def test_extract_context_survives_a_search_symbols_that_returns_none():
         {"results": [None]},
         {"results": [{"data": None}]},
         {"results": [{"data": {"symbol": None, "dependencies": None}}]},
+        {"results": [{"data": ["not", "a", "dict"]}]},
+        {"results": [{"data": {"symbol": ["x"], "dependencies": "x"}}]},
+        {"results": [{"data": {"symbol": {"code_block": 5}}}]},
         {},
         None,
     ],
@@ -269,7 +290,15 @@ async def test_get_code_by_symbol_tolerates_null_fields(payload):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "payload", [{"results": None}, {"results": "oops"}, {"results": [None]}, {}, None]
+    "payload",
+    [
+        {"results": None},
+        {"results": "oops"},
+        {"results": [None]},
+        {"results": [{"data": ["not", "a", "dict"]}]},
+        {},
+        None,
+    ],
 )
 async def test_get_file_skeleton_tolerates_null_results(payload):
     """A null or malformed results envelope yields None, never a crash (BB-56)."""
