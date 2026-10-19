@@ -1,24 +1,26 @@
 """Run control for POST /api/models/{id}/run (bug-bash plan §6, run order item 21).
 
-The pipeline runs inside the SSE response generator, so the model's status
-depends on how that generator ends. These tests drive the route with a fake
-pipeline (no provider, no network) and check the status a model is left in
-when the client goes away, when the server restarts mid-run, and when two runs
+The pipeline runs as a background task (backend/pipeline/live_runs.py) that the
+SSE response only follows. These tests drive the route with a fake pipeline
+(no provider, no network) and check the status a model is left in when the
+client goes away, when the server stops or restarts mid-run, and when two runs
 of one model overlap. Each strict xfail is a bug-bash finding: fixing it turns
 the test XPASS, and the marker must go.
 """
 
 import asyncio
 import contextlib
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from fastapi import HTTPException
 
 from backend.config import settings
 from backend.db import crud
 from backend.main import app, lifespan
 from backend.models.enums import ModelStatus
+from backend.pipeline import live_runs
 from backend.pipeline.runner import PipelineEvent, PipelineStep
 from backend.routes import models as models_routes
 from tests.fixtures.pipeline import make_stride_threats
@@ -62,27 +64,52 @@ async def _open_run(model_id: str):
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 21): a client disconnect cancels the run inside the SSE "
-        "generator, and `except Exception` doesn't see CancelledError, so the model stays "
-        "'in_progress' forever. Results.svelte aborts the stream on onDestroy, so leaving "
-        "the page mid-run does this."
-    ),
-)
-async def test_client_disconnect_mid_run_does_not_leave_the_model_in_progress(model_id):
-    started = asyncio.Event()
+@pytest.fixture(autouse=True)
+async def _no_leftover_runs(test_db):
+    """A test that leaves a run going must not leak it into the next test."""
+    yield
+    await live_runs.cancel_all_runs()
 
-    async def hanging_runner(*args, **kwargs):
+
+def _gated_runner(release: asyncio.Event, started: asyncio.Event | None = None):
+    """A fake pipeline that starts, waits for `release`, then completes with threats."""
+
+    async def runner(*args, **kwargs):
         yield PipelineEvent(step=PipelineStep.SUMMARIZE, status="started", message="go")
-        started.set()
-        await asyncio.Event().wait()
+        if started is not None:
+            started.set()
+        await release.wait()
+        yield PipelineEvent(
+            step=PipelineStep.COMPLETE,
+            status="completed",
+            message="done",
+            data={"threats": make_stride_threats()},
+        )
+
+    return runner
+
+
+def _sse_payloads(chunks: list[str]) -> list[dict]:
+    return [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+
+
+async def _drain(resp) -> list[dict]:
+    return _sse_payloads([chunk async for chunk in resp.body_iterator])
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_mid_run_does_not_stop_the_run(model_id):
+    """BB-71: Results.svelte closes the stream whenever you leave the page."""
+    started, release = asyncio.Event(), asyncio.Event()
 
     p1, p2 = _providers()
-    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", hanging_runner):
+    with (
+        p1,
+        p2,
+        patch("backend.routes.models.run_pipeline_for_model", _gated_runner(release, started)),
+    ):
         resp = await _open_run(model_id)
+        run = live_runs.get_run(model_id)
 
         async def consume() -> None:
             async for _ in resp.body_iterator:
@@ -95,8 +122,72 @@ async def test_client_disconnect_mid_run_does_not_leave_the_model_in_progress(mo
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
+        assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.IN_PROGRESS.value
+        release.set()
+        await asyncio.wait_for(run.task, timeout=5)
+
     record = await crud.get_threat_model(model_id)
-    assert record["status"] != ModelStatus.IN_PROGRESS.value
+    assert record["status"] == ModelStatus.COMPLETED.value
+    assert len(await crud.list_threats(model_id)) == len(make_stride_threats().threats)
+    assert live_runs.get_run(model_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_page_opened_mid_run_gets_the_run_from_its_start(model_id):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch("backend.routes.models.run_pipeline_for_model", _gated_runner(release, started)),
+    ):
+        await _open_run(model_id)  # the wizard's stream, never read: its page went away
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        resp = await models_routes.follow_run(model_id, _authz=None)
+        release.set()
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    assert [(e["step"], e["status"]) for e in events] == [
+        ("summarize", "started"),
+        ("complete", "completed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_following_a_model_with_no_run_in_progress_is_404(model_id):
+    # Also what a model stuck 'in_progress' by a server restart gets, so the UI
+    # can offer Re-run instead of polling forever.
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+    with pytest.raises(HTTPException) as exc_info:
+        await models_routes.follow_run(model_id, _authz=None)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_run_stopped_by_server_shutdown_marks_the_model_failed(model_id):
+    started = asyncio.Event()
+
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _gated_runner(asyncio.Event(), started),
+        ),
+    ):
+        resp = await _open_run(model_id)
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await live_runs.cancel_all_runs()
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    record = await crud.get_threat_model(model_id)
+    assert record["status"] == ModelStatus.FAILED.value
+    assert events[-1]["step"] == "complete"
+    assert events[-1]["status"] == "failed"
+    assert "interrupted" in events[-1]["message"]
 
 
 @pytest.mark.asyncio
@@ -125,49 +216,28 @@ async def test_startup_marks_a_run_left_in_progress_as_failed(model_id, test_db,
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 21): two runs of one model are both accepted; each clears "
-        "the model's data first and then persists its own results, so the threats are "
-        "duplicated (20 instead of 10 on a live rules-only run)."
-    ),
-)
-async def test_two_overlapping_runs_of_one_model_do_not_duplicate_threats(model_id):
-    both_started = asyncio.Barrier(2)
-
-    async def runner(*args, **kwargs):
-        yield PipelineEvent(step=PipelineStep.SUMMARIZE, status="started", message="go")
-        await both_started.wait()
-        yield PipelineEvent(
-            step=PipelineStep.COMPLETE,
-            status="completed",
-            message="done",
-            data={"threats": make_stride_threats()},
-        )
+async def test_a_second_run_of_a_model_already_running_is_refused(model_id):
+    """BB-73: two runs of one model each cleared its data, then both added their threats."""
+    release = asyncio.Event()
 
     p1, p2 = _providers()
-    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", runner):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            first, second = await asyncio.wait_for(
-                asyncio.gather(
-                    c.post(f"/api/models/{model_id}/run", data={"assumptions": "[]"}),
-                    c.post(f"/api/models/{model_id}/run", data={"assumptions": "[]"}),
-                ),
-                timeout=10,
-            )
+    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", _gated_runner(release)):
+        first = await _open_run(model_id)
+        with pytest.raises(HTTPException) as exc_info:
+            await _open_run(model_id)
+        release.set()
+        await asyncio.wait_for(_drain(first), timeout=5)
 
-    statuses = sorted([first.status_code, second.status_code])
-    threats = await crud.list_threats(model_id)
-    one_run = len(make_stride_threats().threats)
-    # Either the second run is refused, or the results aren't doubled.
-    assert statuses == [200, 409] or len(threats) == one_run
+        # Once the first run has finished, the model can be run again.
+        second = await _open_run(model_id)
+        await asyncio.wait_for(_drain(second), timeout=5)
+
+    assert exc_info.value.status_code == 409
+    assert len(await crud.list_threats(model_id)) == len(make_stride_threats().threats)
 
 
 @pytest.mark.asyncio
 async def test_a_failing_run_marks_the_model_failed(model_id):
-    """The path that does work today: an exception from the pipeline."""
-
     async def failing_runner(*args, **kwargs):
         yield PipelineEvent(step=PipelineStep.SUMMARIZE, status="started", message="go")
         raise RuntimeError("boom")
@@ -175,9 +245,9 @@ async def test_a_failing_run_marks_the_model_failed(model_id):
     p1, p2 = _providers()
     with p1, p2, patch("backend.routes.models.run_pipeline_for_model", failing_runner):
         resp = await _open_run(model_id)
-        with pytest.raises(RuntimeError):
-            async for _ in resp.body_iterator:
-                pass
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
 
     record = await crud.get_threat_model(model_id)
     assert record["status"] == ModelStatus.FAILED.value
+    assert events[-1]["status"] == "failed"
+    assert events[-1]["message"] == "boom"

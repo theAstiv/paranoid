@@ -71,6 +71,7 @@ from backend.models.enums import (
 )
 from backend.models.extended import CodeContext, DiagramData
 from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.pipeline import live_runs
 from backend.pipeline.confidence import score_threat_confidence
 from backend.pipeline.pre_flight import analyze_description_gaps
 from backend.pipeline.runner import PipelineEvent, PipelineStep, run_pipeline_for_model
@@ -816,6 +817,11 @@ async def run_pipeline(
       Off by default: dependency analysis does registry/codeload fetches and
       a Semgrep scan (up to deps_analysis_timeout_seconds), so it must not
       silently turn on for every code-source run.
+
+    The run itself is a background task (backend/pipeline/live_runs.py): this
+    response only follows it, so closing the stream doesn't stop the run, and
+    GET /{model_id}/run/events picks it up again. 409 if the model is already
+    running.
     """
     code_source_id = code_source_id.strip() or ""
 
@@ -909,7 +915,7 @@ async def run_pipeline(
         project_temperature if project_temperature is not None else settings.default_temperature
     )
 
-    async def event_generator() -> AsyncGenerator[str, None]:
+    async def run_events() -> AsyncGenerator[str, None]:
         # Clear any previous run's data so re-runs start clean
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
@@ -1028,8 +1034,41 @@ async def run_pipeline(
             ).to_sse_format()
             raise
 
+    async def mark_interrupted() -> str:
+        await crud.update_threat_model_status(model_id, ModelStatus.FAILED.value)
+        return PipelineEvent(
+            step=PipelineStep.COMPLETE,
+            status="failed",
+            message="Run interrupted: the server shut down before it finished.",
+        ).to_sse_format()
+
+    try:
+        run = live_runs.start_run(model_id, run_events(), mark_interrupted)
+    except live_runs.RunAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="This model already has a run in progress.")
+
+    return _follow_run_response(run)
+
+
+@router.get("/{model_id}/run/events")
+async def follow_run(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> StreamingResponse:
+    """Stream the model's in-progress run as SSE, replaying its events from the start.
+
+    For a page opened (or reopened) while a run is going. 404 when the model
+    has no run in progress: it finished, or the server restarted under it.
+    """
+    run = live_runs.get_run(model_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="This model has no run in progress.")
+    return _follow_run_response(run)
+
+
+def _follow_run_response(run: live_runs.LiveRun) -> StreamingResponse:
     return StreamingResponse(
-        event_generator(),
+        live_runs.follow_run(run),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
