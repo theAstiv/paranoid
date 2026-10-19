@@ -191,6 +191,22 @@ def enrich_complete(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
     return ok, f"enrich={enrich} threats={threats}"
 
 
+# Share of threats that must end up with both an attack tree and a test suite.
+# A flagship model may refuse the odd threat; mass refusals (BB-55) must still fail.
+ENRICH_COVERAGE_MIN = 0.9
+
+
+def enrich_coverage(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
+    enrich = row.get("enrich")
+    threats = (row.get("db") or {}).get("threats", 0)
+    if not enrich or threats <= 0:
+        return False, f"enrich={enrich} threats={threats}"
+    trees = enrich["attack_trees"] / threats
+    suites = enrich["test_suites"] / threats
+    ok = trees >= ENRICH_COVERAGE_MIN and suites >= ENRICH_COVERAGE_MIN
+    return ok, f"attack_trees={trees:.0%} test_suites={suites:.0%} of {threats} threats"
+
+
 def maestro_present(row: dict, arm: Arm, run_dir: Path) -> tuple[bool, str]:
     db = row.get("db") or {}
     ok = db.get("maestro", 0) > 0 and sum(db.get("stride", {}).values()) > 0
@@ -241,6 +257,7 @@ GATES: dict[str, Gate] = {
         exports_valid,
         cvss_consistent,
         enrich_complete,
+        enrich_coverage,
         maestro_present,
         code_context_used,
         no_orphan_semgrep,
