@@ -4,12 +4,12 @@ const BASE = '/api'
 let _refreshPromise = null
 
 /**
- * Core fetch wrapper.
+ * Authenticated fetch that returns the raw Response.
  * - Attaches Authorization: Bearer header from localStorage token (if present).
  * - On 401: attempts one silent token refresh, then retries.
  * - On second 401 after refresh: clears token + redirects to /app/login.
  */
-async function request(method, path, body, extraHeaders = {}, signal = undefined, _retrying = false) {
+async function authedFetch(method, path, { body, extraHeaders = {}, signal } = {}, _retrying = false) {
   const { getStoredToken, setStoredToken, clearStoredToken, clearAuthState } = await import('./stores.js')
 
   const token = getStoredToken()
@@ -40,7 +40,7 @@ async function request(method, path, body, extraHeaders = {}, signal = undefined
       const newToken = await _refreshPromise
       if (newToken) {
         setStoredToken(newToken)
-        return request(method, path, body, extraHeaders, signal, true)
+        return authedFetch(method, path, { body, extraHeaders, signal }, true)
       }
     } catch {
       // refresh failed — fall through to clear below
@@ -54,6 +54,12 @@ async function request(method, path, body, extraHeaders = {}, signal = undefined
     throw new Error('Session expired — please log in again')
   }
 
+  return res
+}
+
+/** JSON request on top of authedFetch: throws on non-2xx, null on 204. */
+async function request(method, path, body, extraHeaders = {}, signal = undefined) {
+  const res = await authedFetch(method, path, { body, extraHeaders, signal })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || res.statusText)
@@ -524,8 +530,9 @@ export function subscribeToExtract(modelId, onEvent, onError, onDone) {
 // ── Export ────────────────────────────────────────────────────────────────────
 
 /**
- * Returns the download URL for an export.
- * Caller uses window.open(url) to trigger the file download.
+ * Returns the download URL for an export. For links to auth-off servers and
+ * for the API; a plain navigation sends no Bearer token, so the UI uses
+ * downloadExport() instead.
  *
  * @param {string} modelId
  * @param {'markdown'|'pdf'|'json'|'sarif'} format
@@ -536,6 +543,36 @@ export function exportUrl(modelId, format, statusFilter) {
   const params = new URLSearchParams({ format })
   if (statusFilter) params.set('status_filter', statusFilter)
   return `${BASE}/export/${modelId}?${params.toString()}`
+}
+
+/**
+ * Download an export with the caller's credentials and save it under the
+ * server's filename. window.open() can't send the Bearer token (BB-61).
+ *
+ * @param {string} modelId
+ * @param {'markdown'|'pdf'|'json'|'sarif'} format
+ * @param {string} [statusFilter]
+ */
+export async function downloadExport(modelId, format, statusFilter) {
+  const params = new URLSearchParams({ format })
+  if (statusFilter) params.set('status_filter', statusFilter)
+  const res = await authedFetch('GET', `/export/${modelId}?${params.toString()}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || res.statusText)
+  }
+  const blob = await res.blob()
+  const disposition = res.headers.get('Content-Disposition') || ''
+  const match = /filename="([^"]+)"/.exec(disposition)
+  const filename = match ? match[1] : `threat-model-${modelId}.${format === 'markdown' ? 'md' : format}`
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 // ── Code Sources ─────────────────────────────────────────────────────────────

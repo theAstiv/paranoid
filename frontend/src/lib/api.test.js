@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getModel, getConfig, login, subscribeToRun, getModelDiagram } from './api.js'
+import { getModel, getConfig, login, subscribeToRun, getModelDiagram, downloadExport } from './api.js'
 import { getStoredToken, setStoredToken } from './stores.js'
 
 function jsonResponse(body, init = {}) {
@@ -132,6 +132,81 @@ describe('request() — 401 refresh-and-retry', () => {
     await expect(getModel('m1')).rejects.toThrow('Session expired')
     expect(getStoredToken()).toBeNull()
     expect(window.location.hash).toBe('#/login')
+  })
+})
+
+describe('downloadExport() — BB-61', () => {
+  function fileResponse(init = {}) {
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'Content-Disposition': 'attachment; filename="My Model.json"' },
+      ...init,
+    })
+  }
+
+  let created
+  let clicked
+
+  beforeEach(() => {
+    created = []
+    clicked = []
+    URL.createObjectURL = vi.fn((blob) => { created.push(blob); return 'blob:test' })
+    URL.revokeObjectURL = vi.fn()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+      clicked.push(this.download)
+    })
+  })
+
+  it('sends the Bearer token and saves under the Content-Disposition filename', async () => {
+    setStoredToken('tok-abc')
+    const fetchMock = vi.fn().mockResolvedValue(fileResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await downloadExport('m1', 'json')
+
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/export/m1?format=json')
+    expect(opts.headers.Authorization).toBe('Bearer tok-abc')
+    expect(created).toHaveLength(1)
+    expect(created[0]).toBeInstanceOf(Blob)
+    expect(clicked).toEqual(['My Model.json'])
+  })
+
+  it('forwards status_filter and falls back to a default filename', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('# md', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await downloadExport('m1', 'markdown', 'approved')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/export/m1?format=markdown&status_filter=approved')
+    expect(clicked).toEqual(['threat-model-m1.md'])
+  })
+
+  it('refreshes once on a 401 and retries with the new token', async () => {
+    setStoredToken('expired-tok')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Authentication required' }), { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'new-tok' }))
+      .mockResolvedValueOnce(fileResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    await downloadExport('m1', 'json')
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[1][0]).toContain('/auth/refresh')
+    expect(fetchMock.mock.calls[2][1].headers.Authorization).toBe('Bearer new-tok')
+    expect(clicked).toEqual(['My Model.json'])
+  })
+
+  it('throws the server detail on a 404 and saves nothing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Model not found' }), { status: 404 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(downloadExport('m1', 'pdf')).rejects.toThrow('Model not found')
+    expect(created).toHaveLength(0)
+    expect(clicked).toHaveLength(0)
   })
 })
 
