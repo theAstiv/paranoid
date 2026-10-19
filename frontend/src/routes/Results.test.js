@@ -59,6 +59,7 @@ import {
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
+  currentProject,
 } from '../lib/stores.js'
 
 const baseModel = {
@@ -81,6 +82,7 @@ beforeEach(() => {
   abortRun.set(null)
   config.set(null)
   currentUser.set(null)
+  currentProject.set(null)
   getModel.mockResolvedValue(baseModel)
   getModelAssets.mockResolvedValue([])
   getModelFlows.mockResolvedValue([])
@@ -536,6 +538,43 @@ describe('Results — status workflow actions', () => {
     await waitFor(() => expect(screen.getByText('pending')).toBeInTheDocument())
     expect(screen.queryByText('Send to review')).toBeNull()
     expect(screen.queryByText('Approve')).toBeNull()
+  })
+})
+
+describe('Results — role gating (BB-62)', () => {
+  function asRole(role) {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: role })
+  }
+
+  it('hides Re-run, Edit Context and the status buttons from a viewer', async () => {
+    asRole('viewer')
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Review Threats')).toBeInTheDocument())
+
+    expect(screen.queryByText('Re-run')).toBeNull()
+    expect(screen.queryByText('Edit Context')).toBeNull()
+    expect(screen.queryByText('Send to review')).toBeNull()
+  })
+
+  it('hides the in_review status buttons from a viewer', async () => {
+    asRole('viewer')
+    getModel.mockResolvedValue({ ...baseModel, status: 'in_review' })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('in review')).toBeInTheDocument())
+
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Back to completed')).toBeNull()
+    expect(screen.queryByText('Archive')).toBeNull()
+  })
+
+  it.each(['owner', 'editor'])('shows them to an %s', async role => {
+    asRole(role)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Re-run')).toBeInTheDocument())
+
+    expect(screen.getByText('Edit Context')).toBeInTheDocument()
+    expect(screen.getByText('Send to review')).toBeInTheDocument()
   })
 })
 

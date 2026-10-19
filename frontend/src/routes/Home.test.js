@@ -18,7 +18,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 })
 
 import { listModels, deleteModel } from '../lib/api.js'
-import { models, currentProject, notify } from '../lib/stores.js'
+import { models, currentProject, currentUser, notify } from '../lib/stores.js'
 
 const modelA = {
   id: 'm1', title: 'API Gateway', framework: 'STRIDE', status: 'completed',
@@ -33,6 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   models.set([])
   currentProject.set(null)
+  currentUser.set(null)
   listModels.mockResolvedValue([])
 })
 
@@ -186,5 +187,30 @@ describe('Home — delete', () => {
     await fireEvent.click(screen.getByTitle('Delete threat model'))
 
     await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('forbidden')))
+  })
+})
+
+describe('Home — role gating (BB-44)', () => {
+  it('hides "New Model" and the empty-state create link from a viewer', async () => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: 'viewer' })
+    render(Home)
+    await waitFor(() => expect(screen.getByText('No threat models yet.')).toBeInTheDocument())
+    expect(screen.queryByText('New Model')).toBeNull()
+    expect(screen.queryByText('Create your first model')).toBeNull()
+  })
+
+  it.each(['owner', 'editor'])('shows them to an %s', async role => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: role })
+    render(Home)
+    await waitFor(() => expect(screen.getByText('Create your first model')).toBeInTheDocument())
+    expect(screen.getByText('New Model')).toBeInTheDocument()
+  })
+
+  it('shows them while the role is unknown (auth off)', async () => {
+    render(Home)
+    await waitFor(() => expect(screen.getByText('Create your first model')).toBeInTheDocument())
+    expect(screen.getByText('New Model')).toBeInTheDocument()
   })
 })

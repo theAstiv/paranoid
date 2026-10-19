@@ -25,7 +25,7 @@
     currentProject, projects, notifications, notifUnread, menuOpen, reconcileProject,
   } from './lib/stores.js'
   import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
-  import { initials, relativeTime } from './lib/utils.js'
+  import { canEditProject, initials, relativeTime } from './lib/utils.js'
 
   const routes = {
     '/': Home,
@@ -109,6 +109,8 @@
 
   // Whether current user can manage (owner or admin)
   $: canManageProject = $currentProject?.member_role === 'owner' || $currentUser?.is_admin
+  // Creating a model needs editor; a viewer would get a 403.
+  $: canCreateModel = canEditProject($currentProject, $currentUser)
 
   // New project inline form state
   let showNewProjectForm = false
@@ -468,16 +470,18 @@
       </nav>
 
       <!-- New Threat Model button -->
-      <div class="px-3 pb-3 flex-shrink-0">
-        <a href="#/models/new" use:link
-          class="btn-primary w-full justify-center glow text-[13px]"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path stroke-linecap="round" d="M10 4v12M4 10h12"/>
-          </svg>
-          New Threat Model
-        </a>
-      </div>
+      {#if canCreateModel}
+        <div class="px-3 pb-3 flex-shrink-0">
+          <a href="#/models/new" use:link
+            class="btn-primary w-full justify-center glow text-[13px]"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" d="M10 4v12M4 10h12"/>
+            </svg>
+            New Threat Model
+          </a>
+        </div>
+      {/if}
 
       <!-- User chip -->
       <div class="border-t border-c-divider px-3 py-2 flex-shrink-0 relative">

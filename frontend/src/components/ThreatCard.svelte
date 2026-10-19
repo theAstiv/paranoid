@@ -12,6 +12,7 @@
    * @type {{
    *   threat?: object,
    *   readonly?: boolean,
+   *   canEdit?: boolean,
    *   selectable?: boolean,
    *   selected?: boolean,
    *   modelId?: string,
@@ -28,6 +29,9 @@
   let {
     threat = {},
     readonly = false,
+    // false for a project viewer: hides the controls the server would refuse
+    // (approve/reject, score edits) while keeping the review links and comments.
+    canEdit = true,
     selectable = false,
     selected = false,
     modelId = '',
@@ -53,6 +57,14 @@
   const showCvss = $derived(scoringMethod === 'cvss' || scoringMethod === 'both')
 
   let showComments = $state(false)
+
+  function handleCommentChange(detail) {
+    // Posting the first comment takes commentCount from 0 to 1, which would
+    // collapse the block to the "Show comments" chip and hide the new comment.
+    // Only an increase opens it, so a deletion doesn't force the list open.
+    if (detail.delta > 0) showComments = true
+    oncommentChange?.(detail)
+  }
 
   let editingDread = $state(false)
   let savingDread = $state(false)
@@ -295,7 +307,7 @@
             {commentCount}
           </button>
         {/if}
-        {#if !readonly && threat.id && !editingDread && showDread}
+        {#if !readonly && canEdit && threat.id && !editingDread && showDread}
           <button
             type="button"
             onclick={startEditDread}
@@ -305,7 +317,7 @@
             DREAD
           </button>
         {/if}
-        {#if !readonly && threat.id && !editingCvss && showCvss}
+        {#if !readonly && canEdit && threat.id && !editingCvss && showCvss}
           <button
             type="button"
             onclick={startEditCvss}
@@ -444,9 +456,9 @@
   {/if}
 
   <!-- Actions -->
-  {#if !readonly}
+  {#if !readonly && (canEdit || (threat.status === 'approved' && threat.id))}
     <div class="flex items-center gap-2 pt-1 border-t border-c-border">
-      {#if threat.status !== 'approved'}
+      {#if canEdit && threat.status !== 'approved'}
         <button
           type="button"
           onclick={() => onapprove?.(threat)}
@@ -455,7 +467,7 @@
           Approve
         </button>
       {/if}
-      {#if threat.status !== 'rejected'}
+      {#if canEdit && threat.status !== 'rejected'}
         <button
           type="button"
           onclick={() => onreject?.(threat)}
@@ -482,7 +494,7 @@
   <!-- Inline comments -->
   {#if modelId && (showComments || commentCount === 0)}
     <Comments {modelId} entityType="threat" entityId={threat.id} compact={true}
-      oncommentChange={detail => oncommentChange?.(detail)} />
+      oncommentChange={handleCommentChange} />
   {:else if modelId && !showComments}
     <button type="button" onclick={() => showComments = true}
       class="text-xs text-c-faint hover:text-c-accent transition-colors pt-1">

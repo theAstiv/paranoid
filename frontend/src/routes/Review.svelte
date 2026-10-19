@@ -5,7 +5,8 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
   import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
-  import { threats, currentModel, notify } from '../lib/stores.js'
+  import { threats, currentModel, currentProject, currentUser, notify } from '../lib/stores.js'
+  import { canEditProject } from '../lib/utils.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
 
@@ -195,6 +196,17 @@
   const showDread = $derived(scoringMethod === 'dread' || scoringMethod === 'both')
   const showCvss = $derived(scoringMethod === 'cvss' || scoringMethod === 'both')
 
+  // A viewer's approve/reject/score edits get a 403, so hide them. The model
+  // may sit in another project than the active one; its role is then unknown.
+  const canEdit = $derived(canEditProject($currentProject, $currentUser, $currentModel?.project_id))
+
+  // Dependency threats only exist when the run analysed a manifest, so the
+  // option only appears for models that have some.
+  const sourceOptions = $derived([
+    ['all', 'All'], ['llm', 'LLM'], ['rule_engine', 'Rule Engine'],
+    ...($threats.some(t => t.source === 'dependency') ? [['dependency', 'Dependency']] : []),
+  ])
+
   async function handleApprove(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'approved' } : t))
     try {
@@ -323,7 +335,7 @@
         class="text-xs font-medium text-c-accent hover:text-c-accent/80 transition-colors">
         {showFilters ? 'Hide filters' : 'Filters'}
       </button>
-      {#if pendingThreats.length > 0}
+      {#if canEdit && pendingThreats.length > 0}
         {#if criticalHighPending.length > 0}
           <button type="button" onclick={() => bulkActionFor(criticalHighPending, 'approved', 'Approved Critical/High')} disabled={bulkBusy}
             class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors disabled:opacity-50">
@@ -370,7 +382,7 @@
         <div class="space-y-1">
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Source</p>
           <div class="flex gap-1">
-            {#each [['all', 'All'], ['llm', 'LLM'], ['rule_engine', 'Rule Engine']] as [val, label]}
+            {#each sourceOptions as [val, label]}
               <button type="button" onclick={() => sourceFilter = val}
                 class="px-2 py-0.5 text-[11px] font-mono rounded-chip border transition-colors
                   {sourceFilter === val ? 'chip-accent' : 'chip-gray'}">
@@ -439,7 +451,7 @@
   {/if}
 
   <!-- Selection bar -->
-  {#if selectedCount > 0}
+  {#if canEdit && selectedCount > 0}
     <div class="flex items-center gap-3 bg-c-accent/10 border border-c-accent/30 rounded-panel px-4 py-2">
       <span class="text-xs font-medium text-c-text">{selectedCount} of {filtered.length} selected</span>
       <button type="button" onclick={() => bulkAction('approved')} disabled={bulkBusy}
@@ -468,19 +480,22 @@
     </div>
   {:else}
     <div class="flex items-center justify-between mb-2">
-      <label class="flex items-center gap-2 text-xs text-c-muted cursor-pointer">
-        <input type="checkbox" checked={allFilteredSelected} onchange={toggleSelectAll}
-          class="w-3.5 h-3.5 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />
-        Select all ({filtered.length})
-      </label>
-      <span class="text-xs text-c-faint font-mono">{filtered.length} threat{filtered.length !== 1 ? 's' : ''}</span>
+      {#if canEdit}
+        <label class="flex items-center gap-2 text-xs text-c-muted cursor-pointer">
+          <input type="checkbox" checked={allFilteredSelected} onchange={toggleSelectAll}
+            class="w-3.5 h-3.5 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />
+          Select all ({filtered.length})
+        </label>
+      {/if}
+      <span class="ml-auto text-xs text-c-faint font-mono">{filtered.length} threat{filtered.length !== 1 ? 's' : ''}</span>
     </div>
     <div class="space-y-4">
       {#each filtered as threat (threat.id)}
         <ThreatCard
           {threat}
           readonly={false}
-          selectable={true}
+          {canEdit}
+          selectable={canEdit}
           selected={selectedIds.has(threat.id)}
           modelId={params.id}
           commentCount={commentCounts[threat.id] || 0}

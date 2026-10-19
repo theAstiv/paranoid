@@ -5,6 +5,12 @@ import ThreatCard from './ThreatCard.svelte'
 vi.mock('../lib/api.js', () => ({
   updateThreat: vi.fn().mockResolvedValue({}),
   scoreCvss: vi.fn().mockResolvedValue({ score: 9.8, severity: 'critical' }),
+  listComments: vi.fn().mockResolvedValue([]),
+  createComment: vi.fn().mockResolvedValue({
+    id: 'c1', body: 'First!', user_id: 'u1', username: 'alice', created_at: new Date().toISOString(),
+  }),
+  updateComment: vi.fn(),
+  deleteComment: vi.fn(),
 }))
 
 // link action from svelte-spa-router is a DOM action — stub it so tests
@@ -185,6 +191,46 @@ describe('ThreatCard', () => {
   it('hides DREAD edit button in readonly mode', () => {
     render(ThreatCard, { props: { threat: baseThreat, readonly: true } })
     expect(screen.queryByText('DREAD')).toBeNull()
+  })
+
+  it('hides Approve/Reject and the DREAD/CVSS edit buttons when canEdit is false', () => {
+    render(ThreatCard, { props: { threat: baseThreat, canEdit: false } })
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Reject')).toBeNull()
+    expect(screen.queryByTitle('Edit DREAD scores')).toBeNull()
+    expect(screen.queryByTitle('Edit CVSS vector')).toBeNull()
+  })
+
+  it('keeps the attack tree and test case links when canEdit is false', () => {
+    render(ThreatCard, { props: { threat: { ...baseThreat, status: 'approved' }, canEdit: false } })
+    expect(screen.getByText('Attack tree →')).toBeInTheDocument()
+    expect(screen.getByText('Test cases →')).toBeInTheDocument()
+  })
+
+  it('keeps the comment box for a viewer (canEdit false)', async () => {
+    render(ThreatCard, { props: { threat: baseThreat, modelId: 'm1', canEdit: false } })
+    expect(await screen.findByPlaceholderText('Add a comment…')).toBeInTheDocument()
+  })
+
+  it('keeps the comments open after posting the first one (BB-63)', async () => {
+    // The parent (Review) owns the count: mirror it by re-rendering with the
+    // new count when the card reports the change, as Review does.
+    let count = 0
+    const view = render(ThreatCard, {
+      props: {
+        threat: baseThreat,
+        modelId: 'm1',
+        commentCount: 0,
+        oncommentChange: detail => { count += detail.delta; view.rerender({ commentCount: count }) },
+      },
+    })
+    const box = await screen.findByPlaceholderText('Add a comment…')
+    await fireEvent.input(box, { target: { value: 'First!' } })
+    await fireEvent.click(screen.getByText('Post'))
+
+    expect(await screen.findByText('First!')).toBeInTheDocument()
+    expect(count).toBe(1)
+    expect(screen.queryByText('Show comments (1)')).toBeNull()
   })
 
   it('calls onapprove with the threat when Approve is clicked', async () => {
