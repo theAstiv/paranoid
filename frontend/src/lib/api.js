@@ -331,7 +331,9 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
 
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ detail: res.statusText }))
-      onError(new Error(detail.detail || res.statusText))
+      const err = new Error(detail.detail || res.statusText)
+      err.status = res.status
+      onError(err)
       fireDone()
       return
     }
@@ -357,6 +359,26 @@ export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
   return subscribeSSE(
     `/models/${modelId}/run`,
     { method: 'POST', body: formData },
+    onEvent, onError, onDone,
+  )
+}
+
+/**
+ * Follow a model's in-progress run, replaying its events from the start.
+ * The run is a server-side background task, so this works after a reload or
+ * after leaving and reopening the page. Fails with `err.status === 404` when
+ * the model has no run in progress (finished, or the server restarted under it).
+ *
+ * @param {string} modelId
+ * @param {(event: object) => void} onEvent
+ * @param {(err: Error & { status?: number }) => void} onError
+ * @param {() => void} onDone
+ * @returns {() => void}  abort function — stops following, not the run
+ */
+export function followRun(modelId, onEvent, onError, onDone) {
+  return subscribeSSE(
+    `/models/${modelId}/run/events`,
+    { method: 'GET' },
     onEvent, onError, onDone,
   )
 }
