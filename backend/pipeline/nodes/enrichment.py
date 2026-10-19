@@ -35,9 +35,6 @@ async def generate_attack_tree(
     Returns:
         AttackTree with Mermaid.js graph
     """
-    system_prompt = attack_tree_prompt()
-
-    # Build prompt
     prompt_parts = [
         build_xml_tag("threat_name", threat),
         build_xml_tag("threat_description", threat_description),
@@ -53,14 +50,13 @@ async def generate_attack_tree(
     mitigations_text = "\n".join(f"- {mitigation}" for mitigation in mitigations)
     prompt_parts.append(build_xml_tag("mitigations", mitigations_text))
 
-    user_prompt = "".join(prompt_parts)
-    full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-    # Generate structured output
+    # Instructions go in shared_context so they are cacheable on providers that
+    # support it and the per-threat prompt carries only the threat fields.
     response = await provider.generate_structured(
-        prompt=full_prompt,
+        prompt="".join(prompt_parts),
         response_model=AttackTree,
         temperature=temperature,
+        shared_context=attack_tree_prompt(),
     )
 
     return response
@@ -87,9 +83,6 @@ async def generate_test_cases(
     Returns:
         TestSuite with Gherkin feature and scenarios
     """
-    system_prompt = test_case_prompt()
-
-    # Build prompt
     prompt_parts = [
         build_xml_tag("threat_name", threat),
         build_xml_tag("threat_description", threat_description),
@@ -99,14 +92,11 @@ async def generate_test_cases(
     mitigations_text = "\n".join(f"- {mitigation}" for mitigation in mitigations)
     prompt_parts.append(build_xml_tag("mitigations", mitigations_text))
 
-    user_prompt = "".join(prompt_parts)
-    full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-    # Generate structured output
     response = await provider.generate_structured(
-        prompt=full_prompt,
+        prompt="".join(prompt_parts),
         response_model=TestSuite,
         temperature=temperature,
+        shared_context=test_case_prompt(),
     )
 
     return response

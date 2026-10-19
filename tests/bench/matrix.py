@@ -419,6 +419,7 @@ def build_suites(env: dict[str, str], settings: BenchSettings) -> dict[str, Suit
                     iterations=3,
                     code_repo=str(settings.code_repo) if settings.code_repo else None,
                     exports=ALL_EXPORTS,
+                    gates=("completed", "enrich_coverage", "exports_valid"),
                     timeout_factor=3.0,
                 )
                 for m in flagship
