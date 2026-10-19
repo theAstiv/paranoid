@@ -22,6 +22,7 @@ class ConsoleRenderer:
             "completed": "✓",
             "failed": "✗",
             "info": "ℹ",
+            "warning": "⚠",
         }
         # Test if console supports Unicode
         import sys
@@ -34,6 +35,7 @@ class ConsoleRenderer:
             "completed": "[OK]",
             "failed": "[FAIL]",
             "info": "[i]",
+            "warning": "[WARN]",
         }
 
     # Color mapping for status
@@ -42,6 +44,7 @@ class ConsoleRenderer:
         "completed": "green",
         "failed": "red",
         "info": "yellow",
+        "warning": "yellow",
     }
 
     def __init__(self, verbose: bool = False):

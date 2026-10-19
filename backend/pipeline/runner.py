@@ -223,7 +223,7 @@ class PipelineEvent:
     """SSE event for pipeline progress."""
 
     step: PipelineStep
-    status: str  # "started" | "completed" | "failed" | "info"
+    status: str  # "started" | "completed" | "failed" | "info" | "warning"
     message: str
     iteration: int | None = None
     data: dict | None = None
@@ -754,16 +754,26 @@ class PipelineRunner:
                     timeout=settings.deps_analysis_timeout_seconds
                     + _DEPS_ANALYSIS_BACKSTOP_GRACE_S,
                 )
+                package_count = len(dependency_context.packages)
+                failed_count = sum(1 for pa in dependency_context.packages if pa.error)
+                skipped_count = len(dependency_context.skipped)
+                # A sweep where every package errored (e.g. the registry is
+                # unreachable and nothing is cached) produced nothing; it must
+                # not read as a plain success.
                 yield PipelineEvent(
                     step=PipelineStep.ANALYZE_DEPENDENCIES,
-                    status="completed",
+                    status="warning"
+                    if package_count and failed_count == package_count
+                    else "completed",
                     message=(
-                        f"Analyzed {len(dependency_context.packages)} direct dependencies, "
-                        f"{len(dependency_context.skipped)} skipped"
+                        f"Analyzed {package_count} direct dependencies: "
+                        f"{package_count - failed_count} ok, {failed_count} failed, "
+                        f"{skipped_count} skipped"
                     ),
                     data={
-                        "package_count": len(dependency_context.packages),
-                        "skipped_count": len(dependency_context.skipped),
+                        "package_count": package_count,
+                        "failed_count": failed_count,
+                        "skipped_count": skipped_count,
                     },
                 )
             except TimeoutError:

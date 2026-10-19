@@ -316,7 +316,7 @@ def scan(spec: str, source: str, output_format: str, output: Path | None) -> Non
 
     try:
         analysis = asyncio.run(_run())
-    except (httpx.HTTPError, FetchError, ValueError) as e:
+    except (httpx.HTTPError, FetchError, ValueError, analyze.RegistryUnreachableError) as e:
         raise DepsCLIError(f"{type(e).__name__}: {e}")
 
     resolved, npm_profile, github_profile, drift = (
@@ -333,6 +333,7 @@ def scan(spec: str, source: str, output_format: str, output: Path | None) -> Non
         "npm": _profile_dict(npm_profile),
         "github": _profile_dict(github_profile),
         "drift": drift.model_dump(mode="json") if drift is not None else None,
+        "resolved_from_cache": analysis.resolved_from_cache,
     }
 
     if output_format.lower() == "json":
@@ -347,6 +348,8 @@ def scan(spec: str, source: str, output_format: str, output: Path | None) -> Non
 
     click.echo()
     click.secho(f"{resolved.name}@{resolved.version}", fg="green", bold=True)
+    if analysis.resolved_from_cache:
+        click.secho("  registry unreachable: using cached registry metadata", fg="yellow")
     click.echo(
         f"  GitHub status: {resolved.github_status}"
         + (f" ({resolved.github_ref})" if resolved.github_ref else "")
@@ -581,6 +584,7 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
             "github": _profile_dict(pa.github_profile),
             "drift": pa.drift.model_dump(mode="json") if pa.drift is not None else None,
             "error": None,
+            "resolved_from_cache": pa.resolved_from_cache,
         }
     skipped = sorted(context.skipped)
 
@@ -595,19 +599,23 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
             click.echo(text)
         return
 
+    failed = sum(1 for entry in results.values() if entry.get("error"))
     click.echo()
     click.secho(
-        f"Scanned {len(results)} direct dependenc{'y' if len(results) == 1 else 'ies'} from {manifest}",
-        fg="green",
+        f"Scanned {len(results)} direct dependenc{'y' if len(results) == 1 else 'ies'} "
+        f"from {manifest}: {len(results) - failed} ok, {failed} failed",
+        fg="yellow" if failed else "green",
         bold=True,
     )
     for pkg_name in sorted(results):
         entry = results[pkg_name]
         click.echo()
         if entry.get("error"):
-            click.secho(f"{pkg_name}: {entry['error']}", fg="red")
+            click.secho(f"{pkg_name}: FAILED: {entry['error']}", fg="red")
             continue
         click.secho(f"{pkg_name}@{entry['version']}", fg="cyan", bold=True)
+        if entry["resolved_from_cache"]:
+            click.secho("  registry unreachable: using cached registry metadata", fg="yellow")
         npm_profile = CapabilityProfile.model_validate(entry["npm"]) if entry["npm"] else None
         _render_capability_grid("npm tarball", npm_profile)
         if entry["github"]:

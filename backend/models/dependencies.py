@@ -275,6 +275,9 @@ class PackageAnalysis(BaseModel):
     github_profile: CapabilityProfile | None = None
     drift: DriftReport | None = None
     error: str | None = None  # set instead of the fields above on a hard failure
+    # The registry was unreachable, so `resolved` is the metadata saved by the
+    # last online run (backend.deps.resolved_cache), not a fresh lookup.
+    resolved_from_cache: bool = False
 
 
 class DependencyContext(BaseModel):

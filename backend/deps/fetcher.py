@@ -371,6 +371,12 @@ def _fetch_result_from_marker(data: dict, cache_dir: Path) -> "FetchResult":
     )
 
 
+def is_cached(kind: SourceKind, name: str, version: str) -> bool:
+    """Whether `fetch_source` would serve this entry from cache, with no network."""
+    marker = cache_dir_for(kind, name, version) / ".complete"
+    return marker.is_file() and not _is_stale_marker(_read_marker_data(marker))
+
+
 def _parse_integrity(integrity: str) -> tuple[str, bytes]:
     """Parse an SSRI-style integrity string into (hashlib algo name, expected digest).
 

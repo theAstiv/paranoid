@@ -263,6 +263,7 @@ export function dependencyCategorySet(profile) {
  *   github_profile?: {status?: string},
  *   drift?: {signal?: boolean, status?: string},
  *   error?: string,
+ *   resolved_from_cache?: boolean,
  * }} [analysis]
  * @returns {string[]}
  */
@@ -276,6 +277,8 @@ export function dependencyFlags(analysis) {
   // git/file-spec dependency the same as a real analysis failure.
   if (analysis.skip_reason) flags.push('skipped')
   if (analysis.error) flags.push('error')
+  // The registry was unreachable; resolution came from the last online run.
+  if (analysis.resolved_from_cache) flags.push('cached-metadata')
   if (analysis.drift?.signal) flags.push('drift')
   if (analysis.npm_profile?.install_hooks?.length) flags.push('install-hook')
   for (const profile of [analysis.npm_profile, analysis.github_profile]) {

@@ -893,4 +893,57 @@ class TestRunnerDependencyAnalysisScope:
             if e.step == PipelineStep.ANALYZE_DEPENDENCIES and e.status == "completed"
         ]
         assert len(completed) == 1
-        assert completed[0].data == {"package_count": 1, "skipped_count": 1}
+        assert completed[0].data == {"package_count": 1, "failed_count": 0, "skipped_count": 1}
+
+    async def _analysis_events(self, context: DependencyContext) -> list:
+        provider = MockProvider(gap_call_threshold=1)
+        runner = PipelineRunner(
+            provider=provider, config=PipelineConfig(max_iterations=1), model_id="t"
+        )
+        with patch("backend.pipeline.runner.analyze_manifest", new=AsyncMock(return_value=context)):
+            events = [
+                e
+                async for e in runner.run(
+                    description="A service",
+                    framework=Framework.STRIDE,
+                    dependency_manifest={"dependencies": {"x": "1.0.0"}},
+                )
+            ]
+        return [
+            e
+            for e in events
+            if e.step == PipelineStep.ANALYZE_DEPENDENCIES and e.status != "started"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_message_counts_failed_packages(self):
+        bad = PackageAnalysis(
+            ref=PackageRef(name="bad", version="1.0.0"), error="ConnectError: offline"
+        )
+        context = DependencyContext(
+            packages=[_pa("good", "1.0.0"), bad],
+            skipped={"weird": "time_budget"},
+            source_mode="npm",
+        )
+
+        [event] = await self._analysis_events(context)
+
+        assert event.status == "completed"
+        assert event.message == "Analyzed 2 direct dependencies: 1 ok, 1 failed, 1 skipped"
+        assert event.data == {"package_count": 2, "failed_count": 1, "skipped_count": 1}
+
+    @pytest.mark.asyncio
+    async def test_every_package_failing_is_a_warning_not_a_completion(self):
+        context = DependencyContext(
+            packages=[
+                PackageAnalysis(ref=PackageRef(name=n, version="1.0.0"), error="ConnectError")
+                for n in ("a", "b")
+            ],
+            source_mode="npm",
+        )
+
+        [event] = await self._analysis_events(context)
+
+        assert event.status == "warning"
+        assert "0 ok, 2 failed" in event.message
+        assert event.data["failed_count"] == 2
