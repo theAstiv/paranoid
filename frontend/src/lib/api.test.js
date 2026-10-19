@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getModel, getConfig, login, subscribeToRun, getModelDiagram, downloadExport } from './api.js'
+import { getModel, getConfig, login, subscribeToRun, followRun, getModelDiagram, downloadExport } from './api.js'
 import { getStoredToken, setStoredToken } from './stores.js'
 
 function jsonResponse(body, init = {}) {
@@ -302,6 +302,24 @@ describe('subscribeToRun() — SSE parsing', () => {
     await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0][0].message).toBe('boom')
+    expect(onError.mock.calls[0][0].status).toBe(500)
+  })
+
+  // BB-71: Results tells "no run behind this model" (404) from a network failure.
+  it('followRun() GETs the run events and reports a 404 by status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'This model has no run in progress.' }), { status: 404 })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const onError = vi.fn()
+    const onDone = vi.fn()
+
+    followRun('m1', vi.fn(), onError, onDone)
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/models\/m1\/run\/events$/)
+    expect(fetchMock.mock.calls[0][1].method).toBe('GET')
+    expect(onError.mock.calls[0][0].status).toBe(404)
   })
 
   it('returns an abort function that aborts the underlying fetch', async () => {

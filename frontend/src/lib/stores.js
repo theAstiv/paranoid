@@ -64,6 +64,8 @@ export const config = writable(null)
 /**
  * Abort function for the active SSE pipeline stream, or null when idle.
  * Set by NewModel before navigating; consumed by Results in onDestroy.
+ * Aborting only stops following the run: the run is a server-side background
+ * task and carries on (BB-71).
  * @type {import('svelte/store').Writable<(() => void)|null>}
  */
 export const abortRun = writable(null)
