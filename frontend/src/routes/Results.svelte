@@ -7,7 +7,7 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToRun, getCommentCounts, getModelDependencies, listModelDiagrams, getModelDiagram,
+    subscribeToRun, followRun, getCommentCounts, getModelDependencies, listModelDiagrams, getModelDiagram,
     getMaestroCoverage,
   } from '../lib/api.js'
   import {
@@ -71,6 +71,10 @@
   let loading = true
   let polling = false
   let pollTimer = null
+  // 'in_progress' with no run behind it on the server: it was stopped by a
+  // restart, or stuck before runs outlived their page (BB-71).
+  let interrupted = false
+  let stopFollowing = null
 
   $: stoppedReason = $pipelineEvents.find(e => e.step === 'complete')?.data?.stopped_reason ?? ''
   $: codeAnalysis = $pipelineEvents.find(e => e.step === 'summarize_code' && e.status === 'completed')?.data?.code_summary ?? model?.code_summary ?? null
@@ -118,6 +122,8 @@
 
   function resetForModel() {
     stopPolling()
+    if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
+    interrupted = false
     model = null
     loading = true
     assets = []; flows = []; trustBoundaries = []
@@ -151,27 +157,77 @@
     loading = false
     if (alreadyRunning) return
     if (model.status === 'in_progress') {
-      polling = true
-      pollTimer = setInterval(async () => {
-        try {
-          const refreshed = await getModel(id)
-          if (id !== params.id) return
-          model = refreshed
-          currentModel.set(model)
-          threats.set(model.threats ?? [])
-          if (refreshed.status === 'completed' || refreshed.status === 'failed') {
-            stopPolling()
-            await loadSupplementary()
-          }
-        } catch { /* ignore transient */ }
-      }, 3000)
+      attachToRun(id)
     } else if (model.status === 'completed' || model.status === 'failed') {
       await loadSupplementary()
     }
   }
 
+  // The run is a background task on the server, so a page opened mid-run (after
+  // a reload, or after leaving and coming back) picks up its live events.
+  function attachToRun(id) {
+    let failure = null
+    let stopped = false
+    pipelineEvents.set([])
+    pipelineRunning.set(true)
+    const abort = followRun(
+      id,
+      evt => {
+        pipelineEvents.update(es => [...es, evt])
+        if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
+      },
+      err => { failure = err },
+      async () => {
+        if (stopped) return
+        pipelineRunning.set(false)
+        // Keep `stop` registered until this finishes, so leaving the page
+        // mid-refresh still sets `stopped` and nothing starts polling after.
+        try {
+          let refreshed
+          try {
+            refreshed = await getModel(id)
+          } catch {
+            if (!stopped) startPolling(id)
+            return
+          }
+          if (stopped) return
+          model = refreshed
+          currentModel.set(refreshed)
+          threats.set(refreshed.threats ?? [])
+          if (refreshed.status !== 'in_progress') await loadSupplementary()
+          else if (failure?.status === 404) interrupted = true
+          else startPolling(id)
+        } finally {
+          if (stopFollowing === stop) stopFollowing = null
+        }
+      },
+    )
+    const stop = () => { stopped = true; stopFollowing = null; abort() }
+    stopFollowing = stop
+  }
+
+  // Fallback when the live stream can't be followed (network error).
+  function startPolling(id) {
+    polling = true
+    pollTimer = setInterval(async () => {
+      try {
+        const refreshed = await getModel(id)
+        if (id !== params.id) return
+        model = refreshed
+        currentModel.set(model)
+        threats.set(model.threats ?? [])
+        if (refreshed.status === 'completed' || refreshed.status === 'failed') {
+          stopPolling()
+          await loadSupplementary()
+        }
+      } catch { /* ignore transient */ }
+    }, 3000)
+  }
+
+  // Leaving the page only stops following the run; the run itself carries on.
   onDestroy(() => {
     stopPolling()
+    if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
     const abort = get(abortRun)
     if (abort) { abort(); abortRun.set(null) }
   })
@@ -312,6 +368,7 @@
     const fd = new FormData()
     fd.append('assumptions', '[]')
     fd.append('has_ai_components', 'false')
+    interrupted = false
     pipelineEvents.set([])
     pipelineRunning.set(true)
     threats.set([])
@@ -362,7 +419,7 @@
             Edit Context
           </a>
         {/if}
-        {#if canEdit && (model.status === 'completed' || model.status === 'failed')}
+        {#if canEdit && (model.status === 'completed' || model.status === 'failed' || interrupted)}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
             class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
             Re-run
@@ -393,8 +450,15 @@
         <div class="w-4 h-4 border-2 border-c-blue border-t-transparent rounded-full animate-spin-slow flex-shrink-0"></div>
         <div>
           <p class="text-sm font-medium text-c-blue">Pipeline is running on the server</p>
-          <p class="text-xs text-c-muted mt-0.5">SSE stream lost on refresh. Polling for completion every 3s…</p>
+          <p class="text-xs text-c-muted mt-0.5">Couldn't follow its live progress. Polling for completion every 3s…</p>
         </div>
+      </div>
+    {/if}
+
+    {#if interrupted}
+      <div class="card px-5 py-4 border-c-high/30 bg-c-high/5">
+        <p class="text-sm font-medium text-c-high">This run was interrupted</p>
+        <p class="text-xs text-c-muted mt-0.5">The server stopped before it finished, so it has no results. Re-run to try again.</p>
       </div>
     {/if}
 

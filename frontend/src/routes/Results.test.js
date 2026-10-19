@@ -24,6 +24,7 @@ vi.mock('../lib/api.js', () => ({
   updateTrustBoundary: vi.fn(),
   deleteTrustBoundary: vi.fn(),
   subscribeToRun: vi.fn(() => vi.fn()),
+  followRun: vi.fn(() => vi.fn()),
   exportUrl: vi.fn(() => '/api/export/x'),
   // Transitively required by child components (Assignees, Comments)
   listAssignees: vi.fn().mockResolvedValue([]),
@@ -54,7 +55,7 @@ vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
-  getModelDependencies, listModelDiagrams, getModelDiagram, getMaestroCoverage,
+  followRun, getModelDependencies, listModelDiagrams, getModelDiagram, getMaestroCoverage,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -401,6 +402,102 @@ describe('Results — header', () => {
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('pending')).toBeInTheDocument())
     expect(screen.queryByText('Review Threats')).toBeNull()
+  })
+})
+
+// BB-71: a run is a server-side background task, so a page opened mid-run
+// follows it instead of polling, and a run with nothing behind it can be re-run.
+describe('Results — opened mid-run', () => {
+  const running = { ...baseModel, status: 'in_progress' }
+
+  /** Capture followRun's callbacks so a test can drive the stream. */
+  function captureFollow() {
+    const stream = { abort: vi.fn() }
+    followRun.mockImplementation((id, onEvent, onError, onDone) => {
+      Object.assign(stream, { id, onEvent, onError, onDone })
+      return stream.abort
+    })
+    return stream
+  }
+
+  it('follows the live run and loads the results when it completes', async () => {
+    const stream = captureFollow()
+    getModel.mockResolvedValueOnce(running).mockResolvedValue(baseModel)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalled())
+    expect(stream.id).toBe('m1')
+    expect(get(pipelineRunning)).toBe(true)
+
+    stream.onEvent({ step: 'summarize', status: 'started', message: 'go' })
+    expect(get(pipelineEvents)).toHaveLength(1)
+    await stream.onDone()
+
+    expect(get(pipelineRunning)).toBe(false)
+    await waitFor(() => expect(screen.getByText('completed')).toBeInTheDocument())
+    expect(getModelAssets).toHaveBeenCalledWith('m1')
+    expect(screen.queryByText(/Polling for completion/)).toBeNull()
+  })
+
+  it('offers Re-run when the server has no run behind an in-progress model', async () => {
+    const stream = captureFollow()
+    getModel.mockResolvedValue(running)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalled())
+
+    stream.onError(Object.assign(new Error('This model has no run in progress.'), { status: 404 }))
+    await stream.onDone()
+
+    await screen.findByText('This run was interrupted')
+    await fireEvent.click(screen.getByText('Re-run'))
+    expect(subscribeToRun).toHaveBeenCalled()
+    expect(screen.queryByText('This run was interrupted')).toBeNull()
+  })
+
+  it('falls back to polling when the live stream fails for another reason', async () => {
+    const stream = captureFollow()
+    getModel.mockResolvedValue(running)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalled())
+
+    stream.onError(new Error('Failed to fetch'))
+    await stream.onDone()
+
+    await screen.findByText(/Polling for completion/)
+    expect(screen.queryByText('Re-run')).toBeNull()
+  })
+
+  it('stops following, not the run, when the page is left', async () => {
+    const stream = captureFollow()
+    getModel.mockResolvedValue(running)
+    const { unmount } = render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalled())
+
+    unmount()
+    expect(stream.abort).toHaveBeenCalled()
+    expect(get(pipelineRunning)).toBe(false)
+    // The abort ends the stream; that must not start polling a page that's gone.
+    await stream.onDone()
+    expect(getModel).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start polling when the page is left while the run end is being handled', async () => {
+    const stream = captureFollow()
+    let failRefresh
+    getModel
+      .mockResolvedValueOnce(running)
+      .mockImplementationOnce(() => new Promise((_, reject) => { failRefresh = reject }))
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+    const { unmount } = render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalled())
+
+    const done = stream.onDone()
+    unmount()
+    failRefresh(new Error('Failed to fetch'))
+    await done
+
+    // waitFor polls with its own setInterval; Results polls every 3000ms.
+    expect(setIntervalSpy.mock.calls.filter(([, ms]) => ms === 3000)).toHaveLength(0)
+    setIntervalSpy.mockRestore()
   })
 })
 

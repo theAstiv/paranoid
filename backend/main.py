@@ -208,6 +208,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except asyncio.CancelledError:
         pass
 
+    # Runs are background tasks now; stop them while the DB is still open so
+    # each can mark its model failed instead of leaving it 'in_progress'.
+    from backend.pipeline.live_runs import cancel_all_runs
+
+    await cancel_all_runs()
+
     # Close database connection
     await db.close()
     logger.info("Shutting down Paranoid application")

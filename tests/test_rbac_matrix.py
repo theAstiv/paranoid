@@ -82,6 +82,7 @@ ROUTES = [
     Route("POST", "/api/models/{model}/analyze", "viewer", spends=True),
     Route("POST", "/api/models/{model}/extract", "editor", {}, spends=True),
     Route("POST", "/api/models/{model}/run", "editor", spends=True),
+    Route("GET", "/api/models/{model}/run/events", "viewer"),
     Route("GET", "/api/models/{model}/diff?base_id={model}", "viewer"),
     Route("GET", "/api/export/{model}?format=json", "viewer"),
     Route("GET", "/api/export/{model}?format=markdown", "viewer"),
