@@ -10,6 +10,9 @@ import {
   pendingCount,
   lastEvent,
   notify,
+  SUCCESS_TOAST_MS,
+  ERROR_TOAST_MS,
+  clearAuthState,
   currentProject,
   pickInitialProject,
   reconcileProject,
@@ -81,12 +84,32 @@ describe('notify', () => {
     vi.useRealTimers()
   })
 
-  it('does not auto-clear error notification', async () => {
+  it('keeps an error longer than a success, then clears it (BB-87)', async () => {
     vi.useFakeTimers()
     notify('error', 'Bad thing')
-    vi.advanceTimersByTime(10000)
+    vi.advanceTimersByTime(SUCCESS_TOAST_MS)
     expect(get(notification)).not.toBeNull()
+    vi.advanceTimersByTime(ERROR_TOAST_MS - SUCCESS_TOAST_MS)
+    expect(get(notification)).toBeNull()
     vi.useRealTimers()
+  })
+
+  it("does not let an older toast's timer clear a newer toast", async () => {
+    vi.useFakeTimers()
+    notify('success', 'Saved!')
+    vi.advanceTimersByTime(3000)
+    notify('error', 'Bad thing')
+    vi.advanceTimersByTime(1000) // the success timer fires here
+    expect(get(notification)).toEqual({ type: 'error', message: 'Bad thing' })
+    vi.advanceTimersByTime(ERROR_TOAST_MS - 1000)
+    expect(get(notification)).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('is cleared by clearAuthState() on sign-out', () => {
+    notify('error', 'Export failed')
+    clearAuthState()
+    expect(get(notification)).toBeNull()
   })
 })
 

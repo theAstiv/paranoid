@@ -257,6 +257,64 @@ describe('Settings — API keys', () => {
   })
 })
 
+describe('Settings — stale test results (BB-43)', () => {
+  async function failAnthropicTest() {
+    testProvider.mockResolvedValue({ ok: false, message: 'invalid key' })
+    await fireEvent.click(screen.getByText('Test'))
+    await waitFor(() => expect(screen.getByText('✗ invalid key')).toBeInTheDocument())
+  }
+
+  it('clears the Anthropic result when the key is edited', async () => {
+    render(Settings)
+    await waitFor(() => expect(screen.getByPlaceholderText('sk-ant-…')).toBeInTheDocument())
+    const key = screen.getByPlaceholderText('sk-ant-…')
+    await fireEvent.input(key, { target: { value: 'bad-key' } })
+    await failAnthropicTest()
+
+    await fireEvent.input(key, { target: { value: 'bad-key2' } })
+
+    expect(screen.queryByText('✗ invalid key')).toBeNull()
+  })
+
+  it('clears the Anthropic result when the key is emptied', async () => {
+    render(Settings)
+    await waitFor(() => expect(screen.getByPlaceholderText('sk-ant-…')).toBeInTheDocument())
+    const key = screen.getByPlaceholderText('sk-ant-…')
+    await fireEvent.input(key, { target: { value: 'bad-key' } })
+    await failAnthropicTest()
+
+    await fireEvent.input(key, { target: { value: '' } })
+
+    expect(screen.queryByText('✗ invalid key')).toBeNull()
+  })
+
+  it.each(['Replace', 'Clear'])('clears a stored key\'s result when %s is clicked', async button => {
+    getConfig.mockResolvedValue({ ...baseConfig, anthropic_api_key_set: true, anthropic_api_key_source: 'db' })
+    render(Settings)
+    await waitFor(() => expect(screen.getByText(button)).toBeInTheDocument())
+    await failAnthropicTest()
+
+    await fireEvent.click(screen.getByText(button))
+
+    expect(screen.queryByText('✗ invalid key')).toBeNull()
+  })
+
+  it.each(['cfg-aws-profile', 'cfg-aws-region'])('clears the Bedrock result when %s is edited', async field => {
+    getConfig.mockResolvedValue({ ...baseConfig, default_provider: 'bedrock', aws_profile: 'nope', aws_region: 'us-east-1' })
+    testProvider.mockResolvedValue({ ok: false, message: 'profile not found' })
+    render(Settings)
+    await waitFor(() => expect(document.getElementById(field)).toBeInTheDocument())
+    // Anthropic and OpenAI rows have no Test button while they have no key,
+    // so the only one on screen is Bedrock's.
+    await fireEvent.click(screen.getByText('Test'))
+    await waitFor(() => expect(screen.getByText('✗ profile not found')).toBeInTheDocument())
+
+    await fireEvent.input(document.getElementById(field), { target: { value: 'other' } })
+
+    expect(screen.queryByText('✗ profile not found')).toBeNull()
+  })
+})
+
 describe('Settings — save', () => {
   it('saves the draft and updates the config store', async () => {
     const updated = { ...baseConfig, default_iterations: 5 }
