@@ -12,6 +12,7 @@
    * @type {{
    *   threat?: object,
    *   readonly?: boolean,
+   *   canEdit?: boolean,
    *   selectable?: boolean,
    *   selected?: boolean,
    *   modelId?: string,
@@ -28,6 +29,9 @@
   let {
     threat = {},
     readonly = false,
+    // false for a project viewer: hides the controls the server would refuse
+    // (approve/reject, score edits) while keeping the review links and comments.
+    canEdit = true,
     selectable = false,
     selected = false,
     modelId = '',
@@ -303,7 +307,7 @@
             {commentCount}
           </button>
         {/if}
-        {#if !readonly && threat.id && !editingDread && showDread}
+        {#if !readonly && canEdit && threat.id && !editingDread && showDread}
           <button
             type="button"
             onclick={startEditDread}
@@ -313,7 +317,7 @@
             DREAD
           </button>
         {/if}
-        {#if !readonly && threat.id && !editingCvss && showCvss}
+        {#if !readonly && canEdit && threat.id && !editingCvss && showCvss}
           <button
             type="button"
             onclick={startEditCvss}
@@ -452,9 +456,9 @@
   {/if}
 
   <!-- Actions -->
-  {#if !readonly}
+  {#if !readonly && (canEdit || (threat.status === 'approved' && threat.id))}
     <div class="flex items-center gap-2 pt-1 border-t border-c-border">
-      {#if threat.status !== 'approved'}
+      {#if canEdit && threat.status !== 'approved'}
         <button
           type="button"
           onclick={() => onapprove?.(threat)}
@@ -463,7 +467,7 @@
           Approve
         </button>
       {/if}
-      {#if threat.status !== 'rejected'}
+      {#if canEdit && threat.status !== 'rejected'}
         <button
           type="button"
           onclick={() => onreject?.(threat)}

@@ -1,8 +1,8 @@
 <script>
   import { link } from 'svelte-spa-router'
-  import { currentProject, notify } from '../lib/stores.js'
+  import { currentProject, currentUser, notify } from '../lib/stores.js'
   import { getProjectDashboard } from '../lib/api.js'
-  import { dreadChip, dreadColor, dreadLabel, initials, relativeTime } from '../lib/utils.js'
+  import { canEditProject, dreadChip, dreadColor, dreadLabel, initials, relativeTime } from '../lib/utils.js'
 
   let loading = true
   let stats = null
@@ -12,6 +12,8 @@
 
   $: projectId = $currentProject?.id
   $: if (projectId) loadDashboard()
+  // Creating a model needs editor; a viewer would get a 403.
+  $: canCreate = canEditProject($currentProject, $currentUser)
 
   async function loadDashboard() {
     loading = true
@@ -69,7 +71,9 @@
         </p>
       {/if}
     </div>
-    <a href="#/models/new" use:link class="btn-primary text-sm px-4 flex-shrink-0">New Model</a>
+    {#if canCreate}
+      <a href="#/models/new" use:link class="btn-primary text-sm px-4 flex-shrink-0">New Model</a>
+    {/if}
   </div>
 
   {#if !projectId}

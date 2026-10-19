@@ -4,7 +4,32 @@ import {
   dependencyCategorySet, dependencyFlags, dependencyDisplayName,
   cvssColor, cvssHex, cvssChip, cvssLabel, cvssScoreLabel,
   CVSS_METRICS, parseCvssVector, cvssVectorFromMetrics, normalizeCvssMetrics,
+  canEditProject,
 } from './utils.js'
+
+describe('canEditProject', () => {
+  const project = role => ({ id: 'p1', member_role: role })
+  const user = { is_admin: false }
+
+  it('allows an instance admin whatever the role', () => {
+    expect(canEditProject(project('viewer'), { is_admin: true })).toBe(true)
+  })
+  it('allows an unknown role (not loaded yet, or auth off)', () => {
+    expect(canEditProject(project(undefined), user)).toBe(true)
+    expect(canEditProject(null, null)).toBe(true)
+  })
+  it('allows an owner and an editor', () => {
+    expect(canEditProject(project('owner'), user)).toBe(true)
+    expect(canEditProject(project('editor'), user)).toBe(true)
+  })
+  it('refuses a viewer', () => {
+    expect(canEditProject(project('viewer'), user)).toBe(false)
+    expect(canEditProject(project('viewer'), user, 'p1')).toBe(false)
+  })
+  it("ignores the active project's role for another project's model", () => {
+    expect(canEditProject(project('viewer'), user, 'p2')).toBe(true)
+  })
+})
 
 describe('dreadColor', () => {
   it('returns critical color for score >= 8', () => {

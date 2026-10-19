@@ -193,6 +193,25 @@ describe('ThreatCard', () => {
     expect(screen.queryByText('DREAD')).toBeNull()
   })
 
+  it('hides Approve/Reject and the DREAD/CVSS edit buttons when canEdit is false', () => {
+    render(ThreatCard, { props: { threat: baseThreat, canEdit: false } })
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Reject')).toBeNull()
+    expect(screen.queryByTitle('Edit DREAD scores')).toBeNull()
+    expect(screen.queryByTitle('Edit CVSS vector')).toBeNull()
+  })
+
+  it('keeps the attack tree and test case links when canEdit is false', () => {
+    render(ThreatCard, { props: { threat: { ...baseThreat, status: 'approved' }, canEdit: false } })
+    expect(screen.getByText('Attack tree →')).toBeInTheDocument()
+    expect(screen.getByText('Test cases →')).toBeInTheDocument()
+  })
+
+  it('keeps the comment box for a viewer (canEdit false)', async () => {
+    render(ThreatCard, { props: { threat: baseThreat, modelId: 'm1', canEdit: false } })
+    expect(await screen.findByPlaceholderText('Add a comment…')).toBeInTheDocument()
+  })
+
   it('keeps the comments open after posting the first one (BB-63)', async () => {
     // The parent (Review) owns the count: mirror it by re-rendering with the
     // new count when the card reports the change, as Review does.

@@ -16,7 +16,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 })
 
 import { getProjectDashboard } from '../lib/api.js'
-import { notify, currentProject } from '../lib/stores.js'
+import { notify, currentProject, currentUser } from '../lib/stores.js'
 
 const fullData = {
   stats: { model_count: 4, open_threats: 10, pending_review: 2, member_count: 3, last_run_at: '2026-01-01T00:00:00.000Z' },
@@ -32,6 +32,7 @@ const fullData = {
 beforeEach(() => {
   vi.clearAllMocks()
   currentProject.set(null)
+  currentUser.set(null)
   getProjectDashboard.mockResolvedValue(fullData)
 })
 
@@ -143,5 +144,22 @@ describe('Dashboard — assigned to you', () => {
     render(Dashboard)
     await waitFor(() => expect(screen.getByText('No score threat')).toBeInTheDocument())
     expect(screen.getByText('—')).toBeInTheDocument()
+  })
+})
+
+describe('Dashboard — role gating (BB-44)', () => {
+  it('hides "New Model" from a viewer', async () => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'My Project', member_role: 'viewer' })
+    render(Dashboard)
+    await waitFor(() => expect(getProjectDashboard).toHaveBeenCalled())
+    expect(screen.queryByText('New Model')).toBeNull()
+  })
+
+  it.each(['owner', 'editor'])('shows "New Model" to an %s', async role => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'My Project', member_role: role })
+    render(Dashboard)
+    expect(screen.getByText('New Model')).toBeInTheDocument()
   })
 })

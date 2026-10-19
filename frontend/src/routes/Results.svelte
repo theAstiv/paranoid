@@ -12,7 +12,9 @@
   } from '../lib/api.js'
   import {
     currentModel, threats, pipelineEvents, pipelineRunning, abortRun, notify, config,
+    currentProject, currentUser,
   } from '../lib/stores.js'
+  import { canEditProject } from '../lib/utils.js'
   import PipelineProgress from '../components/PipelineProgress.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
   import ResourceList from '../components/ResourceList.svelte'
@@ -230,7 +232,9 @@
     ],
     approved: [{ label: 'Archive', to: 'archived' }],
   }
-  $: statusActions = STATUS_ACTIONS[model?.status] ?? []
+  // A viewer's re-run, context edit and status change get a 403, so hide them.
+  $: canEdit = canEditProject($currentProject, $currentUser, model?.project_id)
+  $: statusActions = canEdit ? (STATUS_ACTIONS[model?.status] ?? []) : []
 
   let changingStatus = false
 
@@ -353,10 +357,12 @@
       <div class="flex flex-wrap items-center gap-3">
         <Assignees modelId={params.id} projectId={model.project_id} />
         <ExportMenu modelId={params.id} />
-        <a href="/models/{params.id}/context" use:link class="btn-ghost text-xs px-3 py-1.5">
-          Edit Context
-        </a>
-        {#if model.status === 'completed' || model.status === 'failed'}
+        {#if canEdit}
+          <a href="/models/{params.id}/context" use:link class="btn-ghost text-xs px-3 py-1.5">
+            Edit Context
+          </a>
+        {/if}
+        {#if canEdit && (model.status === 'completed' || model.status === 'failed')}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
             class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
             Re-run

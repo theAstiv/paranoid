@@ -22,7 +22,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 })
 
 import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
-import { notify, threats, currentModel } from '../lib/stores.js'
+import { notify, threats, currentModel, currentProject, currentUser } from '../lib/stores.js'
 
 function threat(overrides = {}) {
   return {
@@ -39,6 +39,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   threats.set([])
   currentModel.set(null)
+  currentProject.set(null)
+  currentUser.set(null)
   getModel.mockResolvedValue({ id: 'm1', title: 'Fetched Model', scoring_method: 'dread' })
   getModelThreats.mockResolvedValue([])
   updateThreat.mockResolvedValue({})
@@ -781,5 +783,53 @@ describe('Review — bulk actions', () => {
     await waitFor(() => expect(screen.getByText('SQL Injection')).toBeInTheDocument())
     expect(screen.queryByText(/Approve all/)).toBeNull()
     expect(screen.queryByText(/Reject all/)).toBeNull()
+  })
+})
+
+describe('Review — role gating (BB-62)', () => {
+  const pending = [
+    threat({ id: 't1', name: 'Critical one', dread_score: 9 }),
+    threat({ id: 't2', name: 'Low one', dread_score: 2 }),
+  ]
+
+  beforeEach(() => {
+    getModelThreats.mockResolvedValue(pending)
+    currentUser.set({ id: 'u1', is_admin: false })
+  })
+
+  function asRole(role, projectId = 'p1') {
+    currentProject.set({ id: 'p1', name: 'P', member_role: role })
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'dread', project_id: projectId })
+  }
+
+  it('hides bulk buttons, checkboxes and per-card approve/reject from a viewer', async () => {
+    asRole('viewer')
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Critical one')).toBeInTheDocument())
+
+    expect(screen.queryByText(/Approve Critical\+High/)).toBeNull()
+    expect(screen.queryByText(/Reject Low/)).toBeNull()
+    expect(screen.queryByText(/Approve all/)).toBeNull()
+    expect(screen.queryByText(/Reject all/)).toBeNull()
+    expect(screen.queryByText(/Select all/)).toBeNull()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Reject')).toBeNull()
+  })
+
+  it.each(['owner', 'editor'])('shows the controls to an %s', async role => {
+    asRole(role)
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Approve all (2)')).toBeInTheDocument())
+
+    expect(screen.getByText('Reject all (2)')).toBeInTheDocument()
+    expect(screen.getByText(/Select all/)).toBeInTheDocument()
+    expect(screen.getAllByText('Approve')).toHaveLength(2)
+  })
+
+  it("shows the controls when the model is in another project (the viewer role isn't its role)", async () => {
+    asRole('viewer', 'p2')
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Approve all (2)')).toBeInTheDocument())
   })
 })

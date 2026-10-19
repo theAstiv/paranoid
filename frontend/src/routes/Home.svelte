@@ -2,8 +2,12 @@
   import { onMount } from 'svelte'
   import { link } from 'svelte-spa-router'
   import { listModels, deleteModel } from '../lib/api.js'
-  import { models, notify, currentProject } from '../lib/stores.js'
+  import { models, notify, currentProject, currentUser } from '../lib/stores.js'
+  import { canEditProject } from '../lib/utils.js'
   import ModelCard from '../components/ModelCard.svelte'
+
+  // Creating a model needs editor; a viewer would get a 403.
+  $: canCreate = canEditProject($currentProject, $currentUser)
 
   let loading = true
 
@@ -58,12 +62,14 @@
         {loading ? '' : `${$models.length} model${$models.length !== 1 ? 's' : ''}`}
       </h1>
     </div>
-    <a href="/models/new" use:link class="btn-primary">
-      <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-        <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
-      </svg>
-      New Model
-    </a>
+    {#if canCreate}
+      <a href="/models/new" use:link class="btn-primary">
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/>
+        </svg>
+        New Model
+      </a>
+    {/if}
   </div>
 
   <!-- Filter chips -->
@@ -133,9 +139,11 @@
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
       </svg>
       <p class="text-c-muted text-sm mb-4">No threat models yet.</p>
-      <a href="/models/new" use:link class="btn-primary">
-        Create your first model
-      </a>
+      {#if canCreate}
+        <a href="/models/new" use:link class="btn-primary">
+          Create your first model
+        </a>
+      {/if}
     </div>
 
   {:else if filtered.length === 0}
