@@ -1,5 +1,6 @@
 <script>
-  import { exportUrl } from '../lib/api.js'
+  import { downloadExport } from '../lib/api.js'
+  import { notify } from '../lib/stores.js'
 
   /** @type {string} */
   export let modelId = ''
@@ -7,6 +8,7 @@
   export let statusFilter = ''
 
   let open = false
+  let busy = false
 
   const formats = [
     { value: 'markdown', label: 'Markdown', ext: '.md', note: null },
@@ -15,9 +17,16 @@
     { value: 'sarif', label: 'SARIF', ext: '.sarif', note: 'MAESTRO-only excluded; hybrid included' },
   ]
 
-  function download(format) {
-    window.open(exportUrl(modelId, format, statusFilter))
+  async function download(format) {
     open = false
+    busy = true
+    try {
+      await downloadExport(modelId, format, statusFilter)
+    } catch (err) {
+      notify('error', `Export failed: ${err.message}`)
+    } finally {
+      busy = false
+    }
   }
 </script>
 
@@ -25,7 +34,8 @@
   <button
     type="button"
     on:click={() => open = !open}
-    class="btn-ghost">
+    disabled={busy}
+    class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed">
     Export
     <svg class="w-3.5 h-3.5 text-c-muted transition-transform {open ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
       <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>

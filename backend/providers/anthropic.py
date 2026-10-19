@@ -27,6 +27,7 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderRefusalError,
     map_sdk_api_error,
     run_sync_in_executor,
     scaled_timeout,
@@ -327,6 +328,20 @@ class AnthropicProvider:
                     messages=[{"role": "user", "content": content}],
                     **call_kwargs,
                 )
+
+                # ── Check for a refusal before trying to parse anything ───
+                if response.stop_reason == "refusal":
+                    # stop_details is only set for refusals; older SDKs lack it.
+                    details = getattr(response, "stop_details", None)
+                    category = getattr(details, "category", None)
+                    raise ProviderRefusalError(
+                        provider=self.name,
+                        message=(
+                            "Anthropic refused the request (stop_reason='refusal'"
+                            + (f", category={category!r}" if category else "")
+                            + ")"
+                        ),
+                    )
 
                 # ── Check for explicit truncation ─────────────────────────
                 if response.stop_reason == "max_tokens":

@@ -5,13 +5,14 @@ Attack tree / test case generation endpoints require a live LLM provider
 and are not tested here (covered by pipeline integration tests).
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.db import crud
 from backend.main import app
+from backend.providers.base import ProviderError, ProviderRefusalError
 
 
 @pytest.fixture
@@ -390,3 +391,48 @@ async def test_list_test_cases_shows_saved_case(client, saved_threat, test_db):
     assert len(cases) == 1
     assert cases[0]["id"] == case_id
     assert "gherkin_source" in cases[0]
+
+
+# ---------------------------------------------------------------------------
+# POST generation endpoints — a content-filter refusal is not an outage
+# ---------------------------------------------------------------------------
+
+
+def _refusing_runner(method: str, error: Exception) -> MagicMock:
+    runner = MagicMock()
+    runner.provider = MagicMock()
+    runner.provider.__aenter__ = AsyncMock(return_value=runner.provider)
+    runner.provider.__aexit__ = AsyncMock(return_value=False)
+    setattr(runner, method, AsyncMock(side_effect=error))
+    return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "method", "noun"),
+    [
+        ("attack-tree", "generate_attack_tree_for_threat", "an attack tree"),
+        ("test-cases", "generate_test_cases_for_threat", "test cases"),
+    ],
+)
+async def test_generation_route_returns_422_when_the_model_refuses(
+    client, saved_threat, path, method, noun
+):
+    error = ProviderRefusalError(provider="bedrock", message="stopReason='content_filtered'")
+    runner = _refusing_runner(method, error)
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        resp = await client.post(f"/api/threats/{saved_threat['id']}/{path}")
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == (
+        f"The model's safety filter declined to generate {noun} for this threat. "
+        "Try another model, or edit the threat's wording."
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_route_still_returns_503_for_other_provider_errors(client, saved_threat):
+    error = ProviderError(provider="bedrock", message="timeout")
+    runner = _refusing_runner("generate_attack_tree_for_threat", error)
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        resp = await client.post(f"/api/threats/{saved_threat['id']}/attack-tree")
+    assert resp.status_code == 503

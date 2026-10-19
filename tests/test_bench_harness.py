@@ -695,3 +695,36 @@ def test_reasoning_effort_is_recorded_in_the_env_snapshot():
         {"OPENAI_REASONING_EFFORT": "none", "OPENAI_API_KEY": "sk-secret", "PATH": "x"}
     )
     assert snapshot == {"OPENAI_REASONING_EFFORT": "none"}
+
+
+def test_enrich_coverage_gate_fails_when_most_threats_lost_their_attack_tree():
+    """BB-55: Opus 5.5 produced 12/36 attack trees and the flagship arms still passed."""
+    from tests.bench.gates import enrich_coverage
+
+    arm = Arm(id="a", main=OPUS)
+    row = {"db": {"threats": 36}, "enrich": {"attack_trees": 12, "test_suites": 36}}
+    ok, detail = enrich_coverage(row, arm, Path())
+    assert not ok
+    assert "attack_trees=33%" in detail
+
+
+def test_enrich_coverage_gate_tolerates_a_single_refusal():
+    from tests.bench.gates import enrich_coverage
+
+    arm = Arm(id="a", main=OPUS)
+    row = {"db": {"threats": 36}, "enrich": {"attack_trees": 35, "test_suites": 36}}
+    assert enrich_coverage(row, arm, Path())[0]
+
+
+def test_enrich_coverage_gate_fails_without_enrichment_data():
+    from tests.bench.gates import enrich_coverage
+
+    arm = Arm(id="a", main=OPUS)
+    assert not enrich_coverage({"db": {"threats": 36}}, arm, Path())[0]
+
+
+def test_flagship_arms_gate_on_enrichment_coverage(no_repo_env):
+    env = {"BENCH_MODEL_OPUS_55": "opus.id", "BENCH_MODEL_FABLE_51": "fable.id"}
+    suite = build_suites(env, load_settings(env))["bm13-flagship"]
+    assert suite.arms
+    assert all("enrich_coverage" in arm.gates for arm in suite.arms)
