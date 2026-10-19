@@ -1,4 +1,4 @@
-"""Tests for cli.commands.run._run_pre_flight / _merge_pre_flight_usage (4a-3 follow-up).
+"""Tests for cli.commands.run._run_pre_flight / _merge_extra_usage (4a-3 follow-up).
 
 The CLI's pre-flight gap check (backend.pipeline.pre_flight.analyze_bundle)
 runs before the pipeline runner opens its own collect_usage() scopes, so any
@@ -16,7 +16,7 @@ import pytest
 from backend.models.api import AnalyzeAssumptionsResponse, AnalyzeDescriptionResponse
 from backend.models.usage import ModelUsage, RunUsage, StepRun, UsageRecord
 from backend.providers.usage import record_usage
-from cli.commands.run import _merge_pre_flight_usage, _run_pre_flight
+from cli.commands.run import _merge_extra_usage, _run_pre_flight
 
 
 class _FakePreFlightProvider:
@@ -192,18 +192,18 @@ def _pre_flight_step(tokens: int = 60) -> StepRun:
 
 def test_noop_when_no_pre_flight_usage():
     run_usage = _sample_run_usage()
-    assert _merge_pre_flight_usage(run_usage, None) is run_usage
+    assert _merge_extra_usage(run_usage, [], prepend=True) is run_usage
 
 
 def test_noop_when_run_never_completed():
     # The pipeline failed before a COMPLETE event, so there's nothing to
     # attach the pre-flight step to (consistent with existing behaviour:
     # all usage is already dropped in that case).
-    assert _merge_pre_flight_usage(None, _pre_flight_step()) is None
+    assert _merge_extra_usage(None, [_pre_flight_step()], prepend=True) is None
 
 
 def test_pre_flight_step_is_added_and_totals_recomputed():
-    merged = _merge_pre_flight_usage(_sample_run_usage(), _pre_flight_step(tokens=60))
+    merged = _merge_extra_usage(_sample_run_usage(), [_pre_flight_step(tokens=60)], prepend=True)
 
     steps = [s["step"] for s in merged["steps"]]
     assert "pre_flight" in steps
@@ -221,7 +221,7 @@ def test_fast_model_share_is_recomputed_not_carried_over_stale():
     # shrink the fast-model's share of the (now larger) total — a stale
     # carried-over share would silently overstate the fast model's share.
     original = _sample_run_usage()
-    merged = _merge_pre_flight_usage(original, _pre_flight_step(tokens=60))
+    merged = _merge_extra_usage(original, [_pre_flight_step(tokens=60)], prepend=True)
 
     assert merged["fast_model_share"] < original["fast_model_share"]
     assert merged["fast_model_tokens"] == 150  # fast model's own tokens are unchanged
@@ -232,7 +232,7 @@ def test_fast_routing_disabled_is_preserved_through_the_rebuild():
     run_usage = _sample_run_usage()
     run_usage["fast_routing_disabled"] = True
 
-    merged = _merge_pre_flight_usage(run_usage, _pre_flight_step())
+    merged = _merge_extra_usage(run_usage, [_pre_flight_step()], prepend=True)
 
     assert merged["fast_routing_disabled"] is True
 
@@ -243,7 +243,7 @@ def test_no_fast_model_run_stays_without_a_fast_share():
     run_usage["fast_model_tokens"] = 0
     run_usage["fast_model_share"] = None
 
-    merged = _merge_pre_flight_usage(run_usage, _pre_flight_step())
+    merged = _merge_extra_usage(run_usage, [_pre_flight_step()], prepend=True)
 
     assert merged["fast_model"] is None
     assert merged["fast_model_share"] is None
@@ -263,7 +263,7 @@ def test_stop_reason_and_coverage_report_survive_the_rebuild():
         "unknown_maestro": False,
     }
 
-    merged = _merge_pre_flight_usage(run_usage, _pre_flight_step())
+    merged = _merge_extra_usage(run_usage, [_pre_flight_step()], prepend=True)
 
     assert merged["stopped_reason"] == "gap_satisfied"
     assert merged["refusal_count"] == 2
