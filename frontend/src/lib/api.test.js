@@ -168,7 +168,8 @@ describe('downloadExport() — BB-61', () => {
     expect(url).toBe('/api/export/m1?format=json')
     expect(opts.headers.Authorization).toBe('Bearer tok-abc')
     expect(created).toHaveLength(1)
-    expect(created[0]).toBeInstanceOf(Blob)
+    // Not instanceof Blob: Response.blob() and jsdom's Blob can be different realms on CI.
+    expect(await created[0].text()).toBe('{"ok":true}')
     expect(clicked).toEqual(['My Model.json'])
   })
 
