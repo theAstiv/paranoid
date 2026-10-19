@@ -274,8 +274,10 @@ class MCPCodeExtractor:
             )
             if isinstance(result, list):
                 return result
-            if isinstance(result, dict) and "results" in result:
-                return result["results"]
+            if isinstance(result, dict):
+                # context-link sends {"results": null} when nothing matches (a Go nil slice).
+                results = result.get("results")
+                return results if isinstance(results, list) else []
             return []
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"Symbol search failed: {e}")
