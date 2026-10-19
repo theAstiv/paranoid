@@ -12,7 +12,7 @@ from backend.db import crud, crud_activity, crud_projects, vectors
 from backend.db.component_links import relink_threat
 from backend.models.api import BulkStatusRequest, UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
-from backend.providers.base import ProviderError, create_provider
+from backend.providers.base import ProviderError, ProviderRefusalError, create_provider
 from backend.routes._helpers import (
     bedrock_kwargs,
     effort_kwargs,
@@ -298,6 +298,16 @@ async def generate_attack_tree(
                 maestro_category=threat.get("maestro_category"),
                 mitigations=threat["mitigations"],
             )
+    except ProviderRefusalError as exc:
+        # Not an outage: retrying the same request won't help, so don't send a 503.
+        logger.warning("Provider refused attack tree for %s: %s", threat_id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The model's safety filter declined to generate an attack tree for this "
+                "threat. Try another model, or edit the threat's wording."
+            ),
+        )
     except ProviderError as exc:
         logger.error("Provider error generating attack tree for %s: %s", threat_id, exc)
         raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
@@ -356,6 +366,15 @@ async def generate_test_cases(
                 target=threat["target"],
                 mitigations=threat["mitigations"],
             )
+    except ProviderRefusalError as exc:
+        logger.warning("Provider refused test cases for %s: %s", threat_id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The model's safety filter declined to generate test cases for this "
+                "threat. Try another model, or edit the threat's wording."
+            ),
+        )
     except ProviderError as exc:
         logger.error("Provider error generating test cases for %s: %s", threat_id, exc)
         raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")

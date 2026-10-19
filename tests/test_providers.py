@@ -1178,3 +1178,40 @@ async def test_anthropic_persistent_validation_failure_still_raises():
             await provider.generate_structured(prompt="x", response_model=AssetsList)
 
     assert mock_client.messages.create.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_anthropic_refusal_raises_provider_refusal_error_with_category():
+    """A stop_reason of "refusal" must surface as a refusal (with the classifier
+    category), not as a JSON-parse failure on an empty body."""
+    from backend.providers.base import ProviderRefusalError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        refused = _text_response("", stop_reason="refusal")
+        refused.stop_details.category = "cyber"
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = refused
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-opus-5-5", api_key="k")
+        with pytest.raises(ProviderRefusalError) as exc_info:
+            await provider.generate_structured(prompt="x", response_model=AssetsList)
+
+    assert "category='cyber'" in str(exc_info.value)
+    assert mock_client.messages.create.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_refusal_without_stop_details_still_raises_refusal():
+    from backend.providers.base import ProviderRefusalError
+
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        refused = _text_response("", stop_reason="refusal")
+        refused.stop_details = None
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = refused
+        mock_anthropic.return_value = mock_client
+
+        provider = AnthropicProvider(model="claude-opus-5-5", api_key="k")
+        with pytest.raises(ProviderRefusalError):
+            await provider.generate_structured(prompt="x", response_model=AssetsList)

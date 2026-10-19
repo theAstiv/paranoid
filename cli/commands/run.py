@@ -40,7 +40,7 @@ from backend.providers import (
     ProviderTimeoutError,
     create_provider,
 )
-from backend.providers.base import LLMProvider
+from backend.providers.base import LLMProvider, ProviderRefusalError
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider, effort_kwargs
 from cli.async_runner import run_async
@@ -326,6 +326,19 @@ def _merge_pre_flight_usage(run_usage: dict | None, pre_flight_step: StepRun | N
     guard = run_usage.get("coverage_guard")
     rebuilt.coverage_guard = CoverageGuardReport(**guard) if guard else None
     return rebuilt.model_dump()
+
+
+def _enrichment_summary(trees: int, suites: int, tree_refusals: int, suite_refusals: int) -> str:
+    """One-line enrichment result that names refusals instead of hiding them."""
+
+    def _part(count: int, noun: str, refused: int) -> str:
+        suffix = f" ({refused} refused by the provider's content filter)" if refused else ""
+        return f"{count} {noun}{suffix}"
+
+    return (
+        f"Enrichment complete: {_part(trees, 'attack trees', tree_refusals)}, "
+        f"{_part(suites, 'test suites', suite_refusals)}"
+    )
 
 
 def _repo_relative_source_file(input_file: Path) -> str:
@@ -1285,6 +1298,8 @@ async def _run_pipeline_inside_provider(
                 f"Enriching {len(threat_list)} threats (attack trees + test cases)...",
                 fg="cyan",
             )
+        tree_refusals = 0
+        suite_refusals = 0
         for i, t in enumerate(threat_list):
             # Threat has no id field in-memory; use loop index as a stable key
             # that matches the synthetic id injected into threats_dicts at export time.
@@ -1304,6 +1319,8 @@ async def _run_pipeline_inside_provider(
                 )
                 attack_trees[tid] = tree
             except Exception as e:
+                if isinstance(e, ProviderRefusalError):
+                    tree_refusals += 1
                 if not quiet:
                     click.secho(
                         f"  Warning: attack tree failed for '{t.name}': {type(e).__name__}: {e}",
@@ -1319,6 +1336,8 @@ async def _run_pipeline_inside_provider(
                 )
                 test_suites[tid] = suite
             except Exception as e:
+                if isinstance(e, ProviderRefusalError):
+                    suite_refusals += 1
                 if not quiet:
                     click.secho(
                         f"  Warning: test cases failed for '{t.name}': {type(e).__name__}: {e}",
@@ -1327,7 +1346,9 @@ async def _run_pipeline_inside_provider(
 
         if not quiet:
             click.secho(
-                f"Enrichment complete: {len(attack_trees)} attack trees, {len(test_suites)} test suites",
+                _enrichment_summary(
+                    len(attack_trees), len(test_suites), tree_refusals, suite_refusals
+                ),
                 fg="green",
             )
 
