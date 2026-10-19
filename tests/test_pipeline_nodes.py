@@ -21,7 +21,7 @@ from backend.models.state import (
     ThreatsListMaestroCvss,
     ThreatsListMaestroDreadOnly,
 )
-from backend.pipeline import nodes
+from backend.pipeline import nodes, prompts
 from backend.pipeline.nodes import helpers
 from backend.pipeline.nodes.summary import _deterministic_code_summary
 from backend.providers.base import ProviderError
@@ -812,6 +812,46 @@ async def test_generate_test_cases(mock_provider):
     )
     assert isinstance(result, TestSuite)
     assert "Scenario" in result.gherkin_source
+
+
+@pytest.mark.asyncio
+async def test_generate_attack_tree_sends_instructions_as_shared_context(mock_provider):
+    await nodes.generate_attack_tree(
+        threat="SQL Injection",
+        threat_description="Attacker injects SQL via search endpoint",
+        target="PostgreSQL Database",
+        stride_category="tampering",
+        maestro_category=None,
+        mitigations=["Parameterized queries"],
+        provider=mock_provider,
+    )
+    call = mock_provider.calls[-1]
+    assert call["shared_context"] == prompts.attack_tree_prompt()
+    assert "<task>" not in mock_provider.last_prompt
+    assert "<threat_name>\nSQL Injection\n</threat_name>" in mock_provider.last_prompt
+    assert "<mitigations>" in mock_provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_test_cases_sends_instructions_as_shared_context(mock_provider):
+    await nodes.generate_test_cases(
+        threat="SQL Injection",
+        threat_description="Attacker injects SQL via search endpoint",
+        target="PostgreSQL Database",
+        mitigations=["Parameterized queries"],
+        provider=mock_provider,
+    )
+    call = mock_provider.calls[-1]
+    assert call["shared_context"] == prompts.test_case_prompt()
+    assert "<task>" not in mock_provider.last_prompt
+    assert "<threat_name>\nSQL Injection\n</threat_name>" in mock_provider.last_prompt
+
+
+def test_attack_tree_prompt_is_framed_for_defenders():
+    prompt = prompts.attack_tree_prompt()
+    assert "place controls and detections" in prompt
+    assert "do not include commands, payloads, exploit code" in prompt.lower()
+    assert "sophisticated techniques" not in prompt.lower()
 
 
 # ---------------------------------------------------------------------------
