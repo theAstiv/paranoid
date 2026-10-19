@@ -195,6 +195,13 @@
   const showDread = $derived(scoringMethod === 'dread' || scoringMethod === 'both')
   const showCvss = $derived(scoringMethod === 'cvss' || scoringMethod === 'both')
 
+  // Dependency threats only exist when the run analysed a manifest, so the
+  // option only appears for models that have some.
+  const sourceOptions = $derived([
+    ['all', 'All'], ['llm', 'LLM'], ['rule_engine', 'Rule Engine'],
+    ...($threats.some(t => t.source === 'dependency') ? [['dependency', 'Dependency']] : []),
+  ])
+
   async function handleApprove(threat) {
     threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: 'approved' } : t))
     try {
@@ -370,7 +377,7 @@
         <div class="space-y-1">
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Source</p>
           <div class="flex gap-1">
-            {#each [['all', 'All'], ['llm', 'LLM'], ['rule_engine', 'Rule Engine']] as [val, label]}
+            {#each sourceOptions as [val, label]}
               <button type="button" onclick={() => sourceFilter = val}
                 class="px-2 py-0.5 text-[11px] font-mono rounded-chip border transition-colors
                   {sourceFilter === val ? 'chip-accent' : 'chip-gray'}">

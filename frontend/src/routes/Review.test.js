@@ -311,6 +311,31 @@ describe('Review — source filter', () => {
     expect(screen.queryByText('From model')).toBeNull()
   })
 
+  it('offers no Dependency option when the model has no dependency threats', async () => {
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
+
+    await openFilters()
+    expect(screen.queryByRole('button', { name: 'Dependency' })).toBeNull()
+  })
+
+  it('filters to dependency threats when the model has some (BB-66)', async () => {
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'From model', source: 'llm' }),
+      threat({ id: 't2', name: 'From rules', source: 'rule_engine' }),
+      threat({ id: 't3', name: 'From a package', source: 'dependency' }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
+
+    await openFilters()
+    await fireEvent.click(screen.getByRole('button', { name: 'Dependency' }))
+
+    expect(screen.getByText('From a package')).toBeInTheDocument()
+    expect(screen.queryByText('From model')).toBeNull()
+    expect(screen.queryByText('From rules')).toBeNull()
+  })
+
   it('returns to all sources when "All" is chosen again', async () => {
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('From model')).toBeInTheDocument())
