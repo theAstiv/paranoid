@@ -222,6 +222,67 @@ async def test_one_query_with_no_matches_keeps_symbols_found_by_the_others():
 
 
 @pytest.mark.asyncio
+async def test_extract_context_survives_a_search_symbols_that_returns_none():
+    """Defence in depth: even a None from search_symbols must not abort extraction (BB-56)."""
+    extractor = MCPCodeExtractor(
+        project_root="/test/repo",
+        binary_path="/usr/local/bin/context-link",
+    )
+    hit = {"symbol_name": "login", "file_path": "auth.py", "kind": "function", "language": "python"}
+    extractor.search_symbols = AsyncMock(side_effect=[None, [hit], None, None, None, None])
+    extractor.get_code_by_symbol = AsyncMock(
+        return_value={"code": "def login(): ...", "language": "python", "dependencies": []}
+    )
+    extractor.get_file_skeleton = AsyncMock(return_value=None)
+
+    context = await extractor.extract_context("my system", max_bytes=50_000)
+
+    assert [f.path for f in context.files] == ["auth.py"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"results": None},
+        {"results": []},
+        {"results": "oops"},
+        {"results": [None]},
+        {"results": [{"data": None}]},
+        {"results": [{"data": {"symbol": None, "dependencies": None}}]},
+        {},
+        None,
+    ],
+)
+async def test_get_code_by_symbol_tolerates_null_fields(payload):
+    """A null at any level of the envelope yields None or an empty body, never a crash (BB-56)."""
+    extractor = MCPCodeExtractor(
+        project_root="/test/repo",
+        binary_path="/usr/local/bin/context-link",
+    )
+    extractor._call_tool = AsyncMock(return_value=payload)
+
+    result = await extractor.get_code_by_symbol("login")
+
+    assert result is None or (result["code"] == "" and result["dependencies"] == [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [{"results": None}, {"results": "oops"}, {"results": [None]}, {}, None]
+)
+async def test_get_file_skeleton_tolerates_null_results(payload):
+    """A null or malformed results envelope yields None, never a crash (BB-56)."""
+    extractor = MCPCodeExtractor(
+        project_root="/test/repo",
+        binary_path="/usr/local/bin/context-link",
+    )
+    extractor._call_tool = AsyncMock(return_value=payload)
+
+    assert await extractor.get_file_skeleton("auth.py") is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.skip(reason="Requires actual context-link binary for integration test")
 async def test_extract_context_integration():
     """Integration test for full extraction flow (requires context-link binary)."""

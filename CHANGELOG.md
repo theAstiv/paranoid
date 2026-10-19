@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A query with no matches no longer drops the run's code context** (BB-56) — context-link answers `{"results": null}` when a search query matches nothing, so `search_symbols` returned `None` and `extract_context` raised `TypeError`, losing every symbol the other queries had found. `search_symbols` now treats a null or non-list result as no matches. Reproduced on macOS and Windows with context-link 1.0.0
+- **A query with no matches no longer drops the run's code context** (BB-56) — context-link answers `{"results": null}` when a search query matches nothing, so `search_symbols` returned `None` and `extract_context` raised `TypeError`, losing every symbol the other queries had found. `search_symbols` now treats a null or non-list result as no matches, `extract_context` tolerates a `None` from it, and `get_code_by_symbol` / `get_file_skeleton` tolerate a null or malformed `results`, `data` or `symbol`. Reproduced on macOS and Windows with context-link 1.0.0
 
 - **Threats now record the iteration that produced them** (BB-30) — `threats.iteration_number` was 1 for every threat, including ones a second iteration or the coverage guard's extra pass produced, because no save path set it. The runner now stamps each LLM threat with its iteration before it joins the cumulative list, and both save paths (CLI/API and the web SSE path) store it. Rule-engine, dependency and seeded threats have no iteration and keep the default of 1. Applies to new runs only; saved models keep 1. No schema change (the column already existed)
 
