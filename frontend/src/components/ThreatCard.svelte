@@ -54,6 +54,14 @@
 
   let showComments = $state(false)
 
+  function handleCommentChange(detail) {
+    // Posting the first comment takes commentCount from 0 to 1, which would
+    // collapse the block to the "Show comments" chip and hide the new comment.
+    // Only an increase opens it, so a deletion doesn't force the list open.
+    if (detail.delta > 0) showComments = true
+    oncommentChange?.(detail)
+  }
+
   let editingDread = $state(false)
   let savingDread = $state(false)
   let dreadError = $state('')
@@ -482,7 +490,7 @@
   <!-- Inline comments -->
   {#if modelId && (showComments || commentCount === 0)}
     <Comments {modelId} entityType="threat" entityId={threat.id} compact={true}
-      oncommentChange={detail => oncommentChange?.(detail)} />
+      oncommentChange={handleCommentChange} />
   {:else if modelId && !showComments}
     <button type="button" onclick={() => showComments = true}
       class="text-xs text-c-faint hover:text-c-accent transition-colors pt-1">
