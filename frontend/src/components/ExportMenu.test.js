@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/svelte'
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
 import ExportMenu from './ExportMenu.svelte'
+import { downloadExport } from '../lib/api.js'
+import { notify } from '../lib/stores.js'
 
 vi.mock('../lib/api.js', () => ({
-  exportUrl: vi.fn((modelId, format, statusFilter) => {
-    const params = new URLSearchParams({ format })
-    if (statusFilter) params.set('status_filter', statusFilter)
-    return `/api/export/${modelId}?${params.toString()}`
-  }),
+  downloadExport: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('../lib/stores.js', () => ({
+  notify: vi.fn(),
 }))
 
 describe('ExportMenu', () => {
@@ -51,17 +53,34 @@ describe('ExportMenu', () => {
     expect(screen.getByText(/MAESTRO-only excluded/)).toBeInTheDocument()
   })
 
-  it('calls window.open with correct URL when a format is clicked', async () => {
+  it('downloads through downloadExport with the status filter, not window.open', async () => {
     render(ExportMenu, { props: { modelId: 'model-42', statusFilter: 'approved' } })
     await fireEvent.click(screen.getByText('Export'))
     await fireEvent.click(screen.getByText('PDF'))
-    expect(window.open).toHaveBeenCalledOnce()
-    const url = window.open.mock.calls[0][0]
-    expect(url).toContain('model-42')
-    expect(url).toContain('format=pdf')
-    // Verify statusFilter is forwarded — if ExportMenu stopped passing it to
-    // exportUrl the filtered-export wiring would silently break.
-    expect(url).toContain('status_filter=approved')
+    expect(downloadExport).toHaveBeenCalledOnce()
+    // statusFilter must be forwarded or filtered exports silently break.
+    expect(downloadExport).toHaveBeenCalledWith('model-42', 'pdf', 'approved')
+    expect(window.open).not.toHaveBeenCalled()
+  })
+
+  it('shows an error toast when the download fails', async () => {
+    downloadExport.mockRejectedValueOnce(new Error('Model not found'))
+    render(ExportMenu, { props: { modelId: 'model-1' } })
+    await fireEvent.click(screen.getByText('Export'))
+    await fireEvent.click(screen.getByText('PDF'))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('error', 'Export failed: Model not found'))
+  })
+
+  it('disables the Export button while a download is pending', async () => {
+    let finish
+    downloadExport.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    render(ExportMenu, { props: { modelId: 'model-1' } })
+    await fireEvent.click(screen.getByText('Export'))
+    await fireEvent.click(screen.getByText('PDF'))
+    const button = screen.getByText('Export').closest('button')
+    expect(button).toBeDisabled()
+    finish()
+    await waitFor(() => expect(button).not.toBeDisabled())
   })
 
   it('closes dropdown after a format is selected', async () => {
