@@ -147,3 +147,24 @@ def test_seed_no_duplicate_names(seed_path: Path) -> None:
             dupes.append(name)
         seen.add(name)
     assert not dupes, f"{seed_path.name}: duplicate names found: {dupes}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug-bash known issue (§5.6, item 25): attack_cloud_patterns.json names the "
+        "revoked T1562.007 and T1562.008, which aren't in the technique catalog, so "
+        "those two seed threats get no seed technique chip and show stale IDs in their names."
+    ),
+)
+def test_every_technique_id_in_a_seed_name_is_in_the_catalog() -> None:
+    from backend.rules.techniques import _SEED_NAME_ID_RE, _catalog_by_id
+
+    catalog = _catalog_by_id()
+    unknown = [
+        f"{path.name}: {match.group(1)}"
+        for path in seed_files()
+        for entry in _load_seed_file(path)
+        if (match := _SEED_NAME_ID_RE.search(entry["name"])) and match.group(1) not in catalog
+    ]
+    assert unknown == []

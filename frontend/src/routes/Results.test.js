@@ -363,6 +363,20 @@ describe('Results — header', () => {
     expect(subscribeToRun.mock.calls[0][0]).toBe('m1')
   })
 
+  // Bug-bash finding (item 25): Re-run posts `assumptions: []`, which the run route
+  // then saves over the model's stored assumptions (and it sends no dependency
+  // manifest, so the dependency scans are cleared too). `it.fails` turns red once fixed.
+  it.fails('re-runs with the model\'s stored assumptions', async () => {
+    getModel.mockResolvedValue({ ...baseModel, assumptions: '["TLS terminates at the load balancer"]' })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Re-run')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Re-run'))
+
+    const fd = subscribeToRun.mock.calls[0][1]
+    expect(JSON.parse(fd.get('assumptions'))).toEqual(['TLS terminates at the load balancer'])
+  })
+
   it('blocks re-run and notifies when the configured provider has no API key', async () => {
     config.set({ default_provider: 'anthropic', anthropic_api_key_set: false })
     getModel.mockResolvedValue({ ...baseModel, provider: 'anthropic' })

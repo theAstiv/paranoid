@@ -1388,3 +1388,106 @@ async def test_fetch_source_touches_marker_mtime_on_cache_hit(monkeypatch):
 
     assert result.path == entry
     assert (entry / ".complete").stat().st_mtime > old_time
+
+
+# ---------------------------------------------------------------------------
+# Bug-bash §7.3 (run order item 23): the caps hold against real-sized input
+# ---------------------------------------------------------------------------
+
+
+def _tree_bytes(root: Path) -> int:
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+
+class _CountingStream(httpx.AsyncByteStream):
+    """An endless-looking body that records how much of it was ever pulled."""
+
+    def __init__(self, chunk: bytes, chunks: int) -> None:
+        self.chunk = chunk
+        self.chunks = chunks
+        self.served = 0
+
+    async def __aiter__(self):
+        for _ in range(self.chunks):
+            self.served += 1
+            yield self.chunk
+
+
+@pytest.mark.asyncio
+async def test_compressed_cap_stops_the_download_mid_stream(monkeypatch, tmp_path):
+    monkeypatch.setattr(fetcher.settings, "deps_max_tarball_mb", 2)
+    body = _CountingStream(b"\0" * (1024 * 1024), chunks=100)  # 100 MB on offer
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=body)
+
+    resolved = _resolved(integrity=_integrity_for(b"placeholder"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(fetcher.TarballTooLargeError):
+            await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    # The cap is checked per chunk as it arrives, not after buffering it all.
+    assert body.served <= 4
+    assert _tree_bytes(tmp_path) <= 3 * 1024 * 1024
+
+
+class _Zeros(io.RawIOBase):
+    def __init__(self, size: int) -> None:
+        self.left = size
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:
+        n = min(len(b), self.left)
+        b[:n] = bytes(n)
+        self.left -= n
+        return n
+
+
+@pytest.mark.asyncio
+async def test_decompression_bomb_is_refused_before_it_is_written(tmp_path):
+    """A ~200 KB tarball that inflates past the real 200 MB extraction cap."""
+    size = fetcher._MAX_EXTRACTED_BYTES + 1
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=1) as tar:
+        info = tarfile.TarInfo(name="package/bomb.bin")
+        info.size = size
+        tar.addfile(info, _Zeros(size))
+    data = buf.getvalue()
+    assert len(data) < 2 * 1024 * 1024  # far under the 50 MB download cap
+
+    resolved = _resolved(integrity=_integrity_for(data))
+    async with _client(data) as client:
+        with pytest.raises(fetcher.TarballTooLargeError):
+            await fetcher.fetch_source(resolved, SourceKind.NPM_TARBALL, client=client)
+
+    cache_dir = fetcher.cache_dir_for(SourceKind.NPM_TARBALL, resolved.name, resolved.version)
+    assert not cache_dir.exists()
+    assert _tree_bytes(tmp_path) < 5 * 1024 * 1024  # nothing inflated on disk
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug-bash carry-over S3 (item 25): a fetch killed mid-download leaves its "
+        "`.name@version.xxxxxxxx` staging dir in the cache (reproduced 10-19 by killing "
+        "the server), and nothing removes it: eviction skips entries with no .complete "
+        "marker, so it never counts toward DEPS_CACHE_MAX_GB either. The cleanup could "
+        "equally live at startup; adjust this test to wherever the fix puts it."
+    ),
+)
+async def test_staging_dir_left_by_a_crash_is_cleaned_up(tmp_path):
+    orphan = tmp_path / SourceKind.NPM_TARBALL.value / ".other@2.0.0.abcd1234"
+    (orphan / "extracted").mkdir(parents=True)
+    (orphan / "source.tar.gz").write_bytes(b"x" * 1024)
+    os.utime(orphan, (1_000, 1_000))  # long before any live fetch could own it
+
+    data = _normal_tarball_bytes()
+    async with _client(data) as client:
+        result = await fetcher.fetch_source(
+            _resolved(integrity=_integrity_for(data)), SourceKind.NPM_TARBALL, client=client
+        )
+    assert result.path is not None
+    assert not orphan.exists()
