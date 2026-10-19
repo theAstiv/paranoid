@@ -712,6 +712,13 @@ def test_scan_manifest_isolates_one_dependency_failure(runner, monkeypatch, tmp_
     assert data["scanned"]["good"]["version"] == "1.0.0"
     assert "OSError" in data["scanned"]["bad"]["error"]
 
+    # Console: the header must not count the failure as scanned-ok.
+    result = runner.invoke(deps_cli.deps, ["scan-manifest", str(manifest)])
+    assert result.exit_code == 0, result.output
+    assert "Scanned 2 direct dependencies" in result.output
+    assert "1 ok, 1 failed" in result.output
+    assert "bad: FAILED: OSError" in result.output
+
 
 def test_scan_manifest_has_no_direct_dependency_cap(runner, monkeypatch, tmp_path):
     """scan-manifest has always swept every direct dependency unconditionally

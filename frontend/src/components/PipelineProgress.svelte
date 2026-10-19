@@ -9,6 +9,7 @@
   export let totalIterations = 3
 
   const STEP_LABELS = {
+    analyze_dependencies: 'Analyze Dependencies',
     summarize: 'Summarize',
     summarize_code: 'Analyze Code',
     extract_assets: 'Extract Assets',
@@ -25,6 +26,7 @@
     completed: '✓',
     failed: '✗',
     info: 'ℹ',
+    warning: '⚠',
   }
 
   const STATUS_COLOR = {
@@ -32,6 +34,7 @@
     completed: 'text-c-green',
     failed:    'text-c-critical',
     info:      'text-c-faint',
+    warning:   'text-c-high',
   }
 
   $: progress = computeProgress(events, totalIterations)

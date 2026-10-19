@@ -19,7 +19,8 @@ from typing import Any
 import httpx
 
 from backend.deps.drift import compare_sources
-from backend.deps.fetcher import FetchError, cache_dir_for, fetch_source, mark_in_use
+from backend.deps.fetcher import FetchError, cache_dir_for, fetch_source, is_cached, mark_in_use
+from backend.deps.resolved_cache import load_cached_resolved, save_resolved
 from backend.deps.resolver import resolve_github_ref, resolve_npm
 from backend.deps.scanner import scan_source
 from backend.models.dependencies import (
@@ -39,6 +40,60 @@ _MANIFEST_CONCURRENCY = 4
 DEFAULT_MAX_DIRECT_DEPENDENCIES = 50
 
 _EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+
+# Transport failures only: the registry (or the proxy in front of it) couldn't
+# be reached at all. A 404 or a version missing from the registry document is
+# a real answer from the registry, and cached metadata must never mask it.
+_OFFLINE_ERRORS = (httpx.NetworkError, httpx.TimeoutException, httpx.ProxyError)
+
+_GITHUB_FIELDS = ("github_status", "github_ref")
+
+
+class RegistryUnreachableError(Exception):
+    """The npm registry couldn't be reached and no metadata was cached for this version."""
+
+
+async def _resolve(
+    name: str, version: str, want_github: bool, client: httpx.AsyncClient
+) -> tuple[ResolvedPackage, bool]:
+    """Resolve `name@version` online, falling back to the metadata saved by the
+    last online run when the registry is unreachable. Returns
+    (resolved, from_cache)."""
+    try:
+        resolved = await resolve_npm(name, version, client)
+    except _OFFLINE_ERRORS as e:
+        cached = await load_cached_resolved(name, version)
+        if cached is None:
+            raise RegistryUnreachableError(
+                f"registry unreachable and no cached metadata for {name}@{version} "
+                f"({type(e).__name__}: {e})"
+            ) from e
+        logger.warning("offline: using cached registry metadata for %s@%s", name, version)
+        if not want_github:
+            return cached.model_copy(
+                update={"github_status": "not_attempted", "github_ref": None}
+            ), True
+        # resolve_github_ref never raises: offline, every probe fails and it
+        # reports "unavailable", which would discard a ref that is already
+        # cached. Only probe when the cache can't serve GitHub on its own.
+        if cached.github_status != "resolved" or not is_cached(SourceKind.GITHUB, name, version):
+            cached = await resolve_github_ref(cached, client)
+        return cached, True
+
+    if want_github:
+        resolved = await resolve_github_ref(resolved, client)
+        await save_resolved(resolved)
+    else:
+        # An npm-only run never probes GitHub; keep a ref an earlier
+        # `both` run saved, so a later offline `both` run can still use it.
+        prior = await load_cached_resolved(name, version)
+        if prior is not None and prior.github_status == "resolved":
+            await save_resolved(
+                resolved.model_copy(update={f: getattr(prior, f) for f in _GITHUB_FIELDS})
+            )
+        else:
+            await save_resolved(resolved)
+    return resolved, False
 
 
 async def fetch_and_scan_one(
@@ -117,14 +172,16 @@ async def analyze_package(
     `source_mode` is one of "npm", "github", "both". Drift is only computed
     when both sources were requested — it stays None (not attempted) rather
     than taking on a status otherwise.
+
+    When the registry is unreachable, the metadata saved by the last online
+    run is used instead (see `_resolve`); a warm source cache then serves the
+    rest with no network at all.
     """
     want_npm = source_mode in ("npm", "both")
     want_github = source_mode in ("github", "both")
     ref = PackageRef(name=name, version=version)
 
-    resolved = await resolve_npm(name, version, client)
-    if want_github:
-        resolved = await resolve_github_ref(resolved, client)
+    resolved, resolved_from_cache = await _resolve(name, version, want_github, client)
 
     # Marked in-use for the entire fetch+scan+drift span, starting *before*
     # either source is fetched — not just around the drift comparison at the
@@ -190,6 +247,7 @@ async def analyze_package(
         npm_profile=tarball_profile,
         github_profile=github_profile,
         drift=drift,
+        resolved_from_cache=resolved_from_cache,
     )
 
 

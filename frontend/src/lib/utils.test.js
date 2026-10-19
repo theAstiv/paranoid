@@ -304,6 +304,11 @@ describe('dependencyFlags', () => {
     expect(dependencyFlags({ drift: { signal: true } })).toContain('drift')
   })
 
+  it('flags metadata replayed from the offline cache', () => {
+    expect(dependencyFlags({ resolved_from_cache: true })).toContain('cached-metadata')
+    expect(dependencyFlags({ resolved_from_cache: false })).toEqual([])
+  })
+
   it('flags install hooks on the npm profile', () => {
     const analysis = { npm_profile: { install_hooks: ['postinstall: node setup.js'] } }
     expect(dependencyFlags(analysis)).toContain('install-hook')

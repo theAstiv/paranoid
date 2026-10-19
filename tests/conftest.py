@@ -106,6 +106,25 @@ def mock_load_seeds():
         yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_deps_cache(request, tmp_path_factory, monkeypatch):
+    """Point DEPS_CACHE_DIR at a fresh temp directory for every test.
+
+    Tests that stub out the registry (e.g. a fake `resolve_npm`) still run
+    `analyze_package`'s real cache writes, so without this every run left
+    fake `pkg0@1.0.0`-style metadata in the developer's real
+    `data/deps_cache/_resolved/`, where an offline run would trust it.
+    Skipped for tests marked `live`, which manage the cache themselves.
+    """
+    if request.node.get_closest_marker("live"):
+        yield
+        return
+    from backend.config import settings
+
+    monkeypatch.setattr(settings, "deps_cache_dir", str(tmp_path_factory.mktemp("deps_cache")))
+    yield
+
+
 def _mock_technique_embed(text: str) -> list[float]:
     """Deterministic hash-based embedding, mirrors tests/test_dedup.py's.
 
