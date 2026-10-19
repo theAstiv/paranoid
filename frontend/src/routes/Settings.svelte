@@ -104,9 +104,12 @@
     runTest(provider, keys[provider].input?.trim() || null)
   }
 
-  function startReplace(provider) { keys[provider] = { ...keys[provider], replacing: true, clearPending: false, input: '' } }
-  function cancelReplace(provider) { keys[provider] = { ...keys[provider], replacing: false, clearPending: false, input: '' } }
-  function markClear(provider) { keys[provider] = { ...keys[provider], clearPending: true, replacing: false, input: '' } }
+  // Each of these changes which key a Test would use, so the last result no
+  // longer describes it.
+  function startReplace(provider) { keys[provider] = { ...keys[provider], replacing: true, clearPending: false, input: '', testResult: null } }
+  function cancelReplace(provider) { keys[provider] = { ...keys[provider], replacing: false, clearPending: false, input: '', testResult: null } }
+  function markClear(provider) { keys[provider] = { ...keys[provider], clearPending: true, replacing: false, input: '', testResult: null } }
+  function clearTestResult(provider) { keys[provider] = { ...keys[provider], testResult: null } }
 
   function buildKeyPayload(provider) {
     const state = keys[provider]
@@ -282,7 +285,7 @@
           <div class="col-span-2 space-y-1.5">
             <div class="flex items-center gap-2">
               <input id="cfg-ollama" type="url" bind:value={draft.ollama_base_url}
-                on:input={() => { keys.ollama = { ...keys.ollama, testResult: null } }}
+                on:input={() => clearTestResult('ollama')}
                 placeholder="http://host.docker.internal:11434"
                 class="flex-1 {FIELD_CLASS} font-mono" />
               {#if draft.ollama_base_url}
@@ -314,6 +317,7 @@
               <span class="{SUBLABEL_CLASS}">empty = env/profile default</span>
             </label>
             <input id="cfg-aws-region" type="text" bind:value={draft.aws_region}
+              on:input={() => clearTestResult('bedrock')}
               placeholder="us-east-1"
               class="col-span-2 {FIELD_CLASS} font-mono" />
           </div>
@@ -325,6 +329,7 @@
             <div class="col-span-2 space-y-1.5">
               <div class="flex items-center gap-2">
                 <input id="cfg-aws-profile" type="text" bind:value={draft.aws_profile}
+                  on:input={() => clearTestResult('bedrock')}
                   placeholder="default"
                   class="flex-1 {FIELD_CLASS} font-mono" />
                 <button type="button" on:click={() => testButtonClick('bedrock')}
@@ -379,6 +384,7 @@
                     class="text-xs font-medium text-c-muted hover:text-c-text2 transition-colors">Undo</button>
                 {:else}
                   <input id={`cfg-${prov}-key`} type="password" bind:value={keys[prov].input}
+                    on:input={() => clearTestResult(prov)}
                     placeholder={prov === 'anthropic' ? 'sk-ant-…' : 'sk-…'}
                     autocomplete="off"
                     class="flex-1 {FIELD_CLASS} font-mono" />
