@@ -99,7 +99,7 @@
     ]
   },
   {
-    "name": "Cloud Firewall Disabled to Enable Lateral Movement (T1562.007)",
+    "name": "Cloud Firewall Disabled to Enable Lateral Movement (T1686.001)",
     "stride_category": "Tampering",
     "description": "Attacker with network configuration permissions disables or modifies cloud firewall rules (AWS Security Groups, Azure NSGs, GCP VPC Firewall Rules) to open paths for lateral movement or exfiltration. Firewall rule changes may be temporary and reversed after use, leaving no persistent evidence. Network-level visibility gaps created by firewall changes allow the attacker to move without triggering network-based IDS.",
     "target": "Cloud Network Firewall",
@@ -113,7 +113,7 @@
     ]
   },
   {
-    "name": "Cloud Audit Logging Disabled to Cover Attack Tracks (T1562.008)",
+    "name": "Cloud Audit Logging Disabled to Cover Attack Tracks (T1685.002)",
     "stride_category": "Repudiation",
     "description": "Attacker with cloud management permissions disables CloudTrail (AWS), Stackdriver/Cloud Audit Logs (GCP), or Activity Logs (Azure) to prevent their subsequent actions from being recorded. Logging disruption is typically one of the first actions an attacker takes after gaining privileged access. Without audit logs, the full scope of the breach cannot be reconstructed during incident response.",
     "target": "Cloud Audit Logging Service",
