@@ -268,7 +268,7 @@ async def _run_pre_flight(
     description and assumptions checks as two concurrent tasks that can each
     call the LLM; both record into this same scope.
 
-    Returns the bundle plus a StepRun to fold in via _merge_pre_flight_usage(),
+    Returns the bundle plus a StepRun to fold in via _merge_extra_usage(),
     or None for the step when no LLM call was actually made.
     """
     start = asyncio.get_running_loop().time()
@@ -301,26 +301,36 @@ async def _run_pre_flight(
     return bundle, step
 
 
-def _merge_pre_flight_usage(run_usage: dict | None, pre_flight_step: StepRun | None) -> dict | None:
-    """Fold the pre-flight gap check's usage (if any) into a run's usage summary.
+def _merge_extra_usage(
+    run_usage: dict | None,
+    extra_steps: list[StepRun],
+    extra_refusals: int = 0,
+    fast_disabled: bool = False,
+    *,
+    prepend: bool = False,
+) -> dict | None:
+    """Fold calls made outside the pipeline into a run's usage summary.
 
+    Used for the pre-flight gap check (before the pipeline, so ``prepend``)
+    and for ``--enrich`` (after it, on a separate PipelineRunner).
     ``run_usage`` is the COMPLETE event's serialized ``RunUsage`` dict (or None
     if the run never reached completion). Rebuilding via ``build_run_usage()``
     recomputes ``by_model``/``total_tokens``/``fast_model_share`` so they
     account for every call the run actually made, not just the pipeline's own
-    steps; ``build_run_usage()`` doesn't set ``fast_routing_disabled``, so it's
-    carried over explicitly. A no-op when there was no pre-flight usage to add,
-    or no completed run to attach it to.
+    steps; ``build_run_usage()`` doesn't set ``fast_routing_disabled`` or the
+    refusal count, so they're carried over (OR'd / summed) explicitly. A no-op
+    when there's nothing to add, or no completed run to attach it to.
     """
-    if pre_flight_step is None or run_usage is None:
+    if run_usage is None or not (extra_steps or extra_refusals or fast_disabled):
         return run_usage
+    pipeline_steps = [StepRun(**s) for s in run_usage["steps"]]
     rebuilt = build_run_usage(
-        [pre_flight_step, *(StepRun(**s) for s in run_usage["steps"])],
+        [*extra_steps, *pipeline_steps] if prepend else [*pipeline_steps, *extra_steps],
         fast_model=run_usage.get("fast_model"),
     )
     # Fields build_run_usage() doesn't compute must survive the rebuild.
-    rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False)
-    rebuilt.refusal_count = run_usage.get("refusal_count", 0)
+    rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False) or fast_disabled
+    rebuilt.refusal_count = run_usage.get("refusal_count", 0) + extra_refusals
     rebuilt.effort = run_usage.get("effort")
     rebuilt.stopped_reason = run_usage.get("stopped_reason")
     guard = run_usage.get("coverage_guard")
@@ -1275,7 +1285,8 @@ async def _run_pipeline_inside_provider(
     duration = asyncio.get_running_loop().time() - start_time
 
     # Fold the pre-flight call's usage (if any) into the run's usage summary.
-    run_usage = _merge_pre_flight_usage(run_usage, pre_flight_step)
+    if pre_flight_step is not None:
+        run_usage = _merge_extra_usage(run_usage, [pre_flight_step], prepend=True)
 
     # Enrichment — generate attack trees + test cases for all threats when --enrich
     # is set and the output format is not sarif (SARIF has no enrichment schema).
@@ -1291,6 +1302,11 @@ async def _run_pipeline_inside_provider(
             ),
             model_id=model_id,
         )
+        # A fresh runner starts with the fast-model breaker reset; without this,
+        # a fast model the pipeline already gave up on is retried (and fails)
+        # on every enrichment call.
+        if run_usage and run_usage.get("fast_routing_disabled"):
+            runner.disable_fast_routing()
         threat_list = json_writer.threats.threats
         if not quiet:
             click.echo()
@@ -1343,6 +1359,17 @@ async def _run_pipeline_inside_provider(
                         f"  Warning: test cases failed for '{t.name}': {type(e).__name__}: {e}",
                         fg="yellow",
                     )
+
+        # The enrichment runner's calls never reach a COMPLETE event, so fold
+        # them in here. Its own refusal count covers fast-model refusals it
+        # retried on main; main-model refusals were re-raised and counted above.
+        enrich_steps, enrich_refusals, enrich_fast_disabled = runner.usage_steps()
+        run_usage = _merge_extra_usage(
+            run_usage,
+            enrich_steps,
+            extra_refusals=enrich_refusals + tree_refusals + suite_refusals,
+            fast_disabled=enrich_fast_disabled,
+        )
 
         if not quiet:
             click.secho(

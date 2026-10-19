@@ -375,6 +375,21 @@ class PipelineRunner:
         if isinstance(e, ProviderRefusalError):
             self._refusal_count += 1
 
+    def usage_steps(self) -> tuple[list[StepRun], int, bool]:
+        """Return (step runs, refusal count, fast routing disabled) for the
+        calls made on this runner so far — for callers that drive the
+        enrichment methods directly and never see a COMPLETE event's
+        RunUsage. Refusals counted here are only those this runner owned
+        (fast-model failures retried on main); a main-model refusal is
+        re-raised for the caller to count."""
+        return list(self._step_runs), self._refusal_count, self._fast_disabled
+
+    def disable_fast_routing(self) -> None:
+        """Trip the fast-model circuit breaker up front, e.g. to carry it over
+        from an earlier runner in the same run that already gave up on the
+        fast model."""
+        self._fast_disabled = True
+
     def _provider_for(self, step: PipelineStep) -> LLMProvider:
         """Return the provider instance routed for `step` by self._step_models."""
         if self._fast_disabled:
