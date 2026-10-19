@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store'
+import { writable, derived, get } from 'svelte/store'
 
 // ---------------------------------------------------------------------------
 // Auth state
@@ -70,7 +70,7 @@ export const abortRun = writable(null)
 
 /**
  * @type {import('svelte/store').Writable<{type: 'success'|'error', message: string}|null>}
- * Auto-dismiss success notifications after 4s in the component that sets them.
+ * Set through notify(), which dismisses it on a timer.
  */
 export const notification = writable(null)
 
@@ -86,16 +86,22 @@ export const lastEvent = derived(
   $e => $e.at(-1) ?? null
 )
 
+export const SUCCESS_TOAST_MS = 4000
+// Longer than a success so an error can be read; it can still be dismissed early.
+export const ERROR_TOAST_MS = 8000
+
 /**
- * Show a notification and auto-dismiss success messages after 4 seconds.
+ * Show a notification and dismiss it after SUCCESS_TOAST_MS or ERROR_TOAST_MS.
  * @param {'success'|'error'} type
  * @param {string} message
  */
 export function notify(type, message) {
-  notification.set({ type, message })
-  if (type === 'success') {
-    setTimeout(() => notification.set(null), 4000)
-  }
+  const toast = { type, message }
+  notification.set(toast)
+  // Clear only this toast: a newer one set meanwhile keeps its own full time.
+  setTimeout(() => {
+    if (get(notification) === toast) notification.set(null)
+  }, type === 'success' ? SUCCESS_TOAST_MS : ERROR_TOAST_MS)
 }
 
 // ---------------------------------------------------------------------------
@@ -183,4 +189,7 @@ export function clearAuthState() {
   projects.set([])
   currentProject.set(null)
   menuOpen.set(null)
+  // A toast from the old session must not greet the next user. Callers that
+  // report the expiry itself notify after this returns.
+  notification.set(null)
 }
