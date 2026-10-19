@@ -10,6 +10,7 @@ Tests marked xfail(strict=True) are bug-bash findings: the app is wrong and the
 test states the expected behaviour.
 """
 
+import importlib
 import logging
 
 import anthropic
@@ -27,6 +28,13 @@ from backend.security import source_key
 
 _LEAKY_KEY = "sk-ant-api03-bugbashLEAK-0123456789"
 _PASSWORD = "correct horse battery"  # noqa: S105 - test-only credential
+
+# anthropic 1.x moved its HTTP layer to httpx2 and rejects an httpx client or
+# transport at construction; 0.x needs httpx. pyproject only sets a floor, so
+# CI resolves 1.x while older dev envs still have 0.x.
+_SDK_HTTP = (
+    importlib.import_module("httpx2") if int(anthropic.__version__.split(".")[0]) >= 1 else httpx
+)
 
 
 @pytest.fixture
@@ -53,15 +61,15 @@ def _anthropic_echoing_the_key(monkeypatch, status: int) -> None:
     """Make every AsyncAnthropic client answer `status` with the key in the body."""
     real = anthropic.AsyncAnthropic
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request):
         key = request.headers.get("x-api-key", "")
-        return httpx.Response(
+        return _SDK_HTTP.Response(
             status,
             json={"type": "error", "error": {"type": "x", "message": f"bad key {key}"}},
         )
 
     def factory(*args, **kwargs):
-        kwargs["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        kwargs["http_client"] = _SDK_HTTP.AsyncClient(transport=_SDK_HTTP.MockTransport(handler))
         kwargs["max_retries"] = 0
         return real(*args, **kwargs)
 
