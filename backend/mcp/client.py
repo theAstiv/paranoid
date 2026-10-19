@@ -272,11 +272,12 @@ class MCPCodeExtractor:
                 "semantic_search_symbols",
                 {"query": query, "top_k": top_k},
             )
-            if isinstance(result, list):
-                return result
-            if isinstance(result, dict) and "results" in result:
-                return result["results"]
-            return []
+            if isinstance(result, dict):
+                # context-link sends {"results": null} when nothing matches (a Go nil slice).
+                result = result.get("results")
+            if not isinstance(result, list):
+                return []
+            return [item for item in result if isinstance(item, dict)]
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"Symbol search failed: {e}")
             return []
@@ -299,15 +300,20 @@ class MCPCodeExtractor:
             if not isinstance(result, dict):
                 return None
             # Unwrap context-link envelope: {results: [{data: {symbol: {...}, dependencies: [...]}}]}
-            results = result.get("results", [])
-            if not results:
+            results = result.get("results")
+            if not isinstance(results, list) or not results or not isinstance(results[0], dict):
                 return None
-            data = results[0].get("data", {})
-            symbol = data.get("symbol", {})
+            # Go nil slices/maps serialize as null, so every level may be None.
+            data = results[0].get("data")
+            data = data if isinstance(data, dict) else {}
+            symbol = data.get("symbol")
+            symbol = symbol if isinstance(symbol, dict) else {}
+            code = symbol.get("code_block")
+            dependencies = data.get("dependencies")
             return {
-                "code": symbol.get("code_block", ""),
+                "code": code if isinstance(code, str) else "",
                 "language": symbol.get("language"),
-                "dependencies": data.get("dependencies", []),
+                "dependencies": dependencies if isinstance(dependencies, list) else [],
             }
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"get_code_by_symbol({symbol_name}) failed: {e}")
@@ -330,10 +336,11 @@ class MCPCodeExtractor:
             if not isinstance(result, dict):
                 return None
             # Unwrap context-link envelope: {results: [{data: {file_path, language, symbols}}]}
-            results = result.get("results", [])
-            if not results:
+            results = result.get("results")
+            if not isinstance(results, list) or not results or not isinstance(results[0], dict):
                 return None
-            return results[0].get("data")
+            data = results[0].get("data")
+            return data if isinstance(data, dict) else None
         except (MCPToolError, MCPTimeoutError) as e:
             logger.warning(f"get_file_skeleton({file_path}) failed: {e}")
             return None
@@ -371,7 +378,8 @@ class MCPCodeExtractor:
         seen_sym_keys: set[tuple[str, str]] = set()
         symbols: list[dict[str, Any]] = []
         for query in [description, *supplemental_queries]:
-            for sym in await self.search_symbols(query, top_k=10):
+            # `or []`: a null search result must cost only that query, never the run.
+            for sym in await self.search_symbols(query, top_k=10) or []:
                 key = (sym.get("symbol_name", ""), sym.get("file_path", ""))
                 if key not in seen_sym_keys:
                     seen_sym_keys.add(key)
