@@ -4,11 +4,13 @@
 before this fix the API accepted a create into an archived project that no list then showed.
 The refusal is independent of role and of PARANOID_REQUIRE_AUTH."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.config import settings
-from backend.db import crud_projects
+from backend.db import crud, crud_projects
 from backend.main import app
 from backend.sources import manager as mgr
 from tests._rbac_world import World, build_world
@@ -91,3 +93,73 @@ async def test_a_non_member_still_gets_the_membership_403_not_a_leak_of_archived
         )
     assert r.status_code == 403
     assert "archived" not in r.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Bug-bash run order item 24: the BB-25 cases left out (same root cause as BB-50)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug-bash finding (item 24, BB-50 root cause): POST /api/models/{id}/run only "
+        "checks the editor role, which ignores is_archived, so a model in an archived "
+        "project can still be re-run (its data is cleared and rewritten)."
+    ),
+)
+async def test_running_a_model_in_an_archived_project_is_refused(test_db, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    await crud_projects.archive_project(w.project_a)
+
+    async def noop_runner(*args, **kwargs):
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+    with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
+        patch("backend.routes.models.run_pipeline_for_model", noop_runner),
+    ):
+        async with _client() as c:
+            r = await c.post(
+                f"/api/models/{w.model}/run",
+                data={"assumptions": "[]"},
+                headers=_bearer(w, "editor"),
+            )
+    assert r.status_code == 403, r.text
+    assert "archived" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug-bash finding (item 24, BB-50 root cause): PATCH /api/sources/{id} checks the "
+        "editor role on the target project but not is_archived, so a source can be moved "
+        "into an archived project, where no list shows it."
+    ),
+)
+async def test_moving_a_source_into_an_archived_project_is_refused(test_db, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    w = await build_world()
+    project_c = (await crud_projects.create_project("C", w.users["owner"]["id"]))["id"]
+    source_c = await crud.create_code_source(
+        name="repo-c",
+        git_url="https://github.com/acme/repo-c.git",
+        ref=None,
+        pat=None,
+        project_id=project_c,
+        created_by=w.users["owner"]["id"],
+    )
+    await crud_projects.archive_project(w.project_a)
+    async with _client() as c:
+        r = await c.patch(
+            f"/api/sources/{source_c}",
+            json={"project_id": w.project_a},
+            headers=_bearer(w, "owner"),
+        )
+    assert r.status_code == 403, r.text
+    assert "archived" in r.json()["detail"].lower()

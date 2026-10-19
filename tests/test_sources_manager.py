@@ -657,3 +657,68 @@ async def _create_source(
         ref=ref,
         pat=pat,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bug-bash §7.4 (run order item 23): a stored PAT never leaves in clear text
+# ---------------------------------------------------------------------------
+
+_REAL_LOOKING_PAT = "ghp_bugbashToken0123456789abcdefABCDEF"
+
+
+@pytest.mark.asyncio
+async def test_stored_pat_echoed_by_git_is_scrubbed_everywhere(test_db, monkeypatch, caplog):
+    """git echoes the authenticated URL on a failed clone; the PAT must not
+    reach the stored error, the SSE events or the log."""
+    source_id = await _create_source("https://github.com/o/r.git", None, _REAL_LOOKING_PAT)
+    events: list[mgr.SourceEvent] = []
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: events.append(ev))
+    stderr = (
+        f"fatal: unable to access 'https://x-access-token:{_REAL_LOOKING_PAT}@github.com/o/r.git/': "
+        "The requested URL returned error: 500\n"
+    ).encode()
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _make_exec_factory({"returncode": 128, "stderr": stderr})
+    )
+
+    with caplog.at_level("DEBUG"):
+        await mgr.run_clone_and_index(source_id)
+
+    from backend.db.crud import get_code_source
+
+    row = await get_code_source(source_id)
+    assert row["last_index_status"] == "failed"
+    outputs = [row.get("last_index_error") or "", caplog.text]
+    outputs += [f"{e.message} {e.error or ''}" for e in events]
+    for text in outputs:
+        assert _REAL_LOOKING_PAT not in text
+    assert "x-access-token:***@" in (row.get("last_index_error") or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug-bash finding (item 23): the PAT is put in the clone URL on git's command line, "
+        "so git writes it in clear text to the clone's .git/config (remote.origin.url; "
+        "checked with real git 10-19) and it shows in the process list while the clone runs. "
+        "docs/authentication.md says PATs are only stored encrypted."
+    ),
+)
+async def test_stored_pat_is_not_on_the_git_command_line(test_db, monkeypatch):
+    source_id = await _create_source("https://github.com/o/r.git", None, _REAL_LOOKING_PAT)
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
+    monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: None)
+    calls: list[tuple] = []
+    fake = _make_exec_factory({"returncode": 0}, {"returncode": 0, "stdout": b"abc123\n"})
+
+    async def recording_exec(*args, **kwargs):
+        calls.append(args)
+        return await fake(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", recording_exec)
+
+    await mgr.run_clone_and_index(source_id)
+
+    clone_argv = next(args for args in calls if "clone" in args)
+    assert not any(_REAL_LOOKING_PAT in str(arg) for arg in clone_argv)
