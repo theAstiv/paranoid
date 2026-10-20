@@ -356,11 +356,6 @@ async def test_pat_lifecycle_format_listing_last_used_and_revocation(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: POST /api/auth/tokens returns the stored row via SELECT *, so the "
-    "response carries token_hash next to the raw token",
-)
 async def test_pat_create_response_has_no_token_hash(test_db):
     user = await _make_user("alice")
     jwt = create_access_token(user["id"], "alice", False)
