@@ -10,6 +10,7 @@ Runs comprehensive checks before pushing a release to GitHub:
 - Version consistency
 """
 
+import os
 import platform
 import re
 import subprocess
@@ -50,32 +51,39 @@ def print_warning(msg: str) -> None:
 
 
 def run_command(
-    cmd: list[str], check: bool = True, capture: bool = False
+    cmd: list[str],
+    check: bool = True,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run a command and handle errors."""
+    """Run a command from the repo root.
+
+    With check=True (the default) a non-zero exit prints the output and raises
+    CalledProcessError, so the step stops the script; pass check=False to get
+    the result back and decide yourself. Output is decoded as UTF-8 with
+    replacement: the binary prints characters cp1252 can't decode.
+    """
     print(f"  Running: {' '.join(cmd)}")
 
-    kwargs = {
-        "check": check,
-        "cwd": Path(__file__).parent.parent,
-    }
-
+    kwargs: dict = {"cwd": Path(__file__).parent.parent, "env": env}
     if capture:
-        kwargs["capture_output"] = True
-        kwargs["text"] = True
+        kwargs.update(capture_output=True, text=True, encoding="utf-8", errors="replace")
 
-    try:
-        result = subprocess.run(cmd, check=False, **kwargs)
-        if result.returncode == 0:
-            print_success(f"Command succeeded: {cmd[0]}")
+    result = subprocess.run(cmd, check=False, **kwargs)
+    if result.returncode == 0:
+        print_success(f"Command succeeded: {cmd[0]}")
         return result
-    except subprocess.CalledProcessError as e:
-        print_error(f"Command failed with exit code {e.returncode}")
-        if capture and e.stdout:
-            print(e.stdout)
-        if capture and e.stderr:
-            print(e.stderr)
-        raise
+
+    print_error(f"Command failed with exit code {result.returncode}: {cmd[0]}")
+    if capture and result.stdout:
+        print(result.stdout)
+    if capture and result.stderr:
+        print(result.stderr)
+    if check:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, output=result.stdout, stderr=result.stderr
+        )
+    return result
 
 
 def check_version_consistency() -> str:
@@ -118,7 +126,18 @@ def run_tests() -> None:
     """Run the full test suite."""
     print_step("Step 2: Run Test Suite")
 
-    run_command([sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"])
+    # Same scope as CI: the E2E file needs live API keys and the context-link binary.
+    run_command(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/",
+            "-v",
+            "--tb=short",
+            "--ignore=tests/test_pipeline_e2e.py",
+        ]
+    )
     print_success("All tests passed")
 
 
@@ -343,6 +362,27 @@ def smoke_test_binary(binary_path: Path) -> None:
     result = run_command([str(binary_path), "--version"], capture=True)
     if not result.stdout.strip():
         print_warning("Binary --version returned no output (might need to implement)")
+
+    # --help alone missed BB-90 (numpy excluded, every run failed). One
+    # rules-only run: the provider points at a closed port, so no LLM call.
+    print("\n  Testing a rules-only run...")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = {
+            **os.environ,
+            "DEFAULT_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://127.0.0.1:9",
+            "DB_PATH": str(Path(tmpdir) / "p.db"),
+            "PYTHONIOENCODING": "utf-8",
+        }
+        result = run_command(
+            [str(binary_path), "run", "examples/stride-example-api-gateway.md", "-n", "1"],
+            capture=True,
+            env=env,
+        )
+    if "Total Threats" not in result.stdout:
+        print(result.stdout)
+        print_error("Rules-only run printed no threat count")
+        sys.exit(1)
 
     print_success("Binary smoke tests passed")
 

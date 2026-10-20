@@ -1761,18 +1761,35 @@ class PipelineRunner:
             # full technique catalog on first use, then each new threat) —
             # run it off the event loop so it can't block other requests,
             # SSE streams, or auth calls on this process while it runs.
-            cumulative_threats, techniques_matched = await asyncio.to_thread(
-                nodes.map_threat_techniques, cumulative_threats
-            )
-            yield PipelineEvent(
-                step=PipelineStep.MAP_TECHNIQUES,
-                status="completed",
-                message=f"Technique mapping: {techniques_matched} technique matches across {len(cumulative_threats.threats)} threats",
-                data={
-                    "threats_mapped": len(cumulative_threats.threats),
-                    "techniques_matched": techniques_matched,
-                },
-            )
+            try:
+                cumulative_threats, techniques_matched = await asyncio.to_thread(
+                    nodes.map_threat_techniques, cumulative_threats
+                )
+            except (ImportError, OSError) as exc:
+                # Optional enrichment: a missing embedding dependency (numpy in a
+                # PyInstaller build, BB-90) or an embedding model that can't be
+                # loaded (offline, no cache) skips it instead of failing the run.
+                logger.warning("Technique mapping skipped: %s", exc)
+                yield PipelineEvent(
+                    step=PipelineStep.MAP_TECHNIQUES,
+                    status="completed",
+                    message=f"Technique mapping skipped: {str(exc)[:200]}",
+                    data={
+                        "threats_mapped": 0,
+                        "techniques_matched": 0,
+                        "skipped": True,
+                    },
+                )
+            else:
+                yield PipelineEvent(
+                    step=PipelineStep.MAP_TECHNIQUES,
+                    status="completed",
+                    message=f"Technique mapping: {techniques_matched} technique matches across {len(cumulative_threats.threats)} threats",
+                    data={
+                        "threats_mapped": len(cumulative_threats.threats),
+                        "techniques_matched": techniques_matched,
+                    },
+                )
 
             # Step 5: Complete
             total_duration = (datetime.now() - self.start_time).total_seconds()
