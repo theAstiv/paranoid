@@ -1015,6 +1015,7 @@ async def run_pipeline(
                     max_iterations=max_iterations,
                     has_ai_components=has_ai_components,
                     temperature=temperature,
+                    similarity_threshold=settings.similarity_threshold,
                     dependency_manifest=dependency_manifest_dict,
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,

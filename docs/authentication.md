@@ -59,6 +59,8 @@ If `PARANOID_ADMIN_PASSWORD` is unset, the generated password is written to the 
 
 `PATCH /api/auth/me` — update display name or password.
 
+A password change (`current_password` + `password`) ends all of the user's other sessions: their refresh tokens stop working at once, and access tokens they already hold expire within their 15 minutes. The browser session that made the change (its refresh cookie) stays signed in; a caller using only a bearer token has no session to keep and logs in again with the new password. PATs are not affected; delete them separately if they may be exposed.
+
 ---
 
 ## JWT lifecycle
