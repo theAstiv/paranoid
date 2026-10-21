@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import aiosqlite
 
@@ -16,6 +18,38 @@ logger = logging.getLogger(__name__)
 # opening per-request connections (which would re-pay the sqlite-vec
 # extension load cost on every request).
 _READER_POOL_SIZE = 4
+
+
+class DatabaseDirectoryError(RuntimeError):
+    """The database's directory can't be created or written to."""
+
+
+def _ensure_db_directory(db_path: str) -> None:
+    """Create the database's parent directory and check it is writable.
+
+    Nothing else creates it: a CLI run from a wheel in an empty directory has
+    no ./data, and Docker creates a missing bind-mount source as root:root 755,
+    which the app user (uid 1000) can't write to. SQLite would then fail with a
+    bare "unable to open database file", so say what's wrong instead.
+    """
+    if db_path == ":memory:" or db_path.startswith("file:"):
+        return
+    directory = Path(db_path).resolve().parent
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    who = f"uid {uid}" if uid is not None else "the current user"
+    hint = (
+        f"{directory} is not writable by {who}; on Docker run "
+        f"`sudo chown 1000:1000 ./data` (see docs/getting-started.md), "
+        f"or set DB_PATH to a writable location"
+    )
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Cannot create the database directory: %s (%s)", hint, exc)
+        raise DatabaseDirectoryError(hint) from None
+    if not os.access(directory, os.W_OK):
+        logger.error("Cannot open the database: %s", hint)
+        raise DatabaseDirectoryError(hint)
 
 
 class ConnectionManager:
@@ -70,6 +104,7 @@ class ConnectionManager:
             return
 
         logger.info(f"Initializing connection to {db_path}")
+        _ensure_db_directory(db_path)
         self._db_path = db_path
         self._connection = await aiosqlite.connect(db_path)
         self._connection.row_factory = aiosqlite.Row

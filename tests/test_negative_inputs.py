@@ -352,11 +352,6 @@ async def test_empty_or_short_description_is_422(test_db, description):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: POST /api/models/ accepts a whitespace-only description (and title) "
-    "because min_length counts the spaces; the CLI rejects the same input",
-)
 @pytest.mark.parametrize(
     "body",
     [
@@ -373,11 +368,6 @@ async def test_whitespace_only_fields_are_422(test_db, body):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: PATCH /api/models/{id} has no length checks, so it can blank a "
-    "model's description that POST would have refused",
-)
 async def test_patch_cannot_blank_the_description(model_id):
     async with _client() as client:
         r = await client.patch(f"/api/models/{model_id}", json={"description": ""})

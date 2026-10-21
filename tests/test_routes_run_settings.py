@@ -15,14 +15,6 @@ from backend.main import app
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 25, carried from review): the web run route never passes "
-        "similarity_threshold, so web runs always dedupe at the 0.85 default; "
-        "SIMILARITY_THRESHOLD and the Settings PATCH only reach CLI runs."
-    ),
-)
 async def test_web_run_uses_the_configured_similarity_threshold(test_db, monkeypatch):
     monkeypatch.setattr(settings, "similarity_threshold", 0.6)
     model_id = await crud.create_threat_model(

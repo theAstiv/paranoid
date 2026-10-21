@@ -14,7 +14,7 @@ Output:
 """
 
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 # Collect all data files from packages that need them
 datas = []
@@ -22,6 +22,11 @@ datas += collect_data_files('anthropic')
 datas += collect_data_files('openai')
 datas += collect_data_files('pydantic')
 datas += collect_data_files('fastembed')
+# fastembed's runtime for technique mapping (map_techniques) and the rule engine's
+# vector fallback: ONNX Runtime's native libraries and the tokenizer.
+datas += collect_data_files('onnxruntime')
+datas += collect_data_files('tokenizers')
+binaries = collect_dynamic_libs('onnxruntime')
 
 # Include seeds directory for threat patterns
 datas += [('seeds', 'seeds')]
@@ -52,6 +57,9 @@ hiddenimports += [
     'aiofiles',
     'aiofiles.os',
     'aiofiles.threadpool',
+    'numpy',
+    'onnxruntime',
+    'tokenizers',
 ]
 
 block_cipher = None
@@ -59,7 +67,7 @@ block_cipher = None
 a = Analysis(
     ['cli/main.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -67,7 +75,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'matplotlib',
-        'numpy',
+        # Not numpy: fastembed needs it (BB-90, every run failed without it).
         'pandas',
         'tkinter',
         'scipy',
