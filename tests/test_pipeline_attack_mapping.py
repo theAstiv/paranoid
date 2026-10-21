@@ -120,3 +120,35 @@ class TestRunnerMapTechniquesWiring:
         # Pipeline must still complete despite the matching failure.
         assert events[-1].step == PipelineStep.COMPLETE
         assert events[-1].status == "completed"
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ImportError("No module named 'numpy'"),
+            OSError("Could not download BAAI/bge-small-en-v1.5"),
+        ],
+        ids=["missing-numpy", "model-unavailable"],
+    )
+    async def test_run_completes_when_technique_mapping_cannot_load(self, error):
+        """BB-90: a PyInstaller build without numpy failed every run at this step."""
+        provider = MockProvider(gap_call_threshold=1)
+        runner = PipelineRunner(
+            provider=provider, config=PipelineConfig(max_iterations=1), model_id="t"
+        )
+
+        with patch("backend.pipeline.runner.nodes.map_threat_techniques", side_effect=error):
+            events = [
+                e async for e in runner.run(description="A service", framework=Framework.STRIDE)
+            ]
+
+        map_done = [
+            e for e in events if e.step == PipelineStep.MAP_TECHNIQUES and e.status == "completed"
+        ]
+        assert len(map_done) == 1
+        assert map_done[0].message.startswith("Technique mapping skipped:")
+        assert map_done[0].data["techniques_matched"] == 0
+        complete = events[-1]
+        assert complete.step == PipelineStep.COMPLETE
+        assert complete.status == "completed"
+        assert complete.data["total_threats"] > 0
+        assert len(complete.data["threats"].threats) == complete.data["total_threats"]

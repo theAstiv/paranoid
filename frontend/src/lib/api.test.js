@@ -225,6 +225,20 @@ describe('login()', () => {
     expect(getStoredToken()).toBe('fresh-tok')
     expect(get(currentUser)).toEqual({ id: 'u1', username: 'a' })
   })
+
+  it('rejects a wrong password with the server detail and no refresh (BB-112)', async () => {
+    setStoredToken('old-tok')
+    window.location.hash = '#/login'
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Invalid credentials' }), { status: 401 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(login({ username: 'a', password: 'wrong' })).rejects.toThrow('Invalid credentials')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/login')
+  })
 })
 
 describe('getConfig()', () => {

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
-from backend.db.connection import ConnectionManager
+from backend.db.connection import ConnectionManager, DatabaseDirectoryError
 
 
 @pytest.fixture
@@ -112,18 +112,39 @@ async def test_initialize_twice_is_idempotent(clean_manager, mock_aiosqlite_conn
 
 
 @pytest.mark.asyncio
-async def test_initialize_with_nonexistent_parent_raises(clean_manager):
-    """Initialize with nonexistent parent directory raises (aiosqlite can't create dirs)."""
-    mock_conn = AsyncMock()
+async def test_initialize_creates_missing_parent_directories(clean_manager, tmp_path):
+    """BB-89/91: nothing else creates ./data (a wheel in an empty dir, a fresh clone)."""
+    db_path = tmp_path / "new" / "nested" / "paranoid.db"
 
-    async def connect_side_effect(path):
-        if "/nonexistent/" in path:
-            raise aiosqlite.OperationalError("unable to open database file")
-        return mock_conn
+    await clean_manager.initialize(str(db_path))
 
-    with patch("aiosqlite.connect", AsyncMock(side_effect=connect_side_effect)):
-        with pytest.raises(aiosqlite.OperationalError, match="unable to open database file"):
-            await clean_manager.initialize("/nonexistent/path/to/db.db")
+    assert db_path.is_file()
+    conn = await clean_manager.get()
+    async with conn.execute("SELECT COUNT(*) FROM schema_migrations") as cursor:
+        assert (await cursor.fetchone())[0] > 0
+
+
+@pytest.mark.asyncio
+async def test_initialize_in_an_unwritable_directory_says_what_to_fix(clean_manager, tmp_path):
+    """BB-89: a root-owned Docker bind mount gives a clear message, not OperationalError."""
+    connect = AsyncMock()
+    with (
+        patch("backend.db.connection.os.access", return_value=False),
+        patch("aiosqlite.connect", connect),
+        pytest.raises(DatabaseDirectoryError, match=r"not writable.*chown 1000:1000"),
+    ):
+        await clean_manager.initialize(str(tmp_path / "paranoid.db"))
+    connect.assert_not_called()
+    assert not clean_manager.is_initialized
+
+
+@pytest.mark.asyncio
+async def test_initialize_when_the_directory_cannot_be_created(clean_manager, tmp_path):
+    with (
+        patch("backend.db.connection.Path.mkdir", side_effect=PermissionError("denied")),
+        pytest.raises(DatabaseDirectoryError, match="not writable"),
+    ):
+        await clean_manager.initialize(str(tmp_path / "data" / "paranoid.db"))
 
 
 # Extension Loading Tests

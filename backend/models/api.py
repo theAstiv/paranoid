@@ -21,11 +21,23 @@ from backend.models.enums import (
 from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
 
 
+_MIN_DESCRIPTION_CHARS = 10
+
+
+def _require_visible_chars(value: str | None, field: str, minimum: int) -> str | None:
+    """min_length counts whitespace, so "   " would pass it; check the stripped
+    text instead. The value is stored as sent."""
+    if value is not None and len(value.strip()) < minimum:
+        msg = f"{field} must have at least {minimum} non-whitespace character(s)"
+        raise ValueError(msg)
+    return value
+
+
 class CreateModelRequest(BaseModel):
     """Request body for POST /api/models."""
 
     title: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(..., min_length=10)
+    description: str = Field(..., min_length=_MIN_DESCRIPTION_CHARS)
     framework: Framework = Framework.STRIDE
     provider: Provider | None = None  # None → project default → settings.default_provider
     model: str | None = None  # None → project default → settings.default_model
@@ -34,14 +46,35 @@ class CreateModelRequest(BaseModel):
     project_id: str | None = None  # None → Default Project sentinel
     scoring_method: ScoringMethod = "dread"
 
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, value: str) -> str:
+        return _require_visible_chars(value, "title", 1)
+
+    @field_validator("description")
+    @classmethod
+    def _description_not_blank(cls, value: str) -> str:
+        return _require_visible_chars(value, "description", _MIN_DESCRIPTION_CHARS)
+
 
 class UpdateModelRequest(BaseModel):
-    """Request body for PATCH /api/models/{model_id}."""
+    """Request body for PATCH /api/models/{model_id}. Omitted fields are unchanged;
+    a field that is sent gets the same checks as on create."""
 
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=200)
     description: str | None = None
     framework: Framework | None = None
     status: ModelStatus | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, value: str | None) -> str | None:
+        return _require_visible_chars(value, "title", 1)
+
+    @field_validator("description")
+    @classmethod
+    def _description_not_blank(cls, value: str | None) -> str | None:
+        return _require_visible_chars(value, "description", _MIN_DESCRIPTION_CHARS)
 
 
 class UpdateThreatRequest(BaseModel):

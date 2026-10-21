@@ -111,11 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(f"Default provider: {settings.default_provider}")
     logger.info(f"Default model: {settings.default_model}")
 
-    # Ensure data directory exists
-    data_dir = Path(settings.db_path).parent
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize database connection and schema
+    # Initialize database connection and schema (creates the data directory)
     await db.initialize(settings.db_path)
 
     # Hydrate API keys from the config table into settings, but only for

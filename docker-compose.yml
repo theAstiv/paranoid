@@ -18,7 +18,10 @@ services:
     # context-link index + fastembed pushes ~3GB on large monorepos.
     # mem_limit: 4g
     volumes:
-      # SQLite database — persisted across container restarts and upgrades
+      # SQLite database — persisted across container restarts and upgrades.
+      # Create ./data before the first `up` (`mkdir -p data`): a directory
+      # Docker creates is root-owned and the app (uid 1000) can't write to it.
+      # (A named volume would avoid this but moves existing data; post-Arsenal.)
       - ./data:/app/data
 
       # Optional: mount a context-link binary from the host instead of the

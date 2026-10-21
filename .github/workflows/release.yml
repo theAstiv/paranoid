@@ -79,11 +79,37 @@ jobs:
           ./dist/paranoid --help
           ./dist/paranoid version
 
+      # --help alone missed BB-90 (numpy excluded from the spec, so every run
+      # failed). Run once rules-only: the provider points at a closed port, so
+      # the pipeline falls back to the rule engine and makes no LLM call.
+      - name: Rules-only run (Linux/macOS)
+        if: runner.os != 'Windows'
+        env:
+          DEFAULT_PROVIDER: ollama
+          OLLAMA_BASE_URL: http://127.0.0.1:9
+          DB_PATH: ${{ runner.temp }}/smoke/p.db
+        shell: bash  # -o pipefail, so a failing run isn't hidden by tee
+        run: |
+          ./dist/paranoid run examples/stride-example-api-gateway.md -n 1 | tee smoke.log
+          grep -q "Total Threats" smoke.log
+
       - name: Test binary (Windows)
         if: runner.os == 'Windows'
         run: |
           dist\paranoid.exe --help
           dist\paranoid.exe version
+
+      - name: Rules-only run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:DEFAULT_PROVIDER = 'ollama'
+          $env:OLLAMA_BASE_URL = 'http://127.0.0.1:9'
+          $env:DB_PATH = Join-Path $env:RUNNER_TEMP 'smoke\p.db'
+          $env:PYTHONIOENCODING = 'utf-8'
+          dist\paranoid.exe run examples\stride-example-api-gateway.md -n 1 | Tee-Object -FilePath smoke.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path smoke.log -Pattern 'Total Threats' -Quiet)) { exit 1 }
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

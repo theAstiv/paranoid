@@ -38,6 +38,7 @@ paranoid run examples/stride-example-api-gateway.md
 ```bash
 git clone https://github.com/theAstiv/paranoid && cd paranoid
 cp .env.example .env        # add your API key
+mkdir -p data               # must be writable by uid 1000: `sudo chown 1000:1000 data` if yours differs
 docker compose up --build   # web UI at http://localhost:8000/app
 ```
 
