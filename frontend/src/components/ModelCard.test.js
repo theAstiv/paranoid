@@ -70,6 +70,13 @@ describe('ModelCard', () => {
     expect(anchor.getAttribute('href')).toBe('/models/model-1')
   })
 
+  it('shows the hover-only delete button on keyboard focus (BB-104)', () => {
+    render(ModelCard, { props: { model: baseModel, onDelete: vi.fn() } })
+    const button = screen.getByTitle('Delete threat model')
+    expect(button.className).toContain('focus-visible:opacity-100')
+    expect(button.className).toContain('group-focus-within/card:opacity-100')
+  })
+
   it('does not render a delete button when onDelete is not provided', () => {
     render(ModelCard, { props: { model: baseModel } })
     expect(screen.queryByTitle('Delete threat model')).toBeNull()

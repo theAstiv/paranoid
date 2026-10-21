@@ -366,10 +366,9 @@ describe('Results — header', () => {
     expect(subscribeToRun.mock.calls[0][0]).toBe('m1')
   })
 
-  // Bug-bash finding (item 25): Re-run posts `assumptions: []`, which the run route
-  // then saves over the model's stored assumptions (and it sends no dependency
-  // manifest, so the dependency scans are cleared too). `it.fails` turns red once fixed.
-  it.fails('re-runs with the model\'s stored assumptions', async () => {
+  // BB-82: Re-run used to post `assumptions: []`, which the run route saved over the
+  // model's stored assumptions. (It still sends no dependency manifest.)
+  it('re-runs with the model\'s stored assumptions', async () => {
     getModel.mockResolvedValue({ ...baseModel, assumptions: '["TLS terminates at the load balancer"]' })
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Re-run')).toBeInTheDocument())
@@ -378,6 +377,23 @@ describe('Results — header', () => {
 
     const fd = subscribeToRun.mock.calls[0][1]
     expect(JSON.parse(fd.get('assumptions'))).toEqual(['TLS terminates at the load balancer'])
+  })
+
+  it('leaves the AI flag out of a re-run so the server reuses the stored one (BB-82)', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Re-run')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Re-run'))
+
+    const fd = subscribeToRun.mock.calls[0][1]
+    expect(fd.has('has_ai_components')).toBe(false)
+    expect(JSON.parse(fd.get('assumptions'))).toEqual([])
+  })
+
+  it('says in its tooltip that a re-run drops the dependencies', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    const button = await screen.findByText('Re-run')
+    expect(button.closest('button').getAttribute('title')).toContain('dependencies need a new run')
   })
 
   it('blocks re-run and notifies when the configured provider has no API key', async () => {
@@ -608,6 +624,20 @@ describe('Results — threats and resource panels', () => {
     await waitFor(() =>
       expect(screen.getByText(/coverage was sufficient after iteration 1/)).toBeInTheDocument()
     )
+  })
+
+  it("says gap analysis didn't run on a rules-only run (BB-131)", async () => {
+    getModel.mockResolvedValue({
+      ...baseModel,
+      threats: [{ id: 't1', name: 'X' }],
+      gap_summaries: [],
+      usage: { stopped_reason: 'provider_offline' },
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() =>
+      expect(screen.getByText("Gap analysis didn't run (rule engine only).")).toBeInTheDocument()
+    )
+    expect(screen.queryByText(/coverage was sufficient/)).toBeNull()
   })
 
   it('renders per-iteration gap analysis when gap_summaries are present', async () => {

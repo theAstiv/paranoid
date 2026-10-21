@@ -50,7 +50,7 @@ async def _open_run(model_id: str):
     return await models_routes.run_pipeline(
         model_id,
         assumptions="[]",
-        has_ai_components=False,
+        has_ai_components="false",
         diagram=None,
         diagrams=None,
         diagram_names=None,

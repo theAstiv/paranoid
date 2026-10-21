@@ -28,6 +28,12 @@ describe('ResourceList', () => {
     onDelete = vi.fn().mockResolvedValue(undefined)
   })
 
+  it('shows the hover-only row buttons when the row has keyboard focus (BB-104)', () => {
+    render(ResourceList, { props: { items, fields, onCreate, onUpdate, onDelete } })
+    const actions = screen.getAllByTitle('Edit')[0].parentElement
+    expect(actions.className).toContain('group-focus-within:opacity-100')
+  })
+
   it('shows empty label when items is empty', () => {
     render(ResourceList, { props: { items: [], fields, onCreate, onUpdate, onDelete, emptyLabel: 'No assets yet.' } })
     expect(screen.getByText('No assets yet.')).toBeInTheDocument()
