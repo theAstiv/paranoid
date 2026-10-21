@@ -91,6 +91,7 @@
       on:click|preventDefault|stopPropagation={onDelete}
       title="Delete threat model"
       class="absolute top-3 right-8 p-1.5 rounded-panel text-c-faint2 opacity-0 group-hover/card:opacity-100
+             group-focus-within/card:opacity-100 focus-visible:opacity-100
              hover:bg-c-critical/10 hover:text-c-critical transition-all z-10"
     >
       <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">

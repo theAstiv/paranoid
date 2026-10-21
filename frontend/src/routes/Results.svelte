@@ -354,6 +354,19 @@
     }
   }
 
+  /** The model's assumptions as a list (the API returns the stored JSON string). */
+  function storedAssumptions(m) {
+    const raw = m?.assumptions
+    if (Array.isArray(raw)) return raw
+    if (typeof raw !== 'string' || !raw.trim()) return []
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
   function rerun() {
     const cfg = get(config)
     const provider = model?.provider ?? cfg?.default_provider
@@ -366,8 +379,10 @@
       return
     }
     const fd = new FormData()
-    fd.append('assumptions', '[]')
-    fd.append('has_ai_components', 'false')
+    // The run route saves what it's sent over the stored assumptions, so send
+    // them back (BB-82). has_ai_components is left out: the server reuses the
+    // flag the model's last run stored. Dependencies are not re-sent (yet).
+    fd.append('assumptions', JSON.stringify(storedAssumptions(model)))
     interrupted = false
     pipelineEvents.set([])
     pipelineRunning.set(true)
@@ -421,6 +436,7 @@
         {/if}
         {#if canEdit && (model.status === 'completed' || model.status === 'failed' || interrupted)}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
+            title="Re-run (description, assumptions and diagrams; dependencies need a new run)"
             class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
             Re-run
           </button>
@@ -731,7 +747,12 @@
         </div>
       {:else if $threats.length > 0}
         <div class="card p-4">
-          <p class="text-xs text-c-faint">Gap analysis: coverage was sufficient after iteration 1 — no gaps identified.</p>
+          <!-- A rules-only run (provider offline) never reached gap analysis (BB-131). -->
+          {#if runUsage?.stopped_reason === 'provider_offline'}
+            <p class="text-xs text-c-faint">Gap analysis didn't run (rule engine only).</p>
+          {:else}
+            <p class="text-xs text-c-faint">Gap analysis: coverage was sufficient after iteration 1 — no gaps identified.</p>
+          {/if}
         </div>
       {/if}
     {/if}

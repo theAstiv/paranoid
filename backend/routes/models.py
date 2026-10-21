@@ -777,7 +777,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
 async def run_pipeline(
     model_id: str,
     assumptions: Annotated[str, Form()] = "[]",
-    has_ai_components: Annotated[bool, Form()] = False,
+    has_ai_components: Annotated[bool | None, Form()] = None,
     diagram: Annotated[UploadFile | None, File()] = None,
     diagrams: Annotated[list[UploadFile] | None, File()] = None,
     diagram_names: Annotated[str | None, Form()] = None,
@@ -793,7 +793,9 @@ async def run_pipeline(
 
     Accepts multipart/form-data:
     - assumptions: JSON array string, e.g. '["TLS is enforced","Auth is OAuth2"]'
-    - has_ai_components: bool, enables MAESTRO alongside STRIDE
+    - has_ai_components: bool, enables MAESTRO alongside STRIDE. Omit it to
+      reuse the value the model's last run stored (false if none did), as
+      Results' Re-run does.
     - diagram: DEPRECATED — optional single PNG/JPG/Mermaid file upload, kept
       for one release. Merged first (position 0) if `diagrams` is also sent.
     - diagrams: optional 1-5 PNG/JPG/Mermaid file uploads. Replaces the
@@ -908,6 +910,8 @@ async def run_pipeline(
     provider = build_provider_from_record(record)
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
+    if has_ai_components is None:
+        has_ai_components = bool(record.get("has_ai_components"))
     max_iterations = record.get("iteration_count", settings.default_iterations)
     project = await crud_projects.get_project(record.get("project_id"))
     project_temperature = (project or {}).get("default_temperature")
@@ -920,7 +924,11 @@ async def run_pipeline(
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
         # Persist assumptions unconditionally — clears stale data from prior runs
-        await crud.update_threat_model(model_id, assumptions=json.dumps(parsed_assumptions))
+        await crud.update_threat_model(
+            model_id,
+            assumptions=json.dumps(parsed_assumptions),
+            has_ai_components=has_ai_components,
+        )
 
         skipped_stored_diagrams: list[dict[str, str]] = []
         if uploaded_diagrams:

@@ -1,12 +1,12 @@
 <svelte:options runes={true} />
 
 <script>
-  import { onMount } from 'svelte'
+  import { untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
   import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
   import { threats, currentModel, currentProject, currentUser, notify } from '../lib/stores.js'
-  import { canEditProject } from '../lib/utils.js'
+  import { canEditProject, dreadBand } from '../lib/utils.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
 
@@ -40,13 +40,10 @@
 
   const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 }
 
+  /** Same bands as the DREAD badges (BB-128: this used `> 6` for high). */
   function dreadSeverityOf(t) {
     const score = dreadScoreOf(t)
-    if (score == null) return null
-    if (score >= 8) return 'critical'
-    if (score > 6) return 'high'
-    if (score >= 4) return 'medium'
-    return 'low'
+    return score == null ? null : dreadBand(score)
   }
 
   function cvssSeverityOf(t) {
@@ -150,8 +147,20 @@
   }
 
   const pendingThreats = $derived($threats.filter(t => t.status === 'pending'))
-  const criticalHighPending = $derived(pendingThreats.filter(t => { const s = severityOf(t); return s === 'critical' || s === 'high' }))
-  const lowPending = $derived(pendingThreats.filter(t => severityOf(t) === 'low'))
+  // The bulk buttons act on what is on screen (BB-127): a filter that hides a
+  // threat keeps every bulk button away from it, and their counts match the list.
+  const shownPending = $derived(filtered.filter(t => t.status === 'pending'))
+  const criticalHighPending = $derived(shownPending.filter(t => { const s = severityOf(t); return s === 'critical' || s === 'high' }))
+  const lowPending = $derived(shownPending.filter(t => severityOf(t) === 'low'))
+  const filtersActive = $derived(
+    (filter !== 'all' && filter !== 'pending') ||
+    selectedCategories.length > 0 ||
+    sourceFilter !== 'all' ||
+    dreadMin > 0 || dreadMax < 10 ||
+    cvssMin > 0 || cvssMax < 10 ||
+    confMin > 0 || confMax < 100
+  )
+  const allLabel = $derived(filtersActive ? 'all shown' : 'all')
 
   // Selection is scoped to what is on screen by derivation rather than by a
   // cleanup pass, so a bulk action can never reach a threat the filter hides.
@@ -159,7 +168,34 @@
   const selectedCount = $derived(visibleSelected.length)
   const allFilteredSelected = $derived(filtered.length > 0 && visibleSelected.length === filtered.length)
 
-  onMount(async () => {
+  // Loads on mount and again when only the hash's model ID changes (BB-88):
+  // svelte-spa-router keeps this instance for #/models/A/review -> B/review.
+  let loadedId = null
+  $effect(() => {
+    const id = params.id
+    if (id && id !== loadedId) untrack(() => loadModel(id))
+  })
+
+  function resetForModel() {
+    filter = 'all'
+    sortBy = 'default'
+    sourceFilter = 'all'
+    selectedCategories = []
+    dreadMin = 0
+    dreadMax = 10
+    cvssMin = 0
+    cvssMax = 10
+    confMin = 0
+    confMax = 100
+    selectedIds.clear()
+    commentCounts = {}
+    threats.set([])
+  }
+
+  async function loadModel(id) {
+    if (loadedId !== null) resetForModel()
+    loadedId = id
+    loading = true
     try {
       // scoring_method (which badges to show per threat) lives on the model.
       // $currentModel is usually already set by whoever navigated here
@@ -169,28 +205,31 @@
       // .catch() here, not the outer try/catch: a failed model fetch must
       // not fail the whole threat list load — it only means the fallback
       // 'dread' gating applies instead of the real scoring_method.
-      const needsModel = !$currentModel || $currentModel.id !== params.id
+      const needsModel = !$currentModel || $currentModel.id !== id
       const [data, rawCounts] = await Promise.all([
-        getModelThreats(params.id),
-        getCommentCounts(params.id).catch(() => []),
+        getModelThreats(id),
+        getCommentCounts(id).catch(() => []),
         needsModel
-          ? getModel(params.id)
-              .then(m => currentModel.set(m))
+          ? getModel(id)
+              .then(m => { if (id === params.id) currentModel.set(m) })
               .catch(err => console.warn('Failed to load model for scoring_method gating:', err.message))
           : Promise.resolve(),
       ])
+      if (id !== params.id) return // another model was opened while this one loaded
       threats.set(data)
+      const counts = {}
       for (const row of rawCounts) {
         if (row.entity_type === 'threat' && row.entity_id) {
-          commentCounts[row.entity_id] = row.count
+          counts[row.entity_id] = row.count
         }
       }
+      commentCounts = counts
     } catch (err) {
-      notify('error', `Failed to load threats: ${err.message}`)
+      if (id === params.id) notify('error', `Failed to load threats: ${err.message}`)
     } finally {
-      loading = false
+      if (id === params.id) loading = false
     }
-  })
+  }
 
   const scoringMethod = $derived($currentModel?.scoring_method ?? 'dread')
   const showDread = $derived(scoringMethod === 'dread' || scoringMethod === 'both')
@@ -272,6 +311,8 @@
   async function bulkActionFor(threatList, status, label) {
     const ids = threatList.map(t => t.id)
     if (ids.length === 0) return
+    // A reject is the one people regret: confirm it with the count.
+    if (status === 'rejected' && !confirm(`Reject ${ids.length} threat${ids.length !== 1 ? 's' : ''}?`)) return
     bulkBusy = true
     const idSet = new Set(ids)
     const originals = threatList.map(t => ({ id: t.id, status: t.status }))
@@ -335,7 +376,7 @@
         class="text-xs font-medium text-c-accent hover:text-c-accent/80 transition-colors">
         {showFilters ? 'Hide filters' : 'Filters'}
       </button>
-      {#if canEdit && pendingThreats.length > 0}
+      {#if canEdit && shownPending.length > 0}
         {#if criticalHighPending.length > 0}
           <button type="button" onclick={() => bulkActionFor(criticalHighPending, 'approved', 'Approved Critical/High')} disabled={bulkBusy}
             class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors disabled:opacity-50">
@@ -348,13 +389,13 @@
             Reject Low ({lowPending.length})
           </button>
         {/if}
-        <button type="button" onclick={() => bulkActionFor(pendingThreats, 'approved', 'Approved all')} disabled={bulkBusy}
+        <button type="button" onclick={() => bulkActionFor(shownPending, 'approved', `Approved ${allLabel}`)} disabled={bulkBusy}
           class="text-xs font-medium text-c-green hover:text-c-green/80 transition-colors disabled:opacity-50">
-          Approve all ({pendingThreats.length})
+          Approve {allLabel} ({shownPending.length})
         </button>
-        <button type="button" onclick={() => bulkActionFor(pendingThreats, 'rejected', 'Rejected all')} disabled={bulkBusy}
+        <button type="button" onclick={() => bulkActionFor(shownPending, 'rejected', `Rejected ${allLabel}`)} disabled={bulkBusy}
           class="text-xs font-medium text-c-critical hover:text-c-critical/80 transition-colors disabled:opacity-50">
-          Reject all ({pendingThreats.length})
+          Reject {allLabel} ({shownPending.length})
         </button>
       {/if}
     </div>

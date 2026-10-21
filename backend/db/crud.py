@@ -115,6 +115,7 @@ async def update_threat_model(
     assumptions: str | None = None,
     usage_summary: str | None = None,
     scoring_method: str | None = None,
+    has_ai_components: bool | None = None,
 ) -> None:
     """
     Update threat model details. Only provided fields will be updated.
@@ -131,6 +132,7 @@ async def update_threat_model(
         usage_summary: JSON-encoded RunUsage dict (backend/models/usage.py) from
             the COMPLETE event's data.usage
         scoring_method: "dread" | "cvss" | "both"
+        has_ai_components: the run's "AI components" flag, reused by a re-run
     """
     update_fields = []
     params = []
@@ -170,6 +172,10 @@ async def update_threat_model(
     if scoring_method is not None:
         update_fields.append("scoring_method = ?")
         params.append(scoring_method)
+
+    if has_ai_components is not None:
+        update_fields.append("has_ai_components = ?")
+        params.append(int(has_ai_components))
 
     # Always update timestamp
     update_fields.append("updated_at = ?")
