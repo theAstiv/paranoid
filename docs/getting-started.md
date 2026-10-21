@@ -21,8 +21,11 @@ paranoid --version
 ```bash
 git clone https://github.com/theAstiv/paranoid && cd paranoid
 cp .env.example .env          # then edit .env with your API key
+mkdir -p data                 # the database lives here; create it before Docker does
 docker compose up --build     # first build: 5–10 min
 ```
+
+The container runs as uid 1000 and keeps its database in `./data` (a bind mount). If Docker creates a missing `./data` itself, it is owned by root and the app can't write to it (the log says `... is not writable by uid 1000`). Create it first, as above; if your own uid isn't 1000 (`id -u`), also run `sudo chown 1000:1000 data`. Docker Desktop on Windows and macOS doesn't enforce this, but a Linux host (or a clone inside WSL) does.
 
 Web UI: `http://localhost:8000/app`  
 API docs: `http://localhost:8000/docs`
