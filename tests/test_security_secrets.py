@@ -59,7 +59,10 @@ def _anthropic_echoing_the_key(monkeypatch, status: int) -> None:
     real = anthropic.AsyncAnthropic
 
     def handler(request):
-        key = request.headers.get("x-api-key", "")
+        # anthropic 2.x sends the key as `Authorization: Bearer`, older SDKs as x-api-key.
+        key = request.headers.get("x-api-key") or request.headers.get(
+            "authorization", ""
+        ).removeprefix("Bearer ")
         return _SDK_HTTP.Response(
             status,
             json={"type": "error", "error": {"type": "x", "message": f"bad key {key}"}},
