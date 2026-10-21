@@ -386,6 +386,8 @@ async def _export_model_async(
         output_path = output.with_suffix(ext)
     else:
         output_path = output
+    # As `run -o` does (BB-119): `-o out/new/dir/f.sarif` failed on the missing dirs.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Decode JSON-encoded list columns shared by markdown + PDF exports
     from backend.db.gap_utils import decode_gap_summaries
@@ -581,7 +583,14 @@ async def _review_threats_async(
     )
 
     if not yes:
-        click.confirm("  Proceed?", abort=True)
+        # Like delete/prune: "n" is a choice, not an error (BB-120: abort=True
+        # raised click.Abort, reported as "Unexpected error" with exit 1).
+        confirmed = click.confirm("  Proceed?", default=False)
+        if not confirmed:
+            click.echo()
+            click.secho("  Cancelled.", fg="yellow")
+            click.echo()
+            return
 
     threat_ids = [t["id"] for t in threats]
     updated = await crud.bulk_update_threat_status(threat_ids, status)

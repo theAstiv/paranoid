@@ -13,6 +13,7 @@ from cli.context import config_exists, load_config
 def version() -> None:
     """Show version, Python version, and dependency information.
 
+    \b
     Displays:
       - Paranoid CLI version
       - Python version

@@ -34,11 +34,13 @@ API docs: `http://localhost:8000/docs`
 
 Download from [GitHub Releases](https://github.com/theAstiv/paranoid/releases/latest):
 
-| Platform | File |
-|----------|------|
-| Linux x86_64 | `paranoid-linux-x64` |
-| macOS ARM64 | `paranoid-macos-arm64` |
-| Windows x64 | `paranoid-windows-x64.exe` |
+| Platform | File (next release) | File in v1.5.0 |
+|----------|------|------|
+| Linux x86_64 | `paranoid-linux-x64` | not included — use PyPI or Docker |
+| macOS ARM64 | `paranoid-macos-arm64` | `paranoid` |
+| Windows x64 | `paranoid-windows-x64.exe` | `paranoid.exe` |
+
+The v1.5.0 binaries predate the dependency engine, ATT&CK mapping and CVSS; for those, use PyPI from source or Docker until the next release.
 
 ## Configure
 
@@ -57,9 +59,15 @@ export DEFAULT_MODEL=claude-sonnet-4-20250514
 
 ## Run your first threat model
 
+The example files live in the repository, not in the PyPI package. From a clone, run them as shown; after `pip install`, download one first:
+
 ```bash
-# Use the built-in example
-paranoid run examples/stride-example-api-gateway.md
+curl -fsSLO https://raw.githubusercontent.com/theAstiv/paranoid/main/examples/stride-example-api-gateway.md
+```
+
+```bash
+# Use the built-in example (from a clone, or after the download above)
+paranoid run examples/stride-example-api-gateway.md   # or: paranoid run stride-example-api-gateway.md
 
 # Use your own description
 paranoid run my-system.md
@@ -84,8 +92,10 @@ THREAT MODEL COMPLETE
 Total Threats:      23
 Iterations:         3
 Duration:           92.4 seconds
-Output:             my-system_threats.json
+Saved as model 3f2a9c1e-…; export with 'paranoid models export 3f2a9c1e-… --format full'
 ```
+
+No file is written unless you pass `-o`: every run is saved to the local database (`DB_PATH`, default `./data/paranoid.db`). Write a file at run time with `-o threats.json` (or `--format sarif -o findings.sarif`), or export any saved run later with `paranoid models export <id> --format <simple|full|sarif|markdown|pdf>`.
 
 **Typical runtimes (3 iterations):**
 

@@ -22,12 +22,12 @@ paranoid run <description-file> [OPTIONS]
 | `--model` | config default | Model name (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
 | `--fast-model` | config default | Fast model for the active provider (overrides `FAST_MODEL` / `FAST_MODEL_OPENAI` / …). `--fast-model=` (the `=` form) runs every step on the main model — a bare `--fast-model ""` loses the empty value in PowerShell |
 | `--step-model` | provider defaults | `STEP=fast\|main`, repeatable (e.g. `--step-model extract_flows=main`). Replaces `STEP_MODELS` for this run; `generate_threats` and `gap_analysis` can never be `fast` |
-| `--iterations` | `3` | Pipeline iterations (1–15) |
-| `--framework` | auto-detect | Force `STRIDE` or `MAESTRO` |
+| `-n`, `--iterations` | config (`DEFAULT_ITERATIONS`, `3`) | Pipeline iterations (1–15) |
+| `--framework` | auto-detect | Force `stride` or `maestro` |
 | `--stride-maestro` | off | Run STRIDE + MAESTRO in parallel |
 | `--format` | `simple` | Output format: `simple` (JSON), `full` (JSON), `sarif`, `markdown`, `pdf` |
-| `-o`, `--output` | auto | Output file path (extension added automatically for markdown/pdf) |
-| `--diagram`, `-d` | — | Architecture diagram: `.png`, `.jpg` (vision), or `.mmd`/`.txt` (Mermaid text). Repeatable — up to 5 diagrams per run, each a named view (e.g. deployment, data flow) |
+| `-o`, `--output` | none | Write the result to this file (extension added for `sarif`/`markdown`/`pdf`). **Without `-o` no file is written**: every run is saved to the database, and the run prints `Saved as model <id>; export with 'paranoid models export <id> --format …'` |
+| `-d`, `--diagram` | — | Architecture diagram: `.png`, `.jpg` (vision), or `.mmd`/`.txt` (Mermaid text). Repeatable — up to 5 diagrams per run, each a named view (e.g. deployment, data flow) |
 | `--code` | — | Path to a local repo — grounded threats via context-link MCP |
 | `--enrich` | off | Generate attack trees + Gherkin test cases per threat after pipeline |
 | `--scoring-method` | `dread` | Risk scoring: `dread`, `cvss` (CVSS v3.1 base score instead) or `both`. The LLM proposes CVSS metrics; scores are always computed by the built-in calculator. Rule-engine and dependency threats get deterministic default vectors |
@@ -38,8 +38,8 @@ paranoid run <description-file> [OPTIONS]
 | `--seeded-assets` / `--seeded-flows` | — | JSON `AssetsList` / `FlowsList` to use instead of LLM extraction |
 | `--seeded-threats` | — | JSON file of known threats to seed into the catalog before iterating |
 | `--strict` | off | Exit code 2 if description has error-severity gaps (for CI gates) |
-| `--quiet` | off | Suppress real-time output, show only summary |
-| `--verbose` | off | Show detailed event data with complete models |
+| `-q`, `--quiet` | off | Suppress real-time output, show only summary |
+| `-v`, `--verbose` | off | Show detailed event data with complete models |
 
 **Output formats**
 
@@ -54,8 +54,9 @@ paranoid run <description-file> [OPTIONS]
 **Examples**
 
 ```bash
-# Basic run
+# Basic run (saved to the database; no file unless -o)
 paranoid run system.md
+paranoid run system.md -o threats.json
 
 # With diagram + code context + strict mode
 paranoid run system.md --diagram arch.png --code /path/to/repo --strict
@@ -125,18 +126,18 @@ Inspect and manage saved threat models.
 ### `paranoid models list`
 
 ```bash
-paranoid models list [--limit N] [--json]
+paranoid models list [-n N] [--json]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--limit N` | Max results (default: 20) |
+| `-n`, `--limit N` | Max results, 1–200 (default: 20) |
 | `--json` | Machine-readable JSON output |
 
 ### `paranoid models show`
 
 ```bash
-paranoid models show <model-id> [--no-mitigations] [--json]
+paranoid models show <model-id> [--mitigations | --no-mitigations] [--json]
 ```
 
 Partial IDs work — first 8 characters are enough.
@@ -147,29 +148,37 @@ Partial IDs work — first 8 characters are enough.
 paranoid models export <model-id> --format <fmt> [-o <output>] [--source-file <path>]
 ```
 
-Run once, export many times. Supported formats: `json`, `full`, `sarif`, `markdown`, `pdf`.
+Run once, export many times. Supported formats: `simple`, `full` (both JSON), `sarif`, `markdown`, `pdf`. Without `-o` the file is written to the current directory as `<id-prefix>_<format><ext>`; missing parent directories in an `-o` path are created.
 
 `--source-file` (SARIF only) sets the repo-relative path GitHub code scanning anchors non-dependency results to — point it at your description file in the repo. Without it, results fall back to a fixed anchor (`threat-model.md`) rather than a logical-only location, which GitHub's code-scanning upload rejects the whole run over.
 
 ### `paranoid models delete`
 
 ```bash
-paranoid models delete <model-id> [--yes]
+paranoid models delete <model-id> [-y]
 ```
 
-`--yes` skips the confirmation prompt (for scripting).
+`-y` / `--yes` skips the confirmation prompt (for scripting).
 
 ### `paranoid models prune`
 
 ```bash
-paranoid models prune [--older-than DAYS] [--status STATUS] [--yes]
+paranoid models prune [--older-than DAYS] [--status STATUS] [-y]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--older-than N` | Delete models older than N days |
-| `--status` | Filter by status: `failed`, `completed`, `pending` |
-| `--yes` | Skip confirmation |
+| `--older-than DAYS` | Delete models created more than DAYS days ago (minimum 1) |
+| `--status` | Filter by status: `pending`, `completed`, `failed` |
+| `-y`, `--yes` | Skip confirmation |
+
+### `paranoid models review`
+
+```bash
+paranoid models review <model-id> --status <status> [--source llm|rule_engine] [-y]
+```
+
+Set every matching threat's status (`approved`, `rejected`, `pending`, `mitigated`), optionally only threats from one source. Answering "n" at the prompt cancels with exit code 0.
 
 ---
 

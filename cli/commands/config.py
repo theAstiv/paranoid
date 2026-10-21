@@ -3,6 +3,8 @@
 Provides commands to initialize and view CLI configuration.
 """
 
+import copy
+
 import click
 
 from cli.context import (
@@ -26,11 +28,11 @@ def config() -> None:
 
     Examples:
 
-        \\b
+        \b
         # Interactive setup wizard
         paranoid config init
 
-        \\b
+        \b
         # Display current configuration
         paranoid config show
     """
@@ -51,11 +53,11 @@ def init(force: bool) -> None:
 
     Examples:
 
-        \\b
+        \b
         # First-time setup
         paranoid config init
 
-        \\b
+        \b
         # Reconfigure (overwrite existing)
         paranoid config init --force
     """
@@ -78,7 +80,7 @@ def init(force: bool) -> None:
         if config_exists():
             config = load_config()
         else:
-            config = DEFAULT_CONFIG.copy()
+            config = copy.deepcopy(DEFAULT_CONFIG)
 
         # Welcome message
         click.echo()
@@ -89,8 +91,12 @@ def init(force: bool) -> None:
         # Provider selection
         click.echo("Select your default LLM provider:")
         click.echo("  1. Anthropic (Claude)")
-        click.echo("  2. OpenAI (GPT-4)")
+        click.echo("  2. OpenAI (GPT-4.1)")
         click.echo("  3. Ollama (Local)")
+        click.echo()
+        # Bedrock needs AWS credentials, not an API key, so it is set up outside the wizard.
+        click.echo("  AWS Bedrock: set DEFAULT_PROVIDER=bedrock and AWS_REGION / AWS_PROFILE")
+        click.echo("  in the environment (see docs/configuration.md); no wizard step needed.")
         click.echo()
 
         provider_choice = click.prompt(
@@ -221,7 +227,7 @@ def show() -> None:
 
     Examples:
 
-        \\b
+        \b
         paranoid config show
     """
     try:
@@ -244,7 +250,7 @@ def show() -> None:
 
         # General settings
         click.secho("General Settings:", fg="cyan")
-        click.echo(f"  Version:          {config.get('version', 'unknown')}")
+        click.echo(f"  Config schema:    {config.get('version', 'unknown')}")
         click.echo(f"  Default Provider: {config.get('default_provider', 'not set')}")
         click.echo(f"  Default Model:    {config.get('default_model', 'not set')}")
         click.echo(f"  Default Iterations: {config.get('default_iterations', 'not set')}")
