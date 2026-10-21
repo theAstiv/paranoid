@@ -98,3 +98,22 @@ describe('ExportMenu', () => {
     expect(screen.queryByText('Markdown')).toBeNull()
   })
 })
+
+describe('ExportMenu — keyboard (BB-100)', () => {
+  it('reports its state with aria-expanded and closes on Escape, refocusing the button', async () => {
+    render(ExportMenu, { props: { modelId: 'model-1' } })
+    const button = screen.getByRole('button', { name: /Export/ })
+    expect(button.getAttribute('aria-haspopup')).toBe('menu')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+
+    await fireEvent.click(button)
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('Markdown')).toBeInTheDocument()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(screen.queryByText('Markdown')).toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(button)
+  })
+})

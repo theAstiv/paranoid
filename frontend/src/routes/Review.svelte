@@ -436,7 +436,7 @@
         <!-- Sort -->
         <div class="space-y-1">
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Sort by</p>
-          <select bind:value={sortBy}
+          <select bind:value={sortBy} aria-label="Sort by"
             class="text-xs bg-c-input border border-c-border rounded px-2 py-1 text-c-text focus:outline-none focus:border-c-accent">
             <option value="default">Default</option>
             {#if showDread}<option value="dread">DREAD score</option>{/if}
@@ -453,10 +453,10 @@
           <div class="space-y-1">
             <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">DREAD range</p>
             <div class="flex items-center gap-2">
-              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMin}
+              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMin} aria-label="DREAD minimum"
                 class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
               <span class="text-c-faint text-xs">–</span>
-              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMax}
+              <input type="number" min="0" max="10" step="0.5" bind:value={dreadMax} aria-label="DREAD maximum"
                 class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
             </div>
           </div>
@@ -466,10 +466,10 @@
         <div class="space-y-1">
           <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">Confidence %</p>
           <div class="flex items-center gap-2">
-            <input type="number" min="0" max="100" step="5" bind:value={confMin}
+            <input type="number" min="0" max="100" step="5" bind:value={confMin} aria-label="Confidence minimum (%)"
               class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
             <span class="text-c-faint text-xs">–</span>
-            <input type="number" min="0" max="100" step="5" bind:value={confMax}
+            <input type="number" min="0" max="100" step="5" bind:value={confMax} aria-label="Confidence maximum (%)"
               class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
           </div>
         </div>
@@ -479,10 +479,10 @@
           <div class="space-y-1">
             <p class="font-mono text-[10px] font-semibold text-c-muted uppercase tracking-wide">CVSS range</p>
             <div class="flex items-center gap-2">
-              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMin}
+              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMin} aria-label="CVSS minimum"
                 class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
               <span class="text-c-faint text-xs">–</span>
-              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMax}
+              <input type="number" min="0" max="10" step="0.1" bind:value={cvssMax} aria-label="CVSS maximum"
                 class="w-14 bg-c-input border border-c-border rounded px-1.5 py-0.5 text-xs font-mono text-c-text text-right focus:outline-none focus:border-c-accent" />
             </div>
           </div>

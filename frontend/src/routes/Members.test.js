@@ -199,3 +199,14 @@ describe('Members — owner (management)', () => {
     await waitFor(() => expect(screen.getByText('No pending invitations.')).toBeInTheDocument())
   })
 })
+
+describe('Members — accessible names (BB-101)', () => {
+  it('names the invite email and role fields', async () => {
+    currentProject.set({ id: 'p1', name: 'Proj', member_role: 'owner' })
+    currentUser.set({ id: 'owner-self', is_admin: false })
+    render(Members)
+    await waitFor(() => expect(screen.getByText('Invite member')).toBeInTheDocument())
+    expect(screen.getByRole('textbox', { name: 'Email of the person to invite' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Role for the invited person' })).toBeInTheDocument()
+  })
+})

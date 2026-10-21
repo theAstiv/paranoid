@@ -144,6 +144,9 @@
       config.set(updated)
       syncDraft(updated)
       notify('success', 'Settings saved')
+      // The Status card reads /health, which now reports the new provider and
+      // model (BB-134: it kept showing the old ones until a reload).
+      health = await getHealth().catch(() => health)
       for (const p of changedProviders) runTest(p, null)
     } catch (err) {
       notify('error', `Failed to save settings: ${err.message}`)

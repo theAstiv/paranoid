@@ -9,6 +9,16 @@
 
   let open = false
   let busy = false
+  /** @type {HTMLButtonElement} */
+  let trigger
+
+  // Escape closes the menu and returns focus to the Export button (BB-100).
+  function handleKeydown(event) {
+    if (event.key === 'Escape' && open) {
+      open = false
+      trigger?.focus()
+    }
+  }
 
   const formats = [
     { value: 'markdown', label: 'Markdown', ext: '.md', note: null },
@@ -30,9 +40,14 @@
   }
 </script>
 
+<svelte:window on:keydown={handleKeydown} />
+
 <div class="relative">
   <button
     type="button"
+    bind:this={trigger}
+    aria-haspopup="menu"
+    aria-expanded={open}
     on:click={() => open = !open}
     disabled={busy}
     class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed">

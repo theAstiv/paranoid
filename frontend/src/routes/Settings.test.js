@@ -408,3 +408,20 @@ describe('Settings — env var reference and McpConfig', () => {
     await waitFor(() => expect(screen.getByText('Code Context via context-link')).toBeInTheDocument())
   })
 })
+
+describe('Settings — status card after Save (BB-134)', () => {
+  it('re-reads /health after a successful Save so the card shows the new provider', async () => {
+    updateConfig.mockResolvedValue({ ...baseConfig, default_provider: 'openai', default_model: 'gpt-4.1' })
+    render(Settings)
+    await waitFor(() => expect(screen.getByText('claude-sonnet-4')).toBeInTheDocument())
+    getHealth.mockResolvedValue({ status: 'healthy', version: '1.0.0', provider: 'openai', model: 'gpt-4.1' })
+
+    await fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(getHealth).toHaveBeenCalledTimes(2))
+    // The Status card's values are <dd>s; the provider name also appears in the select.
+    await waitFor(() => expect(screen.getByText('openai', { selector: 'dd' })).toBeInTheDocument())
+    expect(screen.getByText('gpt-4.1', { selector: 'dd' })).toBeInTheDocument()
+    expect(screen.queryByText('claude-sonnet-4', { selector: 'dd' })).toBeNull()
+  })
+})
