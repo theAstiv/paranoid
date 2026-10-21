@@ -401,7 +401,11 @@ def _parse_step_models(
     "-o",
     type=click.Path(path_type=Path),
     default=None,
-    help="Output JSON file path (default: {input_basename}_threats.json)",
+    help=(
+        "Write the result to this file (extension added for sarif/markdown/pdf). "
+        "Without -o no file is written; every run is saved to the database, "
+        "export it later with 'paranoid models export'."
+    ),
 )
 @click.option(
     "--format",
@@ -601,6 +605,7 @@ def run(
 
     INPUT_FILE: Path to .txt or .md file with system description
 
+    \b
     Auto-detects framework from XML tags:
       - <component_description> -> STRIDE
       - <maestro_component_description> -> MAESTRO
@@ -1548,3 +1553,10 @@ async def _run_pipeline_inside_provider(
         )
         if model_db_id and not quiet:
             click.echo(f"  Database ID: {model_db_id}")
+        if model_db_id and output_path is None:
+            # BB-94: no -o means no file; say where the result went instead.
+            hint_format = "full" if output_format == "simple" else output_format
+            click.echo(
+                f"Saved as model {model_db_id}; export with "
+                f"'paranoid models export {model_db_id} --format {hint_format}'"
+            )

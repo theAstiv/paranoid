@@ -153,6 +153,17 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      # The release takes each file's basename, and the Linux and macOS builds
+      # are both named `paranoid`: one overwrote the other (v1.5.0 shipped no
+      # Linux binary, BB-115). Give every binary its platform name.
+      - name: Name binaries by platform
+        run: |
+          mkdir -p binaries
+          cp paranoid-linux-x64/paranoid binaries/paranoid-linux-x64
+          cp paranoid-macos-arm64/paranoid binaries/paranoid-macos-arm64
+          cp paranoid-windows-x64.exe/paranoid.exe binaries/paranoid-windows-x64.exe
+          chmod +x binaries/paranoid-linux-x64 binaries/paranoid-macos-arm64
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -162,7 +173,5 @@ jobs:
           prerelease: false
           files: |
             python-package/*
-            paranoid-linux-x64/paranoid
-            paranoid-macos-arm64/paranoid
-            paranoid-windows-x64.exe/paranoid.exe
+            binaries/*
           token: ${{ secrets.GITHUB_TOKEN }}

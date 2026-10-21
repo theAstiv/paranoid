@@ -3,6 +3,7 @@
 Loads and saves configuration to ~/.paranoid/config.json with secure permissions.
 """
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -17,8 +18,8 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Default model names — single source of truth for the CLI layer
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_OPENAI_MODEL = "gpt-4"
-DEFAULT_OLLAMA_MODEL = "llama3"
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -44,7 +45,7 @@ def load_config() -> dict[str, Any]:
         ConfigurationError: If config file exists but is invalid
     """
     if not CONFIG_FILE.exists():
-        return DEFAULT_CONFIG.copy()
+        return copy.deepcopy(DEFAULT_CONFIG)
 
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -53,9 +54,9 @@ def load_config() -> dict[str, Any]:
         # Validate version
         if "version" not in config:
             raise ConfigurationError(
-                "Invalid configuration file: missing version field\\n\\n"
-                f"Config file: {CONFIG_FILE}\\n\\n"
-                "Run the setup wizard to recreate:\\n"
+                "Invalid configuration file: missing version field\n\n"
+                f"Config file: {CONFIG_FILE}\n\n"
+                "Run the setup wizard to recreate:\n"
                 "  paranoid config init"
             )
 
@@ -63,15 +64,15 @@ def load_config() -> dict[str, Any]:
 
     except json.JSONDecodeError as e:
         raise ConfigurationError(
-            f"Failed to parse configuration file\\n\\n"
-            f"Config file: {CONFIG_FILE}\\n"
-            f"Error: {e}\\n\\n"
-            "Run the setup wizard to recreate:\\n"
+            f"Failed to parse configuration file\n\n"
+            f"Config file: {CONFIG_FILE}\n"
+            f"Error: {e}\n\n"
+            "Run the setup wizard to recreate:\n"
             "  paranoid config init"
         ) from e
     except Exception as e:
         raise ConfigurationError(
-            f"Failed to load configuration file\\n\\nConfig file: {CONFIG_FILE}\\nError: {e}"
+            f"Failed to load configuration file\n\nConfig file: {CONFIG_FILE}\nError: {e}"
         ) from e
 
 
@@ -102,7 +103,7 @@ def save_config(config: dict[str, Any]) -> None:
 
     except Exception as e:
         raise ConfigurationError(
-            f"Failed to save configuration file\\n\\nConfig file: {CONFIG_FILE}\\nError: {e}"
+            f"Failed to save configuration file\n\nConfig file: {CONFIG_FILE}\nError: {e}"
         ) from e
 
 
@@ -122,8 +123,8 @@ def get_provider_config(provider: str) -> dict[str, Any]:
 
     if provider not in config.get("providers", {}):
         raise ConfigurationError(
-            f"Provider '{provider}' not configured\\n\\n"
-            f"Run the setup wizard to configure:\\n"
+            f"Provider '{provider}' not configured\n\n"
+            f"Run the setup wizard to configure:\n"
             f"  paranoid config init"
         )
 

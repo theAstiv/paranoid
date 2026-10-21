@@ -30,8 +30,9 @@ pip install paranoid-cli
 # Configure
 paranoid config init
 
-# Run
-paranoid run examples/stride-example-api-gateway.md
+# Run (the examples are in the repo, not the package: clone it, or fetch one)
+curl -fsSLO https://raw.githubusercontent.com/theAstiv/paranoid/main/examples/stride-example-api-gateway.md
+paranoid run stride-example-api-gateway.md   # saved to the database; add -o threats.json for a file
 ```
 
 **Docker (web UI + API):**
@@ -118,8 +119,8 @@ paranoid deps scan chalk@5.3.0 --source both
 # shows the delta computing cleanly against real registry data.)
 paranoid deps diff ua-parser-js 0.7.28 0.7.30 --source both
 
-# Sweep every dependency in a package.json / package-lock.json
-paranoid deps scan-manifest package.json
+# Sweep every direct dependency in your project's package.json
+paranoid deps scan-manifest path/to/your-project/package.json
 ```
 
 Requires [Semgrep](https://semgrep.dev) on `PATH` (`pip install semgrep`) —
@@ -192,10 +193,12 @@ is meant to be triaged by a person, not acted on automatically.
 
 | Platform | PyPI | Docker | Binary |
 |----------|------|--------|--------|
-| Ubuntu 20.04+ | ✓ | ✓ | ✓ |
+| Ubuntu 20.04+ | ✓ | ✓ | next release¹ |
 | macOS 11+ ARM64 | ✓ | ✓ | ✓ |
 | Windows 10+ | ✓ | ✓ | ✓ |
-| WSL2 | ✓ | ✓ | ✓ |
+| WSL2 | ✓ | ✓ | next release¹ |
+
+¹ The v1.5.0 release has no Linux binary (its macOS build overwrote it: both were named `paranoid`). Release assets are now named by platform; until the next release, use PyPI or Docker on Linux.
 
 Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
