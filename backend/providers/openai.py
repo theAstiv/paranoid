@@ -9,6 +9,7 @@ from openai import (
     APITimeoutError,
     AuthenticationError,
     BadRequestError,
+    ContentFilterFinishReasonError,
     LengthFinishReasonError,
     OpenAI,
     RateLimitError,
@@ -21,6 +22,7 @@ from backend.providers.base import (
     ProviderAuthError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderRefusalError,
     map_sdk_api_error,
     run_sync_in_executor,
 )
@@ -275,11 +277,25 @@ class OpenAIProvider:
                     parsed = response.choices[0].message.parsed
                     if parsed is None:
                         refusal = response.choices[0].message.refusal
+                        if refusal:
+                            raise ProviderRefusalError(
+                                provider=self.name,
+                                message=f"Model refused to answer: {refusal}",
+                            )
                         raise ProviderError(
                             provider=self.name,
-                            message=f"Model returned no parsed output (refusal: {refusal})",
+                            message="Model returned no parsed output",
                         )
                     return parsed
+
+                except ContentFilterFinishReasonError as e:
+                    # An OpenAIError, not an APIError: without this it escapes every
+                    # `except ProviderError` fallback as a raw SDK exception.
+                    raise ProviderRefusalError(
+                        provider=self.name,
+                        message="Response blocked by OpenAI's content filter",
+                        original_error=e,
+                    ) from e
 
                 except LengthFinishReasonError as e:
                     # Model hit its output token ceiling before completing JSON.

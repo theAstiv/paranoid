@@ -152,27 +152,31 @@ class UpdateConfigRequest(BaseModel):
     openai_api_key: SecretStr | None = None
 
 
-async def _apply_key_update(provider: str, secret: SecretStr | None) -> None:
-    """Apply a PATCH to one API-key field. Assumes caller already verified the
-    field was explicitly present in the request body."""
+def _check_key_update(provider: str, secret: SecretStr | None) -> None:
+    """400 if a PATCH to one API-key field would be refused. Runs for every key
+    field before anything is applied, so a refused request changes nothing."""
     env_name, key = API_KEY_FIELDS[provider]
     if os.environ.get(env_name, "").strip():
         raise HTTPException(
             status_code=400,
             detail=f"{key} is managed by environment variable {env_name}",
         )
-    if secret is None:
-        await delete_config_value(key)
-        setattr(settings, key, "")
-        return
-    # Strip so a user who pastes "sk-ant-xyz\n" (or pure whitespace) gets
-    # a clean stored value; whitespace-only is semantically empty.
-    raw = secret.get_secret_value().strip()
-    if raw == "":
+    if secret is not None and secret.get_secret_value().strip() == "":
         raise HTTPException(
             status_code=400,
             detail=f"Use null to clear {key}, or omit the field for no change.",
         )
+
+
+async def _apply_key_update(provider: str, secret: SecretStr | None) -> None:
+    """Apply a PATCH to one API-key field already passed by _check_key_update."""
+    _, key = API_KEY_FIELDS[provider]
+    if secret is None:
+        await delete_config_value(key)
+        setattr(settings, key, "")
+        return
+    # Strip so a user who pastes "sk-ant-xyz\n" gets a clean stored value.
+    raw = secret.get_secret_value().strip()
     await set_config_value(key, raw, encrypted=True)
     setattr(settings, key, raw)
 
@@ -224,6 +228,13 @@ async def update_config(
     # non-empty string (upsert). The is-not-None pattern used for other
     # fields collapses omitted and null into one branch.
     fields_set = body.model_fields_set
+    key_updates = [
+        (provider, getattr(body, key))
+        for provider, (_, key) in API_KEY_FIELDS.items()
+        if key in fields_set
+    ]
+    for provider, secret in key_updates:
+        _check_key_update(provider, secret)
 
     if body.default_provider is not None:
         settings.default_provider = body.default_provider  # type: ignore[assignment]
@@ -244,10 +255,8 @@ async def update_config(
     if body.aws_profile is not None:
         settings.aws_profile = body.aws_profile
 
-    if "anthropic_api_key" in fields_set:
-        await _apply_key_update("anthropic", body.anthropic_api_key)
-    if "openai_api_key" in fields_set:
-        await _apply_key_update("openai", body.openai_api_key)
+    for provider, secret in key_updates:
+        await _apply_key_update(provider, secret)
 
     return JSONResponse(content=await _config_payload())
 

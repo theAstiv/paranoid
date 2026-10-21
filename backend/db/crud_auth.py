@@ -168,6 +168,20 @@ async def revoke_all_user_sessions(user_id: str) -> None:
     await conn.commit()
 
 
+async def delete_other_user_sessions(user_id: str, keep_jti: str | None) -> None:
+    """End every session for a user except *keep_jti* (all of them when None).
+
+    Deleted rather than revoked: a revoked jti presented again trips refresh's
+    reuse detection, which would also end the session being kept.
+    """
+    conn = await db.get()
+    await conn.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND id IS NOT ?",
+        (user_id, keep_jti),
+    )
+    await conn.commit()
+
+
 async def cleanup_expired_sessions() -> None:
     """Delete sessions that are expired or already revoked.
 

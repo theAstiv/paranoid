@@ -48,6 +48,7 @@ from backend.db.crud_auth import create_pat as db_create_pat
 from backend.db.crud_auth import (
     create_session,
     create_user,
+    delete_other_user_sessions,
     delete_pat,
     get_pat_by_id,
     get_session,
@@ -349,9 +350,13 @@ async def get_me(
 @router.patch("/me")
 async def update_me(
     body: UpdateMeRequest,
+    request: Request,
     user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> dict[str, Any]:
-    """Update display_name and/or password for the current user."""
+    """Update display_name and/or password for the current user.
+
+    A password change ends the user's other refresh sessions.
+    """
     if body.password is not None:
         # Require current_password when changing password
         if not body.current_password:
@@ -378,6 +383,19 @@ async def update_me(
         (new_display_name, new_password_hash, now, user["id"]),
     )
     await conn.commit()
+
+    if body.password is not None:
+        # A new password must end sessions opened with the old one (e.g. on a lost
+        # laptop). The browser session making this request (its refresh cookie) is
+        # kept; a bearer-only caller keeps nothing and logs in again.
+        keep_jti = None
+        raw_refresh = request.cookies.get(_REFRESH_COOKIE)
+        if raw_refresh:
+            jti = parse_refresh_token_jti(raw_refresh)
+            session = await get_session(jti) if jti else None
+            if session is not None and session["user_id"] == user["id"]:
+                keep_jti = jti
+        await delete_other_user_sessions(user["id"], keep_jti)
 
     refreshed = await get_user_by_id(user["id"])
     return _user_response(refreshed or user)
@@ -417,7 +435,9 @@ async def create_pat_token(
         expires_at=expires_at,
     )
 
-    return {**pat, "token": raw_token}
+    # The stored row carries token_hash; never hand it out, even with the raw token.
+    metadata = {k: v for k, v in pat.items() if k != "token_hash"}
+    return {**metadata, "token": raw_token}
 
 
 @router.get("/tokens")
