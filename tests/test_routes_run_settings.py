@@ -96,3 +96,35 @@ async def test_the_ai_flag_defaults_to_false_when_never_stored(test_db):
     )
     captured = await _post_run(model_id, {"assumptions": "[]"})
     assert captured["has_ai_components"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_false_overrides_the_stored_ai_flag(test_db):
+    model_id = await crud.create_threat_model(
+        title="t",
+        description="An LLM agent that calls internal tools.",
+        provider="ollama",
+        model="llama3.1:8b",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    await _post_run(model_id, {"assumptions": "[]", "has_ai_components": "true"})
+    captured = await _post_run(model_id, {"assumptions": "[]", "has_ai_components": "false"})
+    assert captured["has_ai_components"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_ai_flag_is_422(test_db):
+    model_id = await crud.create_threat_model(
+        title="t",
+        description="A web API with a Postgres database.",
+        provider="ollama",
+        model="llama3.1:8b",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post(
+            f"/api/models/{model_id}/run", data={"assumptions": "[]", "has_ai_components": "maybe"}
+        )
+    assert r.status_code == 422
