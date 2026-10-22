@@ -540,6 +540,19 @@ describe('Results — opened from the wizard mid-run', () => {
     expect(get(currentModel).status).toBe('completed')
   })
 
+  it('follows the run when the model is still pending on arrival', async () => {
+    pipelineRunning.set(true)
+    getModel.mockResolvedValueOnce({ ...baseModel, status: 'pending' }).mockResolvedValue(finished)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await screen.findByText('Payments Service')
+
+    pipelineRunning.set(false)
+
+    await screen.findByText('Missing auth coverage')
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(getModel).toHaveBeenCalledTimes(2)
+  })
+
   it('reloads at once when the run ended while the model was loading', async () => {
     pipelineRunning.set(true)
     let releaseFirst
