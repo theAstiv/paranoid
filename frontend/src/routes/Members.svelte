@@ -128,11 +128,12 @@
         <div class="flex gap-3 flex-wrap sm:flex-nowrap">
           <input
             type="email"
+            aria-label="Email of the person to invite"
             bind:value={inviteEmail}
             placeholder="colleague@example.com"
             class="flex-1 field text-sm min-w-0"
           />
-          <select bind:value={inviteRole} class="field text-sm w-28 flex-shrink-0">
+          <select bind:value={inviteRole} aria-label="Role for the invited person" class="field text-sm w-28 flex-shrink-0">
             <option value="viewer">Viewer</option>
             <option value="editor">Editor</option>
             <option value="owner">Owner</option>
@@ -181,6 +182,7 @@
               <!-- Role: editable select for non-owners when canManage, else chip -->
               {#if canManage && member.role !== 'owner'}
                 <select
+                  aria-label={`Role for ${member.display_name || member.username}`}
                   value={member.role}
                   on:change={(e) => handleRoleChange(member, e.target.value)}
                   class="field text-xs py-1 w-28 flex-shrink-0"

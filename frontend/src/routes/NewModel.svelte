@@ -268,6 +268,8 @@
   }
 
   async function handleSubmit() {
+    // Text typed but never "Add"ed is still meant (BB-123); addAssumption ignores blank.
+    addAssumption()
     submitting = true
     try {
       const model = await createModel({
@@ -323,12 +325,13 @@
 </script>
 
 <div class="max-w-[880px] mx-auto">
+  <h1 class="text-xl font-semibold text-c-text mb-4">New Threat Model</h1>
   <Wizard
     steps={STEPS}
     currentStep={step}
     {nextDisabled}
     {submitting}
-    onnext={() => step++}
+    onnext={() => { addAssumption(); step++ }}
     onback={() => step--}
     onsubmit={handleSubmit}
   >
@@ -341,12 +344,12 @@
             class="{INPUT_CLASS}" />
           <p class="mt-1 font-mono text-[11px] text-c-faint">{title.length}/200</p>
         </div>
-        <div>
-          <p class="{LABEL_CLASS}">Threat framework</p>
+        <fieldset>
+          <legend class="{LABEL_CLASS}">Threat framework</legend>
           <div class="flex gap-4 mt-2">
             {#each ['STRIDE', 'MAESTRO', 'HYBRID'] as fw}
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" bind:group={framework} value={fw}
+                <input type="radio" name="framework" bind:group={framework} value={fw}
                   class="text-c-accent focus:ring-c-accent" />
                 <span class="text-sm font-medium text-c-text2">{fw}</span>
               </label>
@@ -361,7 +364,7 @@
               Both STRIDE and MAESTRO — full coverage for systems with AI/ML components.
             {/if}
           </p>
-        </div>
+        </fieldset>
       </div>
 
     {:else if step === 1}
@@ -472,7 +475,7 @@
           <div class="space-y-2">
             <label class="flex items-center gap-3 p-3 rounded-panel border cursor-pointer transition-colors
               {selectedCodeSourceId === null ? 'border-c-accent/40 bg-c-accent/5' : 'border-c-border hover:bg-c-well'}">
-              <input type="radio" bind:group={selectedCodeSourceId} value={null} class="text-c-accent" />
+              <input type="radio" name="code-source" bind:group={selectedCodeSourceId} value={null} class="text-c-accent" />
               <div>
                 <p class="text-sm font-medium text-c-text2">None</p>
                 <p class="text-xs text-c-faint">No code context</p>
@@ -481,7 +484,7 @@
             {#each readySources as src (src.id)}
               <label class="flex items-center gap-3 p-3 rounded-panel border cursor-pointer transition-colors
                 {selectedCodeSourceId === src.id ? 'border-c-accent/40 bg-c-accent/5' : 'border-c-border hover:bg-c-well'}">
-                <input type="radio" bind:group={selectedCodeSourceId} value={src.id} class="text-c-accent" />
+                <input type="radio" name="code-source" bind:group={selectedCodeSourceId} value={src.id} class="text-c-accent" />
                 <div class="min-w-0">
                   <p class="text-sm font-medium text-c-text2">{src.name}</p>
                   <p class="font-mono text-xs text-c-faint truncate">{src.git_url}{src.ref ? ` @ ${src.ref}` : ''}</p>
@@ -544,19 +547,19 @@
         {/if}
 
         {#if manifestFile || (selectedCodeSourceId && useCodeSourceManifest)}
-          <div>
-            <p class="{LABEL_CLASS}">Analysis depth</p>
+          <fieldset>
+            <legend class="{LABEL_CLASS}">Analysis depth</legend>
             <div class="flex gap-4 mt-1">
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" bind:group={depsSourceMode} value="npm" class="text-c-accent focus:ring-c-accent" />
+                <input type="radio" name="deps-source" bind:group={depsSourceMode} value="npm" class="text-c-accent focus:ring-c-accent" />
                 <span class="text-sm font-medium text-c-text2">Fast (npm)</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" bind:group={depsSourceMode} value="both" class="text-c-accent focus:ring-c-accent" />
+                <input type="radio" name="deps-source" bind:group={depsSourceMode} value="both" class="text-c-accent focus:ring-c-accent" />
                 <span class="text-sm font-medium text-c-text2">Deep (npm + GitHub drift)</span>
               </label>
             </div>
-          </div>
+          </fieldset>
         {/if}
         {/if}
       </div>
@@ -567,6 +570,7 @@
         <p class="text-xs text-c-muted">List existing security controls, scope boundaries, and focus areas.</p>
         <div class="flex gap-2">
           <input type="text" bind:value={newAssumption}
+            aria-label="New assumption"
             placeholder="e.g. TLS 1.3 enforced on all client connections"
             on:keydown={e => e.key === 'Enter' && addAssumption()}
             class="flex-1 field" />

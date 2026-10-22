@@ -72,3 +72,14 @@ describe('Login', () => {
     expect(container.querySelector('a[href="#/register"]')).not.toBeNull()
   })
 })
+
+describe('Login — error is announced (BB-102)', () => {
+  it('shows a failed login as an alert', async () => {
+    login.mockRejectedValue(new Error('Invalid credentials'))
+    render(Login)
+    await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'admin' } })
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'wrong' } })
+    await fireEvent.click(screen.getByText('Sign in →'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid credentials')
+  })
+})

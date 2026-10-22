@@ -215,3 +215,28 @@ describe('Comments — deleting', () => {
     expect(screen.getByText('First comment')).toBeInTheDocument()
   })
 })
+
+describe('Comments — accessibility (BB-101, BB-100)', () => {
+  it('names the comment and reply boxes', async () => {
+    listComments.mockResolvedValue([rootComment])
+    render(Comments, { props: { modelId: 'm1' } })
+    await waitFor(() => expect(screen.getByText('First comment')).toBeInTheDocument())
+
+    expect(screen.getByRole('textbox', { name: 'Add a comment' })).toBeInTheDocument()
+    await fireEvent.click(screen.getByText('Reply'))
+    expect(screen.getByRole('textbox', { name: 'Write a reply' })).toBeInTheDocument()
+  })
+
+  it('Escape in the reply box closes it and refocuses the Reply button', async () => {
+    listComments.mockResolvedValue([rootComment])
+    render(Comments, { props: { modelId: 'm1' } })
+    await waitFor(() => expect(screen.getByText('First comment')).toBeInTheDocument())
+    const replyButton = screen.getByText('Reply')
+    await fireEvent.click(replyButton)
+
+    await fireEvent.keyDown(screen.getByRole('textbox', { name: 'Write a reply' }), { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Write a reply' })).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(replyButton))
+  })
+})

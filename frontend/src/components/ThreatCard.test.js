@@ -445,3 +445,10 @@ describe('ThreatCard', () => {
     expect(await screen.findByText('7.0')).toBeInTheDocument()
   })
 })
+
+describe('ThreatCard — accessible names (BB-101)', () => {
+  it('names the selection checkbox after the threat', () => {
+    render(ThreatCard, { props: { threat: baseThreat, selectable: true } })
+    expect(screen.getByRole('checkbox', { name: 'Select threat: SQL Injection via login form' })).toBeInTheDocument()
+  })
+})

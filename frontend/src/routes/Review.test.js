@@ -952,3 +952,21 @@ describe('Review — model switch (BB-88)', () => {
     await screen.findByText('B approved')
   })
 })
+
+describe('Review — accessible names (BB-101)', () => {
+  it('names the sort select and every range input', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    getModelThreats.mockResolvedValue([threat()])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('SQL Injection')).toBeInTheDocument())
+    await fireEvent.click(screen.getByText('Filters'))
+
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toBeInTheDocument()
+    for (const name of [
+      'DREAD minimum', 'DREAD maximum', 'CVSS minimum', 'CVSS maximum',
+      'Confidence minimum (%)', 'Confidence maximum (%)',
+    ]) {
+      expect(screen.getByRole('spinbutton', { name })).toBeInTheDocument()
+    }
+  })
+})

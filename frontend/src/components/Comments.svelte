@@ -1,7 +1,7 @@
 <svelte:options runes={true} />
 
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { currentUser, notify } from '../lib/stores.js'
   import { listComments, createComment, updateComment, deleteComment } from '../lib/api.js'
   import { initials, relativeTime } from '../lib/utils.js'
@@ -31,6 +31,14 @@
   let editDraft = $state('')
   let replyToId = $state(null)
   let replyDraft = $state('')
+
+  /** Escape in the reply box closes it and refocuses its Reply button (BB-100). */
+  async function cancelReply(commentId) {
+    replyToId = null
+    replyDraft = ''
+    await tick()
+    document.querySelector(`[data-reply-trigger="${commentId}"]`)?.focus()
+  }
 
   // One level of nesting only — replies never get their own reply/edit UI
   // for grandchildren, matching the comments.parent_id self-reference model.
@@ -158,7 +166,7 @@
               </div>
 
               {#if editingId === comment.id}
-                <textarea bind:value={editDraft} rows="2" class="field text-sm w-full mt-1.5"></textarea>
+                <textarea bind:value={editDraft} rows="2" aria-label="Edit comment" class="field text-sm w-full mt-1.5"></textarea>
                 <div class="flex gap-2 mt-1.5">
                   <button type="button" onclick={() => saveEdit(comment)} class="btn-primary text-xs px-3 py-1">Save</button>
                   <button type="button" onclick={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
@@ -166,7 +174,7 @@
               {:else}
                 <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{comment.body}</p>
                 <div class="flex items-center gap-3 mt-1">
-                  <button type="button" onclick={() => { replyToId = replyToId === comment.id ? null : comment.id; replyDraft = '' }} class="text-xs text-c-faint hover:text-c-accent transition-colors">
+                  <button type="button" data-reply-trigger={comment.id} onclick={() => { replyToId = replyToId === comment.id ? null : comment.id; replyDraft = '' }} class="text-xs text-c-faint hover:text-c-accent transition-colors">
                     Reply
                   </button>
                   {#if isAuthor(comment)}
@@ -178,7 +186,8 @@
 
               {#if replyToId === comment.id}
                 <div class="flex gap-2 mt-2">
-                  <textarea bind:value={replyDraft} rows="2" placeholder="Write a reply…" class="field text-sm flex-1"></textarea>
+                  <textarea bind:value={replyDraft} rows="2" placeholder="Write a reply…" aria-label="Write a reply"
+                    onkeydown={e => { if (e.key === 'Escape') cancelReply(comment.id) }} class="field text-sm flex-1"></textarea>
                   <button type="button" onclick={() => postReply(comment.id)} class="btn-primary text-xs px-3 self-start">Reply</button>
                 </div>
               {/if}
@@ -197,7 +206,7 @@
                     </div>
 
                     {#if editingId === reply.id}
-                      <textarea bind:value={editDraft} rows="2" class="field text-sm w-full mt-1.5"></textarea>
+                      <textarea bind:value={editDraft} rows="2" aria-label="Edit comment" class="field text-sm w-full mt-1.5"></textarea>
                       <div class="flex gap-2 mt-1.5">
                         <button type="button" onclick={() => saveEdit(reply)} class="btn-primary text-xs px-3 py-1">Save</button>
                         <button type="button" onclick={() => editingId = null} class="btn-ghost text-xs px-3 py-1">Cancel</button>
@@ -221,7 +230,7 @@
     {/if}
 
     <div class="flex gap-2 mt-5 pt-4 border-t border-c-border">
-      <textarea bind:value={draft} rows="2" placeholder="Add a comment…" class="field text-sm flex-1"></textarea>
+      <textarea bind:value={draft} rows="2" placeholder="Add a comment…" aria-label="Add a comment" class="field text-sm flex-1"></textarea>
       <button type="button" onclick={post} disabled={posting || !draft.trim()} class="btn-primary text-sm px-4 self-start disabled:opacity-50">
         Post
       </button>
