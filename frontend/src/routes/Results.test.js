@@ -517,6 +517,62 @@ describe('Results — opened mid-run', () => {
   })
 })
 
+// BB-137: the wizard owns the run's stream and navigates here mid-run, so this
+// page has to reload the model itself when pipelineRunning goes false.
+describe('Results — opened from the wizard mid-run', () => {
+  const running = { ...baseModel, status: 'in_progress' }
+  const finished = { ...baseModel, gap_summaries: ['Missing auth coverage'] }
+
+  it('reloads the model and its panels when the run ends', async () => {
+    pipelineRunning.set(true)
+    getModel.mockResolvedValueOnce(running).mockResolvedValue(finished)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await screen.findByText('Payments Service')
+    expect(followRun).not.toHaveBeenCalled()
+    expect(getModelAssets).not.toHaveBeenCalled()
+
+    pipelineRunning.set(false)
+
+    await screen.findByText('Missing auth coverage')
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(getModel).toHaveBeenCalledTimes(2)
+    expect(getModelAssets).toHaveBeenCalledWith('m1')
+    expect(get(currentModel).status).toBe('completed')
+  })
+
+  it('reloads at once when the run ended while the model was loading', async () => {
+    pipelineRunning.set(true)
+    let releaseFirst
+    getModel
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = () => resolve(running) }))
+      .mockResolvedValue(finished)
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(getModel).toHaveBeenCalledTimes(1))
+
+    pipelineRunning.set(false)
+    releaseFirst()
+
+    await screen.findByText('Missing auth coverage')
+    expect(getModel).toHaveBeenCalledTimes(2)
+    expect(getModelAssets).toHaveBeenCalledWith('m1')
+  })
+
+  it('does not reload a model that was navigated away from', async () => {
+    pipelineRunning.set(true)
+    const other = { ...baseModel, id: 'm2', title: 'Search Service' }
+    getModel.mockImplementation(async (id) => (id === 'm2' ? other : running))
+    const { rerender } = render(Results, { props: { params: { id: 'm1' } } })
+    await screen.findByText('Payments Service')
+
+    await rerender({ params: { id: 'm2' } })
+    await screen.findByText('Search Service')
+    pipelineRunning.set(false)
+    await tick()
+
+    expect(getModel.mock.calls.map(([id]) => id)).toEqual(['m1', 'm2'])
+  })
+})
+
 describe('Results — status workflow actions', () => {
   it('shows "Send to review" for a completed model and transitions on click', async () => {
     const updated = { ...baseModel, status: 'in_review' }

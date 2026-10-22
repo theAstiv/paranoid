@@ -109,10 +109,33 @@
 
   let _wasRunning = false
   $: {
-    if (_wasRunning && !$pipelineRunning && model?.id === params.id) {
-      loadSupplementary()
-    }
+    if (_wasRunning && !$pipelineRunning && model?.id === params.id) onRunEnded()
     _wasRunning = $pipelineRunning
+  }
+
+  // The wizard's run streams into the shared stores and nothing on this page
+  // owns that stream, so the model loaded mid-run is stale when it ends (BB-137).
+  let followingWizardRun = false
+
+  function onRunEnded() {
+    if (!followingWizardRun) { loadSupplementary(); return }
+    followingWizardRun = false
+    refreshModel(params.id)
+  }
+
+  async function refreshModel(id) {
+    let refreshed
+    try {
+      refreshed = await getModel(id)
+    } catch (err) {
+      if (id === params.id) notify('error', `Failed to reload model: ${err.message}`)
+      return
+    }
+    if (id !== params.id) return
+    model = refreshed
+    currentModel.set(refreshed)
+    threats.set(refreshed.threats ?? [])
+    await loadSupplementary()
   }
 
   // Load on mount and whenever only the route param changes: #/models/a -> #/models/b
@@ -124,6 +147,7 @@
     stopPolling()
     if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
     interrupted = false
+    followingWizardRun = false
     model = null
     loading = true
     assets = []; flows = []; trustBoundaries = []
@@ -155,7 +179,12 @@
     currentModel.set(model)
     threats.set(model.threats ?? [])
     loading = false
-    if (alreadyRunning) return
+    if (alreadyRunning) {
+      // The run may have ended while the model was loading.
+      if (!get(pipelineRunning)) await refreshModel(id)
+      else if (model.status === 'in_progress') followingWizardRun = true
+      return
+    }
     if (model.status === 'in_progress') {
       attachToRun(id)
     } else if (model.status === 'completed' || model.status === 'failed') {
