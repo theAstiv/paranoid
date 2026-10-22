@@ -22,6 +22,13 @@ from backend.providers import (
 # Test fixtures
 
 
+@pytest.fixture(autouse=True)
+def _sdk_takes_temperature(monkeypatch):
+    """These tests describe an SDK whose `messages.create` takes `temperature`.
+    CI installs the newest SDK, which doesn't (BB-142); that path has its own tests."""
+    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", True)
+
+
 @pytest.fixture
 def sample_asset_list():
     """Sample AssetsList for structured output tests."""
@@ -185,6 +192,50 @@ async def test_anthropic_temperature_deprecated_retries_without_it():
         await provider.generate(prompt="Hello again")
         third_call_kwargs = mock_client.messages.create.call_args_list[-1].kwargs
         assert "temperature" not in third_call_kwargs
+
+
+# BB-142: anthropic 2.1 removed `temperature` from `messages.create` (passing it
+# raised TypeError on every call), so it goes in the request body there.
+
+
+@pytest.mark.asyncio
+async def test_anthropic_sends_temperature_in_the_body_when_the_sdk_takes_no_argument(
+    monkeypatch,
+):
+    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", False)
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = _text_response("ok")
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k", effort="medium")
+
+        assert await provider.generate(prompt="Hello", temperature=0.3) == "ok"
+
+    kwargs = mock_client.messages.create.call_args.kwargs
+    assert "temperature" not in kwargs
+    assert kwargs["extra_body"] == {"temperature": 0.3, "output_config": {"effort": "medium"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_body_temperature_rejected_by_the_model_is_dropped(monkeypatch):
+    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", False)
+    with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [
+            _anthropic_400("`temperature` is deprecated for this model."),
+            _text_response("ok"),
+            _text_response("ok again"),
+        ]
+        mock_anthropic.return_value = mock_client
+        provider = AnthropicProvider(model="claude-sonnet-5-5", api_key="k")
+
+        assert await provider.generate(prompt="Hello") == "ok"
+        assert await provider.generate(prompt="Hello again") == "ok again"
+
+    calls = [c.kwargs for c in mock_client.messages.create.call_args_list]
+    assert calls[0]["extra_body"] == {"temperature": 0.0}
+    assert "extra_body" not in calls[1]
+    assert "extra_body" not in calls[2]
 
 
 # BB-32: two calls in flight on one provider both carry `temperature`; the first
