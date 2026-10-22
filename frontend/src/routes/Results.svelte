@@ -181,8 +181,10 @@
     loading = false
     if (alreadyRunning) {
       // The run may have ended while the model was loading.
+      // The wizard opens this page as soon as it starts the run, so the
+      // model is often still `pending` here (BB-137, seen in the dry run).
       if (!get(pipelineRunning)) await refreshModel(id)
-      else if (model.status === 'in_progress') followingWizardRun = true
+      else if (['pending', 'in_progress'].includes(model.status)) followingWizardRun = true
       return
     }
     if (model.status === 'in_progress') {
