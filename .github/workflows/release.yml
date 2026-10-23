@@ -164,11 +164,22 @@ jobs:
           cp paranoid-windows-x64.exe/paranoid.exe binaries/paranoid-windows-x64.exe
           chmod +x binaries/paranoid-linux-x64 binaries/paranoid-macos-arm64
 
+      # The whole CHANGELOG is close to GitHub's 125,000-character limit on a
+      # release body; publish only this version's section.
+      - name: Extract this version's release notes
+        run: |
+          awk -v ver="${{ steps.get_version.outputs.VERSION }}" '
+            index($0, "## [" ver "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: Paranoid v${{ steps.get_version.outputs.VERSION }}
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
           draft: false
           prerelease: false
           files: |
