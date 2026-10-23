@@ -34,13 +34,13 @@ API docs: `http://localhost:8000/docs`
 
 Download from [GitHub Releases](https://github.com/theAstiv/paranoid/releases/latest):
 
-| Platform | File (next release) | File in v1.5.0 |
-|----------|------|------|
-| Linux x86_64 | `paranoid-linux-x64` | not included — use PyPI or Docker |
-| macOS ARM64 | `paranoid-macos-arm64` | `paranoid` |
-| Windows x64 | `paranoid-windows-x64.exe` | `paranoid.exe` |
+| Platform | File (v1.6.0+) |
+|----------|------|
+| Linux x86_64 | `paranoid-linux-x64` |
+| macOS ARM64 | `paranoid-macos-arm64` |
+| Windows x64 | `paranoid-windows-x64.exe` |
 
-The v1.5.0 binaries predate the dependency engine, ATT&CK mapping and CVSS; for those, use PyPI from source or Docker until the next release.
+The binary doesn't include Semgrep: the dependency engine needs it on `PATH` (`pip install semgrep`), or use Docker. v1.5.0 named its binaries `paranoid` / `paranoid.exe` and had no Linux build.
 
 ## Configure
 

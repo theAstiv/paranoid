@@ -21,7 +21,7 @@ jobs:
 
       - name: Run Paranoid threat modeling
         id: paranoid
-        uses: theAstiv/paranoid@v1.5.0
+        uses: theAstiv/paranoid@v1.6.0
         with:
           description-file: docs/system-description.md
           provider: anthropic
@@ -73,7 +73,7 @@ The threat count is printed as a `::notice::` in the job log. The action uses a 
 ### Strict mode — fail on description gaps
 
 ```yaml
-- uses: theAstiv/paranoid@v1.5.0
+- uses: theAstiv/paranoid@v1.6.0
   with:
     description-file: docs/system-description.md
     provider: anthropic
@@ -88,7 +88,7 @@ Exit code 2 if the description is missing critical sections (auth, trust boundar
 For high-security workflows where any new threat in a PR is a blocker:
 
 ```yaml
-- uses: theAstiv/paranoid@v1.5.0
+- uses: theAstiv/paranoid@v1.6.0
   with:
     description-file: docs/system-description.md
     provider: anthropic
@@ -99,7 +99,7 @@ For high-security workflows where any new threat in a PR is a blocker:
 ### MAESTRO for AI/ML systems
 
 ```yaml
-- uses: theAstiv/paranoid@v1.5.0
+- uses: theAstiv/paranoid@v1.6.0
   with:
     description-file: docs/ml-system.md
     provider: anthropic
@@ -111,7 +111,7 @@ For high-security workflows where any new threat in a PR is a blocker:
 ### OpenAI provider
 
 ```yaml
-- uses: theAstiv/paranoid@v1.5.0
+- uses: theAstiv/paranoid@v1.6.0
   with:
     description-file: docs/system.md
     provider: openai
@@ -169,6 +169,6 @@ Results appear in the **Security** tab under **Code scanning alerts** and as **P
 Pin to a specific version tag to avoid unexpected behavior changes:
 
 ```yaml
-uses: theAstiv/paranoid@v1.5.0   # pinned
+uses: theAstiv/paranoid@v1.6.0   # pinned
 uses: theAstiv/paranoid@v1        # floating major (receives non-breaking updates)
 ```

@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 1.5.1-dev
+## [Unreleased]
+
+## [1.6.0] - 2026-10-23
+
+### Highlights
+
+- **Dependency capability engine** — give a run an npm `package.json` (and lockfile) and Paranoid scans each dependency's published tarball with Semgrep for what it can do (network, process, filesystem, install hooks, …), compares a release with the previous one, and checks the npm tarball against its GitHub source. The findings become dependency threats in the same model. Needs [Semgrep](https://semgrep.dev) on `PATH`; the Docker image includes it
+- **Multi-user collaboration** — local accounts, projects with owner/editor/viewer roles, personal access tokens, comments, assignees and notifications. Off by default: with `PARANOID_REQUIRE_AUTH=false` every caller is the instance admin, as before
+- **More providers and cheaper runs** — AWS Bedrock as a provider, per-step model routing (the extraction steps on a fast model; threat generation and gap analysis always on the main model) and effort settings for Claude and GPT models
+- **Richer threat models** — several diagrams per model with ELK-rendered Mermaid, ATT&CK/ATLAS techniques on every threat, CVSS v3.1 next to DREAD, and MAESTRO applicability with a coverage check
+- **CI** — GitHub Action inputs for dependencies, scoring, the fast model and Bedrock; SARIF results carry physical locations and `security-severity`; release binaries are named per platform, so the Linux binary is published (v1.5.0 had none)
+
+**Upgrading:** database migrations `0002`–`0015` run automatically at startup; back up `data/paranoid.db` first. The dependency engine needs Semgrep installed separately when you install from PyPI.
 
 ### Added
 
@@ -40,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Direct Anthropic runs failed on every call with `anthropic` 2.1.0** (BB-142) — the SDK removed `temperature` from `messages.create`, so passing it raised `TypeError` before any request was made, and a fresh install picks up 2.1.0. When the installed SDK has no `temperature` argument it now goes in the request body; a model that rejects it is still handled by the existing retry. `examples/arsenal-deps/inject_incident.py` also uses the configured provider now instead of always direct Anthropic (BB-143)
+- **Results stayed "In Progress" after a run started from the wizard** (BB-137) — the wizard opens Results while its run is going, and nothing reloaded the model when the run ended, so the status, the gap-analysis line and the panels stayed stale until you navigated away. Results now reloads the model and its panels when that run ends
 - **Offline dependency runs failed even with a warm cache** (BB-85) — `analyze_package()` always asked the npm registry first, so with no network every package failed with `ConnectError` before the source cache was consulted. Each successful online resolve (including the GitHub ref, for `--deps-source both`) is now saved to `DEPS_CACHE_DIR/_resolved/<name>@<version>.json`, written atomically and kept out of the source cache directories that Semgrep scans and drift compares. When the registry can't be reached (connection, timeout or proxy error; never a 404 or an unknown version), that metadata is used and a complete cache entry serves the rest with no network: the GitHub ref isn't re-probed when its source is already cached. Without cached metadata the package fails with "registry unreachable and no cached metadata". `PackageAnalysis.resolved_from_cache` marks a replayed result; the dependency table shows it as a `cached-metadata` flag and the CLI prints a note. Saved metadata isn't evicted with its source entry (a few hundred bytes each; a stale one is harmless). Also: the ANALYZE_DEPENDENCIES message counted failed packages as analyzed ("Analyzed 8 direct dependencies, 0 skipped" with 8 errors). It now reads "Analyzed N direct dependencies: X ok, Y failed, Z skipped", the event's data gains `failed_count`, and a sweep where every package failed is a `warning` event (amber in the web log, yellow in the CLI) instead of `completed`. `paranoid deps scan-manifest` counts failures in its header the same way. **Demo prep:** caches warmed before this fix have no saved metadata; re-warm `DEPS_CACHE_DIR` online once (run scenario 1) before going offline
 - **Web runs ignored `SIMILARITY_THRESHOLD`** (BB-79) — `POST /models/{id}/run` never passed it to the pipeline, so web runs always deduplicated at 0.85; only CLI runs used the setting (or the Settings PATCH)
 - **OpenAI content-filter stops and refusals are reported as refusals** (BB-80, BB-81) — `ContentFilterFinishReasonError` (an `OpenAIError`, not an `APIError`) escaped `generate_structured` as a raw SDK error, so no `except ProviderError` fallback caught it and the run failed. It, and a `message.refusal` with no parsed output, now raise `ProviderRefusalError`, so the run falls back as for any provider error and counts the refusal in `refusal_count`
@@ -841,7 +855,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/theAstiv/paranoid/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/theAstiv/paranoid/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/theAstiv/paranoid/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/theAstiv/paranoid/compare/v1.2.1...v1.3.0
