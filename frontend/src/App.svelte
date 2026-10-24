@@ -20,12 +20,14 @@
   import ProjectSettings from './routes/ProjectSettings.svelte'
   import AdminUsers from './routes/AdminUsers.svelte'
   import ModelDiff from './routes/ModelDiff.svelte'
+  import NotFound from './routes/NotFound.svelte'
   import {
     config, notification, notify, currentUser,
     currentProject, projects, notifications, notifUnread, menuOpen, reconcileProject,
   } from './lib/stores.js'
   import { getConfig, fetchMe, logout, listProjects, createProject, listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/api.js'
   import { canEditProject, initials, relativeTime } from './lib/utils.js'
+  import { isKnownRoute, pageTitle, screenLabel as screenLabelFor } from './lib/navigation.js'
 
   const routes = {
     '/': Home,
@@ -45,6 +47,8 @@
     '/members': Members,
     '/projects/settings': ProjectSettings,
     '/admin/users': AdminUsers,
+    // Last: any other hash (a typo, a stale link) gets a page, not a blank (BB-113).
+    '*': NotFound,
   }
 
   // Routes that render standalone (no sidebar/topbar chrome)
@@ -80,6 +84,15 @@
 
   function closeMenu() {
     menuOpen.set(null)
+  }
+
+  // Escape closes the open overlay and gives focus back to its trigger (BB-100).
+  function handleKeydown(event) {
+    if (event.key !== 'Escape') return
+    const open = get(menuOpen)
+    if (!open) return
+    menuOpen.set(null)
+    document.querySelector(`[data-menu-trigger="${open}"]`)?.focus()
   }
 
   // The `autofocus` attribute is flagged because it is disorienting on page
@@ -141,24 +154,9 @@
   }
 
 
-  // Breadcrumb screen name
-  const SCREEN_LABELS = {
-    '/dashboard': 'Dashboard',
-    '/': 'Threat Models',
-    '/models/new': 'New Model',
-    '/library': 'Library',
-    '/sources': 'Code Sources',
-    '/members': 'Members',
-    '/projects/settings': 'Project Settings',
-    '/admin/users': 'Users',
-    '/settings': 'Settings',
-  }
-  $: screenLabel = (() => {
-    for (const [prefix, label] of Object.entries(SCREEN_LABELS)) {
-      if (prefix === '/' ? $location === '/' : $location.startsWith(prefix)) return label
-    }
-    return ''
-  })()
+  // Breadcrumb screen name, and a tab title per page (BB-109)
+  $: screenLabel = screenLabelFor($location)
+  $: document.title = pageTitle($location, isKnownRoute($location, Object.keys(routes)))
 
   // Boot sequence
   onMount(async () => {
@@ -196,6 +194,8 @@
     } catch { /* non-fatal */ }
   }
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <!-- Full-bleed backdrop: closes any open overlay -->
 {#if $menuOpen}
@@ -238,6 +238,9 @@
       <div class="px-3 pt-3 pb-2 flex-shrink-0">
         <button
           on:click={() => toggleMenu('project')}
+          data-menu-trigger="project"
+          aria-haspopup="menu"
+          aria-expanded={$menuOpen === 'project'}
           class="w-full flex items-center gap-2.5 px-3 py-2 rounded-panel hover:bg-c-panel transition-colors"
           aria-label="Switch project"
         >
@@ -487,6 +490,9 @@
       <div class="border-t border-c-divider px-3 py-2 flex-shrink-0 relative">
         <button
           on:click={() => toggleMenu('user')}
+          data-menu-trigger="user"
+          aria-haspopup="menu"
+          aria-expanded={$menuOpen === 'user'}
           class="w-full flex items-center gap-2.5 px-2 py-2 rounded-panel hover:bg-c-panel transition-colors"
           aria-label="User menu"
         >
@@ -587,6 +593,9 @@
           <div class="relative">
             <button
               on:click={() => toggleMenu('notif')}
+              data-menu-trigger="notif"
+              aria-haspopup="menu"
+              aria-expanded={$menuOpen === 'notif'}
               aria-label="Notifications"
               class="relative w-[34px] h-[34px] flex items-center justify-center rounded-panel text-c-muted hover:text-c-text hover:bg-c-panel border border-c-border transition-colors"
             >
@@ -649,10 +658,13 @@
         </div>
       </header>
 
-      <!-- Notification banner -->
+      <!-- Notification banner. The live region stays in the DOM so screen readers
+           announce each new toast (BB-102); an error toast is also an alert. -->
+      <div role="status" aria-live="polite" data-testid="toast-region"
+        class="fixed top-[54px] inset-x-0 z-20 flex justify-center pointer-events-none px-4 pt-3">
       {#if $notification}
-        <div class="fixed top-[54px] inset-x-0 z-20 flex justify-center pointer-events-none px-4 pt-3">
-          <div class="pointer-events-auto flex items-center gap-3 px-4 py-2.5 rounded-panel shadow-lg text-sm font-medium border
+          <div role={$notification.type === 'success' ? null : 'alert'}
+            class="pointer-events-auto flex items-center gap-3 px-4 py-2.5 rounded-panel shadow-lg text-sm font-medium border
             {$notification.type === 'success'
               ? 'bg-c-green/10 text-c-green border-c-green/30'
               : 'bg-c-critical/10 text-c-critical border-c-critical/30'}">
@@ -672,8 +684,8 @@
               </svg>
             </button>
           </div>
-        </div>
       {/if}
+      </div>
 
       <!-- Page content -->
       <main class="flex-1">

@@ -79,11 +79,37 @@ jobs:
           ./dist/paranoid --help
           ./dist/paranoid version
 
+      # --help alone missed BB-90 (numpy excluded from the spec, so every run
+      # failed). Run once rules-only: the provider points at a closed port, so
+      # the pipeline falls back to the rule engine and makes no LLM call.
+      - name: Rules-only run (Linux/macOS)
+        if: runner.os != 'Windows'
+        env:
+          DEFAULT_PROVIDER: ollama
+          OLLAMA_BASE_URL: http://127.0.0.1:9
+          DB_PATH: ${{ runner.temp }}/smoke/p.db
+        shell: bash  # -o pipefail, so a failing run isn't hidden by tee
+        run: |
+          ./dist/paranoid run examples/stride-example-api-gateway.md -n 1 | tee smoke.log
+          grep -q "Total Threats" smoke.log
+
       - name: Test binary (Windows)
         if: runner.os == 'Windows'
         run: |
           dist\paranoid.exe --help
           dist\paranoid.exe version
+
+      - name: Rules-only run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:DEFAULT_PROVIDER = 'ollama'
+          $env:OLLAMA_BASE_URL = 'http://127.0.0.1:9'
+          $env:DB_PATH = Join-Path $env:RUNNER_TEMP 'smoke\p.db'
+          $env:PYTHONIOENCODING = 'utf-8'
+          dist\paranoid.exe run examples\stride-example-api-gateway.md -n 1 | Tee-Object -FilePath smoke.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path smoke.log -Pattern 'Total Threats' -Quiet)) { exit 1 }
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -127,16 +153,36 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      # The release takes each file's basename, and the Linux and macOS builds
+      # are both named `paranoid`: one overwrote the other (v1.5.0 shipped no
+      # Linux binary, BB-115). Give every binary its platform name.
+      - name: Name binaries by platform
+        run: |
+          mkdir -p binaries
+          cp paranoid-linux-x64/paranoid binaries/paranoid-linux-x64
+          cp paranoid-macos-arm64/paranoid binaries/paranoid-macos-arm64
+          cp paranoid-windows-x64.exe/paranoid.exe binaries/paranoid-windows-x64.exe
+          chmod +x binaries/paranoid-linux-x64 binaries/paranoid-macos-arm64
+
+      # The whole CHANGELOG is close to GitHub's 125,000-character limit on a
+      # release body; publish only this version's section.
+      - name: Extract this version's release notes
+        run: |
+          awk -v ver="${{ steps.get_version.outputs.VERSION }}" '
+            index($0, "## [" ver "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: Paranoid v${{ steps.get_version.outputs.VERSION }}
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
           draft: false
           prerelease: false
           files: |
             python-package/*
-            paranoid-linux-x64/paranoid
-            paranoid-macos-arm64/paranoid
-            paranoid-windows-x64.exe/paranoid.exe
+            binaries/*
           token: ${{ secrets.GITHUB_TOKEN }}

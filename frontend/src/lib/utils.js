@@ -1,13 +1,29 @@
 /**
+ * The DREAD severity band for a score: critical ≥ 8, high ≥ 6, medium ≥ 4,
+ * else low. Every DREAD colour, chip, label and Review's bulk buttons go
+ * through this, so a badge and "Approve Critical+High" can't disagree (BB-128).
+ * @param {number} score
+ * @returns {'critical'|'high'|'medium'|'low'}
+ */
+export function dreadBand(score) {
+  if (score >= 8) return 'critical'
+  if (score >= 6) return 'high'
+  if (score >= 4) return 'medium'
+  return 'low'
+}
+
+const _DREAD_TEXT = { critical: 'text-c-critical', high: 'text-c-high', medium: 'text-c-medium', low: 'text-c-low' }
+const _DREAD_HEX = { critical: '#FB6F84', high: '#FFA552', medium: '#F5D04E', low: '#3FD0A8' }
+const _DREAD_CHIP = { critical: 'chip-red', high: 'chip-orange', medium: 'chip-amber', low: 'chip-green' }
+const _DREAD_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' }
+
+/**
  * Maps a DREAD score to its Tailwind text-color class using the design handoff severity scale.
  * @param {number} score
  * @returns {string} Tailwind class
  */
 export function dreadColor(score) {
-  if (score >= 8) return 'text-c-critical'
-  if (score >= 6) return 'text-c-high'
-  if (score >= 4) return 'text-c-medium'
-  return 'text-c-low'
+  return _DREAD_TEXT[dreadBand(score)]
 }
 
 /**
@@ -16,10 +32,7 @@ export function dreadColor(score) {
  * @returns {string} hex color
  */
 export function dreadHex(score) {
-  if (score >= 8) return '#FB6F84'
-  if (score >= 6) return '#FFA552'
-  if (score >= 4) return '#F5D04E'
-  return '#3FD0A8'
+  return _DREAD_HEX[dreadBand(score)]
 }
 
 /**
@@ -28,10 +41,7 @@ export function dreadHex(score) {
  * @returns {string}
  */
 export function dreadChip(score) {
-  if (score >= 8) return 'chip-red'
-  if (score >= 6) return 'chip-orange'
-  if (score >= 4) return 'chip-amber'
-  return 'chip-green'
+  return _DREAD_CHIP[dreadBand(score)]
 }
 
 /**
@@ -40,10 +50,7 @@ export function dreadChip(score) {
  * @returns {'Critical'|'High'|'Medium'|'Low'}
  */
 export function dreadLabel(score) {
-  if (score >= 8) return 'Critical'
-  if (score >= 6) return 'High'
-  if (score >= 4) return 'Medium'
-  return 'Low'
+  return _DREAD_LABEL[dreadBand(score)]
 }
 
 /**

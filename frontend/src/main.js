@@ -13,15 +13,11 @@ import '@fontsource/ibm-plex-mono/latin-600.css'
 import './app.css'
 import App from './App.svelte'
 import { mount } from 'svelte'
+import { createChunkErrorHandler } from './lib/chunk_reload.js'
 
-// After a deploy the content-hashed chunk filenames change. If a user has an
-// old tab open, the browser may try to dynamically import a chunk that no longer
-// exists and surface "Failed to fetch dynamically imported module". Reloading
-// picks up the new index.html and new hashes — the user sees a brief flash
-// instead of a hard error.
-window.addEventListener('vite:preloadError', () => {
-  window.location.reload()
-})
+// A stale tab after a deploy reloads once to pick up the new chunk names;
+// see lib/chunk_reload.js for why only once.
+window.addEventListener('vite:preloadError', createChunkErrorHandler())
 
 const app = mount(App, {
   target: document.getElementById('app'),

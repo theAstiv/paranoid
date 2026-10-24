@@ -773,11 +773,17 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
 # ---------------------------------------------------------------------------
 
 
+_FORM_TRUE = frozenset({"true", "1", "yes", "on"})
+_FORM_FALSE = frozenset({"false", "0", "no", "off"})
+
+
 @router.post("/{model_id}/run")
 async def run_pipeline(
     model_id: str,
     assumptions: Annotated[str, Form()] = "[]",
-    has_ai_components: Annotated[bool, Form()] = False,
+    # A string, not `bool | None`: "" (the default) must mean "not sent", and
+    # FastAPI versions differ on what an omitted optional bool form field becomes.
+    has_ai_components: Annotated[str, Form()] = "",
     diagram: Annotated[UploadFile | None, File()] = None,
     diagrams: Annotated[list[UploadFile] | None, File()] = None,
     diagram_names: Annotated[str | None, Form()] = None,
@@ -793,7 +799,9 @@ async def run_pipeline(
 
     Accepts multipart/form-data:
     - assumptions: JSON array string, e.g. '["TLS is enforced","Auth is OAuth2"]'
-    - has_ai_components: bool, enables MAESTRO alongside STRIDE
+    - has_ai_components: bool, enables MAESTRO alongside STRIDE. Omit it to
+      reuse the value the model's last run stored (false if none did), as
+      Results' Re-run does.
     - diagram: DEPRECATED — optional single PNG/JPG/Mermaid file upload, kept
       for one release. Merged first (position 0) if `diagrams` is also sent.
     - diagrams: optional 1-5 PNG/JPG/Mermaid file uploads. Replaces the
@@ -908,6 +916,15 @@ async def run_pipeline(
     provider = build_provider_from_record(record)
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
+    ai_flag = has_ai_components.strip().lower()
+    if not ai_flag:
+        has_ai = bool(record.get("has_ai_components"))
+    elif ai_flag in _FORM_TRUE:
+        has_ai = True
+    elif ai_flag in _FORM_FALSE:
+        has_ai = False
+    else:
+        raise HTTPException(status_code=422, detail="'has_ai_components' must be true or false")
     max_iterations = record.get("iteration_count", settings.default_iterations)
     project = await crud_projects.get_project(record.get("project_id"))
     project_temperature = (project or {}).get("default_temperature")
@@ -920,7 +937,11 @@ async def run_pipeline(
         await crud.clear_model_data(model_id)
         await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
         # Persist assumptions unconditionally — clears stale data from prior runs
-        await crud.update_threat_model(model_id, assumptions=json.dumps(parsed_assumptions))
+        await crud.update_threat_model(
+            model_id,
+            assumptions=json.dumps(parsed_assumptions),
+            has_ai_components=has_ai,
+        )
 
         skipped_stored_diagrams: list[dict[str, str]] = []
         if uploaded_diagrams:
@@ -1013,8 +1034,9 @@ async def run_pipeline(
                     diagrams=run_diagrams or None,
                     code_context=code_context,
                     max_iterations=max_iterations,
-                    has_ai_components=has_ai_components,
+                    has_ai_components=has_ai,
                     temperature=temperature,
+                    similarity_threshold=settings.similarity_threshold,
                     dependency_manifest=dependency_manifest_dict,
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,

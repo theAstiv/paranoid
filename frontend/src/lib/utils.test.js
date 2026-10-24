@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials,
+  dreadBand, dreadColor, dreadHex, dreadChip, dreadLabel, shortId, relativeTime, initials,
   dependencyCategorySet, dependencyFlags, dependencyDisplayName,
   cvssColor, cvssHex, cvssChip, cvssLabel, cvssScoreLabel,
   CVSS_METRICS, parseCvssVector, cvssVectorFromMetrics, normalizeCvssMetrics,
@@ -28,6 +28,23 @@ describe('canEditProject', () => {
   })
   it("ignores the active project's role for another project's model", () => {
     expect(canEditProject(project('viewer'), user, 'p2')).toBe(true)
+  })
+})
+
+describe('dreadBand (BB-128: one set of bands for badges and bulk buttons)', () => {
+  it.each([
+    [10, 'critical'], [8, 'critical'], [7.99, 'high'], [6, 'high'], [5.99, 'medium'],
+    [4, 'medium'], [3.99, 'low'], [0, 'low'],
+  ])('%s -> %s', (score, band) => {
+    expect(dreadBand(score)).toBe(band)
+  })
+
+  it('agrees with every DREAD presentation helper at the boundaries', () => {
+    for (const score of [4, 6, 8]) {
+      const band = dreadBand(score)
+      expect(dreadLabel(score).toLowerCase()).toBe(band)
+      expect(dreadColor(score)).toBe(`text-c-${band}`)
+    }
   })
 })
 

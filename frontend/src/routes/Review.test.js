@@ -689,6 +689,7 @@ describe('Review — bulk actions', () => {
   })
 
   it('rejects all pending threats', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     bulkUpdateThreatStatus.mockResolvedValue({ updated: 2 })
     getModelThreats.mockResolvedValue([threat({ id: 't1' }), threat({ id: 't2' })])
     render(Review, { props: { params: { id: 'm1' } } })
@@ -730,6 +731,7 @@ describe('Review — bulk actions', () => {
   })
 
   it('shows and applies "Reject Low" only for low-severity pending threats', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
     getModelThreats.mockResolvedValue([
       threat({ id: 't1', name: 'Critical one', dread_score: 9 }),
@@ -775,6 +777,46 @@ describe('Review — bulk actions', () => {
 
     await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
     expect(get(threats).find(t => t.id === 't2').status).toBe('pending')
+  })
+
+  it('counts a DREAD 6.0 threat in "Approve Critical+High", as its High badge says (BB-128)', async () => {
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([
+      threat({ id: 't1', name: 'Exactly six', dread_score: 6.0 }),
+      threat({ id: 't2', name: 'Medium one', dread_score: 5.9 }),
+    ])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Approve Critical+High (1)')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve Critical+High (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+  })
+
+  it('asks before a bulk reject and does nothing when dismissed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    getModelThreats.mockResolvedValue([threat({ id: 't1' }), threat({ id: 't2' })])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Reject all (2)')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Reject all (2)'))
+
+    expect(confirmSpy).toHaveBeenCalledWith('Reject 2 threats?')
+    expect(bulkUpdateThreatStatus).not.toHaveBeenCalled()
+    expect(get(threats).every(t => t.status === 'pending')).toBe(true)
+  })
+
+  it('does not ask before a bulk approve', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue([threat({ id: 't1' })])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Approve all (1)')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Approve all (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t1'], 'approved'))
+    expect(confirmSpy).not.toHaveBeenCalled()
   })
 
   it('hides bulk-action buttons when there are no pending threats', async () => {
@@ -831,5 +873,100 @@ describe('Review — role gating (BB-62)', () => {
     asRole('viewer', 'p2')
     render(Review, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(screen.getByText('Approve all (2)')).toBeInTheDocument())
+  })
+})
+
+describe('Review — bulk actions follow the filters (BB-127)', () => {
+  const mixed = [
+    threat({ id: 't1', name: 'LLM one', source: 'llm', dread_score: 2 }),
+    threat({ id: 't2', name: 'LLM two', source: 'llm', dread_score: 9 }),
+    threat({ id: 't3', name: 'Rule one', source: 'rule_engine', dread_score: 2 }),
+  ]
+
+  async function filterToSource(label) {
+    await fireEvent.click(screen.getByText('Filters'))
+    await fireEvent.click(screen.getByRole('button', { name: label }))
+  }
+
+  it('acts only on the shown threats, and says so', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    bulkUpdateThreatStatus.mockResolvedValue({ updated: 1 })
+    getModelThreats.mockResolvedValue(mixed)
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Reject all (3)')).toBeInTheDocument())
+
+    await filterToSource('Rule Engine')
+
+    expect(screen.queryByText('Reject all (3)')).toBeNull()
+    expect(screen.getByText('Reject all shown (1)')).toBeInTheDocument()
+    expect(screen.getByText('Reject Low (1)')).toBeInTheDocument()
+    expect(screen.queryByText(/Approve Critical\+High/)).toBeNull()
+
+    await fireEvent.click(screen.getByText('Reject all shown (1)'))
+
+    await waitFor(() => expect(bulkUpdateThreatStatus).toHaveBeenCalledWith(['t3'], 'rejected'))
+    expect(get(threats).filter(t => t.source === 'llm').every(t => t.status === 'pending')).toBe(true)
+  })
+
+  it('offers no bulk button when the filter shows no pending threat', async () => {
+    getModelThreats.mockResolvedValue(mixed.filter(t => t.source === 'llm'))
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Reject all (2)')).toBeInTheDocument())
+
+    await filterToSource('Rule Engine')
+
+    expect(screen.queryByText(/Reject all/)).toBeNull()
+    expect(screen.queryByText(/Approve all/)).toBeNull()
+    expect(bulkUpdateThreatStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('Review — model switch (BB-88)', () => {
+  it('loads the new model when only params.id changes, and drops the old threats', async () => {
+    getModelThreats.mockImplementation(async (id) => (id === 'm2'
+      ? [threat({ id: 'b1', name: 'Model B threat' })]
+      : [threat({ id: 'a1', name: 'Model A threat' })]))
+    getModel.mockImplementation(async (id) => ({ id, title: `Model ${id}`, scoring_method: 'dread' }))
+    const { rerender } = render(Review, { props: { params: { id: 'm1' } } })
+    await screen.findByText('Model A threat')
+
+    await rerender({ params: { id: 'm2' } })
+
+    await screen.findByText('Model B threat')
+    expect(screen.queryByText('Model A threat')).toBeNull()
+    expect(getModelThreats).toHaveBeenCalledWith('m2')
+    expect(getCommentCounts).toHaveBeenCalledWith('m2')
+    expect(get(currentModel).id).toBe('m2')
+  })
+
+  it('resets the filters for the new model', async () => {
+    getModelThreats.mockImplementation(async (id) => (id === 'm2'
+      ? [threat({ id: 'b1', name: 'B approved', status: 'approved' })]
+      : [threat({ id: 'a1', name: 'A pending' })]))
+    const { rerender } = render(Review, { props: { params: { id: 'm1' } } })
+    await screen.findByText('A pending')
+    await fireEvent.click(screen.getByRole('button', { name: /^pending/i }))
+
+    await rerender({ params: { id: 'm2' } })
+
+    await screen.findByText('B approved')
+  })
+})
+
+describe('Review — accessible names (BB-101)', () => {
+  it('names the sort select and every range input', async () => {
+    currentModel.set({ id: 'm1', title: 'X', scoring_method: 'both' })
+    getModelThreats.mockResolvedValue([threat()])
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('SQL Injection')).toBeInTheDocument())
+    await fireEvent.click(screen.getByText('Filters'))
+
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toBeInTheDocument()
+    for (const name of [
+      'DREAD minimum', 'DREAD maximum', 'CVSS minimum', 'CVSS maximum',
+      'Confidence minimum (%)', 'Confidence maximum (%)',
+    ]) {
+      expect(screen.getByRole('spinbutton', { name })).toBeInTheDocument()
+    }
   })
 })

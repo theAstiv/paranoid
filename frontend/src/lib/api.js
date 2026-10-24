@@ -3,10 +3,15 @@ const BASE = '/api'
 // Track in-flight refresh to prevent parallel refresh races
 let _refreshPromise = null
 
+// A 401 from these means wrong credentials (or a dead refresh token), not an
+// expired access token, so it goes back to the caller with the server's detail.
+const _NO_REFRESH_PATHS = new Set(['/auth/login', '/auth/register', '/auth/refresh'])
+
 /**
  * Authenticated fetch that returns the raw Response.
  * - Attaches Authorization: Bearer header from localStorage token (if present).
- * - On 401: attempts one silent token refresh, then retries.
+ * - On 401: attempts one silent token refresh, then retries (not for the
+ *   login/register/refresh endpoints themselves).
  * - On second 401 after refresh: clears token + redirects to /app/login.
  */
 async function authedFetch(method, path, { body, extraHeaders = {}, signal } = {}, _retrying = false) {
@@ -22,6 +27,8 @@ async function authedFetch(method, path, { body, extraHeaders = {}, signal } = {
   if (signal !== undefined) opts.signal = signal
 
   const res = await fetch(BASE + path, opts)
+
+  if (_NO_REFRESH_PATHS.has(path)) return res
 
   // Retry 401 after refresh still failed: full auth clear
   if (res.status === 401 && _retrying) {

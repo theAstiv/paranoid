@@ -34,7 +34,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -198,20 +197,27 @@ async def main() -> None:
 
     from backend.config import settings
 
-    api_key = settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise SystemExit("ANTHROPIC_API_KEY is not set — export it or put it in .env")
-
+    # The configured default provider, as the server and the CLI use it: the demo
+    # recordings run on Bedrock, which has no Anthropic API key (BB-143).
     from backend.db.persist import persist_pipeline_result
     from backend.pipeline.runner import PipelineStep, run_pipeline_for_model
-    from backend.providers.anthropic import AnthropicProvider
+    from backend.providers import create_provider
+    from backend.routes._helpers import bedrock_kwargs, effort_kwargs, get_api_key
 
-    provider = AnthropicProvider(
+    provider_type = settings.default_provider
+    api_key = get_api_key(provider_type)
+    if provider_type in ("anthropic", "openai") and not api_key:
+        raise SystemExit(f"No API key for {provider_type}: set it in .env or the environment")
+
+    provider = create_provider(
+        provider_type=provider_type,
         model=settings.default_model,
         api_key=api_key,
-        effort=settings.anthropic_effort,
+        base_url=settings.ollama_base_url if provider_type == "ollama" else None,
+        **bedrock_kwargs(provider_type),
+        **effort_kwargs(provider_type, settings.default_model),
     )
-    print(f"Provider model: {provider.model}")
+    print(f"Provider: {provider_type}, model: {provider.model}")
     model_id = args.model_id or f"arsenal-deps-demo-{int(datetime.now().timestamp())}"
 
     # Mirrors cli.output.json_writer.JSONWriter's event-accumulation logic
@@ -256,7 +262,7 @@ async def main() -> None:
     db_model_id = await persist_pipeline_result(
         title="MediaDrop (Arsenal demo)",
         description=description,
-        provider="anthropic",
+        provider=provider_type,
         model_name=provider.model,
         framework=Framework.STRIDE,
         iterations_completed=iterations_completed,

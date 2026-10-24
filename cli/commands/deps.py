@@ -302,7 +302,10 @@ def deps() -> None:
     help="Write JSON output to this file (in addition to console output, unless --format json).",
 )
 def scan(spec: str, source: str, output_format: str, output: Path | None) -> None:
-    """Scan one package: SPEC is NAME@VERSION (e.g. 'chalk@5.3.0')."""
+    """Scan one package's capabilities; SPEC is NAME@VERSION.
+
+    Example: paranoid deps scan chalk@5.3.0
+    """
     try:
         name, version = parse_package_spec(spec)
     except ValueError as e:
@@ -550,6 +553,12 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
         manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         raise DepsCLIError(f"Could not parse {manifest}: {e}")
+    # Same check as `run --manifest` (BB-117): a JSON array tracebacked below.
+    if not isinstance(manifest_data, dict):
+        raise DepsCLIError(
+            f"Invalid package.json {manifest}: expected a JSON object, "
+            f"got {type(manifest_data).__name__}"
+        )
 
     if not analyze.direct_dependencies_from_manifest(manifest_data):
         raise DepsCLIError(f"No dependencies found in {manifest}")
@@ -560,6 +569,8 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
         try:
             lockfile_data = json.loads(lockfile_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            lockfile_data = None
+        if not isinstance(lockfile_data, dict):
             lockfile_data = None
 
     _warn_if_semgrep_missing()

@@ -160,7 +160,7 @@
             {/if}
           {/each}
         </div>
-        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <div class="flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex-shrink-0">
           <button type="button" on:click={() => startEdit(item)} title="Edit"
             class="p-1 text-c-faint hover:text-c-accent rounded">
             <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">

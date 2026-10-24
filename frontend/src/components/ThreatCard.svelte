@@ -267,6 +267,7 @@
       <label class="flex items-center pt-0.5 cursor-pointer shrink-0">
         <input
           type="checkbox"
+          aria-label={`Select threat: ${threat.name}`}
           checked={selected}
           onchange={() => ontoggleSelect?.(threat)}
           class="w-4 h-4 rounded border-c-border-strong text-c-accent focus:ring-c-accent/30" />

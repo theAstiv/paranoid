@@ -5,9 +5,6 @@ echoes the key, through the real probe and route; the PATCH response and log;
 both providers' env-managed keys; a PATCH that is refused half way; and what a
 password change does to the user's other sessions. No network: the probe's
 HTTP client is a mock transport.
-
-Tests marked xfail(strict=True) are bug-bash findings: the app is wrong and the
-test states the expected behaviour.
 """
 
 import importlib
@@ -62,7 +59,10 @@ def _anthropic_echoing_the_key(monkeypatch, status: int) -> None:
     real = anthropic.AsyncAnthropic
 
     def handler(request):
-        key = request.headers.get("x-api-key", "")
+        # anthropic 2.x sends the key as `Authorization: Bearer`, older SDKs as x-api-key.
+        key = request.headers.get("x-api-key") or request.headers.get(
+            "authorization", ""
+        ).removeprefix("Bearer ")
         return _SDK_HTTP.Response(
             status,
             json={"type": "error", "error": {"type": "x", "message": f"bad key {key}"}},
@@ -123,14 +123,6 @@ async def test_env_managed_key_cannot_be_replaced_or_cleared(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 23): PATCH /api/config applies the non-key fields (and an "
-        "earlier key) before it checks whether a key is env-managed, so a request that "
-        "gets 400 has still changed the instance's settings."
-    ),
-)
 async def test_a_refused_config_patch_changes_nothing(client, monkeypatch):
     # The route writes settings directly; these make monkeypatch restore them.
     monkeypatch.setattr(settings, "default_iterations", settings.default_iterations)
@@ -158,14 +150,6 @@ async def _login(client: AsyncClient, username: str, password: str = _PASSWORD) 
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 23): PATCH /api/auth/me changes the password hash but "
-        "revokes no session, so a refresh token issued before the change keeps working "
-        "for its full 7 days. docs/authentication.md doesn't say either way."
-    ),
-)
 async def test_password_change_ends_the_users_other_sessions(client, monkeypatch):
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     await crud_auth.create_user(
@@ -177,13 +161,66 @@ async def test_password_change_ends_the_users_other_sessions(client, monkeypatch
     stolen = await _login(client, "alice")  # e.g. a session on a lost laptop
     mine = await _login(client, "alice")
 
+    # Sent by hand: the cookie is Secure, so the client won't send it to http://test.
     r = await client.patch(
         "/api/auth/me",
         json={"current_password": _PASSWORD, "password": "a brand new passphrase"},
-        headers={"Authorization": f"Bearer {mine['access_token']}"},
+        headers={
+            "Authorization": f"Bearer {mine['access_token']}",
+            "Cookie": f"paranoid_refresh={mine['refresh_token']}",
+        },
     )
     assert r.status_code == 200
 
     client.cookies.clear()
     r = await client.post("/api/auth/refresh", json={"refresh_token": stolen["refresh_token"]})
     assert r.status_code == 401
+
+    # The session that changed the password (its cookie was sent) keeps working,
+    # even after the old token's failed refresh.
+    r = await client.post("/api/auth/refresh", json={"refresh_token": mine["refresh_token"]})
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_password_change_without_a_refresh_cookie_ends_every_session(client, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    await crud_auth.create_user(
+        username="bob",
+        email="bob@test.local",
+        password_hash=hash_password(_PASSWORD),
+        is_admin=False,
+    )
+    mine = await _login(client, "bob")
+    client.cookies.clear()  # a CLI caller: bearer token only
+
+    r = await client.patch(
+        "/api/auth/me",
+        json={"current_password": _PASSWORD, "password": "a brand new passphrase"},
+        headers={"Authorization": f"Bearer {mine['access_token']}"},
+    )
+    assert r.status_code == 200
+    r = await client.post("/api/auth/refresh", json={"refresh_token": mine["refresh_token"]})
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_display_name_change_keeps_other_sessions(client, monkeypatch):
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    await crud_auth.create_user(
+        username="carol",
+        email="carol@test.local",
+        password_hash=hash_password(_PASSWORD),
+        is_admin=False,
+    )
+    other = await _login(client, "carol")
+    mine = await _login(client, "carol")
+    r = await client.patch(
+        "/api/auth/me",
+        json={"display_name": "Carol"},
+        headers={"Authorization": f"Bearer {mine['access_token']}"},
+    )
+    assert r.status_code == 200
+    client.cookies.clear()
+    r = await client.post("/api/auth/refresh", json={"refresh_token": other["refresh_token"]})
+    assert r.status_code == 200

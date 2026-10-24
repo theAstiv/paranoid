@@ -1,5 +1,6 @@
 """Anthropic LLM provider implementation."""
 
+import inspect
 import json
 import logging
 from typing import TypeVar
@@ -13,6 +14,7 @@ from anthropic import (
     BadRequestError,
     RateLimitError,
 )
+from anthropic.resources.messages import Messages
 from pydantic import BaseModel, ValidationError
 
 from backend.models.extended import ImageContent
@@ -37,6 +39,11 @@ from backend.providers.usage import as_token_count, record_usage
 
 
 logger = logging.getLogger(__name__)
+
+# anthropic 2.1 dropped `temperature` from `messages.create`, so passing it raises
+# TypeError before any request is made. The API still takes it, so on those SDKs it
+# goes in the request body instead (BB-142).
+_SDK_TAKES_TEMPERATURE = "temperature" in inspect.signature(Messages.create).parameters
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -139,11 +146,13 @@ class AnthropicProvider:
         loop retries at most once per parameter."""
         while True:
             call = dict(kwargs)
-            if not self._temperature_unsupported:
-                call["temperature"] = temperature
             # What THIS call carries decides whether a rejection is retriable: another
             # in-flight call may already have flipped the flag (BB-32).
-            sent_temperature = "temperature" in call
+            sent_temperature = not self._temperature_unsupported
+            if sent_temperature and _SDK_TAKES_TEMPERATURE:
+                call["temperature"] = temperature
+            elif sent_temperature:
+                call["extra_body"] = {**call.get("extra_body", {}), "temperature": temperature}
             sent_effort = bool(self._effort) and not self._effort_unsupported
             if sent_effort:
                 # extra_body rather than the typed `output_config` argument so

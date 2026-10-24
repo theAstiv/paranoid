@@ -57,6 +57,18 @@ describe('NewModel — step 0 (title & framework)', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'MAESTRO' }))
     expect(screen.getByText(/AI\/ML-specific: Model Security/)).toBeInTheDocument()
   })
+
+  it('groups the framework radios under one name and legend (BB-107)', () => {
+    render(NewModel)
+    const radios = ['STRIDE', 'MAESTRO', 'HYBRID'].map(name => screen.getByRole('radio', { name }))
+    expect(new Set(radios.map(r => r.name))).toEqual(new Set(['framework']))
+    expect(screen.getByRole('group', { name: 'Threat framework' })).toBeInTheDocument()
+  })
+
+  it('has a page heading (BB-109)', () => {
+    render(NewModel)
+    expect(screen.getByRole('heading', { level: 1, name: 'New Threat Model' })).toBeInTheDocument()
+  })
 })
 
 describe('NewModel — step 1 (description)', () => {
@@ -267,6 +279,17 @@ describe('NewModel — step 4 (dependencies)', () => {
     expect(screen.getByRole('radio', { name: 'Deep (npm + GitHub drift)' })).toBeInTheDocument()
   })
 
+  it('groups the analysis depth radios under one name and legend (BB-107)', async () => {
+    await toStep4()
+    const file = new File(['{"name":"x","dependencies":{}}'], 'm.json', { type: 'application/json' })
+    await fireEvent.change(screen.getByLabelText('package.json'), { target: { files: [file] } })
+    const fast = screen.getByRole('radio', { name: 'Fast (npm)' })
+    const deep = screen.getByRole('radio', { name: 'Deep (npm + GitHub drift)' })
+    expect(fast.name).toBe('deps-source')
+    expect(deep.name).toBe('deps-source')
+    expect(screen.getByRole('group', { name: 'Analysis depth' })).toBeInTheDocument()
+  })
+
   it('rejects a manifest file over 1 MB and does not keep a previously accepted one', async () => {
     await toStep4()
     const good = new File(['{"name":"x","dependencies":{}}'], 'my-manifest.json', { type: 'application/json' })
@@ -340,6 +363,33 @@ describe('NewModel — step 5 (assumptions)', () => {
     const [removeBtn] = screen.getAllByRole('button').filter(b => b.closest('li'))
     await fireEvent.click(removeBtn)
     expect(screen.queryByText('Temp assumption')).toBeNull()
+  })
+
+  it('keeps an assumption that was typed but not added when moving on (BB-123)', async () => {
+    await toStep5()
+    await fireEvent.input(screen.getByPlaceholderText(/TLS 1.3 enforced/), { target: { value: 'Never added' } })
+    await fireEvent.click(screen.getByText('Next'))
+    await fireEvent.click(screen.getByText('Back'))
+    expect(screen.getByText('Never added')).toBeInTheDocument()
+  })
+
+  it('sends an assumption typed but not added on Create & Run (BB-123)', async () => {
+    createModel.mockResolvedValue({ id: 'model-a' })
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await goToStep(5)
+    await fireEvent.input(screen.getByPlaceholderText(/TLS 1.3 enforced/), { target: { value: 'Pending one' } })
+    await goToStep(3)
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
+    expect(JSON.parse(subscribeToRun.mock.calls[0][1].get('assumptions'))).toEqual(['Pending one'])
+  })
+
+  it('names the assumption input (BB-101)', async () => {
+    await toStep5()
+    expect(screen.getByRole('textbox', { name: 'New assumption' })).toBeInTheDocument()
   })
 })
 

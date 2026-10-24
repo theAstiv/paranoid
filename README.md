@@ -30,18 +30,20 @@ pip install paranoid-cli
 # Configure
 paranoid config init
 
-# Run
-paranoid run examples/stride-example-api-gateway.md
+# Run (the examples are in the repo, not the package: clone it, or fetch one)
+curl -fsSLO https://raw.githubusercontent.com/theAstiv/paranoid/main/examples/stride-example-api-gateway.md
+paranoid run stride-example-api-gateway.md   # saved to the database; add -o threats.json for a file
 ```
 
 **Docker (web UI + API):**
 ```bash
 git clone https://github.com/theAstiv/paranoid && cd paranoid
 cp .env.example .env        # add your API key
+mkdir -p data               # must be writable by uid 1000: `sudo chown 1000:1000 data` if yours differs
 docker compose up --build   # web UI at http://localhost:8000/app
 ```
 
-> **Note:** the dependency capability engine, Bedrock, model routing, multiple diagrams, CVSS and ATT&CK/ATLAS mapping are on `main` and ship to PyPI in the next release. Until then, install from source (`pip install git+https://github.com/theAstiv/paranoid`) or use Docker. The dependency engine also needs [Semgrep](https://semgrep.dev) on `PATH` (`pip install semgrep`); the Docker image includes it.
+> **Note:** the dependency capability engine, Bedrock, model routing, multiple diagrams, CVSS and ATT&CK/ATLAS mapping need v1.6.0 or later (`pip install "paranoid-cli>=1.6.0"`). The dependency engine also needs [Semgrep](https://semgrep.dev) on `PATH` (`pip install semgrep`); the Docker image includes it.
 
 ## Try the full demo (Black Hat India Arsenal 2026)
 
@@ -117,8 +119,8 @@ paranoid deps scan chalk@5.3.0 --source both
 # shows the delta computing cleanly against real registry data.)
 paranoid deps diff ua-parser-js 0.7.28 0.7.30 --source both
 
-# Sweep every dependency in a package.json / package-lock.json
-paranoid deps scan-manifest package.json
+# Sweep every direct dependency in your project's package.json
+paranoid deps scan-manifest path/to/your-project/package.json
 ```
 
 Requires [Semgrep](https://semgrep.dev) on `PATH` (`pip install semgrep`) —
@@ -191,18 +193,20 @@ is meant to be triaged by a person, not acted on automatically.
 
 | Platform | PyPI | Docker | Binary |
 |----------|------|--------|--------|
-| Ubuntu 20.04+ | ✓ | ✓ | ✓ |
+| Ubuntu 20.04+ | ✓ | ✓ | ✓¹ |
 | macOS 11+ ARM64 | ✓ | ✓ | ✓ |
 | Windows 10+ | ✓ | ✓ | ✓ |
-| WSL2 | ✓ | ✓ | ✓ |
+| WSL2 | ✓ | ✓ | ✓¹ |
+
+¹ From v1.6.0 (`paranoid-linux-x64`). The v1.5.0 release has no Linux binary: its macOS build overwrote it, as both were named `paranoid`.
 
 Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 ## Development Status
 
-**v1.5.0** — Multi-user collaboration release. Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
+**v1.6.0** — dependency capability engine, multi-user collaboration (accounts, projects, roles), AWS Bedrock, per-step model routing, multiple diagrams with ELK rendering, ATT&CK/ATLAS mapping and CVSS v3.1 scoring. See the [CHANGELOG](CHANGELOG.md).
 
-**Next release (on `main`)** — dependency capability engine, AWS Bedrock, per-step model routing, multiple diagrams with ELK rendering, ATT&CK/ATLAS mapping and CVSS v3.1 scoring. See the [CHANGELOG](CHANGELOG.md).
+**v1.5.0** — Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
 
 **Future:** OIDC/SSO federation.
 

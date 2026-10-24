@@ -30,7 +30,7 @@ jobs:
 
       - name: Run Paranoid threat modeling
         id: paranoid
-        uses: theAstiv/paranoid@main        # pin to a release tag in production, e.g. @v1.4.0
+        uses: theAstiv/paranoid@main        # pin to a release tag in production, e.g. @v1.6.0
         with:
           description-file: ${{ github.event.inputs.description-file }}
           provider: anthropic
