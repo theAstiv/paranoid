@@ -5,7 +5,7 @@
 ## so it only runs when you explicitly start it.
 ##
 ## To use the live action from this repo:
-##   uses: theAstiv/paranoid@v1
+##   uses: theAstiv/paranoid@v1.6.0
 
 name: Threat Model (example)
 
