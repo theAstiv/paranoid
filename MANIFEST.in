@@ -15,7 +15,7 @@ recursive-include seeds *.json
 
 # Exclude development files
 exclude .gitignore
-exclude test_pipeline.py
+recursive-exclude scripts *
 recursive-exclude tests *
 recursive-exclude .github *
 recursive-exclude .claude *

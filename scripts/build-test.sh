@@ -2,6 +2,7 @@
 # Linux/macOS wrapper for build test script
 
 set -e
+cd "$(dirname "$0")/.."
 
 echo ""
 echo "========================================"

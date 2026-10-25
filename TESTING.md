@@ -59,8 +59,8 @@ python scripts/run_tests.py --tests   # Only tests
 ```bash
 python scripts/build_test.py
 # or
-./build-test.sh   # Linux/Mac
-build-test.bat    # Windows
+./scripts/build-test.sh   # Linux/Mac
+scriptsuild-test.bat    # Windows
 ```
 
 **When to use:** Before tagging a release or pushing to main.
@@ -322,7 +322,7 @@ git push origin feature-branch
    ```bash
    python scripts/build_test.py
    # or
-   ./build-test.sh
+   ./scripts/build-test.sh
    ```
 
 3. **Commit and tag:**

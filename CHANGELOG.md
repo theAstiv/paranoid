@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Root directory tidy** — the manual dev script `test_pipeline.py` and the `build-test.sh` / `build-test.bat` wrappers moved from the repository root to `scripts/` (the wrappers now `cd` to the repo root first, so they work from anywhere). No change to the package or the app
+
 ## [1.6.0] - 2026-10-23
 
 ### Highlights

@@ -13,7 +13,7 @@ python scripts/run_tests.py
 
 # Pre-release validation (before tagging)
 python scripts/build_test.py
-# or: ./build-test.sh (Linux/Mac) or build-test.bat (Windows)
+# or: ./scripts/build-test.sh (Linux/Mac) or scriptsuild-test.bat (Windows)
 
 # Install Git hooks (one-time setup)
 ./scripts/install-hooks.sh  # Linux/Mac
@@ -135,7 +135,7 @@ version = "1.3.0"
 - Feature X
 
 # 3. Run build test
-./build-test.sh
+./scripts/build-test.sh
 
 # 4. Commit and tag
 git add pyproject.toml CHANGELOG.md
