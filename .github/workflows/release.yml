@@ -186,3 +186,26 @@ jobs:
             python-package/*
             binaries/*
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Keep the floating major tag (v1, v2, …) on the newest release of that
+  # major, so `uses: theAstiv/paranoid@v1` resolves to the latest 1.x.
+  # Only runs after the release itself exists; pre-releases (v2.0.0-rc1) are
+  # skipped so the major tag never points at one.
+  move-major-tag:
+    name: Move major tag
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point the major tag at this release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$major" -m "$major: floating major tag, currently $TAG" "$GITHUB_SHA"
+          git push origin "$major" --force
+          echo "$major -> $TAG ($GITHUB_SHA)"
