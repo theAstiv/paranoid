@@ -166,8 +166,9 @@ Results appear in the **Security** tab under **Code scanning alerts** and as **P
 
 ## Version pinning
 
-Pin to a release tag. There is no floating major tag (`@v1`) yet, so a reference to one fails to resolve:
+Pin to a release tag for reproducible runs, or to the floating major tag to follow the latest 1.x release. `v1` is moved to each new 1.x release by the release workflow (never to a pre-release):
 
 ```yaml
 uses: theAstiv/paranoid@v1.6.0   # pinned to a release
+uses: theAstiv/paranoid@v1       # latest 1.x
 ```
