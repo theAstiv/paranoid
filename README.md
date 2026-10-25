@@ -86,7 +86,7 @@ CLI runs are saved to the local database (`paranoid models list`); start the web
 | [Configuration](docs/configuration.md) | All environment variables and config options |
 | [Web UI Guide](docs/web-ui-guide.md) | Browser interface walkthrough |
 | [Authentication](docs/authentication.md) | Multi-user setup, JWT, PATs, RBAC |
-| [API Reference](docs/api-reference.md) | REST API — 83 route handlers across 13 route modules, plus `/health` and `/` in `main.py` |
+| [API Reference](docs/api-reference.md) | REST API — 86 route handlers across 13 route modules, plus `/health` and `/` in `main.py` |
 | [GitHub Action](docs/github-action.md) | Automated threat modeling in CI/CD |
 | [Architecture](docs/architecture.md) | System design, pipeline, data model |
 | [Benchmarks](docs/benchmarks.md) | An 11-model comparison on AWS Bedrock, routing savings per step, multi-diagram extraction, iterations, wall time, reliability and dependency-engine gates — dated, with sample sizes and caveats |
