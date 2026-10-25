@@ -186,7 +186,7 @@ ignore = [
     "S603",   # subprocess with harness-built args (the pipeline itself, git, taskkill/pgrep)
     "S607",   # git / taskkill / tasklist / pgrep resolved from PATH on the test machine
 ]
-"test_pipeline.py" = [
+"scripts/test_pipeline.py" = [
     "ASYNC250", # blocking input() intentional in interactive dev script
 ]
 

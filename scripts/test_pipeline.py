@@ -4,7 +4,7 @@
 Usage:
     1. Copy .env.example to .env
     2. Add your API key to .env
-    3. Run: python test_pipeline.py
+    3. Run: python scripts/test_pipeline.py (from the repo root)
 
 Test scenarios:
     1. Basic STRIDE (plain text input)
@@ -15,6 +15,9 @@ Test scenarios:
 import asyncio
 import sys
 from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import Settings
 from backend.models.enums import Framework
@@ -228,7 +231,7 @@ async def test_structured_stride():
         sys.exit(1)
 
     # Load structured example
-    example_path = Path(__file__).parent / "examples" / "stride-example-api-gateway.md"
+    example_path = Path(__file__).parent.parent / "examples" / "stride-example-api-gateway.md"
     if not example_path.exists():
         print(f"[ERROR] Example file not found: {example_path}")
         print("Please ensure examples/stride-example-api-gateway.md exists")
@@ -304,7 +307,7 @@ async def test_dual_framework():
         sys.exit(1)
 
     # Load MAESTRO structured example
-    example_path = Path(__file__).parent / "examples" / "maestro-example-rag-chatbot.md"
+    example_path = Path(__file__).parent.parent / "examples" / "maestro-example-rag-chatbot.md"
     if not example_path.exists():
         print(f"[ERROR] Example file not found: {example_path}")
         print("Please ensure examples/maestro-example-rag-chatbot.md exists")
