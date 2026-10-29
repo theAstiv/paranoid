@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Floating `v1` tag** — `v1` now exists (pointing at v1.6.0) and `release.yml` moves it to each new 1.x release after the GitHub Release is created, skipping pre-releases, so `uses: theAstiv/paranoid@v1` follows the latest 1.x. `docs/github-action.md` documents both pin styles
+- **README and web UI guide refresh** — README gains a header image, the pre-flight gap check, editable context and Model Diff in Features, a "Hand off to a coding agent" section (the Markdown export) and a Roadmap; `docs/web-ui-guide.md` documents the wizard's pre-flight panels and what Re-run and Re-extract delete (both discard context edits, and Re-extract also deletes threats without regenerating them). Docs only
 - **Root directory tidy** — the manual dev script `test_pipeline.py` and the `build-test.sh` / `build-test.bat` wrappers moved from the repository root to `scripts/` (the wrappers now `cd` to the repo root first, so they work from anywhere). No change to the package or the app
 
 ## [1.6.0] - 2026-10-23

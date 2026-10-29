@@ -1,3 +1,5 @@
+![Paranoid: threat modeling that iterates, with receipts. Self-hosted STRIDE + MAESTRO threat models with a deterministic fallback and a dependency capability engine for npm.](https://raw.githubusercontent.com/theAstiv/paranoid/main/docs/assets/social-preview.png)
+
 # Paranoid
 
 **Open-source, self-hosted, iterative threat modeling powered by LLMs.**
@@ -13,6 +15,9 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **DREAD + CVSS Risk Scoring**: automatic 5-dimension DREAD (0–10) and/or a standalone CVSS v3.1 base-score calculator, selectable per run
 - **ATT&CK / ATLAS Enrichment**: every threat — LLM-generated, rule-engine, or dependency — is mapped to MITRE ATT&CK/ATLAS techniques (deterministic rule table, pattern-ID regex, or embedding similarity depending on origin), never self-attributed by the LLM
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
+- **Pre-flight Gap Check**: before a run, the wizard flags missing authentication, trust-boundary, data-flow and external-system details in the description and assumptions; deterministic checks first, then an optional LLM pass, with a strict mode that blocks the run on error-severity gaps
+- **Editable Context**: add, edit or delete assets, flows and trust boundaries on the Results page; edits relink threats and appear in exports. A Re-run or Re-extract replaces them with fresh extraction (keeping them is on the [roadmap](#roadmap)); to fix the context a CLI run uses, pass `--seeded-assets` / `--seeded-flows`
+- **Model Diff**: compare two models by embedding similarity (new / removed / unchanged threats)
 - **Model Routing**: per-pipeline-step fast/main model selection (e.g. Haiku for extraction, Sonnet for threat generation); the routed extraction steps cost about two-thirds less ([measured](docs/benchmarks.md#2-model-routing)), and the steps that write the threat text never leave the main model
 - **Code-as-Input**: Semantic code extraction via context-link MCP (`--code /path/to/repo`)
 - **Image-as-Input**: Multiple architecture diagrams per run — up to 5 named views (deployment, data flow, etc.) via a repeatable `-d` on the CLI (`-d arch.png -d flow.mmd`) or the API's `diagrams[]` field, rendered with a proper ELK layout
@@ -76,6 +81,16 @@ paranoid run examples/arsenal-deps/description.md -n 3 -v \
 CLI runs are saved to the local database (`paranoid models list`); start the web UI against the same `DB_PATH` to open them at `http://localhost:8000/app`. Set `ANTHROPIC_EFFORT=medium` for Claude: at the default effort a run takes about three times as long. Measured costs, timings and their sample sizes are in [Benchmarks](docs/benchmarks.md).
 
 **What the dependency engine claims:** capability visibility plus change and discrepancy triage: what a dependency can do, what changed in a release, and what ships in the npm tarball that isn't in the repo. It doesn't claim to catch supply-chain attacks; see [what it does not catch](#dependency-capability-engine).
+
+## Hand off to a coding agent
+
+Export a model as the Markdown report and give it to Claude Code, Cursor or another coding agent as security requirements:
+
+```bash
+paranoid models export <model-id> --format markdown -o threats.md
+```
+
+This is the ordinary Markdown report, not an agent-specific format: assets, flows and trust boundaries, then each threat with its target, description, DREAD/CVSS score and mitigations. It includes every threat whatever its review status, so remove rejected ones from the file before handing it over. A dedicated format is on the [roadmap](#roadmap).
 
 ## Documentation
 
@@ -208,7 +223,20 @@ Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 **v1.5.0** — Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
 
-**Future:** OIDC/SSO federation.
+## Roadmap
+
+1. **Real-malware recall**: run the dependency engine on real malicious npm samples, handled as inert data, and publish k of N with the misses.
+2. **Product-scope models**: break a product into components, then combine their models, remove duplicates and flag contradictions between components.
+3. **PyPI ecosystem**: the same capability, drift and delta analysis for Python dependencies.
+4. **Reachability v2**: which dependency capabilities your own code can actually reach.
+
+Also planned:
+
+- **Re-run keeps your edits**: Re-run and Re-extract reuse edited assets, flows and trust boundaries, and Re-run keeps the previous run so the two can be diffed automatically.
+- **Design documents as input**: PRDs, BRDs and PDFs alongside descriptions, diagrams and code.
+- **Org knowledge base**: upload internal standards or compliance docs for the pipeline to retrieve from.
+- **Coding-agent export**: threats written as security requirements and acceptance criteria.
+- **OIDC/SSO federation**.
 
 ## License
 
