@@ -54,6 +54,14 @@ A step-by-step wizard for creating a threat model.
 8. **AI Components** — flag whether the system has AI/ML components (runs MAESTRO alongside STRIDE)
 9. **Review & Run** — confirm everything and start the pipeline; progress shown via live SSE events
 
+### Pre-flight gap check
+
+The wizard checks your input for gaps before you spend a run on it. Nothing here stops a run unless you turn on strict mode.
+
+- **Description step, 80+ characters**: an instant in-browser keyword check for missing authentication, trust boundaries, data flows and external systems ("Description looks complete" when none are missing).
+- **200+ characters**: the wizard sends the description and assumptions to `POST /api/analyze/` 600 ms after you stop typing. The server runs the same deterministic checks, then asks the default provider for a deeper pass; if the provider fails, you get the deterministic gaps only. Results appear as **Description coverage (AI)** on the Description step (collapsed) and **Assumptions coverage (AI)** on the Assumptions step, and update as you edit either.
+- **Review & Run** repeats both panels under **Pre-flight analysis** when they found anything. **Block run on error-severity gaps** (off by default) disables the Run button while any error-severity gap remains.
+
 ---
 
 ## Results (`#/models/:id`)
@@ -66,9 +74,20 @@ Shows the full threat model context and threat list after a run completes.
 - **Run Summary**: per-step model (fast vs. main) and token usage, with a warning chip if fast routing fell back to the main model mid-run
 - **Diagrams**: a single diagram renders directly; two or more show a tab strip (`role="tablist"`, arrow-key navigation). Each image loads lazily on first selection and is cached per tab
 - **Dependencies**: a heatmap of packages × capability categories (network, filesystem, process, dynamic code, native addons, …), with expandable evidence and drift/skip reasons, shown when the run included a manifest
-- **Context** (assets, flows, trust boundaries): click any item to expand; **Re-extract** button re-runs extraction without regenerating threats (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
+- **Context** (assets, flows, trust boundaries): click any item to expand; add, edit or delete items (see [Re-run vs. Re-extract](#re-run-vs-re-extract) for how long edits last); **Re-extract** button re-runs only the extraction steps (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
 - **Threats**: filterable table by category, severity, and status; each threat can show ATT&CK/ATLAS technique chips and a CVSS badge alongside its DREAD score
 - **Compare**: opens the Model Diff view
+
+### Re-run vs. Re-extract
+
+Both buttons start from a clean slate. Context edits last until the next Re-run or Re-extract.
+
+- **Re-run** runs the whole pipeline again on the model's stored description, assumptions and diagrams. It first deletes the previous threats, assets, flows and trust boundaries, **including any context you added or edited**, and the dependency analysis. The manifest isn't stored, so the Dependencies section stays empty until you start a new run with one.
+- **Re-extract** deletes the same data, **threats included**, then runs only the extraction steps. Threats are not regenerated, so the model has none until you Re-run.
+
+Keeping edits across both is on the [roadmap](../README.md#roadmap). Until then, to run with corrected context, use the CLI's `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
+
+Re-run doesn't keep the previous version. To compare before and after, create a second model with the changed input and use **Compare**.
 
 ---
 
