@@ -94,11 +94,11 @@ Get extracted context (assets, flows, trust boundaries) for editing before or af
 
 ### `POST /api/models/{id}/extract`
 
-Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`.
+Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`. Rate-limited to 20 requests per minute per client IP (shared with `/analyze` below and the attack-tree / test-case generators); over the limit returns `429` with `Retry-After`.
 
 ### `POST /api/models/{id}/analyze`
 
-Run the pre-flight gap analysis against this model's own stored description — deterministic checks plus one LLM pass, returning gaps and `is_sufficient`. Needs viewer on the model's project when auth is on. For analyzing a draft description that isn't saved as a model yet, use `POST /api/analyze` instead.
+Run the pre-flight gap analysis against this model's own stored description — deterministic checks plus one LLM pass, returning gaps and `is_sufficient`. Needs viewer on the model's project when auth is on. For analyzing a draft description that isn't saved as a model yet, use `POST /api/analyze` instead. Rate-limited like `/extract` above.
 
 ### `GET /api/models/{id}/stats`
 
@@ -196,7 +196,7 @@ Stateless CVSS v3.1 scoring — parses a vector string and returns its computed 
 
 ### `GET /api/config`
 
-Get current runtime configuration (provider, model, iterations, etc.).
+Get current runtime configuration (provider, model, iterations, etc.). Requires a login when `PARANOID_REQUIRE_AUTH=true` (`401` otherwise); never returns key values.
 
 ### `PATCH /api/config`
 
@@ -222,7 +222,7 @@ Liveness probe for a provider (`anthropic`, `openai`, `ollama`, `bedrock`). Requ
 
 ### `POST /api/auth/register`
 
-Create a new user account.
+Create a new user account. Rate-limited to 5 registrations per minute per client IP (a separate bucket from login); over the limit returns `429` with `Retry-After`.
 
 **Body:** `{"username": "alice", "email": "alice@example.com", "password": "..."}`
 

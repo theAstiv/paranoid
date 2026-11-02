@@ -35,6 +35,34 @@ async def test_config_returns_200(client):
 
 
 @pytest.mark.asyncio
+async def test_config_requires_a_user_when_auth_is_on(client, monkeypatch):
+    """S2: provider, model, AWS profile and key sources aren't public."""
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    resp = await client.get("/api/config/")
+    assert resp.status_code == 401
+    assert "default_provider" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_config_returns_200_with_a_token_when_auth_is_on(client, monkeypatch):
+    from backend.auth.passwords import hash_password
+    from backend.auth.tokens import create_access_token
+    from backend.db import crud_auth
+
+    monkeypatch.setattr(settings, "paranoid_require_auth", True)
+    user = await crud_auth.create_user(
+        username="cfg-reader",
+        email="cfg-reader@test.local",
+        password_hash=hash_password("password123"),
+        is_admin=False,
+    )
+    token = create_access_token(user["id"], "cfg-reader", False)
+    resp = await client.get("/api/config/", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert "default_provider" in resp.json()
+
+
+@pytest.mark.asyncio
 async def test_config_contains_expected_keys(client):
     resp = await client.get("/api/config/")
     data = resp.json()

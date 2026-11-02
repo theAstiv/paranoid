@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Code-source `ref` can no longer inject git options** — `POST /api/sources` used to pass `ref` straight to `git checkout`, so an editor could submit `--orphan` or `--pathspec-from-file=…` and git parsed it as an option. A ref must now be a valid git ref name that doesn't start with `-` (`422` otherwise). The clone step checks stored rows again before running git, passes a named ref as `--branch=<ref>`, and puts `--` before the clone URL and directory
+- **Rate limits on registration and the per-model LLM routes** — `POST /api/auth/register` (open, and an argon2id hash per call) is limited to 5 per minute per IP in its own bucket, so sign-up spam can't use up the logins of others behind the same address. `POST /api/models/{id}/analyze` and `/extract` make LLM calls and now share the 20/min enrichment limit; `/analyze` is viewer-level, so a viewer could previously drain the instance's API key budget
+- **`GET /api/config` requires a login when auth is on** — it returned the provider, model, AWS profile, Ollama URL and where each API key comes from to anyone. With auth off nothing changes. The web UI now loads config after sign-in, so opening Register with auth on no longer bounces to Login
 
 ### Fixed
 

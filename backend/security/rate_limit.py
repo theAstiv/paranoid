@@ -87,6 +87,11 @@ _PIPELINE_TIER = _RateLimitTier(limit=5, window=60.0, unit="pipeline runs")
 # Auth tier: /api/auth/login + /api/auth/refresh — brute-force protection.
 _AUTH_TIER = _RateLimitTier(limit=10, window=60.0, unit="login attempts")
 
+# Register tier: /api/auth/register — each call is an argon2id hash (~65 MB).
+# Separate from the auth tier so sign-up spam from a shared IP can't use up
+# the logins of everyone behind it.
+_REGISTER_TIER = _RateLimitTier(limit=5, window=60.0, unit="registrations")
+
 # Registry — the only place that must be updated when a new tier is added.
 # _reset_for_tests() iterates this list, so new tiers are automatically cleared.
 _ALL_TIERS: list[_RateLimitTier] = [
@@ -95,6 +100,7 @@ _ALL_TIERS: list[_RateLimitTier] = [
     _ENRICHMENT_TIER,
     _PIPELINE_TIER,
     _AUTH_TIER,
+    _REGISTER_TIER,
 ]
 
 # Module-level aliases so tests can backdate timestamps directly.
@@ -209,7 +215,8 @@ async def write_rate_limit(request: Request) -> None:
 async def enrichment_rate_limit(request: Request) -> None:
     """FastAPI dependency — rate-limits single-LLM-call enrichment endpoints (20 req / 60 s per IP).
 
-    Covers: attack-tree generation, test-case generation.
+    Covers: attack-tree generation, test-case generation, a saved model's
+    pre-flight (/models/{id}/analyze) and context extraction (/models/{id}/extract).
     Separate from write_rate_limit so that DB-write traffic does not exhaust
     the LLM enrichment budget for the same IP.
     """
@@ -234,6 +241,15 @@ async def auth_rate_limit(request: Request) -> None:
     await _check_bucket(_get_client_ip(request), _AUTH_TIER)
 
 
+async def register_rate_limit(request: Request) -> None:
+    """FastAPI dependency — rate-limits /api/auth/register (5 req / 60 s per IP).
+
+    Registration is open and every call hashes a password with argon2id, so
+    without a limit it is a cheap CPU/memory DoS and unlimited account creation.
+    """
+    await _check_bucket(_get_client_ip(request), _REGISTER_TIER)
+
+
 # Expose the constants so tests can introspect them without re-importing the
 # module multiple times and risking stale references to the bucket dict.
 RATE_LIMIT = _ANALYZE_TIER.limit
@@ -246,6 +262,8 @@ PIPELINE_RATE_LIMIT = _PIPELINE_TIER.limit
 PIPELINE_RATE_WINDOW = _PIPELINE_TIER.window
 AUTH_RATE_LIMIT = _AUTH_TIER.limit
 AUTH_RATE_WINDOW = _AUTH_TIER.window
+REGISTER_RATE_LIMIT = _REGISTER_TIER.limit
+REGISTER_RATE_WINDOW = _REGISTER_TIER.window
 
 
 def _reset_for_tests() -> None:

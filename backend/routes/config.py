@@ -116,10 +116,11 @@ async def _config_payload() -> dict:
 
 
 @router.get("/")
-async def get_config() -> JSONResponse:
+async def get_config(_user: Annotated[dict, Depends(get_current_user)]) -> JSONResponse:
     """Return current application configuration.
 
-    API keys are never included in the response.
+    API keys are never included in the response. Needs a signed-in user when
+    auth is on (provider, model, AWS profile and key sources aren't public).
     """
     return JSONResponse(content=await _config_payload())
 
