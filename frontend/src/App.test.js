@@ -13,7 +13,7 @@ vi.mock('./lib/api.js', async (importOriginal) => {
 
 import App from './App.svelte'
 import { getConfig, fetchMe } from './lib/api.js'
-import { menuOpen, notification, notify, currentUser } from './lib/stores.js'
+import { menuOpen, notification, notify, currentUser, config } from './lib/stores.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -21,6 +21,7 @@ beforeEach(() => {
   menuOpen.set(null)
   notification.set(null)
   currentUser.set(null)
+  config.set(null)
   getConfig.mockResolvedValue({ first_run: false })
   fetchMe.mockResolvedValue(null)
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })))
@@ -106,6 +107,26 @@ describe('App — config needs a session (review S2)', () => {
     render(App)
     await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(window.location.hash).toBe('#/settings'))
+  })
+})
+
+describe('App — sidebar version (review F1)', () => {
+  it('shows the server version from config, not a hard-coded one', async () => {
+    getConfig.mockResolvedValue({ first_run: false, version: '1.6.0' })
+    fetchMe.mockImplementation(async () => {
+      const user = { id: 'u-1', username: 'alice' }
+      currentUser.set(user)
+      return user
+    })
+    render(App)
+    expect(await screen.findByText('v1.6.0')).toBeInTheDocument()
+    expect(screen.queryByText('v1.5')).toBeNull()
+  })
+
+  it('shows no version before config has loaded', async () => {
+    render(App)
+    await screen.findByRole('button', { name: 'User menu' })
+    expect(screen.queryByText(/^v\d/)).toBeNull()
   })
 })
 
