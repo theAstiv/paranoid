@@ -233,7 +233,9 @@
         </svg>
         <div class="flex items-baseline gap-1.5">
           <span class="font-mono font-semibold text-c-text text-[15px]">paranoid</span>
-          <span class="font-mono text-[11px] text-c-faint tracking-wider">v1.5</span>
+          {#if $config?.version}
+            <span class="font-mono text-[11px] text-c-faint tracking-wider">v{$config.version}</span>
+          {/if}
         </div>
       </div>
 

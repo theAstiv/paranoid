@@ -29,14 +29,20 @@ jobs:
       - name: Build package
         run: python -m build
 
+      # Scoped to the package files, as in ci.yml: anything else that lands in
+      # dist/ (a frontend or PyInstaller build) breaks twine check, and this
+      # artifact is exactly what publish-pypi uploads.
       - name: Check package
-        run: twine check dist/*
+        run: twine check dist/paranoid_cli-*.whl dist/paranoid_cli-*.tar.gz
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: python-package
-          path: dist/*
+          path: |
+            dist/paranoid_cli-*.whl
+            dist/paranoid_cli-*.tar.gz
+          if-no-files-found: error
 
   # Build standalone binaries for Linux, macOS, Windows
   build-binaries:
