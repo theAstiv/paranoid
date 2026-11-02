@@ -61,7 +61,7 @@ from backend.db.crud_auth import (
     revoke_session,
     update_last_login,
 )
-from backend.security.rate_limit import auth_rate_limit
+from backend.security.rate_limit import auth_rate_limit, register_rate_limit
 
 
 logger = logging.getLogger(__name__)
@@ -145,11 +145,15 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 
 @router.post("/register", status_code=201)
-async def register(body: RegisterRequest) -> JSONResponse:
+async def register(
+    body: RegisterRequest,
+    _rl: None = Depends(register_rate_limit),
+) -> JSONResponse:
     """Create a new user account.
 
     Open registration — any caller can create an account.  The first user
     bootstrapped by main.py is admin; subsequent users are non-admin by default.
+    Rate-limited per IP: every call does an argon2id hash.
     """
     if await get_user_by_username(body.username):
         raise HTTPException(status_code=409, detail="Username already taken")

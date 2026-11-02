@@ -161,7 +161,22 @@
   // Boot sequence
   onMount(async () => {
     await fetchMe()
+    checkHealth()
+    setInterval(checkHealth, 30000)
+  })
 
+  // Config, projects and notifications need a session, so they 401 before
+  // login (and a 401 sends the page to #/login, even from Register). Load them
+  // whenever a different user becomes current: page load (fetchMe, which also
+  // resolves the anonymous admin with auth off), login, register.
+  let workspaceUserId = null
+  $: if ($currentUser?.id && $currentUser.id !== workspaceUserId) {
+    workspaceUserId = $currentUser.id
+    loadConfig()
+    loadWorkspace()
+  }
+
+  async function loadConfig() {
     try {
       const cfg = await getConfig()
       config.set(cfg)
@@ -169,18 +184,6 @@
     } catch (err) {
       console.warn('Config bootstrap failed — first-run redirect skipped.', err)
     }
-
-    checkHealth()
-    setInterval(checkHealth, 30000)
-  })
-
-  // Projects and notifications need a session, so they 401 before login. Load
-  // them whenever a different user becomes current: page load (fetchMe, which
-  // also resolves the anonymous admin with auth off), login, register.
-  let workspaceUserId = null
-  $: if ($currentUser?.id && $currentUser.id !== workspaceUserId) {
-    workspaceUserId = $currentUser.id
-    loadWorkspace()
   }
 
   async function loadWorkspace() {

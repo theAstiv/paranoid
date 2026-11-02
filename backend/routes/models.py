@@ -82,7 +82,11 @@ from backend.routes._helpers import (
     resolve_provider,
 )
 from backend.scoring.cvss31 import to_vector_string
-from backend.security.rate_limit import pipeline_rate_limit, write_rate_limit
+from backend.security.rate_limit import (
+    enrichment_rate_limit,
+    pipeline_rate_limit,
+    write_rate_limit,
+)
 from backend.sources.paths import clone_dir_for, index_db_for
 
 
@@ -1445,6 +1449,7 @@ async def delete_trust_boundary(
 @router.post("/{model_id}/analyze")
 async def analyze_model_description(
     model_id: str,
+    _rate: None = Depends(enrichment_rate_limit),
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> AnalyzeDescriptionResponse:
     """Analyze the model's description for completeness gaps.
@@ -1469,6 +1474,7 @@ async def analyze_model_description(
 @router.post("/{model_id}/extract")
 async def extract_model_context(
     model_id: str,
+    _rate: None = Depends(enrichment_rate_limit),
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> StreamingResponse:
     """Run only the summarize + extract steps (no threat generation), streaming SSE.

@@ -86,6 +86,29 @@ describe('App — menus (BB-100)', () => {
   })
 })
 
+describe('App — config needs a session (review S2)', () => {
+  it('does not fetch config while nobody is signed in', async () => {
+    window.location.hash = '#/register'
+    render(App)
+    await waitFor(() => expect(fetchMe).toHaveBeenCalled())
+    await tick()
+    expect(getConfig).not.toHaveBeenCalled()
+    expect(window.location.hash).toBe('#/register')
+  })
+
+  it('fetches config once a user is current, and follows first_run to Settings', async () => {
+    getConfig.mockResolvedValue({ first_run: true })
+    fetchMe.mockImplementation(async () => {
+      const user = { id: 'u-1', username: 'alice' }
+      currentUser.set(user)
+      return user
+    })
+    render(App)
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(window.location.hash).toBe('#/settings'))
+  })
+})
+
 describe('App — unknown routes and titles (BB-113, BB-109)', () => {
   it('shows a not-found page with a link home for an unknown hash', async () => {
     window.location.hash = '#/no/such/page'

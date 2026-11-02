@@ -16,17 +16,21 @@ import pytest
 import backend.security.rate_limit as rl
 from backend.config import settings
 from backend.security.rate_limit import (
+    AUTH_RATE_LIMIT,
     ENRICHMENT_RATE_LIMIT,
     ENRICHMENT_RATE_WINDOW,
     PIPELINE_RATE_LIMIT,
     PIPELINE_RATE_WINDOW,
     RATE_LIMIT,
     RATE_WINDOW,
+    REGISTER_RATE_LIMIT,
     WRITE_RATE_LIMIT,
     WRITE_RATE_WINDOW,
     analyze_rate_limit,
+    auth_rate_limit,
     enrichment_rate_limit,
     pipeline_rate_limit,
+    register_rate_limit,
     write_rate_limit,
 )
 
@@ -408,3 +412,70 @@ async def test_enrichment_bucket_refills_after_window():
 
     for _ in range(ENRICHMENT_RATE_LIMIT):
         await enrichment_rate_limit(req)
+
+
+# ---------------------------------------------------------------------------
+# Routes that carry a tier (S3, S4 in the 2026-11-02 review)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def client(test_db):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["analyze", "extract"])
+async def test_llm_model_endpoints_are_rate_limited(client, action):
+    """Both make LLM calls; the limit is checked before the handler, so an unknown
+    model 404s until the bucket is empty and then gets 429 without any LLM call."""
+    path = f"/api/models/no-such-model/{action}"
+    for _ in range(ENRICHMENT_RATE_LIMIT):
+        resp = await client.post(path)
+        assert resp.status_code != 429
+    resp = await client.post(path)
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_register_is_rate_limited_before_hashing(client):
+    """S3: every registration is an argon2id hash, so a refused call must not hash."""
+    from unittest.mock import AsyncMock, patch
+
+    hashes = MagicMock(return_value="$argon2id$stub")
+    created = {"id": "u1", "username": "u", "email": "u@test.local", "is_active": 1}
+    with (
+        patch("backend.routes.auth.get_user_by_username", new=AsyncMock(return_value=None)),
+        patch("backend.routes.auth.get_user_by_email", new=AsyncMock(return_value=None)),
+        patch("backend.routes.auth.create_user", new=AsyncMock(return_value=created)),
+        patch("backend.routes.auth.hash_password", new=hashes),
+    ):
+        body = {"username": "newuser", "email": "new@test.local", "password": "password123"}
+        for _ in range(REGISTER_RATE_LIMIT):
+            assert (await client.post("/api/auth/register", json=body)).status_code == 201
+        resp = await client.post("/api/auth/register", json=body)
+
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+    assert hashes.call_count == REGISTER_RATE_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_register_bucket_independent_from_login():
+    """Sign-up spam from a shared IP must not lock everyone behind it out of login."""
+    from fastapi import HTTPException
+
+    req = _mock_request("10.40.0.1")
+    for _ in range(REGISTER_RATE_LIMIT):
+        await register_rate_limit(req)
+    with pytest.raises(HTTPException):
+        await register_rate_limit(req)
+
+    for _ in range(AUTH_RATE_LIMIT):
+        await auth_rate_limit(req)
