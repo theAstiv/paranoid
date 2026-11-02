@@ -71,6 +71,10 @@ _AUTH_FAILURE_RE = re.compile(
 # Hex SHA ref (7-40 hex chars) -> full clone required (no --depth 1).
 _SHA_REF_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
+# Characters and sequences `git check-ref-format` refuses in a ref name.
+_REF_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
+_MAX_REF_LENGTH = 255
+
 MAX_SUBSCRIBERS = 8
 RING_BUFFER_SIZE = 20
 RING_BUFFER_TTL_S = 60.0
@@ -84,6 +88,10 @@ HEARTBEAT_INTERVAL_S = 10.0
 
 class HostNotAllowedError(ValueError):
     """Git URL host is not in the allowlist."""
+
+
+class InvalidRefError(ValueError):
+    """Ref is not a valid git branch, tag or commit name."""
 
 
 class TooManySubscribersError(RuntimeError):
@@ -189,6 +197,29 @@ def is_sha_ref(ref: str | None) -> bool:
     cannot satisfy an arbitrary commit SHA lookup.
     """
     return bool(ref and _SHA_REF_RE.match(ref))
+
+
+def validate_git_ref(ref: str) -> None:
+    """Raise ``InvalidRefError`` unless ``ref`` is a valid branch, tag or commit name.
+
+    The ref ends up on git's argv, so a value like ``--orphan`` would be parsed
+    as an option. Applies the `git check-ref-format` rules without spawning git;
+    a leading ``-`` is never a valid ref name.
+    """
+    components = ref.split("/")
+    if (
+        not ref
+        or len(ref) > _MAX_REF_LENGTH
+        or ref.startswith(("-", "/"))
+        or ref.endswith(("/", "."))
+        or ref == "@"
+        or _REF_FORBIDDEN_RE.search(ref)
+        or any(c.startswith(".") or c.endswith(".lock") for c in components)
+    ):
+        raise InvalidRefError(
+            f"Invalid ref {ref[:100]!r}: expected a branch, tag or commit SHA "
+            "(git check-ref-format rules; must not start with '-')."
+        )
 
 
 def check_path_containment(path: Path, base_dir: Path) -> bool:
@@ -405,6 +436,17 @@ async def _do_clone_and_index(  # noqa: PLR0911
         await update_code_source_status(source_id, status="failed", error=err)
         _publish(source_id, SourceEvent(source_id, "failed", "validate", "URL rejected", error=err))
         return
+    # Rows stored before the route validated refs could still hold an option-like value.
+    if ref:
+        try:
+            validate_git_ref(ref)
+        except InvalidRefError as exc:
+            err = str(exc)
+            await update_code_source_status(source_id, status="failed", error=err)
+            _publish(
+                source_id, SourceEvent(source_id, "failed", "validate", "Ref rejected", error=err)
+            )
+            return
 
     # ── Step 1: clone ────────────────────────────────────────────────────
     if cancel_event.is_set():
@@ -460,9 +502,14 @@ async def _do_clone_and_index(  # noqa: PLR0911
         "core.symlinks=false",
         "clone",
     ]
+    # A shallow clone only fetches one branch, so a named branch or tag must be
+    # cloned with --branch (a later checkout of it would not find it). A SHA
+    # needs full history and is checked out after the clone.
     if not is_sha_ref(ref):
         clone_args += ["--depth", "1"]
-    clone_args += [clone_url, str(clone_dir)]
+        if ref:
+            clone_args.append(f"--branch={ref}")
+    clone_args += ["--", clone_url, str(clone_dir)]
 
     rc, _, stderr = await _run_subprocess(clone_args, cancel_event, env=git_env)
     if cancel_event.is_set():
@@ -501,10 +548,12 @@ async def _do_clone_and_index(  # noqa: PLR0911
                 )
                 return
 
-    # Optional: checkout an explicit ref.
-    if ref:
+    # A SHA ref: check it out from the full clone. The trailing "--" stops git
+    # reading the ref as a path; it still resolves a remote branch that only
+    # looks like a SHA (e.g. "deadbeef").
+    if is_sha_ref(ref):
         co_rc, _, co_err = await _run_subprocess(
-            ["git", "-C", str(clone_dir), "checkout", ref],
+            ["git", "-C", str(clone_dir), "checkout", ref, "--"],
             cancel_event,
             env=git_env,
         )

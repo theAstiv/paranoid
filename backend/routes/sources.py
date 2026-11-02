@@ -92,6 +92,11 @@ async def create_source(
         mgr.validate_git_url(body.git_url)
     except mgr.HostNotAllowedError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    if body.ref:
+        try:
+            mgr.validate_git_ref(body.ref)
+        except mgr.InvalidRefError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     pat = body.pat.get_secret_value() if body.pat else None
 

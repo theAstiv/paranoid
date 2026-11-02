@@ -366,6 +366,8 @@ Add and clone a git repository.
 
 `project_id` is optional and defaults to the Default Project. The URL must not contain a username or password (`422`); put the token in `pat`, which is encrypted at rest.
 
+`ref` is optional (omit it for the default branch) and may be a branch, a tag or a commit SHA. It must be a valid git ref name (`git check-ref-format` rules) and must not start with `-`; anything else returns `422`.
+
 **Response:** `202 Accepted` — clone runs as a background task; track progress via SSE.
 
 ### `GET /api/sources/{id}`
