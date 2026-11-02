@@ -94,7 +94,7 @@ Get extracted context (assets, flows, trust boundaries) for editing before or af
 
 ### `POST /api/models/{id}/extract`
 
-Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`. Rate-limited to 20 requests per minute per client IP (shared with `/analyze` below and the attack-tree / test-case generators); over the limit returns `429` with `Retry-After`.
+Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`, and like `/run` it is a background task the stream only follows: closing the stream doesn't stop it, and `GET /api/models/{id}/run/events` follows it from its start. `409` if the model already has a run or an extraction in progress. Rate-limited to 20 requests per minute per client IP (shared with `/analyze` below and the attack-tree / test-case generators); over the limit returns `429` with `Retry-After`.
 
 ### `POST /api/models/{id}/analyze`
 
