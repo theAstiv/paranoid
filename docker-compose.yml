@@ -59,9 +59,10 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      # Default * is fine for self-hosted single-user use.
-      # For a publicly accessible deployment set this explicitly, e.g.:
-      #   CORS_ORIGINS=https://your-domain.com
+      # Default * allows any origin but never with credentials; the web UI is
+      # same-origin and needs no CORS. List concrete origins only for a browser
+      # app on another origin that calls the API with cookies, e.g.:
+      #   CORS_ORIGINS=https://dash.your-domain.com
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       # Concrete origins allowed to make mutating requests. Default covers
       # the loopback publish above. Adjust if you change the host publish.

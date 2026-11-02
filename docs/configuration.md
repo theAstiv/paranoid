@@ -81,7 +81,7 @@ The Run Summary on the Results page lists each step's model and its input / outp
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `8000` | Bind port |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated); use `*` for all |
+| `CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated). `*` allows any origin **without** credentials (no cookies, no `Access-Control-Allow-Credentials`); list concrete origins to allow credentialed cross-origin requests from them. The web UI is same-origin and needs neither |
 
 ---
 

@@ -33,6 +33,7 @@ from backend.routes.projects import router as projects_router
 from backend.routes.scoring import router as scoring_router
 from backend.routes.sources import router as sources_router
 from backend.routes.threats import router as threats_router
+from backend.security.cors import parse_cors_origins
 from backend.security.csrf import CSRFMiddleware, parse_allowed_origins
 from backend.security.headers import SecurityHeadersMiddleware
 from backend.security.source_key import PATDecryptionError
@@ -243,12 +244,13 @@ if not _allowed_origins:
     )
 
 # CORS — configure via CORS_ORIGINS env var: "*" (default) or comma-separated
-# origins, e.g. CORS_ORIGINS="https://app.example.com,https://staging.example.com"
-_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+# origins, e.g. CORS_ORIGINS="https://app.example.com,https://staging.example.com".
+# "*" never allows credentials (see backend/security/cors.py).
+_cors_origins, _cors_credentials = parse_cors_origins(settings.cors_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=True,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -128,7 +128,7 @@ Backend: `http://localhost:8000`
 - [ ] Set `CONFIG_SECRET` to protect the Settings page and encrypt PATs
 - [ ] Set `ALLOWED_ORIGINS` to your concrete public origin(s)
 - [ ] Put the container behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik)
-- [ ] Set `CORS_ORIGINS` to your frontend origin(s)
+- [ ] Leave `CORS_ORIGINS=*` unless a browser app on another origin calls the API with cookies; then list that origin. The web UI is served from the same origin and needs no CORS. With `*` the server never allows credentialed cross-origin requests
 - [ ] Set `TRUSTED_PROXIES` to the proxy's IP or CIDR (e.g. `172.18.0.0/16`); without it `X-Forwarded-For` is ignored and every request is rate-limited as the proxy's address
 - [ ] Bind the port to `0.0.0.0` only if needed; prefer a reverse proxy instead
 - [ ] Mount `./data` as a named volume with regular backups
