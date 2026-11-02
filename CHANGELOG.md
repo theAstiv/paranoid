@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Code-source `ref` can no longer inject git options** — `POST /api/sources` used to pass `ref` straight to `git checkout`, so an editor could submit `--orphan` or `--pathspec-from-file=…` and git parsed it as an option. A ref must now be a valid git ref name that doesn't start with `-` (`422` otherwise). The clone step checks stored rows again before running git, passes a named ref as `--branch=<ref>`, and puts `--` before the clone URL and directory
+
+### Fixed
+
+- **Code sources on a non-default branch or tag** — a branch or tag other than the remote's default always failed with `pathspec '…' did not match`, because the shallow clone only fetched the default branch before the checkout. Named refs are now cloned with `--branch`; commit SHAs still get a full clone and a checkout
+
 ### Changed
 
 - **Floating `v1` tag** — `v1` now exists (pointing at v1.6.0) and `release.yml` moves it to each new 1.x release after the GitHub Release is created, skipping pre-releases, so `uses: theAstiv/paranoid@v1` follows the latest 1.x. `docs/github-action.md` documents both pin styles

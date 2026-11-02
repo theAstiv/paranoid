@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -155,6 +157,49 @@ def test_is_sha_ref_tag():
 
 def test_is_sha_ref_none():
     assert mgr.is_sha_ref(None) is False
+
+
+@pytest.mark.parametrize(
+    "ref", ["main", "feature/x", "release-1.2", "v1.2.3", "a" * 40, "deadbeef", "user@host"]
+)
+def test_validate_git_ref_accepts(ref):
+    mgr.validate_git_ref(ref)  # should not raise
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "",
+        "--orphan",
+        "-b",
+        "--pathspec-from-file=/etc/passwd",
+        "--upload-pack=touch /tmp/x",
+        "a..b",
+        "x.lock",
+        "x.lock/y",
+        "a b",
+        "a\tb",
+        "a~1",
+        "a^",
+        "a:b",
+        "a?",
+        "a*",
+        "a[b",
+        "a\\b",
+        "a@{1}",
+        "@",
+        ".hidden",
+        "x/.hidden",
+        "x/",
+        "/x",
+        "x//y",
+        "x.",
+        "a" * 256,
+    ],
+)
+def test_validate_git_ref_rejects(ref):
+    with pytest.raises(mgr.InvalidRefError):
+        mgr.validate_git_ref(ref)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +489,128 @@ async def test_sha_ref_skips_depth_flag(test_db, monkeypatch):
     clone_call = next((a for a in called_args if "clone" in a), None)
     assert clone_call is not None
     assert "--depth" not in clone_call
+    checkout_call = next((a for a in called_args if "checkout" in a), None)
+    assert checkout_call is not None
+    assert checkout_call[-2:] == ["abc1234def5678901234567890123456789012ab", "--"]
+
+
+async def _record_clone_args(monkeypatch, ref: str | None) -> list[list[str]]:
+    source_id = await _create_source("https://github.com/o/r.git", ref=ref, pat=None)
+    called_args: list[list[str]] = []
+
+    async def recording_exec(*args, **kwargs):
+        called_args.append(list(args))
+        return _FakeProcess(returncode=0, stdout=b"abc1234\n", stderr=b"")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", recording_exec)
+    monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: None)
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
+    await mgr.run_clone_and_index(source_id)
+    return called_args
+
+
+@pytest.mark.asyncio
+async def test_branch_ref_clones_with_branch_flag_and_no_checkout(test_db, monkeypatch):
+    """A shallow clone only has the default branch, so the ref goes on the clone (C1)."""
+    called_args = await _record_clone_args(monkeypatch, "feature")
+
+    clone_call = called_args[0]
+    assert "clone" in clone_call
+    assert "--branch=feature" in clone_call
+    depth_at = clone_call.index("--depth")
+    assert clone_call[depth_at : depth_at + 2] == ["--depth", "1"]
+    assert not any("checkout" in a for a in called_args)
+
+
+@pytest.mark.asyncio
+async def test_clone_ends_option_parsing_before_url(test_db, monkeypatch):
+    called_args = await _record_clone_args(monkeypatch, None)
+
+    clone_call = called_args[0]
+    assert clone_call[-3] == "--"
+    assert clone_call[-2] == "https://github.com/o/r.git"
+    assert not any(a.startswith("--branch") for a in clone_call)
+
+
+@pytest.mark.asyncio
+async def test_stored_option_like_ref_fails_without_running_git(test_db, monkeypatch):
+    """A row stored before refs were validated must not reach git's argv (S1)."""
+    source_id = await _create_source("https://github.com/o/r.git", ref="--orphan", pat=None)
+    events: list[mgr.SourceEvent] = []
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: events.append(ev))
+
+    async def no_exec(*args, **kwargs):
+        raise AssertionError(f"git must not run: {args}")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", no_exec)
+
+    await mgr.run_clone_and_index(source_id)
+
+    assert events[-1].status == "failed"
+    assert events[-1].phase == "validate"
+    assert "Invalid ref" in (events[-1].error or "")
+
+
+def _git(cwd, *args: str) -> str:
+    result = subprocess.run(  # noqa: S603 - fixed git args on a test-owned repo
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+@pytest.fixture
+def two_branch_repo(tmp_path):
+    """A local repo whose default branch is main, plus a feature branch and a tag on it."""
+    repo = tmp_path / "origin"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "on main")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "on feature")
+    _git(repo, "tag", "v-feature")
+    _git(repo, "checkout", "-q", "main")
+    shas = {name: _git(repo, "rev-parse", name) for name in ("main", "feature")}
+    return repo, shas
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ref", "expected"), [("feature", "feature"), ("v-feature", "feature"), (None, "main")]
+)
+async def test_real_git_clones_non_default_branch(
+    test_db, monkeypatch, two_branch_repo, ref, expected
+):
+    """Regression for C1: a branch or tag off the default branch used to fail checkout."""
+    repo, shas = two_branch_repo
+    monkeypatch.setattr(mgr, "validate_git_url", lambda url: None)
+    monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: None)
+    events: list[mgr.SourceEvent] = []
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: events.append(ev))
+
+    # The manager blocks the file transport; allow it only for this local fixture.
+    real_run = mgr._run_subprocess
+
+    async def allow_file_transport(args, *a, **kw):
+        args = [
+            "protocol.file.allow=always" if x == "protocol.file.allow=never" else x for x in args
+        ]
+        return await real_run(args, *a, **kw)
+
+    monkeypatch.setattr(mgr, "_run_subprocess", allow_file_transport)
+
+    source_id = await _create_source(repo.as_uri(), ref=ref, pat=None)
+    await mgr.run_clone_and_index(source_id)
+
+    assert events[-1].status == "ready", events[-1].error
+    from backend.db.crud import get_code_source
+
+    row = await get_code_source(source_id)
+    assert row["resolved_sha"] == shas[expected]
 
 
 @pytest.mark.asyncio

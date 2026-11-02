@@ -97,6 +97,19 @@ async def test_create_source_with_ref(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ref", ["--orphan", "-b", "--upload-pack=touch /tmp/x", "a..b"])
+async def test_create_source_option_like_ref_returns_422_and_stores_nothing(
+    client, monkeypatch, ref
+):
+    """A ref reaches git's argv, so anything git could parse as an option is refused (S1)."""
+    monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda sid: None)
+    resp = await _create(client, ref=ref)
+    assert resp.status_code == 422
+    assert "Invalid ref" in resp.json()["detail"]
+    assert (await client.get("/api/sources")).json() == []
+
+
+@pytest.mark.asyncio
 async def test_create_source_with_pat_has_pat_true(client, monkeypatch):
     """POST with a PAT results in has_pat=True in the response."""
     monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda sid: None)
