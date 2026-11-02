@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code sources on a non-default branch or tag** — a branch or tag other than the remote's default always failed with `pathspec '…' did not match`, because the shallow clone only fetched the default branch before the checkout. Named refs are now cloned with `--branch`; commit SHAs still get a full clone and a checkout
 - **Sidebar version** — the web UI's sidebar said `v1.5` on every release since 1.5. It now shows the server's version from `GET /api/config`, once config has loaded
 - **Release workflow package check** — `release.yml` ran `twine check dist/*` and uploaded `dist/*` as the artifact PyPI publishes; anything else in `dist/` would have failed the check or been sent to PyPI. Both are now scoped to `dist/paranoid_cli-*` (as `ci.yml` already was), and the upload fails if no package was built
+- **Pre-release tags** — a tag with a suffix (`v1.6.1-rc1`) now creates a GitHub pre-release instead of the repo's "Latest" release, and CI's Action version check reads a PEP 440 pre-release version (`1.6.1rc1`) whole instead of cutting it to `1.6.1` and failing
 
 ### Changed
 

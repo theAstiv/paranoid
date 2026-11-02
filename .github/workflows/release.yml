@@ -187,7 +187,9 @@ jobs:
           name: Paranoid v${{ steps.get_version.outputs.VERSION }}
           body_path: release-notes.md
           draft: false
-          prerelease: false
+          # A tag with a suffix (v1.6.1-rc1) is a pre-release, so it never
+          # becomes the repo's "Latest" release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             python-package/*
             binaries/*
