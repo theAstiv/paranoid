@@ -23,7 +23,7 @@ from backend.auth.dependencies import (
     visible_project_ids,
 )
 from backend.config import settings
-from backend.db import crud, crud_activity, crud_projects
+from backend.db import crud, crud_activity, crud_projects, kept_context
 from backend.db.component_links import (
     relink_boundary,
     relink_flow,
@@ -617,7 +617,11 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
     if event.step == PipelineStep.EXTRACT_ASSETS:
         assets_list: AssetsList | None = event.data.get("assets")
         if assets_list and hasattr(assets_list, "assets"):
+            # Re-extract keeps the user's rows; don't save the extractor's copy of them.
+            kept_assets = kept_context.kept_asset_keys(await crud.list_assets(model_id))
             for asset in assets_list.assets:
+                if kept_context.normalize_key(asset.name) in kept_assets:
+                    continue
                 try:
                     await crud.create_asset(
                         model_id=model_id,
@@ -632,14 +636,24 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
     elif event.step == PipelineStep.EXTRACT_FLOWS:
         flows_list: FlowsList | None = event.data.get("flows")
         if flows_list and hasattr(flows_list, "data_flows"):
+            renames = kept_context.asset_renames(await crud.list_assets(model_id))
+            kept_flows = kept_context.kept_endpoint_keys(await crud.list_flows(model_id))
+            kept_boundaries = kept_context.kept_endpoint_keys(
+                await crud.list_trust_boundaries(model_id)
+            )
             for flow in flows_list.data_flows:
+                source = kept_context.rename_endpoint(flow.source_entity, renames)
+                target = kept_context.rename_endpoint(flow.target_entity, renames)
+                key = kept_context.endpoint_key(source, target)
+                if kept_context.normalize_key(key) in kept_flows:
+                    continue
                 try:
                     await crud.create_flow(
                         model_id=model_id,
                         flow_type="data",
                         flow_description=flow.flow_description,
-                        source_entity=flow.source_entity,
-                        target_entity=flow.target_entity,
+                        source_entity=source,
+                        target_entity=target,
                     )
                 except Exception:
                     logger.warning(
@@ -649,12 +663,17 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
                         exc_info=True,
                     )
             for boundary in flows_list.trust_boundaries:
+                source = kept_context.rename_endpoint(boundary.source_entity, renames)
+                target = kept_context.rename_endpoint(boundary.target_entity, renames)
+                key = kept_context.endpoint_key(source, target)
+                if kept_context.normalize_key(key) in kept_boundaries:
+                    continue
                 try:
                     await crud.create_trust_boundary(
                         model_id=model_id,
                         purpose=boundary.purpose,
-                        source_entity=boundary.source_entity,
-                        target_entity=boundary.target_entity,
+                        source_entity=source,
+                        target_entity=target,
                     )
                 except Exception:
                     logger.warning(
@@ -1285,6 +1304,7 @@ async def create_asset(
         asset_type=body.type,
         name=body.name,
         description=body.description,
+        user_edited=True,
     )
     # A new asset can resolve flows/threats that had no match before.
     await try_link_model_components(model_id)
@@ -1353,6 +1373,7 @@ async def create_flow(
         flow_description=body.flow_description,
         source_entity=body.source_entity,
         target_entity=body.target_entity,
+        user_edited=True,
     )
     await try_link_model_components(model_id)
     flow = await crud.get_flow(flow_id)
@@ -1415,6 +1436,7 @@ async def create_trust_boundary(
         purpose=body.purpose,
         source_entity=body.source_entity,
         target_entity=body.target_entity,
+        user_edited=True,
     )
     await try_link_model_components(model_id)
     boundary = await crud.get_trust_boundary(boundary_id)
