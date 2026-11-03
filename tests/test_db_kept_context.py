@@ -284,6 +284,8 @@ async def test_reextract_route_keeps_the_users_edit(test_db) -> None:
 
     async def extractor(*args, **kwargs):
         yield _assets_event("API", "DB")
+        yield _flows_event([("API", "DB")])
+        yield PipelineEvent(step=PipelineStep.COMPLETE, status="completed", message="done")
 
     with (
         patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
@@ -297,6 +299,8 @@ async def test_reextract_route_keeps_the_users_edit(test_db) -> None:
     assets = {a["name"]: a["id"] for a in await crud.list_assets(model_id)}
     assert assets.keys() == {"API", "Postgres"}
     assert assets["Postgres"] == asset_id
+    flows = [(f["source_entity"], f["target_entity"]) for f in await crud.list_flows(model_id)]
+    assert flows == [("API", "Postgres")]
 
 
 async def _consume(resp) -> None:
