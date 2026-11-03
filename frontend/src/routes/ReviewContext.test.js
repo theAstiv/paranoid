@@ -109,6 +109,43 @@ describe('ReviewContext — re-extract', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('LLM down')))
     expect(screen.getByText('Re-extract from description')).toBeInTheDocument()
   })
+
+  it('a refused extraction (409) is not reported as a success', async () => {
+    // subscribeSSE always calls onDone after onError.
+    subscribeToExtract.mockImplementation((id, evtCb, errCb, doneCb) => {
+      const err = Object.assign(new Error('This model already has a run in progress.'), { status: 409 })
+      queueMicrotask(async () => { errCb(err); await doneCb() })
+      return vi.fn()
+    })
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Re-extract from description'))
+
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'error', 'Extraction not started: This model already has a run in progress.',
+    ))
+    await waitFor(() => expect(screen.getByText('Re-extract from description')).toBeInTheDocument())
+    expect(notify).not.toHaveBeenCalledWith('success', expect.anything())
+  })
+
+  it('a failed complete event is reported as a failure, not a success', async () => {
+    subscribeToExtract.mockImplementation((id, evtCb, errCb, doneCb) => {
+      queueMicrotask(async () => {
+        evtCb({ step: 'complete', status: 'failed', message: 'Extraction failed; see server logs.' })
+        await doneCb()
+      })
+      return vi.fn()
+    })
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Re-extract from description'))
+
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('see server logs')))
+    await waitFor(() => expect(getModelAssets).toHaveBeenCalledTimes(2))
+    expect(notify).not.toHaveBeenCalledWith('success', expect.anything())
+  })
 })
 
 describe('ReviewContext — assets CRUD', () => {

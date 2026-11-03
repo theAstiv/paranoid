@@ -937,15 +937,30 @@ async def run_pipeline(
     )
 
     async def run_events() -> AsyncGenerator[str, None]:
-        # Clear any previous run's data so re-runs start clean
-        await crud.clear_model_data(model_id)
-        await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
-        # Persist assumptions unconditionally — clears stale data from prior runs
-        await crud.update_threat_model(
-            model_id,
-            assumptions=json.dumps(parsed_assumptions),
-            has_ai_components=has_ai,
-        )
+        # Inside a guard: a failure here used to leave the model 'pending' or
+        # 'in_progress' with no task behind it.
+        try:
+            # Clear any previous run's data so re-runs start clean
+            await crud.clear_model_data(model_id)
+            await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+            # Persist assumptions unconditionally — clears stale data from prior runs
+            await crud.update_threat_model(
+                model_id,
+                assumptions=json.dumps(parsed_assumptions),
+                has_ai_components=has_ai,
+            )
+        except aiosqlite.Error:
+            logger.exception("Failed to start the run of model %s", model_id)
+            try:
+                await crud.update_threat_model_status(model_id, ModelStatus.FAILED.value)
+            except aiosqlite.Error:
+                logger.exception("Could not mark model %s failed", model_id)
+            yield PipelineEvent(
+                step=PipelineStep.COMPLETE,
+                status="failed",
+                message="Failed to start the run; see server logs.",
+            ).to_sse_format()
+            return
 
         skipped_stored_diagrams: list[dict[str, str]] = []
         if uploaded_diagrams:
@@ -1482,6 +1497,11 @@ async def extract_model_context(
     Populates assets, flows, and trust boundaries in the DB so the user can
     review and edit them before triggering a full pipeline run. The SSE stream
     ends with a 'complete' event once extraction is done.
+
+    Like /run, the extraction is a background task (backend/pipeline/live_runs.py)
+    that this response only follows: it clears the generated context first, so
+    closing the tab must not stop it halfway. GET /{model_id}/run/events follows
+    it too. 409 if the model already has a run or an extraction in progress.
     """
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1491,8 +1511,17 @@ async def extract_model_context(
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        await crud.clear_model_data(model_id, preserve_user_edits=True)
+    async def extract_events() -> AsyncGenerator[str, None]:
+        try:
+            await crud.clear_model_data(model_id, preserve_user_edits=True)
+        except aiosqlite.Error:
+            logger.exception("Failed to clear generated context for model %s", model_id)
+            yield PipelineEvent(
+                step=PipelineStep.COMPLETE,
+                status="failed",
+                message="Failed to start the extraction; see server logs.",
+            ).to_sse_format()
+            return
 
         try:
             run_diagrams, skipped_stored_diagrams = await _load_stored_diagrams_for_reuse(model_id)
@@ -1541,11 +1570,17 @@ async def extract_model_context(
                 message="Extraction failed; see server logs.",
             ).to_sse_format()
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    async def mark_extract_interrupted() -> str:
+        # Extraction never sets the model's status, so there is nothing to reset.
+        return PipelineEvent(
+            step=PipelineStep.COMPLETE,
+            status="failed",
+            message="Extraction interrupted: the server shut down before it finished.",
+        ).to_sse_format()
+
+    try:
+        run = live_runs.start_run(model_id, extract_events(), mark_extract_interrupted)
+    except live_runs.RunAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="This model already has a run in progress.")
+
+    return _follow_run_response(run)
