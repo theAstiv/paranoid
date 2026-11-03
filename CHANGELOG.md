@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1-rc1] - 2026-11-03
+
+Release candidate for 1.6.1: the security and data-loss fixes from the 2026-11-02 code review. A pre-release, so `pip install paranoid-cli` still installs 1.6.0; use `pip install --pre paranoid-cli` or `paranoid-cli==1.6.1rc1` to try it, and `theAstiv/paranoid@v1.6.1-rc1` for the GitHub Action (`@v1` stays on 1.6.0). No database migrations.
+
+**Upgrading with auth on:** serve Paranoid over HTTPS or use it through localhost — on another plain-HTTP origin users are signed out every 15 minutes, and the server now warns about it at startup. A browser client on another origin that sends cookies must now be listed in `CORS_ORIGINS`.
+
 ### Security
 
 - **`CORS_ORIGINS=*` no longer allows credentialed cross-origin requests** — with the default `*`, the server ran `CORSMiddleware` with `allow_credentials=True`, which makes Starlette echo any request Origin back with `Access-Control-Allow-Credentials: true`, so any site could read credentialed `GET` responses if a cookie ever stopped being `SameSite=Strict`. A wildcard now drops credentials; a concrete origin list keeps them for those origins only. The web UI is same-origin and is unaffected; a cross-origin browser client that sends cookies must now be listed in `CORS_ORIGINS`
@@ -879,7 +885,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.1-rc1...HEAD
+[1.6.1-rc1]: https://github.com/theAstiv/paranoid/compare/v1.6.0...v1.6.1-rc1
 [1.6.0]: https://github.com/theAstiv/paranoid/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/theAstiv/paranoid/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/theAstiv/paranoid/compare/v1.3.0...v1.4.0
