@@ -18,9 +18,10 @@ import pytest
 from fastapi import HTTPException
 
 from backend.config import settings
-from backend.db import crud
+from backend.db import crud, crud_projects
 from backend.main import app, lifespan
-from backend.models.enums import ModelStatus
+from backend.models.enums import AssetType, ModelStatus
+from backend.models.state import Asset, AssetsList, DataFlow, FlowsList
 from backend.pipeline import live_runs
 from backend.pipeline.runner import PipelineEvent, PipelineStep
 from backend.routes import models as models_routes
@@ -396,12 +397,78 @@ async def test_an_extract_stopped_by_shutdown_says_so_and_leaves_the_status(mode
     assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.COMPLETED.value
 
 
+def _extraction_events(*, flows_fail: bool = False):
+    """A fake extractor: assets, then flows (or a provider failure), then COMPLETE."""
+
+    async def runner(*args, **kwargs):
+        yield PipelineEvent(
+            step=PipelineStep.EXTRACT_ASSETS,
+            status="completed",
+            message="ok",
+            data={
+                "assets": AssetsList(
+                    assets=[Asset(type=AssetType.ASSET, name="Fresh asset", description="")]
+                )
+            },
+        )
+        if flows_fail:
+            yield PipelineEvent(
+                step=PipelineStep.COMPLETE,
+                status="failed",
+                message="LLM provider unavailable — nothing was extracted",
+            )
+            return
+        yield PipelineEvent(
+            step=PipelineStep.EXTRACT_FLOWS,
+            status="completed",
+            message="ok",
+            data={
+                "flows": FlowsList(
+                    data_flows=[
+                        DataFlow(
+                            flow_description="new", source_entity="Fresh asset", target_entity="X"
+                        )
+                    ],
+                    trust_boundaries=[],
+                    threat_sources=[],
+                )
+            },
+        )
+        yield PipelineEvent(step=PipelineStep.COMPLETE, status="completed", message="done")
+
+    return runner
+
+
+async def _seed_previous_run(model_id: str) -> None:
+    await crud.create_asset(model_id, "Asset", "Old asset", "")
+    await crud.create_flow(model_id, "data", "old", "Old asset", "Y")
+    await crud.create_threat(
+        model_id=model_id,
+        name="Old threat",
+        description="An earlier run's threat that a failed Re-extract must not delete.",
+        target="Old asset",
+        impact="High",
+        likelihood="Medium",
+        mitigations=["Fix it"],
+        stride_category="Tampering",
+    )
+
+
+async def _context_names(model_id: str) -> tuple[list[str], list[str], list[str]]:
+    return (
+        [a["name"] for a in await crud.list_assets(model_id)],
+        [f["flow_description"] for f in await crud.list_flows(model_id)],
+        [t["name"] for t in await crud.list_threats(model_id)],
+    )
+
+
 @pytest.mark.asyncio
 async def test_an_extract_that_cannot_clear_reports_failure(model_id):
     p1, p2 = _providers()
     with (
         p1,
         p2,
+        patch("backend.routes.models.run_pipeline_for_model", _extraction_events()),
         patch(
             "backend.routes.models.crud.clear_model_data",
             AsyncMock(side_effect=aiosqlite.OperationalError("database is locked")),
@@ -411,8 +478,54 @@ async def test_an_extract_that_cannot_clear_reports_failure(model_id):
         events = await asyncio.wait_for(_drain(resp), timeout=5)
 
     assert events[-1]["status"] == "failed"
-    assert "Failed to start the extraction" in events[-1]["message"]
+    assert "Failed to save the extraction" in events[-1]["message"]
     assert live_runs.get_run(model_id) is None
+    assert await crud.list_assets(model_id) == []
+
+
+@pytest.mark.asyncio
+async def test_an_extract_that_fails_part_way_leaves_the_previous_context(model_id):
+    """It used to clear everything before the first LLM call (found in the PR #215 check)."""
+    await _seed_previous_run(model_id)
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch("backend.routes.models.run_pipeline_for_model", _extraction_events(flows_fail=True)),
+    ):
+        events = await asyncio.wait_for(_drain(await _open_extract(model_id)), timeout=5)
+
+    assert events[-1]["status"] == "failed"
+    assert await _context_names(model_id) == (["Old asset"], ["old"], ["Old threat"])
+
+
+@pytest.mark.asyncio
+async def test_a_finished_extract_replaces_the_generated_context(model_id):
+    await _seed_previous_run(model_id)
+    p1, p2 = _providers()
+    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", _extraction_events()):
+        events = await asyncio.wait_for(_drain(await _open_extract(model_id)), timeout=5)
+
+    assert events[-1]["status"] == "completed"
+    assert await _context_names(model_id) == (["Fresh asset"], ["new"], [])
+
+
+@pytest.mark.asyncio
+async def test_extract_uses_the_models_iterations_and_the_project_temperature(model_id):
+    record = await crud.get_threat_model(model_id)
+    await crud_projects.update_project(record["project_id"], default_temperature=0.7)
+    seen: dict = {}
+
+    async def runner(*args, **kwargs):
+        seen.update(kwargs)
+        yield PipelineEvent(step=PipelineStep.COMPLETE, status="completed", message="done")
+
+    p1, p2 = _providers()
+    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", runner):
+        await asyncio.wait_for(_drain(await _open_extract(model_id)), timeout=5)
+
+    assert seen["max_iterations"] == 1
+    assert seen["temperature"] == 0.7
 
 
 @pytest.mark.asyncio

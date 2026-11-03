@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Re-extract keeps context you edited or added** — nothing ever marked a row as user-edited, so Re-extract deleted renamed, edited and hand-added assets, flows and trust boundaries along with the generated ones. Adding or editing one in the Context section now marks it, and Re-extract keeps it. The new extraction doesn't save its own copy of a kept row: a renamed asset stays once under its new name, and new flows to it use that name (new column `generated_key`, migration `0016`). Re-run still starts from a clean slate
+- **Re-extract with the provider down no longer wipes the model** — `/extract` cleared the generated context, all threats and the dependency analysis before its first LLM call, and with the provider unavailable the pipeline fell back to the rule engine and saved rules-only threats from a step that promises none. Now a provider failure ends the extraction with a failure event and nothing saved, and the old context is only replaced once the new extraction has produced its flows, so a failure part-way leaves the model as it was. Re-extract also uses the model's iteration count and the project's default temperature, as Run does
 
 ## [1.6.1-rc1] - 2026-11-03
 

@@ -376,6 +376,32 @@ async def test_runner_provider_error_before_loop_skips_llm_steps():
     assert complete.data["iterations_completed"] == 0
 
 
+@pytest.mark.parametrize("failing_step", [SummaryState, AssetsList, FlowsList])
+@pytest.mark.asyncio
+async def test_extraction_with_the_provider_down_fails_without_rule_engine_threats(failing_step):
+    """Re-extract with the LLM down used to fall through to the rule engine and
+    save its threats, from a step that promises none (found in the PR #215 check)."""
+    provider = MockProvider()
+    provider.error_types.add(failing_step)
+    runner = PipelineRunner(provider=provider, config=PipelineConfig(), model_id="test-extract")
+
+    events = [
+        e
+        async for e in runner.run(
+            description="A payment processing service",
+            framework=Framework.STRIDE,
+            stop_after="extraction",
+        )
+    ]
+
+    assert not any(e.step == PipelineStep.RULE_ENGINE and e.status == "completed" for e in events)
+    complete = events[-1]
+    assert (complete.step, complete.status) == (PipelineStep.COMPLETE, "failed")
+    assert "nothing was extracted" in complete.message
+    assert "threats" not in (complete.data or {})
+    assert sum(e.step == PipelineStep.COMPLETE for e in events) == 1
+
+
 @pytest.mark.asyncio
 async def test_runner_provider_error_mid_iterations_preserves_completed_threats():
     """ProviderError on iteration 2 preserves threats from completed iteration 1."""

@@ -604,6 +604,13 @@ async def delete_model(
 # ---------------------------------------------------------------------------
 
 
+async def _run_temperature(record: dict) -> float:
+    """The project's default temperature, else the instance default."""
+    project = await crud_projects.get_project(record.get("project_id"))
+    project_temperature = (project or {}).get("default_temperature")
+    return project_temperature if project_temperature is not None else settings.default_temperature
+
+
 async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
     """Persist data from a pipeline event to the database.
 
@@ -949,11 +956,7 @@ async def run_pipeline(
     else:
         raise HTTPException(status_code=422, detail="'has_ai_components' must be true or false")
     max_iterations = record.get("iteration_count", settings.default_iterations)
-    project = await crud_projects.get_project(record.get("project_id"))
-    project_temperature = (project or {}).get("default_temperature")
-    temperature = (
-        project_temperature if project_temperature is not None else settings.default_temperature
-    )
+    temperature = await _run_temperature(record)
 
     async def run_events() -> AsyncGenerator[str, None]:
         # Inside a guard: a failure here used to leave the model 'pending' or
@@ -1521,9 +1524,13 @@ async def extract_model_context(
     ends with a 'complete' event once extraction is done.
 
     Like /run, the extraction is a background task (backend/pipeline/live_runs.py)
-    that this response only follows: it clears the generated context first, so
+    that this response only follows: it replaces the generated context, so
     closing the tab must not stop it halfway. GET /{model_id}/run/events follows
     it too. 409 if the model already has a run or an extraction in progress.
+
+    The old generated context (and the threats and dependency scans) is only
+    cleared once the new extraction has produced its flows, so a provider that
+    is down, or fails part-way, leaves the model as it was.
     """
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1532,19 +1539,12 @@ async def extract_model_context(
     provider = build_provider_from_record(record)
     fast_provider = build_fast_provider(record)
     framework = Framework(record.get("framework", "STRIDE"))
+    max_iterations = record.get("iteration_count", settings.default_iterations)
+    temperature = await _run_temperature(record)
 
     async def extract_events() -> AsyncGenerator[str, None]:
-        try:
-            await crud.clear_model_data(model_id, preserve_user_edits=True)
-        except aiosqlite.Error:
-            logger.exception("Failed to clear generated context for model %s", model_id)
-            yield PipelineEvent(
-                step=PipelineStep.COMPLETE,
-                status="failed",
-                message="Failed to start the extraction; see server logs.",
-            ).to_sse_format()
-            return
-
+        held: list[PipelineEvent] = []
+        replaced = False
         try:
             run_diagrams, skipped_stored_diagrams = await _load_stored_diagrams_for_reuse(model_id)
         except aiosqlite.Error:
@@ -1579,9 +1579,35 @@ async def extract_model_context(
                     provider=provider,
                     fast_provider=fast_provider,
                     diagrams=run_diagrams or None,
+                    max_iterations=max_iterations,
+                    temperature=temperature,
                     stop_after="extraction",
                     persist_usage=True,  # model_id already names a saved threat_models row
                 ):
+                    # The old context is replaced only once the extraction has
+                    # produced flows too: a provider failure part-way leaves it as
+                    # it was instead of half-cleared.
+                    if not replaced and event.status == "completed":
+                        if event.step == PipelineStep.EXTRACT_ASSETS:
+                            held.append(event)
+                            yield event.to_sse_format()
+                            continue
+                        if event.step in (PipelineStep.EXTRACT_FLOWS, PipelineStep.COMPLETE):
+                            try:
+                                await crud.clear_model_data(model_id, preserve_user_edits=True)
+                            except aiosqlite.Error:
+                                logger.exception(
+                                    "Failed to clear generated context for model %s", model_id
+                                )
+                                yield PipelineEvent(
+                                    step=PipelineStep.COMPLETE,
+                                    status="failed",
+                                    message="Failed to save the extraction; see server logs.",
+                                ).to_sse_format()
+                                return
+                            replaced = True
+                            for held_event in held:
+                                await _persist_pipeline_event(model_id, held_event)
                     await _persist_pipeline_event(model_id, event)
                     yield event.to_sse_format()
         except Exception:
