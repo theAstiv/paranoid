@@ -1,12 +1,14 @@
 """FastAPI application entry point."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,6 +79,43 @@ async def _bootstrap_admin_if_needed() -> None:
         is_admin=True,
     )
     logger.info("Created initial admin user (username: admin)")
+
+
+def _non_tls_origins(origins: list[str]) -> list[str]:
+    """Return the ``http://`` origins whose host isn't loopback.
+
+    The refresh cookie is ``Secure``. Browsers drop it on plain HTTP, except
+    that Chrome and Firefox treat localhost and loopback addresses as secure.
+    """
+    found = []
+    for origin in origins:
+        parsed = urlparse(origin)
+        if parsed.scheme != "http":
+            continue
+        host = (parsed.hostname or "").lower()
+        if host == "localhost" or host.endswith(".localhost"):
+            continue
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                continue
+        except ValueError:
+            pass
+        found.append(origin)
+    return found
+
+
+def _warn_if_refresh_cookie_is_dropped(origins: list[str]) -> None:
+    """With auth on, warn when users would be signed out every 15 minutes."""
+    if not settings.paranoid_require_auth:
+        return
+    plain = _non_tls_origins(origins)
+    if plain:
+        logger.warning(
+            "PARANOID_REQUIRE_AUTH=true but ALLOWED_ORIGINS has plain-HTTP origin(s) "
+            f"{', '.join(plain)}. The refresh cookie is Secure, so browsers drop it there "
+            "and users are signed out when their 15-minute access token expires. "
+            "Serve Paranoid over HTTPS (or use localhost). See docs/authentication.md."
+        )
 
 
 async def _run_staleness_check() -> None:
@@ -167,6 +206,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "All requests are treated as instance admin. "
             "Set PARANOID_REQUIRE_AUTH=true to enforce login."
         )
+    _warn_if_refresh_cookie_is_dropped(_allowed_origins)
 
     # Background task: clean up sessions every 24 h.
     async def _session_gc_loop() -> None:
