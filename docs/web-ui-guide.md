@@ -81,7 +81,7 @@ Shows the full threat model context and threat list after a run completes.
 ### Re-run vs. Re-extract
 
 - **Re-run** runs the whole pipeline again on the model's stored description, assumptions and diagrams. It first deletes the previous threats, assets, flows and trust boundaries, **including any context you added or edited**, and the dependency analysis. The manifest isn't stored, so the Dependencies section stays empty until you start a new run with one.
-- **Re-extract** keeps the assets, flows and trust boundaries you added or edited, deletes the rest of the context, **all threats** and the dependency analysis, then runs only the extraction steps. The new extraction doesn't add a second copy of a row you kept: an asset you renamed stays once under your name, and new flows to it use that name. Threats are not regenerated, so the model has none until you Re-run.
+- **Re-extract** runs only the extraction steps, then keeps the assets, flows and trust boundaries you added or edited and replaces the rest of the context, **all threats** and the dependency analysis. The new extraction doesn't add a second copy of a row you kept: an asset you renamed stays once under your name, and new flows to it use that name. Threats are not regenerated, so the model has none until you Re-run. If the provider is unavailable or the extraction fails before it finishes, nothing is deleted.
 
 Keeping edits across Re-run is on the [roadmap](../README.md#roadmap). Until then, to run with corrected context, use the CLI's `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
 

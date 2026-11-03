@@ -1058,6 +1058,20 @@ class PipelineRunner:
                 # Use the original description as a minimal summary so the rule
                 # engine still has text to match keywords against.
                 self._note_refusal(e)
+                if stop_after == "extraction":
+                    # Extraction only: the rule engine extracts nothing, and its
+                    # threats would be saved by a step that promises none.
+                    logger.warning("Provider unavailable during extraction: %s", e)
+                    yield PipelineEvent(
+                        step=PipelineStep.COMPLETE,
+                        status="failed",
+                        message=(
+                            f"LLM provider unavailable ({e}) — nothing was extracted; "
+                            "the existing context is unchanged."
+                        ),
+                        data=_provider_error_event_data(e),
+                    )
+                    return
                 provider_failed = True
                 stopped_reason = "provider_offline"
                 summary = SummaryState(summary=description)
