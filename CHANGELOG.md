@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Upgrading:** database migration `0016` runs automatically at startup; back up `data/paranoid.db` first.
+
+### Fixed
+
+- **Re-extract keeps context you edited or added** — nothing ever marked a row as user-edited, so Re-extract deleted renamed, edited and hand-added assets, flows and trust boundaries along with the generated ones. Adding or editing one in the Context section now marks it, and Re-extract keeps it. The new extraction doesn't save its own copy of a kept row: a renamed asset stays once under its new name, and new flows to it use that name (new column `generated_key`, migration `0016`). Re-run still starts from a clean slate
+
 ## [1.6.1-rc1] - 2026-11-03
 
 Release candidate for 1.6.1: the security and data-loss fixes from the 2026-11-02 code review. A pre-release, so `pip install paranoid-cli` still installs 1.6.0; use `pip install --pre paranoid-cli` or `paranoid-cli==1.6.1rc1` to try it, and `theAstiv/paranoid@v1.6.1-rc1` for the GitHub Action (`@v1` stays on 1.6.0). No database migrations.

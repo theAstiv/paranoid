@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.db.connection import db
+from backend.db.kept_context import endpoint_key
 from backend.image.validation import sanitize_diagram_name
 from backend.models.enums import DiagramFormat
 from backend.models.extended import DiagramData
@@ -603,18 +604,39 @@ async def update_threat(
 # Assets CRUD
 
 
-async def create_asset(model_id: str, asset_type: str, name: str, description: str) -> str:
-    """Create a new asset."""
+async def create_asset(
+    model_id: str,
+    asset_type: str,
+    name: str,
+    description: str,
+    user_edited: bool = False,
+) -> str:
+    """Create a new asset.
+
+    user_edited=True marks a row a user added, which Re-extract keeps
+    (clear_model_data(preserve_user_edits=True)). Pipeline rows record their
+    name as generated_key instead; see backend/db/kept_context.py.
+    """
     asset_id = generate_id()
     now = now_iso()
 
     conn = await db.get()
     await conn.execute(
         """
-        INSERT INTO assets (id, model_id, type, name, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO assets (
+            id, model_id, type, name, description, user_edited, generated_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (asset_id, model_id, asset_type, name, description, now),
+        (
+            asset_id,
+            model_id,
+            asset_type,
+            name,
+            description,
+            int(user_edited),
+            None if user_edited else name,
+            now,
+        ),
     )
     await conn.commit()
 
@@ -639,6 +661,8 @@ async def update_asset(
 ) -> None:
     """
     Update asset details. Only provided fields will be updated.
+
+    Any update marks the row user_edited, so Re-extract keeps it.
 
     Args:
         asset_id: ID of asset to update
@@ -665,6 +689,7 @@ async def update_asset(
         logger.warning(f"No fields provided to update for asset {asset_id}")
         return
 
+    update_fields.append("user_edited = 1")
     params.append(asset_id)
 
     query = f"UPDATE assets SET {', '.join(update_fields)} WHERE id = ?"
@@ -883,8 +908,9 @@ async def create_flow(
     flow_description: str,
     source_entity: str,
     target_entity: str,
+    user_edited: bool = False,
 ) -> str:
-    """Create a new data flow."""
+    """Create a new data flow. user_edited: see create_asset."""
     flow_id = generate_id()
     now = now_iso()
 
@@ -893,10 +919,20 @@ async def create_flow(
         """
         INSERT INTO flows (
             id, model_id, flow_type, flow_description,
-            source_entity, target_entity, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            source_entity, target_entity, user_edited, generated_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (flow_id, model_id, flow_type, flow_description, source_entity, target_entity, now),
+        (
+            flow_id,
+            model_id,
+            flow_type,
+            flow_description,
+            source_entity,
+            target_entity,
+            int(user_edited),
+            None if user_edited else endpoint_key(source_entity, target_entity),
+            now,
+        ),
     )
     await conn.commit()
 
@@ -928,7 +964,7 @@ async def update_flow(
     source_entity: str | None = None,
     target_entity: str | None = None,
 ) -> None:
-    """Update flow details. Only provided fields will be updated."""
+    """Update flow details. Only provided fields will be updated; any update marks it user_edited."""
     update_fields = []
     params = []
 
@@ -952,6 +988,7 @@ async def update_flow(
         logger.warning(f"No fields provided to update for flow {flow_id}")
         return
 
+    update_fields.append("user_edited = 1")
     params.append(flow_id)
     query = f"UPDATE flows SET {', '.join(update_fields)} WHERE id = ?"
 
@@ -981,18 +1018,30 @@ async def create_trust_boundary(
     purpose: str,
     source_entity: str,
     target_entity: str,
+    user_edited: bool = False,
 ) -> str:
-    """Create a new trust boundary."""
+    """Create a new trust boundary. user_edited: see create_asset."""
     boundary_id = generate_id()
     now = now_iso()
 
     conn = await db.get()
     await conn.execute(
         """
-        INSERT INTO trust_boundaries (id, model_id, purpose, source_entity, target_entity, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO trust_boundaries (
+            id, model_id, purpose, source_entity, target_entity,
+            user_edited, generated_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (boundary_id, model_id, purpose, source_entity, target_entity, now),
+        (
+            boundary_id,
+            model_id,
+            purpose,
+            source_entity,
+            target_entity,
+            int(user_edited),
+            None if user_edited else endpoint_key(source_entity, target_entity),
+            now,
+        ),
     )
     await conn.commit()
     return boundary_id
@@ -1024,7 +1073,7 @@ async def update_trust_boundary(
     source_entity: str | None = None,
     target_entity: str | None = None,
 ) -> None:
-    """Update trust boundary details. Only provided fields will be updated."""
+    """Update trust boundary details. Only provided fields will be updated; marks it user_edited."""
     update_fields = []
     params = []
 
@@ -1044,6 +1093,7 @@ async def update_trust_boundary(
         logger.warning(f"No fields provided to update for trust boundary {boundary_id}")
         return
 
+    update_fields.append("user_edited = 1")
     params.append(boundary_id)
     query = f"UPDATE trust_boundaries SET {', '.join(update_fields)} WHERE id = ?"
 

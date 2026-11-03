@@ -74,18 +74,16 @@ Shows the full threat model context and threat list after a run completes.
 - **Run Summary**: per-step model (fast vs. main) and token usage, with a warning chip if fast routing fell back to the main model mid-run
 - **Diagrams**: a single diagram renders directly; two or more show a tab strip (`role="tablist"`, arrow-key navigation). Each image loads lazily on first selection and is cached per tab
 - **Dependencies**: a heatmap of packages × capability categories (network, filesystem, process, dynamic code, native addons, …), with expandable evidence and drift/skip reasons, shown when the run included a manifest
-- **Context** (assets, flows, trust boundaries): click any item to expand; add, edit or delete items (see [Re-run vs. Re-extract](#re-run-vs-re-extract) for how long edits last); **Re-extract** button re-runs only the extraction steps (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
+- **Context** (assets, flows, trust boundaries): click any item to expand; add, edit or delete items (Re-extract keeps them, Re-run doesn't yet; see [Re-run vs. Re-extract](#re-run-vs-re-extract)); **Re-extract** button re-runs only the extraction steps (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
 - **Threats**: filterable table by category, severity, and status; each threat can show ATT&CK/ATLAS technique chips and a CVSS badge alongside its DREAD score
 - **Compare**: opens the Model Diff view
 
 ### Re-run vs. Re-extract
 
-Both buttons start from a clean slate. Context edits last until the next Re-run or Re-extract.
-
 - **Re-run** runs the whole pipeline again on the model's stored description, assumptions and diagrams. It first deletes the previous threats, assets, flows and trust boundaries, **including any context you added or edited**, and the dependency analysis. The manifest isn't stored, so the Dependencies section stays empty until you start a new run with one.
-- **Re-extract** deletes the same data, **threats included**, then runs only the extraction steps. Threats are not regenerated, so the model has none until you Re-run.
+- **Re-extract** keeps the assets, flows and trust boundaries you added or edited, deletes the rest of the context, **all threats** and the dependency analysis, then runs only the extraction steps. The new extraction doesn't add a second copy of a row you kept: an asset you renamed stays once under your name, and new flows to it use that name. Threats are not regenerated, so the model has none until you Re-run.
 
-Keeping edits across both is on the [roadmap](../README.md#roadmap). Until then, to run with corrected context, use the CLI's `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
+Keeping edits across Re-run is on the [roadmap](../README.md#roadmap). Until then, to run with corrected context, use the CLI's `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
 
 Re-run doesn't keep the previous version. To compare before and after, create a second model with the changed input and use **Compare**.
 

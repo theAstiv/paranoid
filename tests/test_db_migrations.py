@@ -564,3 +564,57 @@ async def test_0011_is_idempotent_on_v2_db(tmp_path):
         await run_migrations(conn)
     finally:
         await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 0016 — generated_key on assets / flows / trust_boundaries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_0016_backfills_generated_key_from_existing_rows(tmp_path):
+    """Nothing set user_edited before 0016, so every existing row is pipeline output."""
+    conn = await _make_conn(tmp_path)
+    try:
+        await run_migrations(conn)
+        await conn.execute(
+            "INSERT INTO threat_models (id, title, provider, model, status, "
+            "created_at, updated_at, project_id) VALUES "
+            "('tm-key', 'Test', 'anthropic', 'claude', 'pending', "
+            "'2024-01-01', '2024-01-01', '00000000-0000-0000-0000-000000000000')"
+        )
+        await conn.execute(
+            "INSERT INTO assets (id, model_id, type, name, description, created_at) "
+            "VALUES ('a-1', 'tm-key', 'Asset', 'DB', '', '2024-01-01')"
+        )
+        await conn.execute(
+            "INSERT INTO flows (id, model_id, flow_type, flow_description, source_entity, "
+            "target_entity, created_at) VALUES "
+            "('f-1', 'tm-key', 'data', 'queries', 'API', 'DB', '2024-01-01')"
+        )
+        await conn.execute(
+            "INSERT INTO trust_boundaries (id, model_id, purpose, source_entity, "
+            "target_entity, created_at) VALUES "
+            "('b-1', 'tm-key', 'edge', 'Internet', 'API', '2024-01-01')"
+        )
+        # Rows written before 0016 ran: un-apply it so the next run backfills them.
+        await conn.execute("DELETE FROM schema_migrations WHERE name = '0016_generated_key'")
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        keys = {}
+        for table, row_id in (("assets", "a-1"), ("flows", "f-1"), ("trust_boundaries", "b-1")):
+            async with conn.execute(
+                f"SELECT generated_key FROM {table} WHERE id = ?", (row_id,)
+            ) as cur:
+                keys[table] = (await cur.fetchone())[0]
+        assert keys == {
+            "assets": "DB",
+            "flows": "API → DB",
+            "trust_boundaries": "Internet → API",
+        }
+
+        await run_migrations(conn)  # idempotent
+    finally:
+        await conn.close()
