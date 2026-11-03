@@ -60,8 +60,13 @@ register and log in before accessing any resource.
 - **Refresh token reuse detection**: a stolen refresh token is usable exactly once — reuse revokes the entire session family
 - **Personal Access Tokens (PATs)**: `pat_<id>_<random>` format, sha256-hashed before storage, returned raw only on creation
 - **PAT and git credential encryption**: Fernet (AES-128-CBC + HMAC-SHA256); key derived from `CONFIG_SECRET` via PBKDF2-HMAC-SHA256 (100k iterations); falls back to a random file key at `data/.source_key`
-- **Login rate limiting**: 10 requests per 60 seconds per IP
+- **Rate limiting** (per client IP; `X-Forwarded-For` only from `TRUSTED_PROXIES`): login and refresh 10 per minute; registration 5 per minute, in its own bucket; LLM-backed routes (pre-flight `/api/analyze`, a model's `/analyze` and `/extract`, attack trees, test cases) 20 per minute; pipeline runs 5 per minute. Counters are per process and reset on restart
+- **Open registration**: anyone who can reach an auth-on server can create an account. It sees no existing project until an owner adds it, but it can create its own projects and run models there on the instance's provider keys. There is no switch to disable registration, so limit network exposure accordingly
+- **Refresh cookie**: HttpOnly, `SameSite=Strict`, `Secure`, `Path=/api/auth/`. Auth on therefore needs HTTPS or `localhost` (browsers drop a `Secure` cookie on other plain-HTTP origins); the server warns at startup about plain-HTTP `ALLOWED_ORIGINS`
+- **Access token storage**: the web UI keeps the 15-minute access token in `localStorage`, so script running in the page (XSS) could read it. Mitigations: CSP `script-src 'self'`, no `{@html}` in the UI, Mermaid sanitized and rendered with `securityLevel: 'strict'`. The refresh token is not readable from script
 - **CSRF protection**: `ALLOWED_ORIGINS` enforced on all state-mutating requests
+- **CORS**: `CORS_ORIGINS=*` (default) allows any origin **without** credentials; only a concrete origin list allows credentialed cross-origin requests, and only from those origins
+- **Configuration endpoint**: `GET /api/config` requires a login when auth is on; API key values are never returned, only whether each is set and where from
 - **Git clone hardening**: `protocol.file.allow=never`, `core.symlinks=false`, `GIT_TERMINAL_PROMPT=0`, HTTPS-only, host allowlist
 
 Raw credentials are never logged, never returned by any API endpoint (PAT presence is reported as `has_pat: bool` only), and never included in SSE event payloads.

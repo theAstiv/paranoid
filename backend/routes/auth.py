@@ -128,7 +128,9 @@ def _set_refresh_cookie(response: Response, raw_token: str, expires_days: int = 
         value=raw_token,
         httponly=True,
         samesite="strict",
-        secure=True,  # Browsers special-case localhost; non-TLS prod must document this
+        # Kept Secure: auth on needs HTTPS or localhost (docs/authentication.md
+        # "Requirements"); main.py warns at startup about plain-HTTP origins.
+        secure=True,
         path="/api/auth/",
         max_age=max_age,
     )
