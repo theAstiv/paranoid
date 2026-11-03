@@ -13,6 +13,7 @@ import contextlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiosqlite
 import pytest
 from fastapi import HTTPException
 
@@ -234,6 +235,184 @@ async def test_a_second_run_of_a_model_already_running_is_refused(model_id):
 
     assert exc_info.value.status_code == 409
     assert len(await crud.list_threats(model_id)) == len(make_stride_threats().threats)
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_fails_to_start_marks_the_model_failed(model_id):
+    """Review C7: clear_model_data / the status update ran outside the guard, so a
+    DB error there left the model 'pending' with no run behind it."""
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.crud.clear_model_data",
+            AsyncMock(side_effect=aiosqlite.OperationalError("database is locked")),
+        ),
+    ):
+        resp = await _open_run(model_id)
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.FAILED.value
+    assert events[-1]["status"] == "failed"
+    assert "Failed to start the run" in events[-1]["message"]
+    assert live_runs.get_run(model_id) is None
+
+
+# ---------------------------------------------------------------------------
+# POST /{id}/extract is a live run too (review C3)
+# ---------------------------------------------------------------------------
+
+
+async def _open_extract(model_id: str):
+    return await models_routes.extract_model_context(model_id, _rate=None, _authz=None)
+
+
+def _gated_extractor(release: asyncio.Event, started: asyncio.Event, finished: asyncio.Event):
+    async def runner(*args, **kwargs):
+        assert kwargs["stop_after"] == "extraction"
+        yield PipelineEvent(step=PipelineStep.SUMMARIZE, status="started", message="go")
+        started.set()
+        await release.wait()
+        yield PipelineEvent(step=PipelineStep.EXTRACT_ASSETS, status="completed", message="ok")
+        finished.set()
+
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_extract_keeps_going_after_the_tab_closes(model_id):
+    """It clears the generated context first; stopping halfway lost it for good."""
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _gated_extractor(release, started, finished),
+        ),
+    ):
+        resp = await _open_extract(model_id)
+        run = live_runs.get_run(model_id)
+
+        async def consume() -> None:
+            async for _ in resp.body_iterator:
+                pass
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(started.wait(), timeout=5)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        release.set()
+        await asyncio.wait_for(run.task, timeout=5)
+
+    assert finished.is_set()
+    assert live_runs.get_run(model_id) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_and_run_refuse_each_other_while_one_is_live(model_id):
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _gated_extractor(release, started, finished),
+        ),
+    ):
+        extract = await _open_extract(model_id)
+        await asyncio.wait_for(started.wait(), timeout=5)
+        with pytest.raises(HTTPException) as run_refused:
+            await _open_run(model_id)
+        with pytest.raises(HTTPException) as extract_refused:
+            await _open_extract(model_id)
+        release.set()
+        await asyncio.wait_for(_drain(extract), timeout=5)
+
+    assert run_refused.value.status_code == 409
+    assert extract_refused.value.status_code == 409
+
+    release = asyncio.Event()
+    p1, p2 = _providers()
+    with p1, p2, patch("backend.routes.models.run_pipeline_for_model", _gated_runner(release)):
+        run = await _open_run(model_id)
+        with pytest.raises(HTTPException) as during_run:
+            await _open_extract(model_id)
+        release.set()
+        await asyncio.wait_for(_drain(run), timeout=5)
+
+    assert during_run.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_page_opened_mid_extract_follows_it_from_its_start(model_id):
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _gated_extractor(release, started, finished),
+        ),
+    ):
+        await _open_extract(model_id)
+        await asyncio.wait_for(started.wait(), timeout=5)
+        resp = await models_routes.follow_run(model_id, _authz=None)
+        release.set()
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    assert [(e["step"], e["status"]) for e in events] == [
+        ("summarize", "started"),
+        ("extract_assets", "completed"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_extract_stopped_by_shutdown_says_so_and_leaves_the_status(model_id):
+    started, finished = asyncio.Event(), asyncio.Event()
+    await crud.update_threat_model_status(model_id, ModelStatus.COMPLETED.value)
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _gated_extractor(asyncio.Event(), started, finished),
+        ),
+    ):
+        resp = await _open_extract(model_id)
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await live_runs.cancel_all_runs()
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    assert events[-1]["status"] == "failed"
+    assert "Extraction interrupted" in events[-1]["message"]
+    assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.COMPLETED.value
+
+
+@pytest.mark.asyncio
+async def test_an_extract_that_cannot_clear_reports_failure(model_id):
+    p1, p2 = _providers()
+    with (
+        p1,
+        p2,
+        patch(
+            "backend.routes.models.crud.clear_model_data",
+            AsyncMock(side_effect=aiosqlite.OperationalError("database is locked")),
+        ),
+    ):
+        resp = await _open_extract(model_id)
+        events = await asyncio.wait_for(_drain(resp), timeout=5)
+
+    assert events[-1]["status"] == "failed"
+    assert "Failed to start the extraction" in events[-1]["message"]
+    assert live_runs.get_run(model_id) is None
 
 
 @pytest.mark.asyncio

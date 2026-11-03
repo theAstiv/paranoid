@@ -52,15 +52,28 @@
   function runExtract() {
     extracting = true
     extractLog = []
+    // subscribeSSE calls onDone after onError too, so success is tracked here.
+    let failed = false
     abortExtract = subscribeToExtract(
       params.id,
-      evt => { extractLog = [...extractLog, evt] },
-      err => { notify('error', `Extraction failed: ${err.message}`); extracting = false },
+      evt => {
+        extractLog = [...extractLog, evt]
+        if (evt.step === 'complete' && evt.status === 'failed') {
+          failed = true
+          notify('error', `Extraction failed: ${evt.message}`)
+        }
+      },
+      err => {
+        failed = true
+        extracting = false
+        // 409: a run or another extraction of this model is still going.
+        notify('error', err.status === 409 ? `Extraction not started: ${err.message}` : `Extraction failed: ${err.message}`)
+      },
       async () => {
         extracting = false
         abortExtract = null
         await reload()
-        notify('success', 'Context extracted successfully')
+        if (!failed) notify('success', 'Context extracted successfully')
       },
     )
   }

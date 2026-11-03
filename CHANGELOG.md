@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sidebar version** — the web UI's sidebar said `v1.5` on every release since 1.5. It now shows the server's version from `GET /api/config`, once config has loaded
 - **Release workflow package check** — `release.yml` ran `twine check dist/*` and uploaded `dist/*` as the artifact PyPI publishes; anything else in `dist/` would have failed the check or been sent to PyPI. Both are now scoped to `dist/paranoid_cli-*` (as `ci.yml` already was), and the upload fails if no package was built
 - **Pre-release tags** — a tag with a suffix (`v1.6.1-rc1`) now creates a GitHub pre-release instead of the repo's "Latest" release, and CI's Action version check reads a PEP 440 pre-release version (`1.6.1rc1`) whole instead of cutting it to `1.6.1` and failing
+- **Re-extract no longer loses context when the tab closes** — `POST /api/models/{id}/extract` ran inside its own SSE response: it cleared the generated assets and flows first, so leaving the page mid-extraction left the model without them and nothing regenerated. It is now a background task like `/run` (`GET /run/events` follows it), and `/run` and `/extract` on the same model refuse each other with `409` instead of both writing assets
+- **A run that fails to start is marked failed** — a database error while clearing the previous run or setting the status left the model `pending` or `in_progress` with no run behind it; it is now marked `failed` with a failure event
+- **Re-extract errors no longer end with a success toast** — the Context page showed "Context extracted successfully" after a refused (`409`) or failed extraction too
 
 ### Changed
 
