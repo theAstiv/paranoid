@@ -5,12 +5,19 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import aiosqlite
 
 
 logger = logging.getLogger(__name__)
+
+# Set while the current task is inside db.writer(). get() inside it would
+# write on the main connection while writer()'s own connection holds the
+# write lock: it would wait out busy_timeout and fail with "database is
+# locked". Refusing it at once turns that into an obvious bug.
+_in_writer: ContextVar[bool] = ContextVar("_in_writer", default=False)
 
 # Number of pre-warmed read-only connections in the pool.
 # WAL mode lets all readers run concurrently against the single writer,
@@ -65,11 +72,18 @@ class ConnectionManager:
             async with conn.execute("SELECT * FROM threats WHERE model_id = ?", ...) as cur:
                 rows = await cur.fetchall()
 
-    Usage — BEGIN IMMEDIATE (read-then-write sequences only):
+    Usage — BEGIN IMMEDIATE (read-then-write sequences, multi-row batches):
         async with db.writer() as conn:
             row = await (await conn.execute("SELECT status FROM threats WHERE id = ?", ...)).fetchone()
             if row["status"] == "pending":
                 await conn.execute("UPDATE threats SET status = 'approved' WHERE id = ?", ...)
+
+    writer() runs on its own connection, not the shared one get() returns:
+    on the shared connection any other coroutine's commit() in the middle of
+    the block committed half of it, and a second writer() failed with "cannot
+    start a transaction within a transaction" (review C4). Its lock queues
+    writer() blocks; the main connection's writes wait on SQLite's own lock
+    (busy_timeout) while one is open, so keep the blocks short.
     """
 
     def __init__(self) -> None:
@@ -77,6 +91,9 @@ class ConnectionManager:
         self._db_path: str | None = None
         self._initialized: bool = False
         self._reader_pool: asyncio.Queue[aiosqlite.Connection] | None = None
+        self._tx_connection: aiosqlite.Connection | None = None
+        self._tx_lock: asyncio.Lock | None = None
+        self._tx_lock_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def is_initialized(self) -> bool:
@@ -160,8 +177,12 @@ class ConnectionManager:
             Active aiosqlite Connection (writer — shared singleton).
 
         Raises:
-            RuntimeError: If connection fails to initialize.
+            RuntimeError: If connection fails to initialize, or if called
+                inside db.writer() (use the connection it yields).
         """
+        if _in_writer.get():
+            msg = "db.get() inside db.writer(): use the connection writer() yields"
+            raise RuntimeError(msg)
         if not self._initialized:
             from backend.config import settings
 
@@ -199,27 +220,67 @@ class ConnectionManager:
         finally:
             self._reader_pool.put_nowait(conn)
 
+    def _writer_lock(self) -> asyncio.Lock:
+        # Created lazily and per event loop: a Lock binds to the loop that
+        # first waits on it, and tests run each case on a fresh loop.
+        loop = asyncio.get_running_loop()
+        if self._tx_lock is None or self._tx_lock_loop is not loop:
+            self._tx_lock = asyncio.Lock()
+            self._tx_lock_loop = loop
+        return self._tx_lock
+
+    async def _open_tx_connection(self) -> aiosqlite.Connection:
+        """writer()'s own read-write connection, with the main one's pragmas."""
+        if self._db_path is None:
+            msg = "Connection initialization failed"
+            raise RuntimeError(msg)
+        conn = await aiosqlite.connect(self._db_path)
+        conn.row_factory = aiosqlite.Row
+        try:
+            import sqlite_vec
+
+            await conn.enable_load_extension(True)
+            await conn.load_extension(sqlite_vec.loadable_path())
+        except Exception as exc:  # not installed in CI; vector writes go through get()
+            logger.debug("writer connection without sqlite-vec: %s", exc)
+        await conn.execute("PRAGMA busy_timeout = 5000;")
+        await conn.execute("PRAGMA foreign_keys = ON;")
+        await conn.commit()
+        return conn
+
     @asynccontextmanager
     async def writer(self) -> AsyncGenerator[aiosqlite.Connection, None]:
-        """BEGIN IMMEDIATE transaction for read-then-write sequences.
+        """BEGIN IMMEDIATE transaction on writer()'s own connection.
 
-        Use only when you need to read a value and conditionally write based
-        on it (e.g. check member count before removing last owner). Single-
-        statement UPDATEs are already atomic — don't use this wrapper for them.
+        Use when you need to read a value and conditionally write based on it
+        (e.g. check member count before removing last owner), or to save many
+        rows in one commit. Single-statement UPDATEs are already atomic —
+        don't use this wrapper for them.
+
+        Inside the block, use only the yielded connection: db.get() raises
+        (see _in_writer), and a CRUD helper that calls it must take the
+        connection as an argument instead.
 
         Commits on clean exit, rolls back on exception.
 
         Yields:
-            The writer connection inside a BEGIN IMMEDIATE transaction.
+            writer()'s connection inside a BEGIN IMMEDIATE transaction.
         """
-        conn = await self.get()
-        await conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-            await conn.commit()
-        except Exception:
-            await conn.rollback()
-            raise
+        await self.get()  # lazy init, and the guard against nesting
+        async with self._writer_lock():
+            if self._tx_connection is None:
+                self._tx_connection = await self._open_tx_connection()
+            conn = self._tx_connection
+            await conn.execute("BEGIN IMMEDIATE")
+            token = _in_writer.set(True)
+            try:
+                yield conn
+                await conn.commit()
+            except BaseException:
+                await conn.rollback()
+                raise
+            finally:
+                _in_writer.reset(token)
 
     async def close(self) -> None:
         """Close all connections (writer + reader pool)."""
@@ -232,6 +293,10 @@ class ConnectionManager:
                     break
             self._reader_pool = None
             logger.info("Closed reader pool")
+
+        if self._tx_connection is not None:
+            await self._tx_connection.close()
+            self._tx_connection = None
 
         if self._connection is not None:
             logger.info("Closing writer connection")

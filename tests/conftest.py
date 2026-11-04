@@ -28,15 +28,21 @@ async def test_db():
         db_path = f.name
 
     # Reset manager state in case a previous test left it initialized
-    if db._connection is not None:
-        await db._connection.close()
+    for leftover in (db._connection, db._tx_connection):
+        if leftover is not None:
+            await leftover.close()
     db._connection = None
+    db._tx_connection = None
     db._initialized = False
     db._db_path = None
 
-    # Open real connection, skip extension loading
+    # Open real connection, skip extension loading. WAL and busy_timeout as in
+    # ConnectionManager.initialize: db.writer() opens a second read-write
+    # connection, and without them the two fail with "database is locked".
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA journal_mode = WAL;")
+    await conn.execute("PRAGMA busy_timeout = 5000;")
     await conn.execute("PRAGMA foreign_keys = ON;")
     await conn.commit()
     await init_database_with_connection(conn)
@@ -53,13 +59,16 @@ async def test_db():
     yield db_path
 
     # Cleanup
-    if db._connection is not None:
-        await db._connection.close()
+    for leftover in (db._connection, db._tx_connection):
+        if leftover is not None:
+            await leftover.close()
     db._connection = None
+    db._tx_connection = None
     db._initialized = False
     db._db_path = None
     db._reader_pool = None
-    Path(db_path).unlink(missing_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        Path(db_path + suffix).unlink(missing_ok=True)
 
 
 @pytest.fixture
