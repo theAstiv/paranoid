@@ -16,7 +16,7 @@ Paranoid takes system descriptions (text, diagrams, or code via MCP) and produce
 - **ATT&CK / ATLAS Enrichment**: every threat — LLM-generated, rule-engine, or dependency — is mapped to MITRE ATT&CK/ATLAS techniques (deterministic rule table, pattern-ID regex, or embedding similarity depending on origin), never self-attributed by the LLM
 - **Iterative Refinement**: 1–15 configurable iteration passes with gap analysis
 - **Pre-flight Gap Check**: before a run, the wizard flags missing authentication, trust-boundary, data-flow and external-system details in the description and assumptions; deterministic checks first, then an optional LLM pass, with a strict mode that blocks the run on error-severity gaps
-- **Editable Context**: add, edit or delete assets, flows and trust boundaries on the Results page; edits relink threats and appear in exports. A Re-run or Re-extract replaces them with fresh extraction (keeping them is on the [roadmap](#roadmap)); to fix the context a CLI run uses, pass `--seeded-assets` / `--seeded-flows`
+- **Editable Context**: add, edit or delete assets, flows and trust boundaries on the Results page; edits relink threats and appear in exports. Re-run generates threats from the context as you left it, and Re-extract regenerates it while keeping your edits; to fix the context a CLI run uses, pass `--seeded-assets` / `--seeded-flows`
 - **Model Diff**: compare two models by embedding similarity (new / removed / unchanged threats)
 - **Model Routing**: per-pipeline-step fast/main model selection (e.g. Haiku for extraction, Sonnet for threat generation); the routed extraction steps cost about two-thirds less ([measured](docs/benchmarks.md#2-model-routing)), and the steps that write the threat text never leave the main model
 - **Code-as-Input**: Semantic code extraction via context-link MCP (`--code /path/to/repo`)
@@ -232,7 +232,7 @@ Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 Also planned:
 
-- **Re-run keeps your edits**: Re-run and Re-extract reuse edited assets, flows and trust boundaries, and Re-run keeps the previous run so the two can be diffed automatically.
+- **Model versions**: Re-run keeps the previous run so the two can be diffed automatically.
 - **Design documents as input**: PRDs, BRDs and PDFs alongside descriptions, diagrams and code.
 - **Org knowledge base**: upload internal standards or compliance docs for the pipeline to retrieve from.
 - **Coding-agent export**: threats written as security requirements and acceptance criteria.

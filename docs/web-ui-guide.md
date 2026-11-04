@@ -73,17 +73,17 @@ Shows the full threat model context and threat list after a run completes.
 - **Summary**: title, framework, provider/model used, run date, iteration count, duration
 - **Run Summary**: per-step model (fast vs. main) and token usage, with a warning chip if fast routing fell back to the main model mid-run
 - **Diagrams**: a single diagram renders directly; two or more show a tab strip (`role="tablist"`, arrow-key navigation). Each image loads lazily on first selection and is cached per tab
-- **Dependencies**: a heatmap of packages × capability categories (network, filesystem, process, dynamic code, native addons, …), with expandable evidence and drift/skip reasons, shown when the run included a manifest
-- **Context** (assets, flows, trust boundaries): click any item to expand; add, edit or delete items (Re-extract keeps them, Re-run doesn't yet; see [Re-run vs. Re-extract](#re-run-vs-re-extract)); **Re-extract** button re-runs only the extraction steps (reuses the model's stored diagrams; dependency manifests aren't persisted, so dependency analysis doesn't re-run here)
+- **Dependencies**: a heatmap of packages × capability categories (network, filesystem, process, dynamic code, native addons, …), with expandable evidence and drift/skip reasons, shown when a run included a manifest (Re-run and Re-extract keep it)
+- **Context** (assets, flows, trust boundaries): click any item to expand; add, edit or delete items (Re-run uses them as they are, Re-extract keeps them; see [Re-run vs. Re-extract](#re-run-vs-re-extract)); **Re-extract** button re-runs only the extraction steps (reuses the model's stored diagrams)
 - **Threats**: filterable table by category, severity, and status; each threat can show ATT&CK/ATLAS technique chips and a CVSS badge alongside its DREAD score
 - **Compare**: opens the Model Diff view
 
 ### Re-run vs. Re-extract
 
-- **Re-run** runs the whole pipeline again on the model's stored description, assumptions and diagrams. It first deletes the previous threats, assets, flows and trust boundaries, **including any context you added or edited**, and the dependency analysis. The manifest isn't stored, so the Dependencies section stays empty until you start a new run with one.
-- **Re-extract** runs only the extraction steps, then keeps the assets, flows and trust boundaries you added or edited and replaces the rest of the context, **all threats** and the dependency analysis. The new extraction doesn't add a second copy of a row you kept: an asset you renamed stays once under your name, and new flows to it use that name. Threats are not regenerated, so the model has none until you Re-run. If the provider is unavailable or the extraction fails before it finishes, nothing is deleted.
+- **Re-run** generates the threats again from the model's **current context**: the assets, flows and trust boundaries as they are now, your edits included; it doesn't extract them again. It also reuses the last run's dependency analysis, since the manifest itself isn't stored. Only the previous threats are replaced. (A model with no context yet, e.g. one whose first run failed early, is extracted as usual.)
+- **Re-extract** regenerates the context: it runs only the extraction steps, then keeps the assets, flows and trust boundaries you added or edited and replaces the rest of the context and **all threats**. The new extraction doesn't add a second copy of a row you kept: an asset you renamed stays once under your name, and new flows to it use that name. Threats are not regenerated, so the model has none until you Re-run. If the provider is unavailable or the extraction fails before it finishes, nothing is deleted. The dependency analysis is kept.
 
-Keeping edits across Re-run is on the [roadmap](../README.md#roadmap). Until then, to run with corrected context, use the CLI's `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
+So to change the context the threats are based on, edit it (or Re-extract it), then Re-run. The CLI equivalent is `--seeded-assets` / `--seeded-flows` (JSON `AssetsList` / `FlowsList`, see the [CLI Reference](cli-reference.md)).
 
 Re-run doesn't keep the previous version. To compare before and after, create a second model with the changed input and use **Compare**.
 

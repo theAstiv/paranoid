@@ -412,7 +412,8 @@
     const fd = new FormData()
     // The run route saves what it's sent over the stored assumptions, so send
     // them back (BB-82). has_ai_components is left out: the server reuses the
-    // flag the model's last run stored. Dependencies are not re-sent (yet).
+    // flag the model's last run stored. With nothing else sent, the server also
+    // reuses the stored context and dependency analysis.
     fd.append('assumptions', JSON.stringify(storedAssumptions(model)))
     interrupted = false
     pipelineEvents.set([])
@@ -467,7 +468,7 @@
         {/if}
         {#if canEdit && (model.status === 'completed' || model.status === 'failed' || interrupted)}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
-            title="Re-run (description, assumptions and diagrams; dependencies need a new run)"
+            title="Re-run threats on the current context and dependency analysis (Edit Context → Re-extract regenerates the context)"
             class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
             Re-run
           </button>

@@ -193,15 +193,9 @@ async def test_a_run_stopped_by_server_shutdown_marks_the_model_failed(model_id)
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 21): nothing at startup resets a run the previous process "
-        "never finished, so a model interrupted by a stop or crash stays 'in_progress' "
-        "(seen on the Bedrock machine's 10-13 model)."
-    ),
-)
 async def test_startup_marks_a_run_left_in_progress_as_failed(model_id, test_db, monkeypatch):
+    """Bug-bash item 21 (BB-72): a model interrupted by a stop or crash stayed
+    'in_progress' forever (seen on the Bedrock machine's 10-13 model)."""
     await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
     monkeypatch.setattr(settings, "db_path", test_db)
 
@@ -502,12 +496,15 @@ async def test_an_extract_that_fails_part_way_leaves_the_previous_context(model_
 @pytest.mark.asyncio
 async def test_a_finished_extract_replaces_the_generated_context(model_id):
     await _seed_previous_run(model_id)
+    await crud.create_dependency_scan(model_id, "lodash", "4.17.21", "npm", {"ref": {}})
     p1, p2 = _providers()
     with p1, p2, patch("backend.routes.models.run_pipeline_for_model", _extraction_events()):
         events = await asyncio.wait_for(_drain(await _open_extract(model_id)), timeout=5)
 
     assert events[-1]["status"] == "completed"
     assert await _context_names(model_id) == (["Fresh asset"], ["new"], [])
+    # Kept for the next Re-run, which reuses them (BB-82).
+    assert [s["package"] for s in await crud.list_dependency_scans(model_id)] == ["lodash"]
 
 
 @pytest.mark.asyncio

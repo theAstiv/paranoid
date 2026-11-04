@@ -105,6 +105,23 @@ async def update_threat_model_status(model_id: str, status: str) -> None:
     logger.info(f"Updated threat model {model_id} status to {status}")
 
 
+async def fail_interrupted_runs() -> int:
+    """Mark every 'in_progress' model 'failed'; returns how many.
+
+    Called once at startup. Live runs are in-process tasks
+    (backend/pipeline/live_runs.py), so a model still 'in_progress' when the
+    server starts lost its run to a stop or crash and would otherwise show as
+    running forever.
+    """
+    conn = await db.get()
+    cursor = await conn.execute(
+        "UPDATE threat_models SET status = 'failed', updated_at = ? WHERE status = 'in_progress'",
+        (now_iso(),),
+    )
+    await conn.commit()
+    return cursor.rowcount
+
+
 async def update_threat_model(
     model_id: str,
     title: str | None = None,
@@ -1111,7 +1128,9 @@ async def delete_trust_boundary(boundary_id: str) -> None:
     logger.info(f"Deleted trust boundary {boundary_id}")
 
 
-async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> None:
+async def clear_model_data(
+    model_id: str, preserve_user_edits: bool = False, keep_dependency_scans: bool = False
+) -> None:
     """Delete all pipeline-generated data for a model (threats, assets, flows, trust boundaries).
 
     Called before each pipeline run so that re-running a model starts from a clean slate.
@@ -1120,10 +1139,13 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
         model_id: The model whose data to clear.
         preserve_user_edits: When True, rows with user_edited=1 in assets, flows, and
             trust_boundaries are kept so that manually-corrected context survives a re-run.
+        keep_dependency_scans: When True, dependency_scans are kept because the
+            run reuses them (a Re-run without a manifest).
     """
     conn = await db.get()
     await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
-    await conn.execute("DELETE FROM dependency_scans WHERE model_id = ?", (model_id,))
+    if not keep_dependency_scans:
+        await conn.execute("DELETE FROM dependency_scans WHERE model_id = ?", (model_id,))
     # model_diagrams is NOT cleared here: a diagram is user input (like an
     # asset with user_edited=1), not pipeline output like dependency_scans.
     # A re-run or re-extract that doesn't re-upload a diagram must not wipe
@@ -1143,6 +1165,23 @@ async def clear_model_data(model_id: str, preserve_user_edits: bool = False) -> 
     await conn.commit()
     logger.info(
         f"Cleared pipeline data for model {model_id} (preserve_user_edits={preserve_user_edits})"
+    )
+
+
+async def clear_model_threats(model_id: str, keep_dependency_scans: bool = False) -> None:
+    """Delete a model's threats (and dependency scans) but keep its context.
+
+    For a Re-run that reuses the stored assets, flows and trust boundaries
+    instead of extracting them again. keep_dependency_scans=True when the run
+    reuses the stored scans too.
+    """
+    conn = await db.get()
+    await conn.execute("DELETE FROM threats WHERE model_id = ?", (model_id,))
+    if not keep_dependency_scans:
+        await conn.execute("DELETE FROM dependency_scans WHERE model_id = ?", (model_id,))
+    await conn.commit()
+    logger.info(
+        f"Cleared threats for model {model_id} (keep_dependency_scans={keep_dependency_scans})"
     )
 
 
