@@ -1,6 +1,15 @@
 <script>
+  import { onMount } from 'svelte'
   import { push } from 'svelte-spa-router'
-  import { register, login } from '../lib/api.js'
+  import { register, login, getAuthOptions } from '../lib/api.js'
+
+  // PARANOID_REGISTRATION=admin_only: only an admin creates accounts.
+  let registrationClosed = false
+  onMount(async () => {
+    try {
+      registrationClosed = (await getAuthOptions()).registration === 'admin_only'
+    } catch { /* show the form; the server still refuses if it's closed */ }
+  })
 
   let username = ''
   let email = ''
@@ -75,102 +84,108 @@
         </div>
       {/if}
 
-      <form on:submit={handleSubmit} class="space-y-4">
-        <!-- Username -->
-        <div>
-          <label for="reg-username" class="block text-[12px] font-medium text-c-text3 mb-1.5">
-            Username
-            <span class="text-c-faint font-normal ml-1">letters, numbers, _ -</span>
-          </label>
-          <input
-            id="reg-username"
-            type="text"
-            bind:value={username}
-            required
-            autocomplete="username"
-            pattern="[a-zA-Z0-9_\-]+"
-            minlength="3"
-            maxlength="50"
-            class="field"
-          />
-        </div>
-
-        <!-- Display name -->
-        <div>
-          <label for="reg-display" class="block text-[12px] font-medium text-c-text3 mb-1.5">
-            Display name
-            <span class="text-c-faint font-normal ml-1">optional</span>
-          </label>
-          <input
-            id="reg-display"
-            type="text"
-            bind:value={displayName}
-            maxlength="100"
-            autocomplete="name"
-            class="field"
-          />
-        </div>
-
-        <!-- Email -->
-        <div>
-          <label for="reg-email" class="block text-[12px] font-medium text-c-text3 mb-1.5">Email</label>
-          <div class="relative">
-            <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-              <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path stroke-linecap="round" d="M3 8l7 5 7-5M3 8v8a2 2 0 002 2h10a2 2 0 002-2V8M3 8l2-2h10l2 2"/>
-              </svg>
-            </div>
+      {#if registrationClosed}
+        <p class="text-[13px] text-c-muted" data-testid="registration-closed">
+          Registration is closed on this server. Ask an instance admin to create an account for you.
+        </p>
+      {:else}
+        <form on:submit={handleSubmit} class="space-y-4">
+          <!-- Username -->
+          <div>
+            <label for="reg-username" class="block text-[12px] font-medium text-c-text3 mb-1.5">
+              Username
+              <span class="text-c-faint font-normal ml-1">letters, numbers, _ -</span>
+            </label>
             <input
-              id="reg-email"
-              type="email"
-              bind:value={email}
+              id="reg-username"
+              type="text"
+              bind:value={username}
               required
-              autocomplete="email"
-              class="field pl-9"
+              autocomplete="username"
+              pattern="[a-zA-Z0-9_\-]+"
+              minlength="3"
+              maxlength="50"
+              class="field"
             />
           </div>
-        </div>
 
-        <!-- Password -->
-        <div>
-          <label for="reg-password" class="block text-[12px] font-medium text-c-text3 mb-1.5">
-            Password
-            <span class="text-c-faint font-normal ml-1">min 8 characters</span>
-          </label>
-          <div class="relative">
-            <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-              <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                <rect x="4" y="9" width="12" height="9" rx="2"/>
-                <path stroke-linecap="round" d="M8 9V6a4 4 0 018 0v3"/>
-              </svg>
-            </div>
+          <!-- Display name -->
+          <div>
+            <label for="reg-display" class="block text-[12px] font-medium text-c-text3 mb-1.5">
+              Display name
+              <span class="text-c-faint font-normal ml-1">optional</span>
+            </label>
             <input
-              id="reg-password"
-              type="password"
-              bind:value={password}
-              required
-              minlength="8"
-              autocomplete="new-password"
-              class="field pl-9"
+              id="reg-display"
+              type="text"
+              bind:value={displayName}
+              maxlength="100"
+              autocomplete="name"
+              class="field"
             />
           </div>
-        </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          class="btn-primary w-full justify-center glow mt-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-        >
-          {#if loading}
-            <svg class="w-4 h-4 animate-spin-slow" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" d="M10 2a8 8 0 018 8"/>
-            </svg>
-            Creating account…
-          {:else}
-            Create account →
-          {/if}
-        </button>
-      </form>
+          <!-- Email -->
+          <div>
+            <label for="reg-email" class="block text-[12px] font-medium text-c-text3 mb-1.5">Email</label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" d="M3 8l7 5 7-5M3 8v8a2 2 0 002 2h10a2 2 0 002-2V8M3 8l2-2h10l2 2"/>
+                </svg>
+              </div>
+              <input
+                id="reg-email"
+                type="email"
+                bind:value={email}
+                required
+                autocomplete="email"
+                class="field pl-9"
+              />
+            </div>
+          </div>
+
+          <!-- Password -->
+          <div>
+            <label for="reg-password" class="block text-[12px] font-medium text-c-text3 mb-1.5">
+              Password
+              <span class="text-c-faint font-normal ml-1">min 8 characters</span>
+            </label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <svg class="w-4 h-4 text-c-faint" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <rect x="4" y="9" width="12" height="9" rx="2"/>
+                  <path stroke-linecap="round" d="M8 9V6a4 4 0 018 0v3"/>
+                </svg>
+              </div>
+              <input
+                id="reg-password"
+                type="password"
+                bind:value={password}
+                required
+                minlength="8"
+                autocomplete="new-password"
+                class="field pl-9"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            class="btn-primary w-full justify-center glow mt-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+          >
+            {#if loading}
+              <svg class="w-4 h-4 animate-spin-slow" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" d="M10 2a8 8 0 018 8"/>
+              </svg>
+              Creating account…
+            {:else}
+              Create account →
+            {/if}
+          </button>
+        </form>
+      {/if}
 
       <div class="mt-6 flex items-center justify-between text-[13px]">
         <span class="text-c-muted">Already have an account?</span>

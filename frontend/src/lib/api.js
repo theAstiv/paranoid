@@ -112,6 +112,14 @@ export function register(body) {
 }
 
 /**
+ * Whether self-registration is open, readable before anyone signs in.
+ * @returns {Promise<{ require_auth: boolean, registration: 'open' | 'admin_only' }>}
+ */
+export function getAuthOptions() {
+  return request('GET', '/auth/options')
+}
+
+/**
  * @param {{ username: string, password: string }} body
  * @returns {Promise<{ access_token: string, user: object }>}
  */

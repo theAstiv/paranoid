@@ -1,6 +1,15 @@
 <script>
+  import { onMount } from 'svelte'
   import { push } from 'svelte-spa-router'
-  import { login } from '../lib/api.js'
+  import { login, getAuthOptions } from '../lib/api.js'
+
+  // Hide the Register link when only an admin can create accounts.
+  let registrationOpen = true
+  onMount(async () => {
+    try {
+      registrationOpen = (await getAuthOptions()).registration !== 'admin_only'
+    } catch { /* keep the link; Register says so if it's closed */ }
+  })
 
   let username = ''
   let password = ''
@@ -133,7 +142,11 @@
 
       <div class="mt-6 flex items-center justify-between text-[13px]">
         <span class="text-c-muted">Need an account?</span>
-        <a href="#/register" class="text-c-accent hover:underline font-medium">Register</a>
+        {#if registrationOpen}
+          <a href="#/register" class="text-c-accent hover:underline font-medium">Register</a>
+        {:else}
+          <span class="text-c-faint">Ask an instance admin</span>
+        {/if}
       </div>
     </div>
 

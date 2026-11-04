@@ -90,6 +90,7 @@ The Run Summary on the Results page lists each step's model and its input / outp
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PARANOID_REQUIRE_AUTH` | `false` | `false` = anonymous admin mode; `true` = require login |
+| `PARANOID_REGISTRATION` | `open` | With auth on: `open` = anyone who can reach the server can register; `admin_only` = only an instance admin creates accounts (Admin → Users) and projects |
 | `PARANOID_ADMIN_PASSWORD` | random | Password for the auto-created `admin` account on first startup; if unset, a random password is generated and logged once |
 | `JWT_SECRET` | derived | JWT signing key; falls back to `PBKDF2(CONFIG_SECRET)`, then an ephemeral per-process key |
 | `CONFIG_SECRET` | — | Optional shared secret protecting `PATCH /api/config` (Settings page) and used as PAT encryption key source |

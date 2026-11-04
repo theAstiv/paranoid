@@ -8,13 +8,30 @@ vi.mock('svelte-spa-router', () => ({
 
 vi.mock('../lib/api.js', () => ({
   login: vi.fn(),
+  getAuthOptions: vi.fn(),
 }))
 
 import { push } from 'svelte-spa-router'
-import { login } from '../lib/api.js'
+import { login, getAuthOptions } from '../lib/api.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  getAuthOptions.mockResolvedValue({ require_auth: true, registration: 'open' })
+})
+
+describe('Login — registration mode', () => {
+  it('links to Register when registration is open', async () => {
+    render(Login)
+    await waitFor(() => expect(getAuthOptions).toHaveBeenCalled())
+    expect(screen.getByText('Register')).toBeInTheDocument()
+  })
+
+  it('hides the Register link when only an admin can create accounts', async () => {
+    getAuthOptions.mockResolvedValue({ require_auth: true, registration: 'admin_only' })
+    render(Login)
+    await waitFor(() => expect(screen.getByText('Ask an instance admin')).toBeInTheDocument())
+    expect(screen.queryByText('Register')).not.toBeInTheDocument()
+  })
 })
 
 describe('Login', () => {

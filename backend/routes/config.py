@@ -105,6 +105,7 @@ async def _config_payload() -> dict:
         "dedup_saturation_threshold": settings.dedup_saturation_threshold,
         "min_iterations": settings.min_iterations,
         "deps_analysis_enabled": settings.deps_analysis_enabled,
+        "registration": settings.paranoid_registration,
         # Presence + source of each provider key (never the value itself).
         "anthropic_api_key_set": anthropic_source is not None,
         "anthropic_api_key_source": anthropic_source,

@@ -130,6 +130,32 @@ describe('App — sidebar version (review F1)', () => {
   })
 })
 
+describe('App — New project under admin-only registration', () => {
+  async function openSwitcher(user, registration) {
+    getConfig.mockResolvedValue({ first_run: false, registration })
+    fetchMe.mockImplementation(async () => { currentUser.set(user); return user })
+    render(App)
+    await waitFor(() => expect(getConfig).toHaveBeenCalled())
+    await tick()
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch project' }))
+  }
+
+  it('is offered to a member when registration is open', async () => {
+    await openSwitcher({ id: 'u-1', username: 'alice', is_admin: false }, 'open')
+    expect(screen.getByText('New project')).toBeInTheDocument()
+  })
+
+  it('is hidden from a member when only admins create accounts', async () => {
+    await openSwitcher({ id: 'u-1', username: 'alice', is_admin: false }, 'admin_only')
+    expect(screen.queryByText('New project')).toBeNull()
+  })
+
+  it('stays for an admin under admin_only', async () => {
+    await openSwitcher({ id: 'u-1', username: 'root', is_admin: true }, 'admin_only')
+    expect(screen.getByText('New project')).toBeInTheDocument()
+  })
+})
+
 describe('App — unknown routes and titles (BB-113, BB-109)', () => {
   it('shows a not-found page with a link home for an unknown hash', async () => {
     window.location.hash = '#/no/such/page'

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/svelte'
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
 import AdminUsers from './AdminUsers.svelte'
 
 vi.mock('svelte-spa-router', () => ({
@@ -8,6 +8,7 @@ vi.mock('svelte-spa-router', () => ({
 
 vi.mock('../lib/api.js', () => ({
   listAllUsers: vi.fn(),
+  register: vi.fn(),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -16,7 +17,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 })
 
 import { push } from 'svelte-spa-router'
-import { listAllUsers } from '../lib/api.js'
+import { listAllUsers, register } from '../lib/api.js'
 import { notify, currentUser, authLoading } from '../lib/stores.js'
 
 const userA = {
@@ -29,6 +30,28 @@ beforeEach(() => {
   currentUser.set(null)
   authLoading.set(true)
   listAllUsers.mockResolvedValue([])
+})
+
+describe('AdminUsers — create user', () => {
+  it('creates a user through register without signing in as them', async () => {
+    currentUser.set({ id: 'admin', is_admin: true })
+    authLoading.set(false)
+    register.mockResolvedValue({ ...userA, id: 'u9', username: 'bob' })
+    render(AdminUsers)
+    await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Create user'))
+    await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'bob' } })
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'bob@x.com' } })
+    await fireEvent.input(screen.getByLabelText(/^Initial password/), { target: { value: 'password123' } })
+    await fireEvent.click(screen.getByText('Create'))
+
+    await waitFor(() => expect(register).toHaveBeenCalledWith({
+      username: 'bob', email: 'bob@x.com', password: 'password123', display_name: undefined,
+    }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('success', 'Created user @bob'))
+    expect(screen.getByText('@bob')).toBeInTheDocument()
+  })
 })
 
 describe('AdminUsers — auth gating', () => {

@@ -181,6 +181,11 @@ class Settings(BaseSettings):
     # equivalent to the existing single-user mode. Document: "anyone with
     # network access is admin" when this is false.
     paranoid_require_auth: bool = False
+    # Who may create accounts when PARANOID_REQUIRE_AUTH=true. "open": anyone
+    # who can reach the server (POST /api/auth/register). "admin_only": only an
+    # instance admin, who also becomes the only one who can create projects —
+    # otherwise any account could open a project and spend the provider keys.
+    paranoid_registration: Literal["open", "admin_only"] = "open"
     # PARANOID_ADMIN_PASSWORD: password for the auto-created 'admin' user on
     # first startup (when the users table is empty). If unset, a random
     # password is generated and logged once. Never overwrites an existing user.
@@ -241,6 +246,12 @@ class Settings(BaseSettings):
         if not isinstance(v, str):
             return v
         return [item.strip() for item in v.split(",") if item.strip()]
+
+    @field_validator("paranoid_registration", mode="before")
+    @classmethod
+    def blank_registration_is_open(cls, v: object) -> object:
+        # `PARANOID_REGISTRATION=` in .env arrives as "", not absent.
+        return "open" if isinstance(v, str) and not v.strip() else v
 
     @field_validator("anthropic_effort", "openai_reasoning_effort", mode="before")
     @classmethod
