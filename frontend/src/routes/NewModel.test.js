@@ -10,7 +10,8 @@ vi.mock('svelte-spa-router', () => ({
 
 vi.mock('../lib/api.js', () => ({
   createModel: vi.fn(),
-  subscribeToRun: vi.fn(() => vi.fn()),
+  // Accepts the run by default (onOpen, the 6th argument); a test can reject it.
+  subscribeToRun: vi.fn((id, fd, onEvent, onError, onDone, onOpen) => { onOpen?.(); return vi.fn() }),
   listCodeSources: vi.fn(),
   analyzeBundle: vi.fn(),
   getModel: vi.fn(),
@@ -482,6 +483,52 @@ describe('NewModel — step 8 (review & submit)', () => {
     await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
     expect(subscribeToRun.mock.calls[0][0]).toBe('model-123')
     await waitFor(() => expect(push).toHaveBeenCalledWith('/models/model-123'))
+  })
+
+  it('asks the server to discard the new model if it rejects the run (BB-122)', async () => {
+    createModel.mockResolvedValue({ id: 'model-123' })
+    await toReview()
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(subscribeToRun).toHaveBeenCalled())
+    expect(subscribeToRun.mock.calls[0][1].get('discard_model_on_reject')).toBe('true')
+  })
+
+  it('stays on the wizard with its input when the run is rejected (BB-122)', async () => {
+    createModel.mockResolvedValue({ id: 'model-123' })
+    subscribeToRun.mockImplementationOnce((id, fd, onEvent, onError, onDone) => {
+      const err = new Error('diagrams.0: file is not a valid PNG')
+      err.status = 422
+      onError(err)
+      onDone()
+      return vi.fn()
+    })
+    await toReview()
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(
+      'error', 'Run not started: diagrams.0: file is not a valid PNG'
+    ))
+    expect(push).not.toHaveBeenCalled()
+    expect(screen.getByText('My System')).toBeInTheDocument()
+    expect(screen.getByText('Create & Run')).not.toBeDisabled()
+    expect(get(pipelineRunning)).toBe(false)
+  })
+
+  it('does not hang when the run request is cancelled before an answer', async () => {
+    createModel.mockResolvedValue({ id: 'model-123' })
+    subscribeToRun.mockImplementationOnce((id, fd, onEvent, onError, onDone) => {
+      onDone()
+      return vi.fn()
+    })
+    await toReview()
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+
+    await waitFor(() => expect(screen.getByText('Create & Run')).not.toBeDisabled())
+    expect(push).not.toHaveBeenCalled()
   })
 
   it('defaults scoring_method to dread when creating the model', async () => {

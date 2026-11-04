@@ -879,6 +879,7 @@ async def run_pipeline(
     dependency_lockfile: Annotated[UploadFile | None, File()] = None,
     deps_source_mode: Annotated[str, Form()] = "npm",
     use_code_source_manifest: Annotated[bool, Form()] = False,
+    discard_model_on_reject: Annotated[bool, Form()] = False,
     _rate: None = Depends(pipeline_rate_limit),
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> StreamingResponse:
@@ -912,6 +913,12 @@ async def run_pipeline(
       Off by default: dependency analysis does registry/codeload fetches and
       a Semgrep scan (up to deps_analysis_timeout_seconds), so it must not
       silently turn on for every code-source run.
+    - discard_model_on_reject: the wizard's first run of a model it just
+      created. If this request is rejected (a 4xx from its own validation),
+      the model is deleted too, provided it never held data
+      (crud.delete_unrun_threat_model), so a bad upload doesn't leave an empty
+      model behind (BB-122). Rejections raised before the handler runs (rate
+      limit, auth, Starlette's multipart limits) can't do this.
 
     The run itself is a background task (backend/pipeline/live_runs.py): this
     response only follows it, so closing the stream doesn't stop the run, and
@@ -924,94 +931,102 @@ async def run_pipeline(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
-    # Parse assumptions JSON array
+    # A rejected wizard run must not leave an empty model behind (BB-122).
     try:
-        parsed_assumptions: list[str] = json.loads(assumptions) if assumptions.strip() else []
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=422,
-            detail="'assumptions' must be a JSON array string, e.g. '[\"assumption 1\"]'",
-        )
-
-    # Build the diagram set if any files were uploaded. An empty list means
-    # nothing was uploaded — the event_generator below then falls back to
-    # whatever is already stored, rather than wiping it.
-    uploaded_diagrams = await _build_diagrams_from_request(diagram, diagrams, diagram_names)
-
-    # Validate code source — fast fail before opening the SSE stream.
-    source_row: dict | None = None
-    if code_source_id:
-        source_row = await crud.get_code_source(code_source_id)
-        if source_row is None:
-            raise HTTPException(
-                status_code=422, detail=f"Code source '{code_source_id}' not found."
-            )
-        # Otherwise an editor of project B could feed project A's code into a B model.
-        if source_row.get("project_id") != record.get("project_id"):
-            raise HTTPException(
-                status_code=403, detail="Code source belongs to a different project."
-            )
-        if source_row["last_index_status"] != "ready":
+        # Parse assumptions JSON array
+        try:
+            parsed_assumptions: list[str] = json.loads(assumptions) if assumptions.strip() else []
+        except json.JSONDecodeError:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"Code source is not indexed yet (status: {source_row['last_index_status']}). "
-                    "Wait for status 'ready'."
-                ),
+                detail="'assumptions' must be a JSON array string, e.g. '[\"assumption 1\"]'",
             )
 
-    # Dependency manifest — explicit upload, or (opt-in) auto-detected from the
-    # code source's own clone. DEPS_ANALYSIS_ENABLED is a hard kill switch:
-    # when false, neither path is used and ANALYZE_DEPENDENCIES never runs.
-    has_manifest_upload = dependency_manifest is not None and bool(dependency_manifest.filename)
-    has_lockfile_upload = dependency_lockfile is not None and bool(dependency_lockfile.filename)
+        # Build the diagram set if any files were uploaded. An empty list means
+        # nothing was uploaded — the event_generator below then falls back to
+        # whatever is already stored, rather than wiping it.
+        uploaded_diagrams = await _build_diagrams_from_request(diagram, diagrams, diagram_names)
 
-    dependency_manifest_dict: dict | None = None
-    dependency_lockfile_dict: dict | None = None
-    if not settings.deps_analysis_enabled:
-        if has_manifest_upload:
-            raise HTTPException(
-                status_code=422,
-                detail="Dependency analysis is disabled on this instance (DEPS_ANALYSIS_ENABLED=false).",
-            )
-    else:
-        if deps_source_mode not in _VALID_DEPS_SOURCE_MODES:
-            raise HTTPException(
-                status_code=422,
-                detail=f"'deps_source_mode' must be one of {sorted(_VALID_DEPS_SOURCE_MODES)}",
-            )
-        if has_manifest_upload:
-            dependency_manifest_dict = await _parse_dependency_json_upload(
-                dependency_manifest, "dependency_manifest", _MAX_MANIFEST_BYTES
-            )
-            if has_lockfile_upload:
-                dependency_lockfile_dict = await _parse_dependency_json_upload(
-                    dependency_lockfile, "dependency_lockfile", _MAX_LOCKFILE_BYTES
+        # Validate code source — fast fail before opening the SSE stream.
+        source_row: dict | None = None
+        if code_source_id:
+            source_row = await crud.get_code_source(code_source_id)
+            if source_row is None:
+                raise HTTPException(
+                    status_code=422, detail=f"Code source '{code_source_id}' not found."
                 )
-            _validate_direct_dependency_count(dependency_manifest_dict, dependency_lockfile_dict)
-        elif has_lockfile_upload:
-            raise HTTPException(
-                status_code=422,
-                detail="'dependency_lockfile' requires 'dependency_manifest'",
-            )
-        elif use_code_source_manifest and source_row is not None:
-            (
-                dependency_manifest_dict,
-                dependency_lockfile_dict,
-            ) = await _detect_manifest_from_code_source(code_source_id)
+            # Otherwise an editor of project B could feed project A's code into a B model.
+            if source_row.get("project_id") != record.get("project_id"):
+                raise HTTPException(
+                    status_code=403, detail="Code source belongs to a different project."
+                )
+            if source_row["last_index_status"] != "ready":
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Code source is not indexed yet (status: {source_row['last_index_status']}). "
+                        "Wait for status 'ready'."
+                    ),
+                )
 
-    provider = build_provider_from_record(record)
-    fast_provider = build_fast_provider(record)
-    framework = Framework(record.get("framework", "STRIDE"))
-    ai_flag = has_ai_components.strip().lower()
-    if not ai_flag:
-        has_ai = bool(record.get("has_ai_components"))
-    elif ai_flag in _FORM_TRUE:
-        has_ai = True
-    elif ai_flag in _FORM_FALSE:
-        has_ai = False
-    else:
-        raise HTTPException(status_code=422, detail="'has_ai_components' must be true or false")
+        # Dependency manifest — explicit upload, or (opt-in) auto-detected from the
+        # code source's own clone. DEPS_ANALYSIS_ENABLED is a hard kill switch:
+        # when false, neither path is used and ANALYZE_DEPENDENCIES never runs.
+        has_manifest_upload = dependency_manifest is not None and bool(dependency_manifest.filename)
+        has_lockfile_upload = dependency_lockfile is not None and bool(dependency_lockfile.filename)
+
+        dependency_manifest_dict: dict | None = None
+        dependency_lockfile_dict: dict | None = None
+        if not settings.deps_analysis_enabled:
+            if has_manifest_upload:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Dependency analysis is disabled on this instance (DEPS_ANALYSIS_ENABLED=false).",
+                )
+        else:
+            if deps_source_mode not in _VALID_DEPS_SOURCE_MODES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'deps_source_mode' must be one of {sorted(_VALID_DEPS_SOURCE_MODES)}",
+                )
+            if has_manifest_upload:
+                dependency_manifest_dict = await _parse_dependency_json_upload(
+                    dependency_manifest, "dependency_manifest", _MAX_MANIFEST_BYTES
+                )
+                if has_lockfile_upload:
+                    dependency_lockfile_dict = await _parse_dependency_json_upload(
+                        dependency_lockfile, "dependency_lockfile", _MAX_LOCKFILE_BYTES
+                    )
+                _validate_direct_dependency_count(
+                    dependency_manifest_dict, dependency_lockfile_dict
+                )
+            elif has_lockfile_upload:
+                raise HTTPException(
+                    status_code=422,
+                    detail="'dependency_lockfile' requires 'dependency_manifest'",
+                )
+            elif use_code_source_manifest and source_row is not None:
+                (
+                    dependency_manifest_dict,
+                    dependency_lockfile_dict,
+                ) = await _detect_manifest_from_code_source(code_source_id)
+
+        provider = build_provider_from_record(record)
+        fast_provider = build_fast_provider(record)
+        framework = Framework(record.get("framework", "STRIDE"))
+        ai_flag = has_ai_components.strip().lower()
+        if not ai_flag:
+            has_ai = bool(record.get("has_ai_components"))
+        elif ai_flag in _FORM_TRUE:
+            has_ai = True
+        elif ai_flag in _FORM_FALSE:
+            has_ai = False
+        else:
+            raise HTTPException(status_code=422, detail="'has_ai_components' must be true or false")
+    except HTTPException as exc:
+        if discard_model_on_reject and 400 <= exc.status_code < 500:
+            await crud.delete_unrun_threat_model(model_id)
+        raise
     max_iterations = record.get("iteration_count", settings.default_iterations)
     temperature = await _run_temperature(record)
 

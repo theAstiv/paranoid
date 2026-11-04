@@ -64,12 +64,31 @@ async function authedFetch(method, path, { body, extraHeaders = {}, signal } = {
   return res
 }
 
+/**
+ * A FastAPI error `detail` as one readable string. A 422 sends a list of
+ * `{loc, msg}` objects, which `new Error(list)` turned into "[object Object]".
+ * @param {unknown} detail
+ * @param {string} fallback
+ * @returns {string}
+ */
+export function formatErrorDetail(detail, fallback) {
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail) && detail.length) {
+    return detail.map(d => {
+      const field = Array.isArray(d?.loc) ? d.loc.filter(p => p !== 'body').join('.') : ''
+      const msg = d?.msg ?? String(d)
+      return field ? `${field}: ${msg}` : msg
+    }).join('; ')
+  }
+  return fallback
+}
+
 /** JSON request on top of authedFetch: throws on non-2xx, null on 204. */
 async function request(method, path, body, extraHeaders = {}, signal = undefined) {
   const res = await authedFetch(method, path, { body, extraHeaders, signal })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || res.statusText)
+    throw new Error(formatErrorDetail(err.detail, res.statusText))
   }
   if (res.status === 204) return null
   return res.json()
@@ -252,9 +271,11 @@ export function compareModels(headId, baseId, threshold = 0.75) {
  * @param {(event: object) => void} onEvent
  * @param {(err: Error) => void} onError
  * @param {() => void} onDone
+ * @param {() => void} [onOpen]  – the server accepted the request (2xx) and the
+ *   stream is about to be read; not called when it is rejected
  * @returns {() => void} abort function
  */
-function subscribeSSE(path, init, onEvent, onError, onDone) {
+function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) {
   const controller = new AbortController()
   let doneFired = false
   const fireDone = () => { if (!doneFired) { doneFired = true; onDone() } }
@@ -338,13 +359,14 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
 
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ detail: res.statusText }))
-      const err = new Error(detail.detail || res.statusText)
+      const err = new Error(formatErrorDetail(detail.detail, res.statusText))
       err.status = res.status
       onError(err)
       fireDone()
       return
     }
 
+    onOpen?.()
     await _readStream(res)
   })()
 
@@ -360,13 +382,14 @@ function subscribeSSE(path, init, onEvent, onError, onDone) {
  * @param {(event: object) => void} onEvent
  * @param {(err: Error) => void} onError
  * @param {() => void} onDone
+ * @param {() => void} [onOpen]  – the run was accepted (see subscribeSSE)
  * @returns {() => void}  abort function
  */
-export function subscribeToRun(modelId, formData, onEvent, onError, onDone) {
+export function subscribeToRun(modelId, formData, onEvent, onError, onDone, onOpen = undefined) {
   return subscribeSSE(
     `/models/${modelId}/run`,
     { method: 'POST', body: formData },
-    onEvent, onError, onDone,
+    onEvent, onError, onDone, onOpen,
   )
 }
 

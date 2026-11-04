@@ -81,6 +81,7 @@ When the model already has assets and the request uploads no diagrams and names 
 | `deps_source_mode` | string | `npm` (fast, default) or `both` (adds GitHub-source drift comparison) |
 | `use_code_source_manifest` | bool | Auto-detect and use the linked code source's root `package.json`/lockfile instead of an upload |
 | `code_source_id` | string | UUID of a ready code source |
+| `discard_model_on_reject` | bool | The web wizard's first run of a model it just created. If the route rejects this request with a `4xx` from its own validation (a bad diagram, manifest or assumptions), it also deletes the model, provided the model never held data (still `pending`, no threats, assets or run records). Rejections raised before the route runs (rate limit, auth, multipart size limits) don't discard it |
 
 **SSE event format:**
 

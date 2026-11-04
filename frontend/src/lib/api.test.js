@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { getModel, getConfig, login, subscribeToRun, followRun, getModelDiagram, downloadExport } from './api.js'
+import {
+  getModel, getConfig, login, subscribeToRun, followRun, getModelDiagram, downloadExport, formatErrorDetail,
+} from './api.js'
 import { getStoredToken, setStoredToken } from './stores.js'
 
 function jsonResponse(body, init = {}) {
@@ -84,6 +86,28 @@ describe('request() — response handling', () => {
       vi.fn().mockResolvedValue(new Response('not json', { status: 500, statusText: 'Server Error' }))
     )
     await expect(getModel('m1')).rejects.toThrow('Server Error')
+  })
+
+  it('turns a 422 validation list into readable text, not [object Object] (BB-132)', async () => {
+    const detail = [
+      { loc: ['body', 'default_iterations'], msg: 'Input should be greater than or equal to 1' },
+      { loc: ['body', 'name'], msg: 'Field required' },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail }), { status: 422 }))
+    )
+    await expect(getModel('m1')).rejects.toThrow(
+      'default_iterations: Input should be greater than or equal to 1; name: Field required'
+    )
+  })
+})
+
+describe('formatErrorDetail()', () => {
+  it('keeps a string detail and falls back when there is none', () => {
+    expect(formatErrorDetail('Model not found', 'x')).toBe('Model not found')
+    expect(formatErrorDetail(undefined, 'Bad Request')).toBe('Bad Request')
+    expect(formatErrorDetail([], 'Bad Request')).toBe('Bad Request')
   })
 })
 
@@ -317,6 +341,34 @@ describe('subscribeToRun() — SSE parsing', () => {
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0][0].message).toBe('boom')
     expect(onError.mock.calls[0][0].status).toBe(500)
+  })
+
+  it('calls onOpen once the run is accepted, before any event (BB-122)', async () => {
+    const order = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      sseStreamResponse([`data: ${JSON.stringify({ step: 'complete' })}\n\n`])
+    ))
+    const onDone = vi.fn()
+
+    subscribeToRun(
+      'm1', new FormData(), () => order.push('event'), vi.fn(), onDone, () => order.push('open')
+    )
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    expect(order).toEqual(['open', 'event'])
+  })
+
+  it('does not call onOpen when the run is rejected', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'bad diagram' }), { status: 422 })
+    ))
+    const onOpen = vi.fn()
+    const onDone = vi.fn()
+
+    subscribeToRun('m1', new FormData(), vi.fn(), vi.fn(), onDone, onOpen)
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    expect(onOpen).not.toHaveBeenCalled()
   })
 
   // BB-71: Results tells "no run behind this model" (404) from a network failure.
