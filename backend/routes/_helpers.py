@@ -4,7 +4,7 @@ import logging
 
 from fastapi import HTTPException
 
-from backend.config import Settings, settings
+from backend.config import DEFAULT_MODEL_BY_PROVIDER, Settings, settings
 from backend.db import crud_comments
 from backend.providers.base import LLMProvider, create_provider, is_openai_family_model
 
@@ -72,11 +72,35 @@ def resolve_provider(
     model_name: str | None = None,
     project: dict | None = None,
 ) -> tuple[str, str]:
-    """Return (provider_type, model), resolving explicit > project default > global settings."""
+    """Return (provider_type, model), resolving explicit > project default > global settings.
+
+    A default model is only used with the provider it belongs to (the
+    project's model with the project's provider, the global model with the
+    global provider): picking OpenAI must not pair it with a Claude model ID
+    (BB-97). Failing both, the provider's built-in default; 422 for a
+    provider without one (Bedrock).
+    """
     project = project or {}
     ptype = provider_name or project.get("default_provider") or settings.default_provider
-    model = model_name or project.get("default_model") or settings.default_model
-    return ptype, model
+    if model_name:
+        return ptype, model_name
+    candidates = (
+        (
+            project.get("default_model"),
+            project.get("default_provider") or settings.default_provider,
+        ),
+        (settings.default_model, settings.default_provider),
+    )
+    for model, owner in candidates:
+        if model and owner == ptype:
+            return ptype, model
+    builtin = DEFAULT_MODEL_BY_PROVIDER.get(ptype)
+    if builtin is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No default model for provider '{ptype}'; choose a model for it.",
+        )
+    return ptype, builtin
 
 
 def build_provider_from_record(record: dict) -> LLMProvider:

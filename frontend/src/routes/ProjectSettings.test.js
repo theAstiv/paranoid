@@ -116,6 +116,39 @@ describe('ProjectSettings — form', () => {
     }))
   })
 
+  it('sends null, not 0, for a number field the user cleared (BB-132)', async () => {
+    updateProject.mockResolvedValue({})
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByDisplayValue('5')).toBeInTheDocument())
+
+    await fireEvent.input(screen.getByLabelText('Default iterations'), { target: { value: '' } })
+    await fireEvent.input(screen.getByLabelText(/Temperature/), { target: { value: '' } })
+    await fireEvent.click(screen.getAllByText('Save')[0])
+
+    await waitFor(() => expect(updateProject).toHaveBeenCalled())
+    const body = updateProject.mock.calls[0][1]
+    expect(body.default_iterations).toBeNull()
+    expect(body.default_temperature).toBeNull()
+  })
+
+  it('leaves the staleness threshold out when it is blank (it has no default to inherit)', async () => {
+    updateProject.mockResolvedValue({})
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByDisplayValue('5')).toBeInTheDocument())
+
+    await fireEvent.input(screen.getByLabelText(/Threshold/), { target: { value: '' } })
+    await fireEvent.click(screen.getAllByText('Save')[0])
+
+    await waitFor(() => expect(updateProject).toHaveBeenCalled())
+    expect(updateProject.mock.calls[0][1]).not.toHaveProperty('staleness_threshold_days')
+  })
+
+  it('limits the temperature to 0–1', async () => {
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByText('Pipeline defaults')).toBeInTheDocument())
+    expect(screen.getByLabelText(/Temperature/).getAttribute('max')).toBe('1')
+  })
+
   it('notifies on save failure', async () => {
     updateProject.mockRejectedValue(new Error('forbidden'))
     render(ProjectSettings)

@@ -323,3 +323,95 @@ async def test_config_patch_aws_region_and_profile(client, monkeypatch):
     assert resp.status_code == 200
     assert settings.aws_region == "us-west-2"
     assert settings.aws_profile == "prod"
+
+
+# ---------------------------------------------------------------------------
+# BB-133: PATCH /api/config validates what it stores
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["", "   "])
+@pytest.mark.asyncio
+async def test_config_patch_rejects_a_blank_model(client, monkeypatch, model):
+    monkeypatch.setattr(settings, "default_model", "claude-keep")
+
+    resp = await client.patch("/api/config/", json={"model": model})
+
+    assert resp.status_code == 422
+    assert settings.default_model == "claude-keep"
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "localhost:11434", "http://", "ftp://x"])
+@pytest.mark.asyncio
+async def test_config_patch_rejects_a_non_http_ollama_url_and_changes_nothing(
+    client, monkeypatch, url
+):
+    monkeypatch.setattr(settings, "ollama_base_url", "http://localhost:11434")
+    monkeypatch.setattr(settings, "default_iterations", 3)
+
+    resp = await client.patch(
+        "/api/config/", json={"ollama_base_url": url, "default_iterations": 7}
+    )
+
+    assert resp.status_code == 422
+    assert settings.ollama_base_url == "http://localhost:11434"
+    assert settings.default_iterations == 3
+
+
+@pytest.mark.asyncio
+async def test_config_patch_accepts_the_current_ollama_url_even_without_a_scheme(
+    client, monkeypatch
+):
+    """Settings re-sends the GET value on every save; an env value without a
+    scheme must not make every save fail."""
+    monkeypatch.setattr(settings, "ollama_base_url", "ollama:11434")
+
+    resp = await client.patch(
+        "/api/config/", json={"ollama_base_url": "ollama:11434", "default_iterations": 4}
+    )
+
+    assert resp.status_code == 200
+    assert settings.default_iterations == 4
+
+
+@pytest.mark.asyncio
+async def test_config_patch_accepts_a_new_https_ollama_url(client, monkeypatch):
+    monkeypatch.setattr(settings, "ollama_base_url", "http://localhost:11434")
+
+    resp = await client.patch("/api/config/", json={"ollama_base_url": " https://ollama.lan "})
+
+    assert resp.status_code == 200
+    assert settings.ollama_base_url == "https://ollama.lan"
+
+
+@pytest.mark.parametrize("region", ["../etc", "us-east-1/evil", "US-EAST-1", "east"])
+@pytest.mark.asyncio
+async def test_config_patch_rejects_a_path_like_aws_region(client, monkeypatch, region):
+    monkeypatch.setattr(settings, "aws_region", "")
+
+    resp = await client.patch("/api/config/", json={"aws_region": region})
+
+    assert resp.status_code == 422
+    assert settings.aws_region == ""
+
+
+@pytest.mark.parametrize("region", ["", "us-gov-west-1", "ap-southeast-2"])
+@pytest.mark.asyncio
+async def test_config_patch_accepts_region_names_and_blank(client, monkeypatch, region):
+    monkeypatch.setattr(settings, "aws_region", "eu-west-1")
+
+    resp = await client.patch("/api/config/", json={"aws_region": region})
+
+    assert resp.status_code == 200
+    assert settings.aws_region == region
+
+
+@pytest.mark.asyncio
+async def test_test_provider_rejects_a_non_http_ollama_url(client, monkeypatch):
+    monkeypatch.setattr(settings, "ollama_base_url", "http://localhost:11434")
+
+    resp = await client.post(
+        "/api/config/test-provider", json={"provider": "ollama", "ollama_base_url": "file:///x"}
+    )
+
+    assert resp.status_code == 422

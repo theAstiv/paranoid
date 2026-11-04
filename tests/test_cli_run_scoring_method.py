@@ -24,7 +24,7 @@ def _invoke(monkeypatch, sample_input_file, args):
         anthropic_api_key="sk-ant-test",
         default_iterations=1,
     )
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: settings)
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: settings)
 
     def _fake_create(provider_type, model, **kwargs):
         provider = MagicMock()

@@ -209,11 +209,13 @@ Update runtime configuration. If `CONFIG_SECRET` is set, requires `X-Config-Secr
 
 ```json
 {
-  "provider": "openai",
+  "default_provider": "openai",
   "model": "gpt-4o",
   "default_iterations": 5
 }
 ```
+
+Rejected with `422`, with nothing applied: a blank `model`; an `ollama_base_url` that changes the current value and isn't an `http://`/`https://` URL with a host (re-sending the current value is always accepted); an `aws_region` that isn't a region name like `us-east-1` (blank is allowed and leaves the region to boto3).
 
 ### `POST /api/config/test-provider`
 
@@ -287,7 +289,9 @@ Get project with member list.
 
 ### `PATCH /api/projects/{id}`
 
-Update project settings (name, description, default provider/model/iterations).
+Update project settings (name, description, default provider/model/iterations/temperature, staleness threshold). Only the fields sent change. `null` for a `default_*` field clears the override so the project inherits the instance default; `name` and `staleness_threshold_days` can't be cleared. `default_provider` must be `anthropic`, `openai`, `ollama` or `bedrock`, and `default_temperature` is 0–1.
+
+A new model with no explicit model uses the project's default model only when it belongs to the provider being used (the project's provider, or the instance's if the project sets none); otherwise the instance default model for the instance provider, or the provider's built-in default (`gpt-4.1` for OpenAI, `llama3.1:8b` for Ollama). Bedrock has no built-in default.
 
 ### `DELETE /api/projects/{id}`
 

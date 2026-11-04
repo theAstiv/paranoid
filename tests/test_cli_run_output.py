@@ -26,7 +26,7 @@ def _invoke(tmp_path, monkeypatch, args: list[str]):
         db_path=db_path,
     )
     provider = _PreFlightProvider()
-    monkeypatch.setattr(run_module, "_load_merged_settings", lambda: cli_settings)
+    monkeypatch.setattr(run_module, "_load_merged_settings", lambda *_a: cli_settings)
     monkeypatch.setattr(global_settings, "db_path", db_path)
     monkeypatch.setattr(run_module, "create_provider", lambda *a, **k: provider)
     monkeypatch.setattr(route_helpers, "create_provider", lambda *a, **k: provider)

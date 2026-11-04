@@ -32,6 +32,14 @@ _VALID_PIPELINE_STEPS = {
 # Mirrors backend.pipeline.runner.FORBIDDEN_FAST_STEPS.
 _FORBIDDEN_FAST_STEP_NAMES = {"generate_threats", "gap_analysis"}
 
+# The model a provider runs when one is chosen without naming a model (BB-97).
+# Bedrock has none: its model IDs depend on the account's region and access.
+DEFAULT_MODEL_BY_PROVIDER: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-20250514",
+    "openai": "gpt-4.1",
+    "ollama": "llama3.1:8b",
+}
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -54,7 +62,7 @@ class Settings(BaseSettings):
     # (AWS_DEFAULT_REGION → profile → instance metadata).
     aws_region: str = ""
     aws_profile: str = ""
-    default_model: str = "claude-sonnet-4-20250514"
+    default_model: str = DEFAULT_MODEL_BY_PROVIDER["anthropic"]
     # Override for which Bedrock model IDs accept images, without a code
     # change. Comma-separated list of model-ID substrings; a model whose ID
     # contains any of these (case-insensitive) is treated as image-capable.
