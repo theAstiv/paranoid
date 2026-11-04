@@ -6,7 +6,7 @@ import binascii
 import json
 import logging
 from collections.abc import AsyncGenerator
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +29,7 @@ from backend.db.component_links import (
     relink_flow,
     try_link_model_components,
 )
+from backend.db.connection import db
 from backend.db.gap_utils import decode_gap_summaries
 from backend.db.maestro_tags import get_model_coverage, parse_categories, try_tag_model_assets
 from backend.deps.analyze import (
@@ -662,6 +663,39 @@ async def _stored_context(model_id: str) -> tuple[AssetsList | None, FlowsList |
     return assets, flows
 
 
+@asynccontextmanager
+async def _batch(what: str, model_id: str) -> AsyncGenerator[aiosqlite.Connection | None, None]:
+    """One db.writer() transaction for saving an event's rows.
+
+    Yields the connection for the CRUD helpers' `conn=`. If the transaction
+    can't be opened (the write lock stayed busy past busy_timeout), yields
+    None so each row is saved and committed on its own, as before. A failed
+    commit is logged, not raised: a DB error must not stop the SSE stream.
+    """
+    writer = db.writer()
+    try:
+        conn = await writer.__aenter__()
+    except aiosqlite.Error:
+        logger.warning(
+            "No transaction for the %s of model %s; saving them one by one",
+            what,
+            model_id,
+            exc_info=True,
+        )
+        yield None
+        return
+    try:
+        yield conn
+    except BaseException as exc:
+        if not await writer.__aexit__(type(exc), exc, exc.__traceback__):
+            raise
+    else:
+        try:
+            await writer.__aexit__(None, None, None)
+        except aiosqlite.Error:
+            logger.error("Failed to save the %s of model %s", what, model_id, exc_info=True)
+
+
 async def _persist_pipeline_event(
     model_id: str, event: PipelineEvent, *, save_dependency_scans: bool = True
 ) -> None:
@@ -683,18 +717,23 @@ async def _persist_pipeline_event(
         if assets_list and hasattr(assets_list, "assets"):
             # Re-extract keeps the user's rows; don't save the extractor's copy of them.
             kept_assets = kept_context.kept_asset_keys(await crud.list_assets(model_id))
-            for asset in assets_list.assets:
-                if kept_context.normalize_key(asset.name) in kept_assets:
-                    continue
-                try:
-                    await crud.create_asset(
-                        model_id=model_id,
-                        asset_type=asset.type.value,
-                        name=asset.name,
-                        description=asset.description,
-                    )
-                except Exception:
-                    logger.warning("Failed to persist asset '%s'", asset.name, exc_info=True)
+            new_assets = [
+                a
+                for a in assets_list.assets
+                if kept_context.normalize_key(a.name) not in kept_assets
+            ]
+            async with _batch("assets", model_id) as conn:
+                for asset in new_assets:
+                    try:
+                        await crud.create_asset(
+                            model_id=model_id,
+                            asset_type=asset.type.value,
+                            name=asset.name,
+                            description=asset.description,
+                            conn=conn,
+                        )
+                    except Exception:
+                        logger.warning("Failed to persist asset '%s'", asset.name, exc_info=True)
             await try_tag_model_assets(model_id)
 
     elif event.step == PipelineStep.EXTRACT_FLOWS:
@@ -705,47 +744,51 @@ async def _persist_pipeline_event(
             kept_boundaries = kept_context.kept_endpoint_keys(
                 await crud.list_trust_boundaries(model_id)
             )
-            for flow in flows_list.data_flows:
-                source = kept_context.rename_endpoint(flow.source_entity, renames)
-                target = kept_context.rename_endpoint(flow.target_entity, renames)
-                key = kept_context.endpoint_key(source, target)
-                if kept_context.normalize_key(key) in kept_flows:
-                    continue
-                try:
-                    await crud.create_flow(
-                        model_id=model_id,
-                        flow_type="data",
-                        flow_description=flow.flow_description,
-                        source_entity=source,
-                        target_entity=target,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to persist flow '%s → %s'",
-                        flow.source_entity,
-                        flow.target_entity,
-                        exc_info=True,
-                    )
-            for boundary in flows_list.trust_boundaries:
-                source = kept_context.rename_endpoint(boundary.source_entity, renames)
-                target = kept_context.rename_endpoint(boundary.target_entity, renames)
-                key = kept_context.endpoint_key(source, target)
-                if kept_context.normalize_key(key) in kept_boundaries:
-                    continue
-                try:
-                    await crud.create_trust_boundary(
-                        model_id=model_id,
-                        purpose=boundary.purpose,
-                        source_entity=source,
-                        target_entity=target,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to persist trust boundary '%s → %s'",
-                        boundary.source_entity,
-                        boundary.target_entity,
-                        exc_info=True,
-                    )
+            async with _batch("flows", model_id) as conn:
+                for flow in flows_list.data_flows:
+                    source = kept_context.rename_endpoint(flow.source_entity, renames)
+                    target = kept_context.rename_endpoint(flow.target_entity, renames)
+                    key = kept_context.endpoint_key(source, target)
+                    if kept_context.normalize_key(key) in kept_flows:
+                        continue
+                    try:
+                        await crud.create_flow(
+                            model_id=model_id,
+                            flow_type="data",
+                            flow_description=flow.flow_description,
+                            source_entity=source,
+                            target_entity=target,
+                            conn=conn,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to persist flow '%s → %s'",
+                            flow.source_entity,
+                            flow.target_entity,
+                            exc_info=True,
+                        )
+                for boundary in flows_list.trust_boundaries:
+                    source = kept_context.rename_endpoint(boundary.source_entity, renames)
+                    target = kept_context.rename_endpoint(boundary.target_entity, renames)
+                    key = kept_context.endpoint_key(source, target)
+                    if kept_context.normalize_key(key) in kept_boundaries:
+                        continue
+                    try:
+                        await crud.create_trust_boundary(
+                            model_id=model_id,
+                            purpose=boundary.purpose,
+                            source_entity=source,
+                            target_entity=target,
+                            conn=conn,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to persist trust boundary '%s → %s'",
+                            boundary.source_entity,
+                            boundary.target_entity,
+                            exc_info=True,
+                        )
+            # After the commit: linking reads the rows back.
             await try_link_model_components(model_id)
 
     elif event.step == PipelineStep.COMPLETE:
@@ -756,52 +799,58 @@ async def _persist_pipeline_event(
             assets = await crud.list_assets(model_id)
             flows = await crud.list_flows(model_id)
 
-            for threat in threats_list.threats:
-                try:
-                    confidence = score_threat_confidence(threat, assets, flows, sys_description)
-                    dread = threat.dread
-                    cvss_vector = to_vector_string(threat.cvss) if threat.cvss else None
-                    await crud.create_threat(
-                        model_id=model_id,
-                        name=threat.name,
-                        description=threat.description,
-                        target=threat.target,
-                        impact=threat.impact,
-                        likelihood=threat.likelihood,
-                        mitigations=threat.mitigations,
-                        stride_category=(
-                            threat.stride_category.value if threat.stride_category else None
-                        ),
-                        maestro_category=(
-                            threat.maestro_category.value if threat.maestro_category else None
-                        ),
-                        dread_score=dread.score if dread else None,
-                        dread_damage=dread.damage if dread else None,
-                        dread_reproducibility=dread.reproducibility if dread else None,
-                        dread_exploitability=dread.exploitability if dread else None,
-                        dread_affected_users=dread.affected_users if dread else None,
-                        dread_discoverability=dread.discoverability if dread else None,
-                        iteration_number=threat.iteration_number or 1,
-                        source=threat.source,
-                        confidence=confidence,
-                        dependency_ref=(
-                            threat.dependency_ref.model_dump() if threat.dependency_ref else None
-                        ),
-                        attack_techniques=(
-                            [t.model_dump() for t in threat.attack_techniques]
-                            if threat.attack_techniques
-                            else None
-                        ),
-                        cvss_vector=cvss_vector,
-                        cvss_score=threat.cvss_score,
-                        cvss_severity=threat.cvss_severity,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to persist threat '%s'",
-                        getattr(threat, "name", "unknown"),
-                        exc_info=True,
-                    )
+            # One transaction for the whole list: it was a commit (an fsync) per
+            # threat while the SSE stream waited (review P1).
+            async with _batch("threats", model_id) as conn:
+                for threat in threats_list.threats:
+                    try:
+                        confidence = score_threat_confidence(threat, assets, flows, sys_description)
+                        dread = threat.dread
+                        cvss_vector = to_vector_string(threat.cvss) if threat.cvss else None
+                        await crud.create_threat(
+                            model_id=model_id,
+                            name=threat.name,
+                            description=threat.description,
+                            target=threat.target,
+                            impact=threat.impact,
+                            likelihood=threat.likelihood,
+                            mitigations=threat.mitigations,
+                            stride_category=(
+                                threat.stride_category.value if threat.stride_category else None
+                            ),
+                            maestro_category=(
+                                threat.maestro_category.value if threat.maestro_category else None
+                            ),
+                            dread_score=dread.score if dread else None,
+                            dread_damage=dread.damage if dread else None,
+                            dread_reproducibility=dread.reproducibility if dread else None,
+                            dread_exploitability=dread.exploitability if dread else None,
+                            dread_affected_users=dread.affected_users if dread else None,
+                            dread_discoverability=dread.discoverability if dread else None,
+                            iteration_number=threat.iteration_number or 1,
+                            source=threat.source,
+                            confidence=confidence,
+                            dependency_ref=(
+                                threat.dependency_ref.model_dump()
+                                if threat.dependency_ref
+                                else None
+                            ),
+                            attack_techniques=(
+                                [t.model_dump() for t in threat.attack_techniques]
+                                if threat.attack_techniques
+                                else None
+                            ),
+                            cvss_vector=cvss_vector,
+                            cvss_score=threat.cvss_score,
+                            cvss_severity=threat.cvss_severity,
+                            conn=conn,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to persist threat '%s'",
+                            getattr(threat, "name", "unknown"),
+                            exc_info=True,
+                        )
             await try_link_model_components(model_id)
 
         dependency_context = event.data.get("dependency_context")

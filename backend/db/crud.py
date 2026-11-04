@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
 from backend.db.connection import db
 from backend.db.kept_context import endpoint_key
 from backend.image.validation import sanitize_diagram_name
@@ -320,8 +322,14 @@ async def create_threat(
     cvss_vector: str | None = None,
     cvss_score: float | None = None,
     cvss_severity: str | None = None,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> str:
-    """Create a new threat."""
+    """Create a new threat.
+
+    conn: a db.writer() connection to insert on; the caller commits. Without
+    it the row is inserted and committed on the shared connection.
+    """
     threat_id = generate_id()
     now = now_iso()
     mitigations_json = json.dumps(mitigations)
@@ -330,7 +338,9 @@ async def create_threat(
         json.dumps(attack_techniques) if attack_techniques is not None else None
     )
 
-    conn = await db.get()
+    owns_commit = conn is None
+    if conn is None:
+        conn = await db.get()
     await conn.execute(
         """
         INSERT INTO threats (
@@ -373,9 +383,9 @@ async def create_threat(
             now,
         ),
     )
-    await conn.commit()
-
-    logger.info(f"Created threat {threat_id} for model {model_id}")
+    if owns_commit:
+        await conn.commit()
+        logger.info(f"Created threat {threat_id} for model {model_id}")
     return threat_id
 
 
@@ -627,8 +637,10 @@ async def create_asset(
     name: str,
     description: str,
     user_edited: bool = False,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> str:
-    """Create a new asset.
+    """Create a new asset. conn: see create_threat.
 
     user_edited=True marks a row a user added, which Re-extract keeps
     (clear_model_data(preserve_user_edits=True)). Pipeline rows record their
@@ -637,7 +649,9 @@ async def create_asset(
     asset_id = generate_id()
     now = now_iso()
 
-    conn = await db.get()
+    owns_commit = conn is None
+    if conn is None:
+        conn = await db.get()
     await conn.execute(
         """
         INSERT INTO assets (
@@ -655,7 +669,8 @@ async def create_asset(
             now,
         ),
     )
-    await conn.commit()
+    if owns_commit:
+        await conn.commit()
 
     return asset_id
 
@@ -951,12 +966,16 @@ async def create_flow(
     source_entity: str,
     target_entity: str,
     user_edited: bool = False,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> str:
-    """Create a new data flow. user_edited: see create_asset."""
+    """Create a new data flow. user_edited: see create_asset; conn: see create_threat."""
     flow_id = generate_id()
     now = now_iso()
 
-    conn = await db.get()
+    owns_commit = conn is None
+    if conn is None:
+        conn = await db.get()
     await conn.execute(
         """
         INSERT INTO flows (
@@ -976,7 +995,8 @@ async def create_flow(
             now,
         ),
     )
-    await conn.commit()
+    if owns_commit:
+        await conn.commit()
 
     return flow_id
 
@@ -1061,12 +1081,16 @@ async def create_trust_boundary(
     source_entity: str,
     target_entity: str,
     user_edited: bool = False,
+    *,
+    conn: aiosqlite.Connection | None = None,
 ) -> str:
-    """Create a new trust boundary. user_edited: see create_asset."""
+    """Create a new trust boundary. user_edited: see create_asset; conn: see create_threat."""
     boundary_id = generate_id()
     now = now_iso()
 
-    conn = await db.get()
+    owns_commit = conn is None
+    if conn is None:
+        conn = await db.get()
     await conn.execute(
         """
         INSERT INTO trust_boundaries (
@@ -1085,7 +1109,8 @@ async def create_trust_boundary(
             now,
         ),
     )
-    await conn.commit()
+    if owns_commit:
+        await conn.commit()
     return boundary_id
 
 

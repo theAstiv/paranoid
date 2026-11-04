@@ -135,7 +135,11 @@ def _run_dir(
 ) -> Path:
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
-    shutil.copy(db_path, run_dir / "paranoid.db")
+    # The test DB is in WAL mode (as in production): committed rows may still
+    # be in the -wal file, so copy it with the database.
+    for suffix in ("", "-wal"):
+        if Path(db_path + suffix).exists():
+            shutil.copy(db_path + suffix, run_dir / f"paranoid.db{suffix}")
     (run_dir / "run.json").write_text(
         json.dumps({"exit_code": 0, "started": 0, "finished": 12.5, "exports": {}}),
         encoding="utf-8",
