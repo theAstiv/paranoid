@@ -40,7 +40,7 @@ def fake_settings():
 
 
 def _patch_settings(monkeypatch, fake_settings):
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: fake_settings)
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: fake_settings)
 
 
 def test_run_manifest_rejects_nonexistent_path(runner, sample_input_file):

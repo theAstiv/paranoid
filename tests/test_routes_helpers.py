@@ -12,7 +12,61 @@ from backend.routes._helpers import (
     build_fast_provider,
     build_provider_from_record,
     effort_kwargs,
+    resolve_provider,
 )
+
+
+# ---------------------------------------------------------------------------
+# resolve_provider — a default model only goes with its own provider (BB-97)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def anthropic_instance(monkeypatch):
+    monkeypatch.setattr(settings, "default_provider", "anthropic")
+    monkeypatch.setattr(settings, "default_model", "claude-instance")
+
+
+def test_resolve_provider_explicit_model_always_wins(anthropic_instance):
+    assert resolve_provider("openai", "gpt-x", {"default_model": "m"}) == ("openai", "gpt-x")
+
+
+def test_resolve_provider_uses_the_instance_model_with_the_instance_provider(anthropic_instance):
+    assert resolve_provider(None) == ("anthropic", "claude-instance")
+    assert resolve_provider("anthropic") == ("anthropic", "claude-instance")
+
+
+def test_resolve_provider_another_provider_gets_its_own_default_not_claude(anthropic_instance):
+    assert resolve_provider("openai") == ("openai", "gpt-4.1")
+    assert resolve_provider("ollama") == ("ollama", "llama3.1:8b")
+
+
+def test_resolve_provider_project_provider_without_a_model_gets_that_providers_default(
+    anthropic_instance,
+):
+    assert resolve_provider(None, None, {"default_provider": "openai"}) == ("openai", "gpt-4.1")
+
+
+def test_resolve_provider_project_model_goes_with_the_project_provider(anthropic_instance):
+    project = {"default_provider": "openai", "default_model": "gpt-proj"}
+    assert resolve_provider(None, None, project) == ("openai", "gpt-proj")
+    # Explicitly picking another provider doesn't take the project's OpenAI model.
+    assert resolve_provider("anthropic", None, project) == ("anthropic", "claude-instance")
+
+
+def test_resolve_provider_project_model_without_project_provider_belongs_to_the_instance(
+    anthropic_instance,
+):
+    project = {"default_model": "claude-proj"}
+    assert resolve_provider(None, None, project) == ("anthropic", "claude-proj")
+    assert resolve_provider("openai", None, project) == ("openai", "gpt-4.1")
+
+
+def test_resolve_provider_bedrock_without_a_model_is_a_422(anthropic_instance):
+    with pytest.raises(HTTPException) as exc:
+        resolve_provider("bedrock")
+    assert exc.value.status_code == 422
+    assert "bedrock" in exc.value.detail
 
 
 def test_effort_kwargs_passes_effort_for_anthropic_and_claude_on_bedrock(monkeypatch):

@@ -37,16 +37,22 @@
     }
   }
 
+  // A cleared number input binds null, not '': Number(null) sent 0 (BB-132).
+  const numberOrNull = v => (v === '' || v == null ? null : Number(v))
+
   async function save() {
     saving = true
     try {
+      // null = inherit the instance default; the server clears the override.
       const body = {
         default_provider: draft.default_provider || null,
         default_model: draft.default_model || null,
-        default_iterations: draft.default_iterations === '' ? null : Number(draft.default_iterations),
-        default_temperature: draft.default_temperature === '' ? null : Number(draft.default_temperature),
-        staleness_threshold_days: draft.staleness_threshold_days === '' ? null : Number(draft.staleness_threshold_days),
+        default_iterations: numberOrNull(draft.default_iterations),
+        default_temperature: numberOrNull(draft.default_temperature),
       }
+      // The threshold has no instance default to fall back to: blank keeps it.
+      const staleness = numberOrNull(draft.staleness_threshold_days)
+      if (staleness !== null) body.staleness_threshold_days = staleness
       const updated = await updateProject(projectId, body)
       currentProject.update(p => ({ ...p, ...updated }))
       notify('success', 'Project defaults saved.')
@@ -118,9 +124,9 @@
         <div class="grid grid-cols-3 items-center gap-4">
           <label for="proj-temp" class="{LABEL_CLASS}">
             Temperature
-            <span class="{SUBLABEL_CLASS}">0–2, higher = more creative</span>
+            <span class="{SUBLABEL_CLASS}">0–1, higher = more creative</span>
           </label>
-          <input id="proj-temp" type="number" min="0" max="2" step="0.1" bind:value={draft.default_temperature}
+          <input id="proj-temp" type="number" min="0" max="1" step="0.1" bind:value={draft.default_temperature}
             class="col-span-2 w-24 {FIELD_CLASS}" />
         </div>
 

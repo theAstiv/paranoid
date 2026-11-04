@@ -212,15 +212,33 @@ class CreateProjectRequest(BaseModel):
 
 
 class UpdateProjectRequest(BaseModel):
-    """Request body for PATCH /api/projects/{project_id}."""
+    """Request body for PATCH /api/projects/{project_id}.
+
+    Only the fields sent are changed. For the default_* fields an explicit
+    null means "inherit the instance default" and clears the stored value
+    (BB-132); name and staleness_threshold_days can't be cleared.
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
-    default_provider: str | None = None
-    default_model: str | None = None
+    default_provider: Provider | None = None
+    default_model: str | None = Field(default=None, max_length=200)
     default_iterations: int | None = Field(default=None, ge=1, le=15)
-    default_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Same range as the instance-wide DEFAULT_TEMPERATURE (backend/config.py).
+    default_temperature: float | None = Field(default=None, ge=0.0, le=1.0)
     staleness_threshold_days: int | None = Field(default=None, ge=1, le=365)
+
+    @field_validator("default_model")
+    @classmethod
+    def blank_model_is_inherit(cls, v: str | None) -> str | None:
+        return (v or "").strip() or None
+
+    @model_validator(mode="after")
+    def required_fields_not_cleared(self) -> "UpdateProjectRequest":
+        for field in ("name", "staleness_threshold_days"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} can't be cleared")
+        return self
 
 
 class AddMemberRequest(BaseModel):

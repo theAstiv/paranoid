@@ -35,7 +35,7 @@ def test_run_builds_openai_fast_provider_from_configured_fast_model(
         fast_model_openai="gpt-4.1-mini",
         default_iterations=1,
     )
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: fake_settings)
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: fake_settings)
 
     calls: list[dict] = []
 
@@ -71,7 +71,7 @@ def test_run_skips_fast_provider_when_fast_equals_main(runner, sample_input_file
         fast_model_openai="gpt-4.1-mini",
         default_iterations=1,
     )
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: fake_settings)
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: fake_settings)
 
     calls: list[dict] = []
 

@@ -99,7 +99,7 @@ def _run_enrich(tmp_path, monkeypatch, provider, *, fast_provider=None, pipeline
         default_iterations=1,
         db_path=str(tmp_path / "enrich.db"),
     )
-    monkeypatch.setattr(run_module, "_load_merged_settings", lambda: settings)
+    monkeypatch.setattr(run_module, "_load_merged_settings", lambda *_a: settings)
     # persist_pipeline_result opens the shared connection from the global settings.
     monkeypatch.setattr(global_settings, "db_path", settings.db_path)
     monkeypatch.setattr(run_module, "create_provider", lambda *a, **k: provider)

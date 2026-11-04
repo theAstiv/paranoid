@@ -26,7 +26,7 @@ def _invoke(monkeypatch, sample_input_file, args, **settings_kwargs):
         "default_iterations": 1,
     }
     base.update(settings_kwargs)
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: Settings(**base))
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: Settings(**base))
 
     created: list[str] = []
 
@@ -152,7 +152,7 @@ def _invoke_to_pipeline(monkeypatch, sample_input_file, args, **settings_kwargs)
         "default_iterations": 1,
     }
     base.update(settings_kwargs)
-    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda: Settings(**base))
+    monkeypatch.setattr("cli.commands.run._load_merged_settings", lambda *_a: Settings(**base))
     monkeypatch.setattr(
         "cli.commands.run.create_provider", lambda **kw: MagicMock(model=kw["model"])
     )

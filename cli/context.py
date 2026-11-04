@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from backend.config import DEFAULT_MODEL_BY_PROVIDER
 from cli.errors import ConfigurationError
 
 
@@ -16,10 +17,18 @@ from cli.errors import ConfigurationError
 CONFIG_DIR = Path.home() / ".paranoid"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# Default model names — single source of truth for the CLI layer
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
-DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+# Default model names — shared with the web routes via backend.config
+DEFAULT_ANTHROPIC_MODEL = DEFAULT_MODEL_BY_PROVIDER["anthropic"]
+DEFAULT_OPENAI_MODEL = DEFAULT_MODEL_BY_PROVIDER["openai"]
+DEFAULT_OLLAMA_MODEL = DEFAULT_MODEL_BY_PROVIDER["ollama"]
+
+
+def default_model_for(provider: str, config: dict[str, Any]) -> str | None:
+    """The model to run for `provider` when none is named: the config file's
+    model for that provider, else the built-in default (none for Bedrock)."""
+    configured = config.get("providers", {}).get(provider, {}).get("model")
+    return configured or DEFAULT_MODEL_BY_PROVIDER.get(provider)
+
 
 # Default configuration
 DEFAULT_CONFIG = {

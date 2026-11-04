@@ -44,7 +44,7 @@ from backend.providers.base import LLMProvider, ProviderRefusalError
 from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
 from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider, effort_kwargs
 from cli.async_runner import run_async
-from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, load_config
+from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, default_model_for, load_config
 from cli.errors import CLIError, ConfigurationError, InputFileError, PipelineExecutionError
 from cli.input.diagram_loader import load_diagram_file
 from cli.input.file_loader import (
@@ -56,7 +56,7 @@ from cli.output.console import ConsoleRenderer
 from cli.output.json_writer import JSONWriter
 
 
-def _load_merged_settings() -> Settings:
+def _load_merged_settings(provider_override: str | None = None) -> Settings:
     """Load configuration with proper precedence, no environment mutation.
 
     Precedence (highest to lowest):
@@ -64,6 +64,10 @@ def _load_merged_settings() -> Settings:
     2. .env file (read by pydantic-settings)
     3. Config file (~/.paranoid/config.toml) — supplements missing values
     4. Field defaults
+
+    provider_override (`--provider`) replaces the configured provider before
+    the config file is read, so that provider's key is the one supplemented
+    and its own default model replaces one meant for another provider (BB-97).
 
     Returns:
         Settings object with merged configuration
@@ -78,9 +82,9 @@ def _load_merged_settings() -> Settings:
         base_settings = None
 
     # Second pass: supplement gaps from config file
-    if config_exists():
-        config = load_config()
-        supplement = _get_config_supplement(base_settings, config)
+    if config_exists() or provider_override:
+        config = load_config() if config_exists() else {}
+        supplement = _get_config_supplement(base_settings, config, provider_override)
 
         if supplement:
             try:
@@ -129,15 +133,20 @@ def _load_merged_settings() -> Settings:
 def _get_config_supplement(
     base_settings: Settings | None,
     config: dict,
+    provider_override: str | None = None,
 ) -> dict:
     """Extract config file values that should supplement (not override) base settings.
 
     Only includes values for fields that are empty or at default in base_settings.
     When base_settings is None (.env failed), includes all config file values.
+    A provider_override that differs from the configured provider does override:
+    the provider, and the model becomes that provider's (`default_model_for`;
+    "" for Bedrock without one, which the run then rejects unless --model is set).
 
     Args:
         base_settings: Settings from env vars + .env, or None if loading failed
         config: Parsed config file dict
+        provider_override: --provider, if given
 
     Returns:
         Dict of field values to pass as Settings constructor kwargs
@@ -160,10 +169,16 @@ def _get_config_supplement(
         ):
             overrides[field_name] = config[config_key]
 
-    # Provider-specific API keys — only supplement if missing (empty string)
-    provider = overrides.get("default_provider") or (
+    configured = overrides.get("default_provider") or (
         base_settings.default_provider if base_settings else "anthropic"
     )
+    provider = provider_override or configured
+    if provider != configured:
+        # The configured model belongs to the configured provider.
+        overrides["default_provider"] = provider
+        overrides["default_model"] = default_model_for(provider, config) or ""
+
+    # Provider-specific API keys — only supplement if missing (empty string)
     provider_config = config.get("providers", {}).get(provider, {})
 
     if provider == "anthropic" and provider_config.get("api_key"):
@@ -658,7 +673,7 @@ def run(
 
         # Load configuration from .env and config file
         # Precedence: Environment variables > Config file > Defaults
-        settings = _load_merged_settings()
+        settings = _load_merged_settings(provider_override.lower() if provider_override else None)
 
         # Override iterations if specified
         if iterations is not None:
@@ -669,6 +684,12 @@ def run(
             settings.default_provider = provider_override.lower()
         if model_override is not None:
             settings.default_model = model_override
+        if not settings.default_model:
+            raise ConfigurationError(
+                f"No model for provider '{settings.default_provider}'\n\n"
+                "Pass one with --model (for Bedrock, a model ID your account can use),\n"
+                "or set DEFAULT_MODEL in your .env."
+            )
         if fast_model_override is not None:
             fast_field = FAST_MODEL_FIELDS.get(settings.default_provider)
             if fast_field:

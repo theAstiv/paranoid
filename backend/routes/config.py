@@ -3,11 +3,13 @@
 import hmac
 import logging
 import os
+import re
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from backend.auth.dependencies import get_current_user
 from backend.config import API_KEY_FIELDS, VERSION, settings
@@ -125,6 +127,32 @@ async def get_config(_user: Annotated[dict, Depends(get_current_user)]) -> JSONR
     return JSONResponse(content=await _config_payload())
 
 
+# AWS region names: "us-east-1", "eu-central-1", "us-gov-west-1", ... A value
+# like "../x" or "us-east-1/evil" ends up in the Bedrock endpoint host (BB-133).
+_AWS_REGION_RE = re.compile(r"^[a-z]{2}(-[a-z]+)+-\d+$")
+
+
+def _check_aws_region(value: str | None) -> str | None:
+    """None/"" pass (boto3 resolves the region itself); else a region name."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value and not _AWS_REGION_RE.match(value):
+        raise ValueError(f"'{value}' is not an AWS region name (e.g. us-east-1)")
+    return value
+
+
+def _check_http_url(value: str, field: str) -> str:
+    """422 unless `value` is an http(s) URL with a host (BB-133: file:// was accepted)."""
+    value = value.strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=422, detail=f"{field} must be an http:// or https:// URL with a host"
+        )
+    return value
+
+
 class UpdateConfigRequest(BaseModel):
     """Mutable runtime settings. Non-key fields are in-memory only (reset on
     restart). API keys are persisted to the ``config`` DB table (encrypted)
@@ -151,6 +179,18 @@ class UpdateConfigRequest(BaseModel):
     aws_profile: str | None = None
     anthropic_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+
+    @field_validator("model")
+    @classmethod
+    def model_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("model must not be blank; omit it for no change")
+        return v.strip() if v is not None else None
+
+    @field_validator("aws_region")
+    @classmethod
+    def region_name(cls, v: str | None) -> str | None:
+        return _check_aws_region(v)
 
 
 def _check_key_update(provider: str, secret: SecretStr | None) -> None:
@@ -236,6 +276,11 @@ async def update_config(
     ]
     for provider, secret in key_updates:
         _check_key_update(provider, secret)
+    ollama_url = body.ollama_base_url.strip() if body.ollama_base_url is not None else None
+    # Settings re-sends the current value on every save; only a change is
+    # checked, so a value set through the environment never blocks a save.
+    if ollama_url is not None and ollama_url != settings.ollama_base_url:
+        ollama_url = _check_http_url(ollama_url, "ollama_base_url")
 
     if body.default_provider is not None:
         settings.default_provider = body.default_provider  # type: ignore[assignment]
@@ -249,8 +294,8 @@ async def update_config(
         settings.default_iterations = body.default_iterations
     if body.similarity_threshold is not None:
         settings.similarity_threshold = body.similarity_threshold
-    if body.ollama_base_url is not None:
-        settings.ollama_base_url = body.ollama_base_url
+    if ollama_url is not None:
+        settings.ollama_base_url = ollama_url
     if body.aws_region is not None:
         settings.aws_region = body.aws_region
     if body.aws_profile is not None:
@@ -273,6 +318,11 @@ class TestProviderRequest(BaseModel):
     # Only used when provider == "bedrock"; fall back to settings if absent.
     aws_region: str | None = None
     aws_profile: str | None = None
+
+    @field_validator("aws_region")
+    @classmethod
+    def region_name(cls, v: str | None) -> str | None:
+        return _check_aws_region(v)
 
 
 def _resolve_probe_key(provider: str, body_key: SecretStr | None) -> str:
@@ -310,6 +360,7 @@ async def test_provider(
         and body.ollama_base_url != settings.ollama_base_url
     ):
         _require_config_writer(user, x_config_secret, "Testing a different Ollama URL")
+        _check_http_url(body.ollama_base_url, "ollama_base_url")
     if body.provider == "bedrock" and (
         (body.aws_region is not None and body.aws_region != settings.aws_region)
         or (body.aws_profile is not None and body.aws_profile != settings.aws_profile)

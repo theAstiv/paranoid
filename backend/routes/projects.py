@@ -87,7 +87,8 @@ async def update_project(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    updates = body.model_dump(exclude_none=True)
+    # exclude_unset, not exclude_none: a null default_* resets it to inherit (BB-132).
+    updates = body.model_dump(exclude_unset=True, mode="json")
     project = await crud_projects.update_project(project_id, **updates)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
