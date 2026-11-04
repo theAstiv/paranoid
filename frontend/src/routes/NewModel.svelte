@@ -296,22 +296,41 @@
         fd.append('use_code_source_manifest', 'true')
         fd.append('deps_source_mode', depsSourceMode)
       }
+      // The server deletes the model again if it rejects this first run (BB-122).
+      fd.append('discard_model_on_reject', 'true')
       pipelineEvents.set([])
       pipelineRunning.set(true)
       const modelId = model.id
-      const abort = subscribeToRun(
-        modelId, fd,
-        evt => {
-          pipelineEvents.update(es => [...es, evt])
-          if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
-        },
-        err => { notify('error', `Pipeline error: ${err.message}`); pipelineRunning.set(false) },
-        async () => {
-          pipelineRunning.set(false)
-          try { const refreshed = await getModel(modelId); currentModel.set(refreshed); threats.set(refreshed.threats ?? []) } catch { /* ignore */ }
-        },
-      )
-      abortRun.set(abort)
+      // Leave the wizard only once the run is accepted: a rejected upload used to
+      // arrive after navigating away, losing everything typed (BB-122).
+      let accepted = false
+      const rejection = await new Promise(resolve => {
+        const abort = subscribeToRun(
+          modelId, fd,
+          evt => {
+            pipelineEvents.update(es => [...es, evt])
+            if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
+          },
+          err => {
+            pipelineRunning.set(false)
+            if (accepted) notify('error', `Pipeline error: ${err.message}`)
+            else resolve(err)
+          },
+          async () => {
+            pipelineRunning.set(false)
+            // Aborted before the server answered: no error, no open.
+            if (!accepted) { resolve(new Error('the request was cancelled')); return }
+            try { const refreshed = await getModel(modelId); currentModel.set(refreshed); threats.set(refreshed.threats ?? []) } catch { /* ignore */ }
+          },
+          () => { accepted = true; resolve(null) },
+        )
+        abortRun.set(abort)
+      })
+      if (rejection) {
+        notify('error', `Run not started: ${rejection.message}`)
+        submitting = false
+        return
+      }
       await push(`/models/${model.id}`)
     } catch (err) {
       notify('error', `Failed to create model: ${err.message}`)

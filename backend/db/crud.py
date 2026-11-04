@@ -815,6 +815,31 @@ async def delete_threat_model(model_id: str) -> None:
     logger.info(f"Deleted threat model {model_id}")
 
 
+async def delete_unrun_threat_model(model_id: str) -> bool:
+    """Delete a model only if it never held any data; returns whether it did.
+
+    "Never held data": still 'pending', with no threats, no assets and no
+    pipeline_runs audit rows. One statement, so a run or an edit that lands
+    in between keeps the model. For a wizard run the server rejects (BB-122).
+    """
+    conn = await db.get()
+    cursor = await conn.execute(
+        """
+        DELETE FROM threat_models
+        WHERE id = ? AND status = 'pending'
+          AND NOT EXISTS (SELECT 1 FROM threats WHERE model_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM assets WHERE model_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM pipeline_runs WHERE model_id = ?)
+        """,
+        (model_id, model_id, model_id, model_id),
+    )
+    await conn.commit()
+    deleted = cursor.rowcount > 0
+    if deleted:
+        logger.info(f"Deleted never-run threat model {model_id} after a rejected run")
+    return deleted
+
+
 async def find_threat_models_for_prune(
     older_than_days: int | None = None,
     status: str | None = None,
