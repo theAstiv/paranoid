@@ -9,13 +9,31 @@ vi.mock('svelte-spa-router', () => ({
 vi.mock('../lib/api.js', () => ({
   register: vi.fn(),
   login: vi.fn(),
+  getAuthOptions: vi.fn(),
 }))
 
 import { push } from 'svelte-spa-router'
-import { register, login } from '../lib/api.js'
+import { register, login, getAuthOptions } from '../lib/api.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  getAuthOptions.mockResolvedValue({ require_auth: true, registration: 'open' })
+})
+
+describe('Register — registration closed', () => {
+  it('shows a message instead of the form under admin_only', async () => {
+    getAuthOptions.mockResolvedValue({ require_auth: true, registration: 'admin_only' })
+    render(Register)
+    await waitFor(() => expect(screen.getByTestId('registration-closed')).toBeInTheDocument())
+    expect(screen.queryByText('Create account →')).not.toBeInTheDocument()
+  })
+
+  it('keeps the form when the options call fails', async () => {
+    getAuthOptions.mockRejectedValue(new Error('offline'))
+    render(Register)
+    await waitFor(() => expect(getAuthOptions).toHaveBeenCalled())
+    expect(screen.getByText('Create account →')).toBeInTheDocument()
+  })
 })
 
 async function fillForm({ username = 'alice', email = 'alice@x.com', password = 'password123', display = '' } = {}) {

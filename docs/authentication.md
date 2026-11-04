@@ -18,7 +18,12 @@ Anyone with network access is treated as an instance admin. All routes are acces
 PARANOID_REQUIRE_AUTH=true
 ```
 
-Users must log in before accessing any resource. The auto-created `admin` account is the first user. Registration is open: anyone who can reach the server can create an account (rate-limited to 5 per minute per client IP). A new account sees no existing project until an owner adds it, but it can create projects of its own and run models in them on the instance's provider keys. There is no setting to turn registration off, so don't expose an auth-on instance to networks whose users shouldn't have accounts.
+Users must log in before accessing any resource. The auto-created `admin` account is the first user. Who can create accounts is set by `PARANOID_REGISTRATION`:
+
+- `open` (default): anyone who can reach the server can register (rate-limited to 5 per minute per client IP). A new account sees no existing project until an owner adds it, but it can create projects of its own and run models in them on the instance's provider keys.
+- `admin_only`: only an instance admin creates accounts, under **Admin → Users → Create user**, and only an admin can create projects. The Register page and the Login page's Register link say so instead. Inviting an email that has no account yet then needs an admin to create the account first; the invite is accepted after that account signs in.
+
+Use `admin_only` for any instance reachable by people who shouldn't spend its provider keys.
 
 ### Requirements: HTTPS or localhost
 
@@ -53,7 +58,9 @@ If `PARANOID_ADMIN_PASSWORD` is unset, the generated password is written to the 
 
 ### Register
 
-`POST /api/auth/register` — open to anyone who can reach the server; 5 per minute per client IP (`429` with `Retry-After` beyond that).
+`POST /api/auth/register` — open to anyone who can reach the server with `PARANOID_REGISTRATION=open`; with `admin_only`, `403` unless the caller is an unscoped instance admin. 5 per minute per client IP (`429` with `Retry-After` beyond that).
+
+`GET /api/auth/options` — unauthenticated; `{"require_auth": bool, "registration": "open" | "admin_only"}`, which the Login and Register pages read before anyone signs in.
 
 ```json
 {

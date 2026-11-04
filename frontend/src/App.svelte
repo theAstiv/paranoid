@@ -154,6 +154,9 @@
   }
 
 
+  // With admin-only registration only an instance admin can create projects.
+  $: canCreateProject = $config?.registration !== 'admin_only' || !!$currentUser?.is_admin
+
   // Breadcrumb screen name, and a tab title per page (BB-109)
   $: screenLabel = screenLabelFor($location)
   $: document.title = pageTitle($location, isKnownRoute($location, Object.keys(routes)))
@@ -323,7 +326,7 @@
                     </button>
                   </div>
                 </div>
-              {:else}
+              {:else if canCreateProject}
                 <button
                   class="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-c-muted hover:text-c-text hover:bg-c-panel2 text-left transition-colors"
                   on:click|stopPropagation={() => { showNewProjectForm = true }}

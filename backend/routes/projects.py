@@ -11,6 +11,7 @@ from backend.auth.dependencies import (
     require_admin,
     require_unscoped,
 )
+from backend.config import settings
 from backend.db import crud_activity, crud_projects
 from backend.db.crud_auth import get_user_by_email
 from backend.db.crud_auth import list_users as _list_users
@@ -37,6 +38,10 @@ async def create_project(
     body: CreateProjectRequest,
     user: Annotated[dict, Depends(require_unscoped)],
 ) -> dict:
+    # With admin-only registration, accounts are handed out by an admin; letting
+    # any of them open a project would let them spend the instance's keys anyway.
+    if settings.paranoid_registration == "admin_only" and not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only an instance admin can create projects.")
     project = await crud_projects.create_project(
         name=body.name,
         created_by=user["id"],

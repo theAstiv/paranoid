@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field, field_validator
 from backend.auth.dependencies import (
     check_project_role,
     get_current_user,
+    get_optional_user,
     require_admin,
     require_unscoped,
 )
@@ -42,6 +43,7 @@ from backend.auth.tokens import (
     create_refresh_token,
     parse_refresh_token_jti,
 )
+from backend.config import settings
 from backend.db.connection import db
 from backend.db.crud import now_iso
 from backend.db.crud_auth import create_pat as db_create_pat
@@ -146,17 +148,43 @@ def _clear_refresh_cookie(response: Response) -> None:
 # ---------------------------------------------------------------------------
 
 
+def registration_is_open() -> bool:
+    """Whether anyone may register (PARANOID_REGISTRATION), not just an admin."""
+    return settings.paranoid_registration == "open"
+
+
+@router.get("/options")
+async def auth_options() -> dict[str, Any]:
+    """What the login and register pages need to know before anyone signs in.
+
+    Unauthenticated on purpose (GET /api/config needs a login since #211).
+    """
+    return {
+        "require_auth": settings.paranoid_require_auth,
+        "registration": settings.paranoid_registration,
+    }
+
+
 @router.post("/register", status_code=201)
 async def register(
     body: RegisterRequest,
+    caller: Annotated[dict[str, Any] | None, Depends(get_optional_user)],
     _rl: None = Depends(register_rate_limit),
 ) -> JSONResponse:
     """Create a new user account.
 
-    Open registration — any caller can create an account.  The first user
-    bootstrapped by main.py is admin; subsequent users are non-admin by default.
+    With PARANOID_REGISTRATION=open any caller can create an account; with
+    admin_only only an instance admin can (403 otherwise). With auth off the
+    caller is the anonymous admin, so it always works. The first user
+    bootstrapped by main.py is admin; users created here are not.
     Rate-limited per IP: every call does an argon2id hash.
     """
+    if not registration_is_open() and not (
+        caller and caller.get("is_admin") and not caller.get("pat_project_id")
+    ):
+        raise HTTPException(
+            status_code=403, detail="Registration is closed; ask an instance admin for an account."
+        )
     if await get_user_by_username(body.username):
         raise HTTPException(status_code=409, detail="Username already taken")
     if await get_user_by_email(body.email):

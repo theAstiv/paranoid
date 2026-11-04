@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Upgrading:** database migration `0016` runs automatically at startup; back up `data/paranoid.db` first.
 
+### Added
+
+- **`PARANOID_REGISTRATION=open|admin_only`** — with auth on, registration was open to anyone who could reach the server, and every account could create projects and run models on the instance's provider keys. `admin_only` lets only an instance admin create accounts (new **Create user** form under Admin → Users) and projects; the Register page and the Login page's link say registration is closed. Default `open`, as before. New unauthenticated `GET /api/auth/options` tells the login pages which mode is on
+
 ### Fixed
 
 - **Re-extract keeps context you edited or added** — nothing ever marked a row as user-edited, so Re-extract deleted renamed, edited and hand-added assets, flows and trust boundaries along with the generated ones. Adding or editing one in the Context section now marks it, and Re-extract keeps it. The new extraction doesn't save its own copy of a kept row: a renamed asset stays once under its new name, and new flows to it use that name (new column `generated_key`, migration `0016`)

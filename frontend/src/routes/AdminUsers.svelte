@@ -1,12 +1,34 @@
 <script>
   import { push } from 'svelte-spa-router'
   import { currentUser, authLoading, notify } from '../lib/stores.js'
-  import { listAllUsers } from '../lib/api.js'
+  import { listAllUsers, register } from '../lib/api.js'
   import { relativeTime } from '../lib/utils.js'
 
   let users = []
   let loading = true
   let fetched = false
+
+  // Create user: the way accounts are made with PARANOID_REGISTRATION=admin_only.
+  // Not Register.svelte, which signs in as the new user and would end this session.
+  let showCreate = false
+  let creating = false
+  let draft = { username: '', email: '', password: '', display_name: '' }
+
+  async function createUser() {
+    creating = true
+    try {
+      const { display_name, ...rest } = draft
+      const user = await register({ ...rest, display_name: display_name.trim() || undefined })
+      users = [...users, user]
+      notify('success', `Created user @${user.username}`)
+      draft = { username: '', email: '', password: '', display_name: '' }
+      showCreate = false
+    } catch (err) {
+      notify('error', `Failed to create user: ${err.message}`)
+    } finally {
+      creating = false
+    }
+  }
 
   // Wait for auth to resolve before checking — $currentUser is null while
   // authLoading is true, so checking too early causes a false redirect.
@@ -38,8 +60,38 @@
       <span class="font-mono text-[11px] text-c-faint ml-auto">
         {users.length} user{users.length !== 1 ? 's' : ''}
       </span>
+      <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => { showCreate = !showCreate }}>
+        {showCreate ? 'Cancel' : 'Create user'}
+      </button>
     {/if}
   </div>
+
+  {#if showCreate}
+    <form class="card p-5 grid grid-cols-1 sm:grid-cols-2 gap-4" on:submit|preventDefault={createUser}>
+      <div>
+        <label for="new-username" class="block text-xs font-medium text-c-muted mb-1">Username</label>
+        <input id="new-username" class="field w-full" bind:value={draft.username} required
+          minlength="3" maxlength="50" pattern="[a-zA-Z0-9_\-]+" autocomplete="off" />
+      </div>
+      <div>
+        <label for="new-display" class="block text-xs font-medium text-c-muted mb-1">Display name <span class="text-c-faint">optional</span></label>
+        <input id="new-display" class="field w-full" bind:value={draft.display_name} maxlength="100" autocomplete="off" />
+      </div>
+      <div>
+        <label for="new-email" class="block text-xs font-medium text-c-muted mb-1">Email</label>
+        <input id="new-email" type="email" class="field w-full" bind:value={draft.email} required autocomplete="off" />
+      </div>
+      <div>
+        <label for="new-password" class="block text-xs font-medium text-c-muted mb-1">Initial password <span class="text-c-faint">min 8; they can change it</span></label>
+        <input id="new-password" type="password" class="field w-full" bind:value={draft.password} required minlength="8" autocomplete="new-password" />
+      </div>
+      <div class="sm:col-span-2 flex justify-end">
+        <button type="submit" class="btn-primary text-sm px-4 disabled:opacity-50" disabled={creating}>
+          {creating ? 'Creating…' : 'Create'}
+        </button>
+      </div>
+    </form>
+  {/if}
 
   {#if loading}
     <div class="flex justify-center py-16">

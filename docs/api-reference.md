@@ -227,7 +227,11 @@ Liveness probe for a provider (`anthropic`, `openai`, `ollama`, `bedrock`). Requ
 
 ### `POST /api/auth/register`
 
-Create a new user account. Rate-limited to 5 registrations per minute per client IP (a separate bucket from login); over the limit returns `429` with `Retry-After`.
+Create a new user account. With `PARANOID_REGISTRATION=admin_only` (and auth on) only an unscoped instance admin may call it; anyone else gets `403`. Rate-limited to 5 registrations per minute per client IP (a separate bucket from login); over the limit returns `429` with `Retry-After`.
+
+### `GET /api/auth/options`
+
+Unauthenticated. `{"require_auth": true, "registration": "open"}`; `registration` is `open` or `admin_only`. `POST /api/projects` is also admin-only under `admin_only`.
 
 **Body:** `{"username": "alice", "email": "alice@example.com", "password": "..."}`
 

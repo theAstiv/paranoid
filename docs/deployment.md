@@ -124,6 +124,7 @@ Backend: `http://localhost:8000`
 
 - [ ] Set `PARANOID_REQUIRE_AUTH=true`
 - [ ] Set `PARANOID_ADMIN_PASSWORD` to a strong passphrase
+- [ ] Set `PARANOID_REGISTRATION=admin_only` unless everyone who can reach the server may have an account (and spend the provider keys)
 - [ ] Set `JWT_SECRET` to a random 32+ char string
 - [ ] Set `CONFIG_SECRET` to protect the Settings page and encrypt PATs
 - [ ] Set `ALLOWED_ORIGINS` to your concrete public origin(s)
