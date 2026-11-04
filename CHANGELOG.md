@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Upgrading:** database migrations `0016`–`0018` run automatically at startup; back up `data/paranoid.db` first. With auth on, everyone signs in once more after the upgrade: sessions created before it have no stored token hash (BB-47).
+**Upgrading:** database migrations `0016`–`0018` run automatically at startup; back up `data/paranoid.db` first. With auth on, everyone signs in once more after the upgrade: sessions created before it have no stored token hash (BB-47), so the next refresh fails. That happens when the user's current access token expires (within 15 minutes of the upgrade), not at once; the old session rows are refused and expire on their own.
 
 ### Security
 
