@@ -6,9 +6,10 @@ Collects events from the async generator and asserts step ordering and data.
 
 import pytest
 
-from backend.models.enums import DiagramFormat, Framework, StrideCategory
+from backend.models.enums import AssetType, DiagramFormat, Framework, StrideCategory
 from backend.models.extended import DiagramData
 from backend.models.state import (
+    Asset,
     AssetsList,
     FlowsList,
     GapAnalysis,
@@ -400,6 +401,34 @@ async def test_extraction_with_the_provider_down_fails_without_rule_engine_threa
     assert "nothing was extracted" in complete.message
     assert "threats" not in (complete.data or {})
     assert sum(e.step == PipelineStep.COMPLETE for e in events) == 1
+
+
+@pytest.mark.asyncio
+async def test_seeded_extraction_events_are_marked_seeded():
+    """The web route skips saving these: they carry the model's own stored context."""
+    assets = AssetsList(assets=[Asset(type=AssetType.ASSET, name="API", description="")])
+    flows = FlowsList(data_flows=[], trust_boundaries=[], threat_sources=[])
+    runner = PipelineRunner(provider=MockProvider(), config=PipelineConfig(), model_id="seeded")
+
+    events = [
+        e
+        async for e in runner.run(
+            description="An API",
+            framework=Framework.STRIDE,
+            seeded_assets=assets,
+            seeded_flows=flows,
+            stop_after="extraction",
+        )
+    ]
+
+    extraction = [
+        e
+        for e in events
+        if e.step in (PipelineStep.EXTRACT_ASSETS, PipelineStep.EXTRACT_FLOWS)
+        and e.status == "completed"
+    ]
+    assert len(extraction) == 2
+    assert all(e.data["seeded"] is True for e in extraction)
 
 
 @pytest.mark.asyncio

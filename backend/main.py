@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import db
-from backend.db.crud import delete_config_value, get_config_value
+from backend.db.crud import delete_config_value, fail_interrupted_runs, get_config_value
 from backend.db.crud_activity import safe_notify_users
 from backend.db.crud_projects import list_members as list_project_members
 from backend.db.crud_staleness import find_stale_models, get_recently_notified_model_ids
@@ -153,6 +153,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize database connection and schema (creates the data directory)
     await db.initialize(settings.db_path)
+
+    # Runs live in this process only (KL-10): one still 'in_progress' now was
+    # cut off by a stop or crash and has no task to finish it.
+    interrupted = await fail_interrupted_runs()
+    if interrupted:
+        logger.warning(
+            "Marked %d model(s) failed: their run was still in progress when the server stopped",
+            interrupted,
+        )
 
     # Hydrate API keys from the config table into settings, but only for
     # fields NOT already sourced from the environment — env wins. A

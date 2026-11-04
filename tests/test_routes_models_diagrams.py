@@ -526,6 +526,32 @@ async def test_run_with_multiple_diagrams_persists_rows_in_order(client, model_i
 
 
 @pytest.mark.asyncio
+async def test_a_run_with_new_diagrams_extracts_the_context_again(client, model_id):
+    """New diagrams are new input for extraction, so the stored context isn't
+    seeded; context the user edited is still kept (preserve_user_edits)."""
+    edited = await crud.create_asset(model_id, "Asset", "DB", "")
+    await crud.update_asset(edited, name="Postgres")
+    await crud.create_asset(model_id, "Asset", "Generated", "")
+    captured: dict = {}
+    with (
+        patch("backend.routes.models.build_provider_from_record", return_value=MagicMock()),
+        patch("backend.routes.models.build_fast_provider", return_value=None),
+        patch(
+            "backend.routes.models.run_pipeline_for_model",
+            _capturing_runner_factory(captured),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/models/{model_id}/run",
+            data=_MINIMAL_FORM,
+            files={"diagrams": ("a.mmd", "graph TD; A", "text/plain")},
+        )
+    assert resp.status_code == 200
+    assert captured["seeded_assets"] is None
+    assert [a["name"] for a in await crud.list_assets(model_id)] == ["Postgres"]
+
+
+@pytest.mark.asyncio
 async def test_run_shim_diagram_field_lands_at_position_zero(client, model_id):
     """The deprecated singular diagram field, when combined with diagrams,
     is merged in first (position 0)."""

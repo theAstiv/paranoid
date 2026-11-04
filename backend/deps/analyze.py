@@ -486,3 +486,28 @@ def dependency_scan_rows(
             )
         )
     return rows
+
+
+def dependency_context_from_scans(scans: list[dict[str, Any]]) -> DependencyContext | None:
+    """Rebuild the `DependencyContext` a run saved, from its `dependency_scans` rows.
+
+    The inverse of `dependency_scan_rows`, for a Re-run that sends no manifest
+    (the manifest itself isn't stored, BB-82). Rows with a top-level
+    `skip_reason` were skipped before analysis and go back into `skipped`; the
+    "+N more skipped" summary row can't be expanded into the names it hid, so
+    it comes back as one entry under its own name. None when there are no rows.
+    """
+    if not scans:
+        return None
+    packages: list[PackageAnalysis] = []
+    skipped: dict[str, str] = {}
+    for scan in scans:
+        analysis = scan["analysis"]
+        if "skip_reason" in analysis:
+            skipped[scan["package"]] = analysis["skip_reason"]
+        else:
+            packages.append(PackageAnalysis.model_validate(analysis))
+    packages.sort(key=lambda pa: pa.ref.name)
+    return DependencyContext(
+        packages=packages, skipped=skipped, source_mode=scans[0]["source_mode"]
+    )

@@ -930,7 +930,8 @@ class PipelineRunner:
                         step=PipelineStep.EXTRACT_ASSETS,
                         status="completed",
                         message=f"Using {len(assets.assets)} pre-edited assets",
-                        data={"asset_count": len(assets.assets), "assets": assets},
+                        # seeded: the caller already has these; savers must not add them again.
+                        data={"asset_count": len(assets.assets), "assets": assets, "seeded": True},
                     )
                 else:
                     yield PipelineEvent(
@@ -982,6 +983,7 @@ class PipelineRunner:
                             "flow_count": len(flows.data_flows),
                             "boundary_count": len(flows.trust_boundaries),
                             "flows": flows,
+                            "seeded": True,
                         },
                     )
                 else:

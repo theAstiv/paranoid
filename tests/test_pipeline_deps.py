@@ -259,6 +259,54 @@ class TestDependencyScanRows:
         assert "more skipped" not in rows[0][0]
 
 
+def _as_stored_scans(context: DependencyContext) -> list[dict]:
+    """What crud.list_dependency_scans returns for the rows a run saved."""
+    return [
+        {"package": p, "version": v, "source_mode": context.source_mode, "analysis": a}
+        for p, v, a in analyze.dependency_scan_rows(context)
+    ]
+
+
+class TestDependencyContextFromScans:
+    """A Re-run without a manifest rebuilds the saved analysis (BB-82)."""
+
+    def test_round_trips_packages_and_skips(self):
+        errored = PackageAnalysis(ref=PackageRef(name="left-pad", version="1.0.0"), error="boom")
+        context = DependencyContext(
+            packages=[_pa("lodash", "4.17.21"), errored],
+            skipped={"weird-spec": "unresolvable_version_range"},
+            source_mode="both",
+        )
+
+        rebuilt = analyze.dependency_context_from_scans(_as_stored_scans(context))
+
+        assert rebuilt.source_mode == "both"
+        assert rebuilt.skipped == {"weird-spec": "unresolvable_version_range"}
+        assert sorted(rebuilt.packages, key=lambda pa: pa.ref.name) == sorted(
+            context.packages, key=lambda pa: pa.ref.name
+        )
+
+    def test_a_skipped_package_stays_skipped_not_an_empty_analysis(self):
+        context = DependencyContext(
+            packages=[], skipped={"weird-spec": "unresolvable_version_range"}, source_mode="npm"
+        )
+        rebuilt = analyze.dependency_context_from_scans(_as_stored_scans(context))
+        assert rebuilt.packages == []
+
+    def test_the_summary_row_comes_back_as_one_entry(self):
+        n = analyze.MAX_SKIPPED_DEPENDENCY_ROWS + 10
+        skipped = {f"pkg-{i:04d}": "unresolvable_version_range" for i in range(n)}
+        context = DependencyContext(packages=[], source_mode="npm", skipped=skipped)
+
+        rebuilt = analyze.dependency_context_from_scans(_as_stored_scans(context))
+
+        assert len(rebuilt.skipped) == analyze.MAX_SKIPPED_DEPENDENCY_ROWS + 1
+        assert "+10 more skipped" in rebuilt.skipped
+
+    def test_no_rows_means_no_context(self):
+        assert analyze.dependency_context_from_scans([]) is None
+
+
 # ---------------------------------------------------------------------------
 # backend.deps.threats — deterministic dependency threat mapping
 # ---------------------------------------------------------------------------

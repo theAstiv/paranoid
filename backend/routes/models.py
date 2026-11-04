@@ -34,6 +34,7 @@ from backend.db.maestro_tags import get_model_coverage, parse_categories, try_ta
 from backend.deps.analyze import (
     DEFAULT_MAX_DIRECT_DEPENDENCIES,
     count_resolvable_direct_dependencies,
+    dependency_context_from_scans,
     dependency_scan_rows,
 )
 from backend.image import (
@@ -62,6 +63,7 @@ from backend.models.api import (
     UpdateModelRequest,
     UpdateTrustBoundaryRequest,
 )
+from backend.models.dependencies import DependencyContext
 from backend.models.enums import (
     DiagramFormat,
     Framework,
@@ -70,7 +72,14 @@ from backend.models.enums import (
     is_valid_model_status_transition,
 )
 from backend.models.extended import CodeContext, DiagramData
-from backend.models.state import AssetsList, FlowsList, ThreatsList
+from backend.models.state import (
+    Asset,
+    AssetsList,
+    DataFlow,
+    FlowsList,
+    ThreatsList,
+    TrustBoundary,
+)
 from backend.pipeline import live_runs
 from backend.pipeline.confidence import score_threat_confidence
 from backend.pipeline.pre_flight import analyze_description_gaps
@@ -611,14 +620,62 @@ async def _run_temperature(record: dict) -> float:
     return project_temperature if project_temperature is not None else settings.default_temperature
 
 
-async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
+async def _stored_context(model_id: str) -> tuple[AssetsList | None, FlowsList | None]:
+    """The model's saved assets and flows/boundaries, as a Re-run's seeded input.
+
+    (None, None) when the model has no assets yet (first run, or one that
+    failed before extraction): the run then extracts as usual. Threat sources
+    aren't stored by the web path and no prompt reads them.
+    """
+    asset_rows = await crud.list_assets(model_id)
+    if not asset_rows:
+        return None, None
+    assets = AssetsList(
+        assets=[
+            Asset(type=a["type"], name=a["name"], description=a["description"] or "")
+            for a in asset_rows
+        ]
+    )
+    flow_rows = await crud.list_flows(model_id)
+    boundary_rows = await crud.list_trust_boundaries(model_id)
+    if not flow_rows and not boundary_rows:
+        return assets, None
+    flows = FlowsList(
+        data_flows=[
+            DataFlow(
+                flow_description=f["flow_description"] or "",
+                source_entity=f["source_entity"],
+                target_entity=f["target_entity"],
+            )
+            for f in flow_rows
+        ],
+        trust_boundaries=[
+            TrustBoundary(
+                purpose=b["purpose"] or "",
+                source_entity=b["source_entity"],
+                target_entity=b["target_entity"],
+            )
+            for b in boundary_rows
+        ],
+        threat_sources=[],
+    )
+    return assets, flows
+
+
+async def _persist_pipeline_event(
+    model_id: str, event: PipelineEvent, *, save_dependency_scans: bool = True
+) -> None:
     """Persist data from a pipeline event to the database.
 
     Called for every event; only completed extract_assets, extract_flows, and
     complete events trigger DB writes. Failures are logged and swallowed so
     that a DB error never interrupts the SSE stream.
+
+    Seeded extraction events carry the model's own stored context back, so
+    they are not saved again. save_dependency_scans=False when the run reused
+    the stored scans, which are still in place.
     """
-    if not event.data or event.status != "completed":
+    if not event.data or event.status != "completed" or event.data.get("seeded"):
         return
 
     if event.step == PipelineStep.EXTRACT_ASSETS:
@@ -748,7 +805,7 @@ async def _persist_pipeline_event(model_id: str, event: PipelineEvent) -> None:
             await try_link_model_components(model_id)
 
         dependency_context = event.data.get("dependency_context")
-        if dependency_context and hasattr(dependency_context, "packages"):
+        if save_dependency_scans and dependency_context and hasattr(dependency_context, "packages"):
             for package, version, analysis in dependency_scan_rows(dependency_context):
                 try:
                     await crud.create_dependency_scan(
@@ -959,11 +1016,35 @@ async def run_pipeline(
     temperature = await _run_temperature(record)
 
     async def run_events() -> AsyncGenerator[str, None]:
+        seeded_assets: AssetsList | None = None
+        seeded_flows: FlowsList | None = None
+        reused_scans: DependencyContext | None = None
         # Inside a guard: a failure here used to leave the model 'pending' or
         # 'in_progress' with no task behind it.
         try:
-            # Clear any previous run's data so re-runs start clean
-            await crud.clear_model_data(model_id)
+            # A Re-run reuses the model's context (as edited on the Context
+            # page) instead of extracting it again, unless this request brings
+            # new input for the extraction. Re-extract regenerates it.
+            if not uploaded_diagrams and source_row is None:
+                seeded_assets, seeded_flows = await _stored_context(model_id)
+            # No manifest sent: reuse the scans the last run saved (BB-82).
+            if settings.deps_analysis_enabled and dependency_manifest_dict is None:
+                scans = await crud.list_dependency_scans(model_id)
+                try:
+                    reused_scans = dependency_context_from_scans(scans)
+                except (ValidationError, KeyError):
+                    logger.warning(
+                        "Stored dependency scans of model %s don't parse; not reusing them",
+                        model_id,
+                        exc_info=True,
+                    )
+            keep_scans = reused_scans is not None
+            if seeded_assets is not None:
+                await crud.clear_model_threats(model_id, keep_dependency_scans=keep_scans)
+            else:
+                await crud.clear_model_data(
+                    model_id, preserve_user_edits=True, keep_dependency_scans=keep_scans
+                )
             await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
             # Persist assumptions unconditionally — clears stale data from prior runs
             await crud.update_threat_model(
@@ -983,6 +1064,16 @@ async def run_pipeline(
                 message="Failed to start the run; see server logs.",
             ).to_sse_format()
             return
+
+        if reused_scans is not None:
+            yield PipelineEvent(
+                step=PipelineStep.ANALYZE_DEPENDENCIES,
+                status="info",
+                message=(
+                    f"Reusing the last run's dependency analysis "
+                    f"({len(reused_scans.packages)} package(s)); send a manifest to re-scan."
+                ),
+            ).to_sse_format()
 
         skipped_stored_diagrams: list[dict[str, str]] = []
         if uploaded_diagrams:
@@ -1078,13 +1169,18 @@ async def run_pipeline(
                     has_ai_components=has_ai,
                     temperature=temperature,
                     similarity_threshold=settings.similarity_threshold,
+                    seeded_assets=seeded_assets,
+                    seeded_flows=seeded_flows,
+                    dependency_context=reused_scans,
                     dependency_manifest=dependency_manifest_dict,
                     dependency_lockfile=dependency_lockfile_dict,
                     dependency_source_mode=deps_source_mode,
                     persist_usage=True,  # model_id already names a saved threat_models row
                     scoring_method=record.get("scoring_method") or "dread",
                 ):
-                    await _persist_pipeline_event(model_id, event)
+                    await _persist_pipeline_event(
+                        model_id, event, save_dependency_scans=reused_scans is None
+                    )
                     yield event.to_sse_format()
 
             await crud.update_threat_model_status(model_id, ModelStatus.COMPLETED.value)
@@ -1528,9 +1624,10 @@ async def extract_model_context(
     closing the tab must not stop it halfway. GET /{model_id}/run/events follows
     it too. 409 if the model already has a run or an extraction in progress.
 
-    The old generated context (and the threats and dependency scans) is only
-    cleared once the new extraction has produced its flows, so a provider that
-    is down, or fails part-way, leaves the model as it was.
+    The old generated context and the threats are only cleared once the new
+    extraction has produced its flows, so a provider that is down, or fails
+    part-way, leaves the model as it was. Dependency scans are kept for the
+    next Re-run.
     """
     record = await crud.get_threat_model(model_id)
     if record is None:
@@ -1594,7 +1691,11 @@ async def extract_model_context(
                             continue
                         if event.step in (PipelineStep.EXTRACT_FLOWS, PipelineStep.COMPLETE):
                             try:
-                                await crud.clear_model_data(model_id, preserve_user_edits=True)
+                                # Scans don't depend on the extraction; the next
+                                # Re-run reuses them.
+                                await crud.clear_model_data(
+                                    model_id, preserve_user_edits=True, keep_dependency_scans=True
+                                )
                             except aiosqlite.Error:
                                 logger.exception(
                                     "Failed to clear generated context for model %s", model_id

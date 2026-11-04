@@ -63,6 +63,8 @@ Delete a threat model and all its data. Owner or admin only.
 
 Run (or re-run) the pipeline. Returns an SSE stream of `PipelineEvent` objects.
 
+When the model already has assets and the request uploads no diagrams and names no code source, the run reuses the stored assets, flows and trust boundaries instead of extracting them again (the `extract_assets` / `extract_flows` events carry `"seeded": true`), and only the previous threats are replaced. Without a `dependency_manifest`, it reuses the model's stored dependency scans and says so in an `analyze_dependencies` `info` event. Otherwise it extracts again, keeping context rows the user added or edited.
+
 **Body (multipart/form-data):**
 
 `provider`/`model`/`iteration_count`/`framework`/`scoring_method` are set once at `POST /api/models` creation time (below) and reused from the stored record on every run — they aren't passed to `/run` itself. Fast/main model routing is a CLI flag (`--fast-model`/`--step-model`) or a Settings-page field, not a per-API-call override — see [Configuration](configuration.md#provider).
@@ -94,7 +96,7 @@ Get extracted context (assets, flows, trust boundaries) for editing before or af
 
 ### `POST /api/models/{id}/extract`
 
-Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams (not its dependency manifest — manifests aren't persisted, and this route doesn't run dependency analysis). Returns an SSE stream, same as `/run`, and like `/run` it is a background task the stream only follows: closing the stream doesn't stop it, and `GET /api/models/{id}/run/events` follows it from its start. `409` if the model already has a run or an extraction in progress. Rate-limited to 20 requests per minute per client IP (shared with `/analyze` below and the attack-tree / test-case generators); over the limit returns `429` with `Retry-After`.
+Re-run only the extraction steps (summarize, extract_assets, extract_flows) without regenerating threats. Reuses the model's stored diagrams. It doesn't run dependency analysis and keeps the stored dependency scans for the next run. Context rows the user added or edited are kept; the rest, and all threats, are replaced only once the new extraction has produced its flows. Returns an SSE stream, same as `/run`, and like `/run` it is a background task the stream only follows: closing the stream doesn't stop it, and `GET /api/models/{id}/run/events` follows it from its start. `409` if the model already has a run or an extraction in progress. Rate-limited to 20 requests per minute per client IP (shared with `/analyze` below and the attack-tree / test-case generators); over the limit returns `429` with `Retry-After`.
 
 ### `POST /api/models/{id}/analyze`
 

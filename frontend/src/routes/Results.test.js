@@ -390,10 +390,13 @@ describe('Results — header', () => {
     expect(JSON.parse(fd.get('assumptions'))).toEqual([])
   })
 
-  it('says in its tooltip that a re-run drops the dependencies', async () => {
+  it('says in its tooltip that a re-run reuses the context and dependencies', async () => {
     render(Results, { props: { params: { id: 'm1' } } })
     const button = await screen.findByText('Re-run')
-    expect(button.closest('button').getAttribute('title')).toContain('dependencies need a new run')
+    const title = button.closest('button').getAttribute('title')
+    expect(title).toContain('current context')
+    expect(title).toContain('dependency analysis')
+    expect(title).toContain('Re-extract')
   })
 
   it('blocks re-run and notifies when the configured provider has no API key', async () => {
