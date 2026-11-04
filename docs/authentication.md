@@ -95,7 +95,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/models
 
 ## Personal Access Tokens (PATs)
 
-PATs are long-lived tokens for CLI and CI/CD use — no session management needed.
+PATs are long-lived tokens for CLI and CI/CD use — no session management needed. A PAT scoped to a project (`project_id` at creation) sees only that project, its notifications included.
 
 ### Create a PAT
 

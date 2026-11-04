@@ -132,57 +132,95 @@ async def list_members(project_id: str) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def add_member(project_id: str, user_id: str, role: str) -> dict:
-    member_id = str(uuid.uuid4())
-    now = datetime.now(UTC).isoformat()
-    conn = await db.get()
-    try:
-        await conn.execute(
-            """INSERT INTO project_members (id, project_id, user_id, role, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (member_id, project_id, user_id, role, now),
-        )
-        await conn.commit()
-    except aiosqlite.IntegrityError:
-        # Already a member — update role instead
-        await conn.execute(
-            "UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?",
-            (role, project_id, user_id),
-        )
-        await conn.commit()
-    return await get_member(project_id, user_id)
+class LastOwnerError(ValueError):
+    """The change would leave a project with no owner (BB-48)."""
 
 
-async def update_member_role(project_id: str, user_id: str, role: str) -> dict | None:
-    conn = await db.get()
-    await conn.execute(
-        "UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?",
-        (role, project_id, user_id),
-    )
-    await conn.commit()
-    return await get_member(project_id, user_id)
+async def _refuse_losing_the_last_owner(
+    conn: aiosqlite.Connection, project_id: str, user_id: str, new_role: str | None
+) -> None:
+    """Raise LastOwnerError if `user_id` is the project's only owner and the
+    change (a new role, or removal when new_role is None) takes that away.
 
-
-async def remove_member(project_id: str, user_id: str) -> None:
-    """Remove a member. Raises ValueError if they are the last owner."""
-    conn = await db.get()
-    # Guard: cannot remove the last owner
+    Runs inside db.writer(): the count and the write that follows are one
+    BEGIN IMMEDIATE transaction, so two concurrent changes can't both see a
+    second owner that the other is removing (BB-49).
+    """
+    if new_role == "owner":
+        return
+    async with conn.execute(
+        "SELECT role FROM project_members WHERE project_id = ? AND user_id = ?",
+        (project_id, user_id),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None or row["role"] != "owner":
+        return
     async with conn.execute(
         "SELECT COUNT(*) FROM project_members WHERE project_id = ? AND role = 'owner'",
         (project_id,),
     ) as cur:
-        row = await cur.fetchone()
-    owner_count = row[0] if row else 0
+        owners = (await cur.fetchone())[0]
+    if owners <= 1:
+        action = "remove" if new_role is None else "demote"
+        raise LastOwnerError(f"Cannot {action} the last owner of a project")
 
-    member = await get_member(project_id, user_id)
-    if member and member["role"] == "owner" and owner_count <= 1:
-        raise ValueError("Cannot remove the last owner of a project")
 
-    await conn.execute(
-        "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
-        (project_id, user_id),
-    )
-    await conn.commit()
+async def add_member(project_id: str, user_id: str, role: str) -> dict:
+    """Add a member, or change the role of an existing one.
+
+    Raises LastOwnerError if that would demote the project's only owner.
+    """
+    member_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    async with db.writer() as conn:
+        try:
+            await conn.execute(
+                """INSERT INTO project_members (id, project_id, user_id, role, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (member_id, project_id, user_id, role, now),
+            )
+        except aiosqlite.IntegrityError:
+            # Already a member — update role instead
+            await _refuse_losing_the_last_owner(conn, project_id, user_id, role)
+            await conn.execute(
+                "UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?",
+                (role, project_id, user_id),
+            )
+    return await get_member(project_id, user_id)
+
+
+async def update_member_role(project_id: str, user_id: str, role: str) -> dict | None:
+    """Raises LastOwnerError if that would demote the project's only owner."""
+    async with db.writer() as conn:
+        await _refuse_losing_the_last_owner(conn, project_id, user_id, role)
+        await conn.execute(
+            "UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?",
+            (role, project_id, user_id),
+        )
+    return await get_member(project_id, user_id)
+
+
+async def remove_member(project_id: str, user_id: str) -> None:
+    """Remove a member with their assignments and notifications in the project.
+
+    Raises LastOwnerError if they are the last owner. The assignments went on
+    notifying a removed user about the project's models (BB-64).
+    """
+    async with db.writer() as conn:
+        await _refuse_losing_the_last_owner(conn, project_id, user_id, None)
+        await conn.execute(
+            "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+        await conn.execute(
+            """DELETE FROM threat_model_assignees WHERE user_id = ?
+               AND threat_model_id IN (SELECT id FROM threat_models WHERE project_id = ?)""",
+            (user_id, project_id),
+        )
+        await conn.execute(
+            "DELETE FROM notifications WHERE user_id = ? AND project_id = ?",
+            (user_id, project_id),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -262,13 +300,16 @@ async def accept_invitation(invitation_id: str, user_id: str, user_email: str) -
         await conn.commit()
         raise ValueError("Invitation has expired")
 
+    # Join first: if the role change is refused (it would demote the last
+    # owner), the invitation stays pending.
+    member = await add_member(inv["project_id"], user_id, inv["role"])
     conn = await db.get()
     await conn.execute(
         "UPDATE project_invitations SET status = 'accepted' WHERE id = ?",
         (invitation_id,),
     )
     await conn.commit()
-    return await add_member(inv["project_id"], user_id, inv["role"])
+    return member
 
 
 async def decline_invitation(invitation_id: str) -> None:

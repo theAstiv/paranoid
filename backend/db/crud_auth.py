@@ -120,15 +120,19 @@ async def user_count() -> int:
 async def create_session(
     jti: str,
     user_id: str,
+    raw_token: str,
     expires_days: int = 7,
 ) -> dict[str, Any]:
-    """Persist a refresh-token session."""
+    """Persist a refresh-token session with the hash of its whole raw token (BB-47)."""
+    from backend.auth.tokens import hash_refresh_token
+
     now = now_iso()
     expires_at = (datetime.now(UTC) + timedelta(days=expires_days)).isoformat()
     conn = await db.get()
     await conn.execute(
-        "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        (jti, user_id, now, expires_at),
+        "INSERT INTO sessions (id, user_id, secret_hash, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (jti, user_id, hash_refresh_token(raw_token), now, expires_at),
     )
     await conn.commit()
     return {

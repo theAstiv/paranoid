@@ -133,17 +133,44 @@ async def test_refresh_rotates_and_reuse_kills_every_session(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: /api/auth/refresh looks the session up by jti only and never checks "
-    "the random half of the refresh token, so '<jti>:anything' is accepted",
-)
 async def test_refresh_rejects_a_token_with_the_right_jti_and_a_wrong_secret(test_db):
     await _make_user("alice")
     async with _client() as client:
         raw = (await _login(client, "alice"))["refresh_token"]
         jti = auth_tokens.parse_refresh_token_jti(raw)
         r = await _refresh(client, f"{jti}:forged")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_a_forged_token_for_a_rotated_jti_does_not_revoke_every_session(test_db):
+    """The secret is checked before reuse detection: otherwise '<old jti>:junk'
+    would kill all of the user's sessions (BB-47)."""
+    user = await _make_user("alice")
+    async with _client() as client:
+        old = (await _login(client, "alice"))["refresh_token"]
+        rotated = (await _refresh(client, old)).json()["refresh_token"]
+        forged = await _refresh(client, f"{auth_tokens.parse_refresh_token_jti(old)}:junk")
+        still_good = await _refresh(client, rotated)
+    assert forged.status_code == 401
+    assert still_good.status_code == 200
+    conn = await db.get()
+    async with conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE user_id = ? AND revoked_at IS NULL", (user["id"],)
+    ) as cur:
+        assert (await cur.fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_session_from_before_the_secret_hash_is_refused(test_db):
+    """Rows created before migration 0017 have no hash: their users sign in again."""
+    await _make_user("alice")
+    async with _client() as client:
+        raw = (await _login(client, "alice"))["refresh_token"]
+        conn = await db.get()
+        await conn.execute("UPDATE sessions SET secret_hash = NULL")
+        await conn.commit()
+        r = await _refresh(client, raw)
     assert r.status_code == 401
 
 
@@ -428,11 +455,6 @@ async def test_removing_the_last_owner_is_refused(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: remove_member counts owners and deletes in separate statements with "
-    "no BEGIN IMMEDIATE, so two concurrent removals of the only two owners both succeed",
-)
 async def test_two_racing_owner_removals_leave_an_owner(test_db):
     w = await build_world()
     a = w.users["owner"]
@@ -453,11 +475,6 @@ async def test_two_racing_owner_removals_leave_an_owner(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: PATCH /projects/{id}/members/{user_id} has no last-owner guard, so the "
-    "only owner can be demoted and the project is left with no owner",
-)
 async def test_demoting_the_last_owner_is_refused(test_db):
     w = await build_world()
     owner_id = w.users["owner"]["id"]

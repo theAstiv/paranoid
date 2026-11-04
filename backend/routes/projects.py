@@ -150,7 +150,10 @@ async def add_member(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    member = await crud_projects.add_member(project_id, body.user_id, body.role)
+    try:
+        member = await crud_projects.add_member(project_id, body.user_id, body.role)
+    except crud_projects.LastOwnerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     await crud_activity.safe_log_activity(
         project_id=project_id,
         user_id=user["id"],
@@ -179,7 +182,10 @@ async def update_member(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
-    member = await crud_projects.update_member_role(project_id, user_id, body.role)
+    try:
+        member = await crud_projects.update_member_role(project_id, user_id, body.role)
+    except crud_projects.LastOwnerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     return member

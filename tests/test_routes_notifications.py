@@ -77,4 +77,4 @@ async def test_mark_all_notifications_read_returns_204(client):
     ) as mock_mark_all:
         res = await client.post("/api/notifications/mark-all-read", json={})
     assert res.status_code == 204
-    mock_mark_all.assert_awaited_once_with(_ANON_ADMIN_ID)
+    mock_mark_all.assert_awaited_once_with(_ANON_ADMIN_ID, project_id=None)

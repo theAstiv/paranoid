@@ -41,6 +41,7 @@ from backend.auth.tokens import (
     create_pat,
     create_refresh_token,
     parse_refresh_token_jti,
+    refresh_token_matches,
 )
 from backend.db.connection import db
 from backend.db.crud import now_iso
@@ -213,7 +214,7 @@ async def login(
     )
     jti, raw_refresh = create_refresh_token()
     expires_at = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-    await create_session(jti=jti, user_id=user["id"], expires_days=7)
+    await create_session(jti=jti, user_id=user["id"], raw_token=raw_refresh, expires_days=7)
     await update_last_login(user["id"])
 
     _set_refresh_cookie(response, raw_refresh)
@@ -264,8 +265,10 @@ async def refresh_token(
         raise HTTPException(status_code=401, detail="Malformed refresh token")
 
     session = await get_session(jti)
-    if session is None:
-        # Unknown jti — could be a forged or very stale token; reject silently.
+    # Unknown jti, or the right jti with the wrong secret (BB-47). Checked
+    # before the reuse test below: a forged "<jti>:junk" for a rotated-out jti
+    # must not be able to revoke the user's other sessions.
+    if session is None or not refresh_token_matches(session, raw_token):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     if session["revoked_at"] is not None:
@@ -291,7 +294,7 @@ async def refresh_token(
     # Rotate: revoke old, issue new
     await revoke_session(jti)
     new_jti, new_raw_refresh = create_refresh_token()
-    await create_session(jti=new_jti, user_id=user["id"], expires_days=7)
+    await create_session(jti=new_jti, user_id=user["id"], raw_token=new_raw_refresh, expires_days=7)
 
     new_access = create_access_token(
         user_id=user["id"],
@@ -330,7 +333,8 @@ async def logout(
 
     if raw_token:
         jti = parse_refresh_token_jti(raw_token)
-        if jti:
+        session = await get_session(jti) if jti else None
+        if session is not None and refresh_token_matches(session, raw_token):
             try:
                 await revoke_session(jti)
             except Exception as exc:
@@ -399,7 +403,11 @@ async def update_me(
         if raw_refresh:
             jti = parse_refresh_token_jti(raw_refresh)
             session = await get_session(jti) if jti else None
-            if session is not None and session["user_id"] == user["id"]:
+            if (
+                session is not None
+                and session["user_id"] == user["id"]
+                and refresh_token_matches(session, raw_refresh)
+            ):
                 keep_jti = jti
         await delete_other_user_sessions(user["id"], keep_jti)
 
