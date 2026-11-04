@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Upgrading:** database migration `0016` runs automatically at startup; back up `data/paranoid.db` first.
+**Upgrading:** database migrations `0016`–`0018` run automatically at startup; back up `data/paranoid.db` first. With auth on, everyone signs in once more after the upgrade: sessions created before it have no stored token hash (BB-47), so the next refresh fails. That happens when the user's current access token expires (within 15 minutes of the upgrade), not at once; the old session rows are refused and expire on their own.
+
+### Security
+
+- **A refresh token's secret is checked** (BB-47) — `/api/auth/refresh` looked the session up by the token's id half and never checked the random half, so `<session id>:anything` refreshed. Sessions now store a SHA-256 of the whole token (migration `0017`), compared in constant time before the reuse check, so a forged token for an old session id also can't revoke the user's other sessions. Logout and a password change's "keep this session" check it too
+- **A project always keeps an owner** (BB-48, BB-49) — the only owner could be demoted through `PATCH` on the member, re-adding them with a lower role, or accepting a lower-role invite to their own project, and two concurrent removals of a project's two owners both succeeded. Each path now counts owners and changes the role in one transaction and answers `409`; a refused invite stays pending
+- **Removing a member cleans up after them** (BB-64) — their assignments on the project's models (which kept notifying them) and their notifications from that project are deleted with the membership
+- **Project-scoped tokens see only their project's notifications** (KL-4) — `GET /api/notifications`, marking one read and mark-all-read now honour a PAT's project scope; notifications record their project (migration `0018`, backfilled)
 
 ### Fixed
 

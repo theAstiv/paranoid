@@ -41,10 +41,14 @@ async def client(test_db):
         yield c
 
 
-def _future_session(jti: str, user_id: str) -> dict:
+def _future_session(jti: str, user_id: str, raw: str | None = None) -> dict:
+    """A live session row; `raw` is the refresh token it was created for (BB-47)."""
+    from backend.auth.tokens import hash_refresh_token
+
     return {
         "id": jti,
         "user_id": user_id,
+        "secret_hash": hash_refresh_token(raw) if raw else None,
         "created_at": "2026-01-01T00:00:00",
         "expires_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
         "revoked_at": None,
@@ -205,7 +209,7 @@ async def test_refresh_valid_token_rotates_session(client):
     from backend.auth.tokens import create_refresh_token
 
     jti, raw = create_refresh_token()
-    session = _future_session(jti, _PLAIN_USER["id"])
+    session = _future_session(jti, _PLAIN_USER["id"], raw)
 
     with (
         patch("backend.routes.auth.get_session", new=AsyncMock(return_value=session)),
@@ -227,7 +231,7 @@ async def test_refresh_revoked_token_kills_all_sessions(client):
 
     jti, raw = create_refresh_token()
     revoked = {
-        **_future_session(jti, _PLAIN_USER["id"]),
+        **_future_session(jti, _PLAIN_USER["id"], raw),
         "revoked_at": "2026-01-02T00:00:00",
     }
     kill_mock = AsyncMock()
@@ -248,7 +252,7 @@ async def test_refresh_expired_token_returns_401(client):
 
     jti, raw = create_refresh_token()
     expired = {
-        **_future_session(jti, _PLAIN_USER["id"]),
+        **_future_session(jti, _PLAIN_USER["id"], raw),
         "expires_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
     }
     with (

@@ -58,6 +58,9 @@ register and log in before accessing any resource.
 - **Passwords**: argon2id hashing via `argon2-cffi` (lazy-imported, does not affect CLI cold start)
 - **Sessions**: HS256 JWT access tokens (15-minute lifetime) + refresh tokens (7-day lifetime, rotated on every use)
 - **Refresh token reuse detection**: a stolen refresh token is usable exactly once — reuse revokes the entire session family
+- **Refresh token check**: a refresh token is `<session id>:<secret>`; the server stores only a SHA-256 of the whole token and compares it in constant time before anything else, so knowing a session id is not enough, and a forged token can't trigger the reuse revocation
+- **Project owners**: removing or demoting a project's last owner is refused (`409`), whichever route changes the role, and the check and the change are one transaction. Removing a member also deletes their assignments and notifications in that project
+- **Project-scoped tokens and notifications**: a PAT scoped to a project lists and marks only that project's notifications
 - **Personal Access Tokens (PATs)**: `pat_<id>_<random>` format, sha256-hashed before storage, returned raw only on creation
 - **PAT and git credential encryption**: Fernet (AES-128-CBC + HMAC-SHA256); key derived from `CONFIG_SECRET` via PBKDF2-HMAC-SHA256 (100k iterations); falls back to a random file key at `data/.source_key`
 - **Rate limiting** (per client IP; `X-Forwarded-For` only from `TRUSTED_PROXIES`): login and refresh 10 per minute; registration 5 per minute, in its own bucket; LLM-backed routes (pre-flight `/api/analyze`, a model's `/analyze` and `/extract`, attack trees, test cases) 20 per minute; pipeline runs 5 per minute. Counters are per process and reset on restart

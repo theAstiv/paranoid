@@ -6,6 +6,7 @@ hashlib + secrets) — no PyJWT required on the CLI import path.
 """
 
 import hashlib
+import hmac
 import logging
 import secrets
 import uuid
@@ -98,6 +99,22 @@ def create_refresh_token() -> tuple[str, str]:
     jti = str(uuid.uuid4())
     raw = secrets.token_urlsafe(48)
     return jti, f"{jti}:{raw}"
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """SHA-256 of the whole raw refresh token, stored on its session row."""
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def refresh_token_matches(session: dict, raw_token: str) -> bool:
+    """Whether `raw_token` is the token `session` was created for (BB-47).
+
+    The jti half only finds the row; without this check `<jti>:anything`
+    passed. A session created before migration 0017 has no hash and never
+    matches, so its user signs in once more.
+    """
+    stored = session.get("secret_hash")
+    return bool(stored) and hmac.compare_digest(stored, hash_refresh_token(raw_token))
 
 
 def parse_refresh_token_jti(raw_token: str) -> str | None:

@@ -84,6 +84,21 @@ async def list_activity(project_id: str, limit: int = 50) -> list[dict[str, Any]
 # Notifications
 # ---------------------------------------------------------------------------
 
+# The project a notification's entity belongs to, worked out at insert time so
+# no caller has to pass it (migration 0018 backfills older rows the same way).
+_PROJECT_OF_ENTITY = """CASE :entity_type
+    WHEN 'project' THEN :entity_id
+    WHEN 'model' THEN (SELECT project_id FROM threat_models WHERE id = :entity_id)
+    WHEN 'threat' THEN (
+        SELECT tm.project_id FROM threats t
+        JOIN threat_models tm ON tm.id = t.model_id WHERE t.id = :entity_id
+    )
+    WHEN 'comment' THEN (
+        SELECT tm.project_id FROM comments c
+        JOIN threat_models tm ON tm.id = c.threat_model_id WHERE c.id = :entity_id
+    )
+END"""
+
 
 async def create_notification(
     user_id: str,
@@ -97,10 +112,21 @@ async def create_notification(
     now = now_iso()
     conn = await db.get()
     await conn.execute(
-        """INSERT INTO notifications
-           (id, user_id, type, title, body, entity_type, entity_id, is_read, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-        (notification_id, user_id, notification_type, title, body, entity_type, entity_id, now),
+        f"""INSERT INTO notifications
+           (id, user_id, type, title, body, entity_type, entity_id, project_id, is_read,
+            created_at)
+           VALUES (:id, :user_id, :type, :title, :body, :entity_type, :entity_id,
+                   {_PROJECT_OF_ENTITY}, 0, :created_at)""",
+        {
+            "id": notification_id,
+            "user_id": user_id,
+            "type": notification_type,
+            "title": title,
+            "body": body,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "created_at": now,
+        },
     )
     await conn.commit()
     # Built from known inputs rather than re-SELECTing — every field here was
@@ -155,10 +181,14 @@ async def get_notification(notification_id: str) -> dict[str, Any] | None:
 
 
 async def list_notifications(
-    user_id: str, limit: int = 50, unread_only: bool = False
+    user_id: str, limit: int = 50, unread_only: bool = False, project_id: str | None = None
 ) -> list[dict[str, Any]]:
+    """project_id: a project-scoped token sees only that project's notifications (KL-4)."""
     query = "SELECT * FROM notifications WHERE user_id = ?"
     params: list[Any] = [user_id]
+    if project_id is not None:
+        query += " AND project_id = ?"
+        params.append(project_id)
     if unread_only:
         query += " AND is_read = 0"
     query += " ORDER BY created_at DESC LIMIT ?"
@@ -168,10 +198,15 @@ async def list_notifications(
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def mark_notification_read(notification_id: str, user_id: str) -> dict[str, Any] | None:
-    """Mark a single notification read. Returns None if not found or not owned."""
+async def mark_notification_read(
+    notification_id: str, user_id: str, project_id: str | None = None
+) -> dict[str, Any] | None:
+    """Mark a single notification read. Returns None if not found, not owned,
+    or (for a project-scoped token) in another project."""
     notification = await get_notification(notification_id)
     if notification is None or notification["user_id"] != user_id:
+        return None
+    if project_id is not None and notification.get("project_id") != project_id:
         return None
     conn = await db.get()
     await conn.execute(
@@ -185,12 +220,14 @@ async def mark_notification_read(notification_id: str, user_id: str) -> dict[str
     return notification
 
 
-async def mark_all_read(user_id: str) -> None:
+async def mark_all_read(user_id: str, project_id: str | None = None) -> None:
+    query = "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0"
+    params: list[Any] = [user_id]
+    if project_id is not None:
+        query += " AND project_id = ?"
+        params.append(project_id)
     conn = await db.get()
-    await conn.execute(
-        "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
-        (user_id,),
-    )
+    await conn.execute(query, params)
     await conn.commit()
 
 
