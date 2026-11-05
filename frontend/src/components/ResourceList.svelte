@@ -23,6 +23,8 @@
   /** @type {(id: string) => Promise<void>} */
   export let onDelete
   export let emptyLabel = 'No items yet.'
+  /** Hide edit/delete (a viewer, or an archived project). */
+  export let readonly = false
 
   let addingNew = false
   let savingNew = false
@@ -160,6 +162,7 @@
             {/if}
           {/each}
         </div>
+        {#if !readonly}
         <div class="flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex-shrink-0">
           <button type="button" on:click={() => startEdit(item)} title="Edit"
             class="p-1 text-c-faint hover:text-c-accent rounded">
@@ -174,6 +177,7 @@
             </svg>
           </button>
         </div>
+        {/if}
       </div>
     {/if}
   {/each}

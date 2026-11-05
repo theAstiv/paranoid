@@ -24,6 +24,7 @@
    *   ondreadUpdated?: (threat: object) => void,
    *   oncvssUpdated?: (threat: object) => void,
    *   oncommentChange?: (detail: { delta: number }) => void,
+   *   commentsReadonly?: boolean,
    * }}
    */
   let {
@@ -46,6 +47,8 @@
     ondreadUpdated,
     oncvssUpdated,
     oncommentChange,
+    // An archived project: its comments are shown but can't change.
+    commentsReadonly = false,
   } = $props()
 
   // Plan: dread -> DREAD only, cvss -> CVSS only, both -> both. Gates the
@@ -495,7 +498,7 @@
   <!-- Inline comments -->
   {#if modelId && (showComments || commentCount === 0)}
     <Comments {modelId} entityType="threat" entityId={threat.id} compact={true}
-      oncommentChange={handleCommentChange} />
+      readonly={commentsReadonly} oncommentChange={handleCommentChange} />
   {:else if modelId && !showComments}
     <button type="button" onclick={() => showComments = true}
       class="text-xs text-c-faint hover:text-c-accent transition-colors pt-1">

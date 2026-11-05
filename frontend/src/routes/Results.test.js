@@ -159,6 +159,39 @@ describe('Results — loading', () => {
   })
 })
 
+describe('Results — read-only states (PR 9)', () => {
+  const asset = { id: 'a1', name: 'Orders DB', type: 'Asset', description: '' }
+
+  async function renderWith(project) {
+    currentProject.set(project)
+    getModelAssets.mockResolvedValue([asset])
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Orders DB')).toBeInTheDocument())
+  }
+
+  it('offers Add, edit and Post to an editor', async () => {
+    await renderWith({ id: 'p1', member_role: 'editor', is_archived: 0 })
+    expect(screen.getAllByText('Add')).toHaveLength(3)
+    expect(screen.getAllByTitle('Edit').length).toBeGreaterThan(0)
+    expect(screen.getByText('Post')).toBeInTheDocument()
+  })
+
+  it('hides Add and edit from a viewer but keeps Post (viewers may comment)', async () => {
+    await renderWith({ id: 'p1', member_role: 'viewer', is_archived: 0 })
+    expect(screen.queryByText('Add')).toBeNull()
+    expect(screen.queryByTitle('Edit')).toBeNull()
+    expect(screen.getByText('Post')).toBeInTheDocument()
+  })
+
+  it('hides Add, edit and comment controls in an archived project, even from an owner', async () => {
+    await renderWith({ id: 'p1', member_role: 'owner', is_archived: 1 })
+    expect(screen.queryByText('Add')).toBeNull()
+    expect(screen.queryByTitle('Edit')).toBeNull()
+    expect(screen.queryByText('Post')).toBeNull()
+    expect(screen.getByText(/comments are read-only/)).toBeInTheDocument()
+  })
+})
+
 describe('Results — dependencies', () => {
   it('hides the Dependencies section when there are no scans', async () => {
     render(Results, { props: { params: { id: 'm1' } } })

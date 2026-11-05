@@ -238,6 +238,10 @@
   // A viewer's approve/reject/score edits get a 403, so hide them. The model
   // may sit in another project than the active one; its role is then unknown.
   const canEdit = $derived(canEditProject($currentProject, $currentUser, $currentModel?.project_id))
+  // Comments are open to viewers, so they follow the archive flag, not canEdit.
+  const archived = $derived(
+    !!$currentProject?.is_archived && $currentProject?.id === $currentModel?.project_id,
+  )
 
   // Dependency threats only exist when the run analysed a manifest, so the
   // option only appears for models that have some.
@@ -536,6 +540,7 @@
           {threat}
           readonly={false}
           {canEdit}
+          commentsReadonly={archived}
           selectable={canEdit}
           selected={selectedIds.has(threat.id)}
           modelId={params.id}

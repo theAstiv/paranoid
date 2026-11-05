@@ -9,6 +9,8 @@
   export let entityType = ''
   /** @type {Record<string, number>} */
   export let commentCounts = {}
+  /** An archived project: see Comments' readonly. */
+  export let readonly = false
 
   let expandedId = null
 
@@ -36,7 +38,7 @@
       </button>
       {#if expandedId === item.id}
         <div class="mt-1">
-          <Comments {modelId} {entityType} entityId={item.id} compact={true}
+          <Comments {modelId} {entityType} entityId={item.id} compact={true} {readonly}
             oncommentChange={detail => handleChange(item.id, detail)} />
         </div>
       {/if}

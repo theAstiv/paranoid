@@ -12,6 +12,7 @@
    *   entityType?: string|null,
    *   entityId?: string|null,
    *   compact?: boolean,
+   *   readonly?: boolean,
    *   oncommentChange?: (detail: { delta: number }) => void,
    * }}
    */
@@ -20,6 +21,8 @@
     entityType = null,
     entityId = null,
     compact = false,
+    // An archived project: comments can be read, not added, edited or removed.
+    readonly = false,
     oncommentChange,
   } = $props()
 
@@ -173,6 +176,7 @@
                 </div>
               {:else}
                 <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{comment.body}</p>
+                {#if !readonly}
                 <div class="flex items-center gap-3 mt-1">
                   <button type="button" data-reply-trigger={comment.id} onclick={() => { replyToId = replyToId === comment.id ? null : comment.id; replyDraft = '' }} class="text-xs text-c-faint hover:text-c-accent transition-colors">
                     Reply
@@ -182,6 +186,7 @@
                     <button type="button" onclick={() => remove(comment)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
                   {/if}
                 </div>
+                {/if}
               {/if}
 
               {#if replyToId === comment.id}
@@ -213,7 +218,7 @@
                       </div>
                     {:else}
                       <p class="text-sm text-c-text2 mt-1 whitespace-pre-line">{reply.body}</p>
-                      {#if isAuthor(reply)}
+                      {#if isAuthor(reply) && !readonly}
                         <div class="flex items-center gap-3 mt-1">
                           <button type="button" onclick={() => startEdit(reply)} class="text-xs text-c-faint hover:text-c-accent transition-colors">Edit</button>
                           <button type="button" onclick={() => remove(reply)} class="text-xs text-c-faint hover:text-c-critical transition-colors">Delete</button>
@@ -229,11 +234,15 @@
       </div>
     {/if}
 
+    {#if readonly}
+      <p class="text-xs text-c-faint mt-5 pt-4 border-t border-c-border">This project is archived; comments are read-only.</p>
+    {:else}
     <div class="flex gap-2 mt-5 pt-4 border-t border-c-border">
       <textarea bind:value={draft} rows="2" placeholder="Add a comment…" aria-label="Add a comment" class="field text-sm flex-1"></textarea>
       <button type="button" onclick={post} disabled={posting || !draft.trim()} class="btn-primary text-sm px-4 self-start disabled:opacity-50">
         Post
       </button>
     </div>
+    {/if}
   {/if}
 </div>
