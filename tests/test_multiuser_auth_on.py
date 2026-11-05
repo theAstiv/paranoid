@@ -641,11 +641,6 @@ async def test_archiving_a_project_hides_it_and_keeps_its_data(test_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: an archived project is not read-only — require_role ignores "
-    "projects.is_archived, so editors still edit models, threats and run pipelines there",
-)
 async def test_archived_project_refuses_edits(test_db):
     w = await build_world()
     await _archive(w)

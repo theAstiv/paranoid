@@ -153,8 +153,11 @@ async def move_source(
     """
     if settings.paranoid_require_auth:
         await check_project_role(user, body.project_id, "editor")
-    if await crud_projects.get_project(body.project_id) is None:
+    target = await crud_projects.get_project(body.project_id)
+    if target is None:
         raise HTTPException(status_code=404, detail="Project not found.")
+    # The source's own project is checked by require_role; the target too.
+    require_active_project(target)
 
     await crud.update_code_source_project(source_id, body.project_id)
     row = await crud.get_code_source(source_id)

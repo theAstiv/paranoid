@@ -138,6 +138,17 @@ describe('active project persistence', () => {
     expect(pickInitialProject([])).toBeNull()
   })
 
+  it('starts on an active project rather than an archived one', () => {
+    const withArchived = [{ id: 'old', is_archived: 1 }, { id: 'live', is_archived: 0 }]
+    expect(pickInitialProject(withArchived).id).toBe('live')
+  })
+
+  it('still restores a remembered archived project', () => {
+    const withArchived = [{ id: 'old', is_archived: 1 }, { id: 'live', is_archived: 0 }]
+    localStorage.setItem('paranoid_active_project', 'old')
+    expect(pickInitialProject(withArchived).id).toBe('old')
+  })
+
   it('reconcile keeps the selection but takes the new list\'s object (role)', () => {
     const editor = { id: 'demo', member_role: 'editor' }
     const viewer = { id: 'demo', member_role: 'viewer' }

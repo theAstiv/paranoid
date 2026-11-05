@@ -49,16 +49,16 @@ async def get_project(project_id: str) -> dict | None:
         return _row(await cur.fetchone())
 
 
-async def list_projects_for_user(user_id: str) -> list[dict]:
-    """Return all non-archived projects the user is a member of."""
+async def list_projects_for_user(user_id: str, include_archived: bool = False) -> list[dict]:
+    """Return the projects the user is a member of; archived ones only on request."""
     conn = await db.get()
     async with conn.execute(
         """SELECT p.*, pm.role AS member_role
            FROM projects p
            JOIN project_members pm ON pm.project_id = p.id
-           WHERE pm.user_id = ? AND p.is_archived = 0
+           WHERE pm.user_id = ? AND (p.is_archived = 0 OR ?)
            ORDER BY p.created_at DESC""",
-        (user_id,),
+        (user_id, int(include_archived)),
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
 
@@ -95,12 +95,13 @@ async def update_project(project_id: str, **fields) -> dict | None:
     return await get_project(project_id)
 
 
-async def archive_project(project_id: str) -> None:
+async def archive_project(project_id: str, archived: bool = True) -> None:
+    """Archive a project (read-only), or with archived=False restore it."""
     now = datetime.now(UTC).isoformat()
     conn = await db.get()
     await conn.execute(
-        "UPDATE projects SET is_archived = 1, updated_at = ? WHERE id = ?",
-        (now, project_id),
+        "UPDATE projects SET is_archived = ?, updated_at = ? WHERE id = ?",
+        (int(archived), now, project_id),
     )
     await conn.commit()
 

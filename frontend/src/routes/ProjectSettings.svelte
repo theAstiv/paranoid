@@ -1,6 +1,6 @@
 <script>
-  import { currentProject, currentUser, notify } from '../lib/stores.js'
-  import { getProject, updateProject } from '../lib/api.js'
+  import { currentProject, currentUser, projects, notify } from '../lib/stores.js'
+  import { getProject, updateProject, archiveProject, unarchiveProject } from '../lib/api.js'
 
   let loading = true
   let saving = false
@@ -15,6 +15,25 @@
 
   $: projectId = $currentProject?.id
   $: canManage = $currentProject?.member_role === 'owner' || $currentUser?.is_admin
+  $: archived = !!$currentProject?.is_archived
+
+  // An archived project is read-only (BB-50): settings wait for unarchive.
+  async function setArchived(value) {
+    if (value && !confirm('Archive this project? It becomes read-only until an owner restores it.')) return
+    saving = true
+    try {
+      const updated = value
+        ? (await archiveProject(projectId), { ...$currentProject, is_archived: 1 })
+        : { ...$currentProject, ...(await unarchiveProject(projectId)) }
+      currentProject.set(updated)
+      projects.update(list => list.map(p => (p.id === updated.id ? { ...p, is_archived: updated.is_archived } : p)))
+      notify('success', value ? 'Project archived.' : 'Project restored.')
+    } catch (err) {
+      notify('error', `${value ? 'Archive' : 'Restore'} failed: ${err.message}`)
+    } finally {
+      saving = false
+    }
+  }
 
   // Re-load whenever the active project changes (sidebar switch)
   $: if (projectId) loadProject()
@@ -90,6 +109,12 @@
     </div>
 
   {:else}
+    {#if archived}
+      <div class="card p-4 border-c-medium/40 text-sm text-c-text2" data-testid="archived-banner">
+        This project is archived: everything in it is read-only until it is restored.
+      </div>
+    {/if}
+
     <div class="card p-5">
       <div class="flex items-center justify-between mb-5">
         <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Pipeline defaults</h2>
@@ -131,7 +156,7 @@
         </div>
 
         <div class="flex justify-end pt-2">
-          <button type="submit" disabled={saving}
+          <button type="submit" disabled={saving || archived}
             class="btn-primary text-sm px-4 disabled:opacity-50 disabled:cursor-not-allowed">
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -150,9 +175,26 @@
           class="col-span-2 w-24 {FIELD_CLASS}" />
       </div>
       <div class="flex justify-end pt-3">
-        <button type="button" on:click={save} disabled={saving}
+        <button type="button" on:click={save} disabled={saving || archived}
           class="btn-primary text-sm px-4 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-2">
+        {archived ? 'Restore project' : 'Archive project'}
+      </h2>
+      <p class="text-xs text-c-faint mb-4">
+        {archived
+          ? 'Make the project editable again and list it for its members.'
+          : "Hide the project from members' lists and make it read-only. Owners can restore it here."}
+      </p>
+      <div class="flex justify-end">
+        <button type="button" on:click={() => setArchived(!archived)} disabled={saving}
+          class="btn-ghost text-sm px-4 disabled:opacity-50 disabled:cursor-not-allowed">
+          {archived ? 'Unarchive' : 'Archive'}
         </button>
       </div>
     </div>

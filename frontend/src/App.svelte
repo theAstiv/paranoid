@@ -154,6 +154,10 @@
   }
 
 
+  // The line under a project's name: archived, else the user's role in it.
+  // (It said "personal" for every project: there is no org.)
+  const projectLabel = p => (p?.is_archived ? 'archived' : p?.member_role ?? 'project')
+
   // With admin-only registration only an instance admin can create projects.
   $: canCreateProject = $config?.registration !== 'admin_only' || !!$currentUser?.is_admin
 
@@ -260,7 +264,7 @@
           </div>
           <div class="flex-1 min-w-0 text-left">
             <p class="font-mono text-[10px] text-c-faint uppercase tracking-[0.08em] leading-none mb-0.5">
-              {$currentProject?.org ?? 'personal'}
+              {projectLabel($currentProject)}
             </p>
             <p class="text-[13px] font-semibold text-c-text truncate">{projectName}</p>
           </div>
@@ -280,7 +284,7 @@
               </div>
               <div class="flex-1 min-w-0">
                 <p class="text-[13px] font-semibold text-c-accent truncate">{projectName}</p>
-                <p class="text-[11px] text-c-faint">{$currentProject?.org ?? 'personal'}</p>
+                <p class="text-[11px] text-c-faint">{projectLabel($currentProject)}</p>
               </div>
             </button>
             {#each $projects.filter(p => p.id !== $currentProject?.id) as p}
@@ -293,7 +297,11 @@
                 </div>
                 <div class="flex-1 min-w-0">
                   <p class="text-[13px] font-semibold text-c-text2 truncate">{p.name}</p>
-                  <p class="text-[11px] text-c-faint">{p.org ?? 'personal'}</p>
+                  {#if p.is_archived}
+                    <span class="font-mono text-[10px] px-1.5 py-px rounded-chip border chip-amber">archived</span>
+                  {:else}
+                    <p class="text-[11px] text-c-faint">{projectLabel(p)}</p>
+                  {/if}
                 </div>
               </button>
             {/each}

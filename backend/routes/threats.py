@@ -6,7 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from backend.auth.dependencies import check_project_role, get_current_user, require_role
+from backend.auth.dependencies import (
+    check_project_role,
+    get_current_user,
+    require_active_project,
+    require_role,
+)
 from backend.config import settings
 from backend.db import crud, crud_activity, crud_projects, vectors
 from backend.db.component_links import relink_threat
@@ -177,6 +182,7 @@ async def bulk_status(
     project_id = await crud_projects.resolve_project_id_from_model(model_id)
     if settings.paranoid_require_auth:
         await check_project_role(user, project_id, "editor")
+    require_active_project(await crud_projects.get_project(project_id))
 
     updated = await crud.bulk_update_threat_status(body.threat_ids, body.status.value)
 
