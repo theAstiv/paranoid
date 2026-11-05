@@ -20,7 +20,7 @@ When `PARANOID_REQUIRE_AUTH=false` (default), all routes are accessible without 
 
 List threat models. Returns most recent first.
 
-**Query params:** `limit` (int, default 20), `offset` (int), `project_id` (UUID)
+**Query params:** `limit` (int, 1–500, default 50), `framework`, `status`, `project_id` (UUID)
 
 **Response:** `[ThreatModel]`
 

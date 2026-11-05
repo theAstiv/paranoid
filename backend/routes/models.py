@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import aiosqlite
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
@@ -491,7 +491,7 @@ async def create_model(
 
 @router.get("/")
 async def list_models(
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
     framework: str | None = None,
     status: str | None = None,
     project_id: str | None = None,
