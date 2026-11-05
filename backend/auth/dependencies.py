@@ -7,6 +7,7 @@ When PARANOID_REQUIRE_AUTH is false (default) every request is treated as a
 synthetic instance-admin user — exactly the existing single-user behaviour.
 """
 
+import hmac
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -147,7 +148,7 @@ async def _authenticate_pat(token: str) -> dict[str, Any]:
     if pat is None:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    if pat["token_hash"] != hash_pat(token):
+    if not hmac.compare_digest(pat["token_hash"], hash_pat(token)):
         raise HTTPException(status_code=401, detail="Invalid token")
 
     if pat["expires_at"]:

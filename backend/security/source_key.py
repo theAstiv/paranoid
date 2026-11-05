@@ -19,6 +19,7 @@ import base64
 import logging
 import os
 import secrets
+import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -56,6 +57,10 @@ class KeySourceChangedError(RuntimeError):
     PATs were encrypted. Re-save PATs after confirming the intended rotation."""
 
 
+# Polls (50 ms apart) for a key file another process is still writing.
+_RACE_READ_ATTEMPTS = 20
+
+
 def _derive_key_from_secret(secret: str) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -66,19 +71,41 @@ def _derive_key_from_secret(secret: str) -> bytes:
     return base64.urlsafe_b64encode(kdf.derive(secret.encode("utf-8")))
 
 
+def _read_key_file(key_path: Path) -> bytes:
+    raw = key_path.read_bytes()
+    if len(raw) != _KEY_BYTES:
+        msg = f"{key_path} has wrong length ({len(raw)} bytes, expected {_KEY_BYTES})"
+        raise SourceKeyUnavailableError(msg)
+    return base64.urlsafe_b64encode(raw)
+
+
+def _read_key_file_written_by_another_process(key_path: Path) -> bytes:
+    """Another process created the file first and may still be writing it."""
+    for _ in range(_RACE_READ_ATTEMPTS):
+        if key_path.stat().st_size == _KEY_BYTES:
+            break
+        time.sleep(0.05)
+    return _read_key_file(key_path)
+
+
 def _load_or_create_file_key(data_dir: Path) -> bytes:
     key_path = data_dir / _KEY_FILENAME
     if key_path.exists():
-        raw = key_path.read_bytes()
-        if len(raw) != _KEY_BYTES:
-            msg = f"{key_path} has wrong length ({len(raw)} bytes, expected {_KEY_BYTES})"
-            raise SourceKeyUnavailableError(msg)
-        return base64.urlsafe_b64encode(raw)
+        return _read_key_file(key_path)
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         raw = secrets.token_bytes(_KEY_BYTES)
-        key_path.write_bytes(raw)
-        os.chmod(key_path, 0o600)
+        # Created 0600, not written then chmod-ed: a default umask left the key
+        # world-readable in between (review S6). O_EXCL so two processes can't
+        # both write one; O_BINARY or Windows rewrites LF bytes as CRLF and the
+        # next start fails the length check.
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+        try:
+            fd = os.open(key_path, flags, 0o600)
+        except FileExistsError:
+            return _read_key_file_written_by_another_process(key_path)
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
     except OSError as exc:
         msg = (
             "Set CONFIG_SECRET or allow writable data dir to store credentials "

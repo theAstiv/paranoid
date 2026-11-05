@@ -118,6 +118,19 @@ def _warn_if_refresh_cookie_is_dropped(origins: list[str]) -> None:
         )
 
 
+def _warn_if_rate_limits_share_one_ip() -> None:
+    """With auth on behind a proxy and no TRUSTED_PROXIES, everyone is one IP."""
+    if not settings.paranoid_require_auth or settings.trusted_proxies.strip():
+        return
+    logger.warning(
+        "PARANOID_REQUIRE_AUTH=true and TRUSTED_PROXIES is empty. If Paranoid is "
+        "behind a reverse proxy, every user's requests come from the proxy's address "
+        "and share one rate-limit bucket (10 logins and 5 pipeline runs a minute for "
+        "the whole team). Set TRUSTED_PROXIES to the proxy's IP or CIDR. See "
+        "docs/configuration.md."
+    )
+
+
 async def _run_staleness_check() -> None:
     """Find stale threat models and notify project members."""
     stale = await find_stale_models()
@@ -216,6 +229,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Set PARANOID_REQUIRE_AUTH=true to enforce login."
         )
     _warn_if_refresh_cookie_is_dropped(_allowed_origins)
+    _warn_if_rate_limits_share_one_ip()
 
     # Background task: clean up sessions every 24 h.
     async def _session_gc_loop() -> None:

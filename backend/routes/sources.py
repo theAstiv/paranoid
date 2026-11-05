@@ -166,6 +166,11 @@ async def move_source(
     return _source_response(row)
 
 
+# Sources whose re-index is being scheduled (see reindex_source). Per process,
+# like the manager's locks and tasks.
+_reindex_starting: set[str] = set()
+
+
 @router.post("/{source_id}/reindex", status_code=202)
 async def reindex_source(
     source_id: str,
@@ -178,12 +183,19 @@ async def reindex_source(
         raise HTTPException(status_code=404, detail="Source not found.")
 
     lock = mgr.get_lock(source_id)
-    if lock.locked():
+    # The lock is only taken inside the task, so two requests arriving together
+    # both saw it free and both scheduled a full clone + index (review C5).
+    # Claim the source before the first await; once scheduled, is_task_active
+    # covers it.
+    if lock.locked() or mgr.is_task_active(source_id) or source_id in _reindex_starting:
         raise HTTPException(status_code=409, detail="Indexing already in progress.")
-
-    # Reset to queued before scheduling so polling clients see the transition.
-    await crud.update_code_source_status(source_id, status="queued")
-    mgr.schedule_clone_and_index(source_id)
+    _reindex_starting.add(source_id)
+    try:
+        # Reset to queued before scheduling so polling clients see the transition.
+        await crud.update_code_source_status(source_id, status="queued")
+        mgr.schedule_clone_and_index(source_id)
+    finally:
+        _reindex_starting.discard(source_id)
 
     row = await crud.get_code_source(source_id)
     if row is None:
