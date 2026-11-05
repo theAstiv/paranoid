@@ -22,6 +22,7 @@ Design constraints:
 """
 
 import asyncio
+import base64
 import contextlib
 import dataclasses
 import json
@@ -34,7 +35,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 from backend.config import settings
 from backend.db.crud import (
@@ -183,9 +184,96 @@ def validate_git_url(url: str) -> None:
         )
 
 
-def scrub_pat(text: str) -> str:
-    """Replace PAT tokens in ``text`` with ``***``."""
-    return _PAT_SCRUB_RE.sub("x-access-token:***@", text)
+def scrub_pat(text: str, *secrets: str) -> str:
+    """Replace PAT tokens in ``text`` with ``***``.
+
+    Catches the ``x-access-token:<pat>@`` URL form (clones made before the PAT
+    moved to an HTTP header still have it in .git/config) and any of
+    ``secrets`` verbatim (the PAT itself and its Basic-auth encoding).
+    """
+    text = _PAT_SCRUB_RE.sub("x-access-token:***@", text)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
+# Environment variables git and context-link need to run, find a proxy or CA
+# bundle, and on Windows start at all (TLS breaks without SYSTEMROOT).
+# Everything else, including ANTHROPIC_API_KEY, OPENAI_API_KEY, AWS_*,
+# CONFIG_SECRET and JWT_SECRET, stays out of their environment (review S8): a
+# git hook or a compromised indexer could otherwise read it.
+_SUBPROCESS_ENV_KEYS = (
+    "PATH",
+    "PATHEXT",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "GIT_SSL_CAINFO",
+)
+
+
+def subprocess_env(**extra: str) -> dict[str, str]:
+    """A minimal environment for git and context-link, plus ``extra``."""
+    env = {k: v for k in _SUBPROCESS_ENV_KEYS if (v := os.environ.get(k)) is not None}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"})
+    env.update(extra)
+    return env
+
+
+def pat_header_env(git_url: str, pat: str) -> dict[str, str]:
+    """Git config, as environment variables, that sends ``pat`` to the URL's host.
+
+    The PAT used to go in the clone URL, so it was on git's command line (the
+    process list) and in clear text in the clone's .git/config (BB-74). An
+    ``http.<url>.extraHeader`` scoped to scheme://host[:port]/ is sent only to
+    that host, not on a redirect elsewhere. GIT_CONFIG_COUNT needs git 2.31+;
+    an older git ignores it and the clone fails as unauthenticated.
+    """
+    parsed = urlparse(git_url)
+    host = parsed.hostname or ""
+    if parsed.port:
+        host += f":{parsed.port}"
+    basic = base64.b64encode(f"x-access-token:{pat}".encode()).decode()
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"http.{parsed.scheme}://{host}/.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+    }
+
+
+def _find_escaping_path(clone_dir: Path) -> Path | None:
+    """The first entry under ``clone_dir`` whose resolved path is outside it.
+
+    followlinks=False so the walk never *descends* into a symlinked directory
+    (no loops from circular links); each entry is still resolved, which catches
+    a file or directory link pointing outside. Blocking: run it in a thread.
+    """
+    base = clone_dir.resolve()
+    for dirpath, dirs, fnames in os.walk(clone_dir, followlinks=False):
+        for name in [*dirs, *fnames]:
+            candidate = Path(dirpath) / name
+            try:
+                candidate.resolve().relative_to(base)
+            except (ValueError, OSError):
+                return candidate
+    return None
 
 
 def is_sha_ref(ref: str | None) -> bool:
@@ -457,20 +545,18 @@ async def _do_clone_and_index(  # noqa: PLR0911
 
     clone_dir = clone_dir_for(source_id)
     if clone_dir.exists():
-        shutil.rmtree(clone_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, clone_dir, True)
     clone_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build clone URL, injecting PAT when available.
-    clone_url = git_url
+    # The PAT travels as an HTTP header in git's environment, never in the URL.
+    auth_env: dict[str, str] = {}
+    secrets: tuple[str, ...] = ()
     if source.get("has_pat"):
         try:
             pat = await get_code_source_pat(source_id)
             if pat:
-                parsed = urlparse(git_url)
-                netloc = f"x-access-token:{pat}@{parsed.hostname}"
-                if parsed.port:
-                    netloc += f":{parsed.port}"
-                clone_url = urlunparse(parsed._replace(netloc=netloc))
+                auth_env = pat_header_env(git_url, pat)
+                secrets = (pat, auth_env["GIT_CONFIG_VALUE_0"].removeprefix("Authorization: "))
                 # Record that the PAT was used in this attempt, regardless of
                 # whether the clone succeeds — the column tracks "last used",
                 # not "last succeeded", so a 403 still advances the timestamp.
@@ -490,7 +576,7 @@ async def _do_clone_and_index(  # noqa: PLR0911
             )
             return
 
-    git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+    git_env = subprocess_env(**auth_env)
     clone_args = [
         "git",
         # CVE-2022-39253 class: block submodule file:// transport
@@ -509,14 +595,14 @@ async def _do_clone_and_index(  # noqa: PLR0911
         clone_args += ["--depth", "1"]
         if ref:
             clone_args.append(f"--branch={ref}")
-    clone_args += ["--", clone_url, str(clone_dir)]
+    clone_args += ["--", git_url, str(clone_dir)]
 
     rc, _, stderr = await _run_subprocess(clone_args, cancel_event, env=git_env)
     if cancel_event.is_set():
         return
 
     if rc != 0:
-        scrubbed = scrub_pat(stderr)
+        scrubbed = scrub_pat(stderr, *secrets)
         if rc == 128 and _AUTH_FAILURE_RE.search(scrubbed):
             err = "Token rejected by git host — rotate the PAT in Settings."
         else:
@@ -525,28 +611,21 @@ async def _do_clone_and_index(  # noqa: PLR0911
         _publish(source_id, SourceEvent(source_id, "failed", "cloning", "Clone failed", error=err))
         return
 
-    # Post-clone path-containment check: walk the clone dir and reject any
-    # entry whose resolved path escapes the clone root. followlinks=False so
-    # we never *descend* into a symlinked directory (avoids DoS / infinite-loop
-    # from circular symlinks); check_path_containment(candidate) still calls
-    # resolve() on each individual entry, which dereferences symlinks and
-    # catches file/dir links pointing outside. core.symlinks=false is the
-    # first line of defence; this walk is belt-and-suspenders.
-    for dirpath, dirs, fnames in os.walk(clone_dir, followlinks=False):
-        for name in [*dirs, *fnames]:
-            candidate = Path(dirpath) / name
-            if not check_path_containment(candidate, clone_dir):
-                err = f"Clone rejected: path escapes clone directory: {candidate}"
-                logger.warning("Source %s: %s", source_id, err)
-                shutil.rmtree(clone_dir, ignore_errors=True)
-                await update_code_source_status(source_id, status="failed", error=err)
-                _publish(
-                    source_id,
-                    SourceEvent(
-                        source_id, "failed", "cloning", "Path containment check failed", error=err
-                    ),
-                )
-                return
+    # Post-clone path-containment check: reject any entry whose resolved path
+    # escapes the clone root. core.symlinks=false is the first line of
+    # defence; this walk is belt-and-suspenders. Off the event loop (review
+    # A3): on a large monorepo it took seconds and stalled every request.
+    escaping = await asyncio.to_thread(_find_escaping_path, clone_dir)
+    if escaping is not None:
+        err = f"Clone rejected: path escapes clone directory: {escaping}"
+        logger.warning("Source %s: %s", source_id, err)
+        await asyncio.to_thread(shutil.rmtree, clone_dir, True)
+        await update_code_source_status(source_id, status="failed", error=err)
+        _publish(
+            source_id,
+            SourceEvent(source_id, "failed", "cloning", "Path containment check failed", error=err),
+        )
+        return
 
     # A SHA ref: check it out from the full clone. The trailing "--" stops git
     # reading the ref as a path; it still resolves a remote branch that only
@@ -560,7 +639,7 @@ async def _do_clone_and_index(  # noqa: PLR0911
         if cancel_event.is_set():
             return
         if co_rc != 0:
-            err = scrub_pat(co_err) or f"git checkout {ref!r} exited with code {co_rc}"
+            err = scrub_pat(co_err, *secrets) or f"git checkout {ref!r} exited with code {co_rc}"
             await update_code_source_status(source_id, status="failed", error=err)
             _publish(
                 source_id,
@@ -639,7 +718,7 @@ async def _do_clone_and_index(  # noqa: PLR0911
                 pass
             if heartbeat_stop.is_set():
                 break
-            files, nbytes = _walk_stats(clone_dir)
+            files, nbytes = await asyncio.to_thread(_walk_stats, clone_dir)
             _publish(
                 source_id,
                 SourceEvent(
@@ -656,9 +735,11 @@ async def _do_clone_and_index(  # noqa: PLR0911
     heartbeat_task = asyncio.create_task(_heartbeat())
 
     try:
+        # Its own minimal environment: no PAT, no server secrets (review S8).
         idx_rc, _, idx_err = await _run_subprocess(
             [cl_binary, "index", str(clone_dir), "--db-path", str(cl_db)],
             cancel_event,
+            env=subprocess_env(),
         )
     finally:
         heartbeat_stop.set()
@@ -671,7 +752,7 @@ async def _do_clone_and_index(  # noqa: PLR0911
     if idx_rc != 0:
         if cl_db.exists():
             cl_db.unlink()
-        err = scrub_pat(idx_err) or f"context-link index exited with code {idx_rc}"
+        err = scrub_pat(idx_err, *secrets) or f"context-link index exited with code {idx_rc}"
         await update_code_source_status(source_id, status="failed", error=err)
         _publish(
             source_id, SourceEvent(source_id, "failed", "indexing", "Indexing failed", error=err)

@@ -217,13 +217,14 @@ async def delete_source(
                 detail="Source is busy; retry in a few seconds.",
             )
 
-    # Remove the clone directory and index DB (best-effort).
+    # Remove the clone directory and index DB (best-effort), off the event
+    # loop: a large clone takes seconds to delete (review A3).
     clone_dir = clone_dir_for(source_id)
     if clone_dir.exists():
-        shutil.rmtree(clone_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, clone_dir, True)
     idx_db = index_db_for(source_id)
     if idx_db.exists():
-        idx_db.unlink(missing_ok=True)
+        await asyncio.to_thread(idx_db.unlink, True)
 
     await crud.delete_code_source(source_id)
     # Purge all per-source module state so create→delete cycles don't accumulate
