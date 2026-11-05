@@ -863,15 +863,6 @@ async def test_stored_pat_echoed_by_git_is_scrubbed_everywhere(test_db, monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 23): the PAT is put in the clone URL on git's command line, "
-        "so git writes it in clear text to the clone's .git/config (remote.origin.url; "
-        "checked with real git 10-19) and it shows in the process list while the clone runs. "
-        "docs/authentication.md says PATs are only stored encrypted."
-    ),
-)
 async def test_stored_pat_is_not_on_the_git_command_line(test_db, monkeypatch):
     source_id = await _create_source("https://github.com/o/r.git", None, _REAL_LOOKING_PAT)
     monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
@@ -889,3 +880,134 @@ async def test_stored_pat_is_not_on_the_git_command_line(test_db, monkeypatch):
 
     clone_argv = next(args for args in calls if "clone" in args)
     assert not any(_REAL_LOOKING_PAT in str(arg) for arg in clone_argv)
+
+
+# ---------------------------------------------------------------------------
+# PR 10: PAT as an HTTP header (BB-74), minimal subprocess env (S8), walk (A3)
+# ---------------------------------------------------------------------------
+
+
+def _recording(monkeypatch, *specs):
+    calls: list[tuple[tuple, dict]] = []
+    fake = _make_exec_factory(*specs)
+
+    async def recording_exec(*args, **kwargs):
+        calls.append((args, kwargs))
+        return await fake(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", recording_exec)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_the_pat_goes_to_git_as_a_host_scoped_header(test_db, monkeypatch):
+    import base64
+
+    source_id = await _create_source("https://github.com/o/r.git", None, _REAL_LOOKING_PAT)
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
+    monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: None)
+    calls = _recording(monkeypatch, {"returncode": 0}, {"returncode": 0, "stdout": b"abc\n"})
+
+    await mgr.run_clone_and_index(source_id)
+
+    args, kwargs = next(c for c in calls if "clone" in c[0])
+    assert "https://github.com/o/r.git" in args
+    env = kwargs["env"]
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
+    encoded = base64.b64encode(f"x-access-token:{_REAL_LOOKING_PAT}".encode()).decode()
+    assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {encoded}"
+
+
+def test_the_header_key_keeps_a_custom_port():
+    env = mgr.pat_header_env("https://git.example.com:8443/o/r.git", "tok")
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://git.example.com:8443/.extraHeader"
+
+
+@pytest.mark.asyncio
+async def test_git_and_context_link_get_no_server_secrets(test_db, monkeypatch):
+    for name, value in (
+        ("ANTHROPIC_API_KEY", "sk-ant-secret"),
+        ("OPENAI_API_KEY", "sk-openai-secret"),
+        ("JWT_SECRET", "jwt-secret"),
+        ("CONFIG_SECRET", "config-secret"),
+        ("AWS_SECRET_ACCESS_KEY", "aws-secret"),
+    ):
+        monkeypatch.setenv(name, value)
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
+    monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: "/fake/context-link")
+    calls = _recording(
+        monkeypatch,
+        {"returncode": 0},
+        {"returncode": 0, "stdout": b"abc\n"},
+        {"returncode": 0},
+    )
+
+    await mgr.run_clone_and_index(source_id)
+
+    assert len(calls) == 3  # clone, rev-parse, context-link index
+    for args, kwargs in calls:
+        env = kwargs["env"]
+        assert env is not None, args
+        leaked = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "JWT_SECRET", "CONFIG_SECRET"} & set(env)
+        assert not leaked, (args[0], leaked)
+        assert not any(k.startswith("AWS_") for k in env), args[0]
+        assert "GIT_CONFIG_VALUE_0" not in env  # no PAT on this source
+    assert calls[2][0][0] == "/fake/context-link"
+    assert "PATH" in calls[2][1]["env"]
+
+
+def test_subprocess_env_keeps_only_what_git_needs(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy:3128")
+    monkeypatch.setenv("JWT_SECRET", "x")
+
+    env = mgr.subprocess_env(EXTRA="1")
+
+    assert env["PATH"] == "/usr/bin"
+    assert env["HTTPS_PROXY"] == "http://proxy:3128"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["EXTRA"] == "1"
+    assert "JWT_SECRET" not in env
+
+
+def test_scrub_pat_also_removes_the_given_secrets():
+    text = "fatal: header Authorization: Basic eC1hY2Nlc3M= rejected for ghp_abc"
+    assert mgr.scrub_pat(text, "eC1hY2Nlc3M=", "ghp_abc") == (
+        "fatal: header Authorization: Basic *** rejected for ***"
+    )
+
+
+def test_find_escaping_path_reports_a_link_out_of_the_clone(tmp_path):
+    clone = tmp_path / "clone"
+    (clone / "src").mkdir(parents=True)
+    (clone / "src" / "ok.py").write_text("x")
+    assert mgr._find_escaping_path(clone) is None
+
+    outside = tmp_path / "secret.txt"
+    outside.write_text("s")
+    try:
+        (clone / "src" / "link").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks not permitted here")
+    assert mgr._find_escaping_path(clone) == clone / "src" / "link"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_real_git_sends_the_header_only_to_the_sources_host():
+    """git reads GIT_CONFIG_COUNT (2.31+) and matches the URL-scoped key."""
+    env = {**os.environ, **mgr.pat_header_env("https://github.com/o/r.git", "tok")}
+
+    def header_for(url: str) -> str:
+        r = subprocess.run(  # noqa: S603 - fixed git args, test-owned URLs
+            ["git", "config", "--get-urlmatch", "http.extraHeader", url],  # noqa: S607
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return r.stdout.strip()
+
+    assert header_for("https://github.com/o/r.git").startswith("Authorization: Basic ")
+    assert header_for("https://evil.example/o/r.git") == ""
