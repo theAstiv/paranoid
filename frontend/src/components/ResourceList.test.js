@@ -34,6 +34,13 @@ describe('ResourceList', () => {
     expect(actions.className).toContain('group-focus-within:opacity-100')
   })
 
+  it('hides edit and delete when readonly (viewer, archived project)', () => {
+    render(ResourceList, { props: { items, fields, onCreate, onUpdate, onDelete, readonly: true } })
+    expect(screen.getByText('Auth Service')).toBeInTheDocument()
+    expect(screen.queryByTitle('Edit')).toBeNull()
+    expect(screen.queryByTitle('Delete')).toBeNull()
+  })
+
   it('shows empty label when items is empty', () => {
     render(ResourceList, { props: { items: [], fields, onCreate, onUpdate, onDelete, emptyLabel: 'No assets yet.' } })
     expect(screen.getByText('No assets yet.')).toBeInTheDocument()

@@ -321,6 +321,8 @@
   }
   // A viewer's re-run, context edit and status change get a 403, so hide them.
   $: canEdit = canEditProject($currentProject, $currentUser, model?.project_id)
+  // Comments are open to viewers, so they follow the archive flag, not canEdit.
+  $: archived = !!$currentProject?.is_archived && $currentProject?.id === model?.project_id
   $: statusActions = canEdit ? (STATUS_ACTIONS[model?.status] ?? []) : []
 
   let changingStatus = false
@@ -821,6 +823,7 @@
             <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
               Assets {#if assets.length > 0}<span class="normal-case font-mono text-c-muted">({assets.length})</span>{/if}
             </h3>
+            {#if canEdit}
             <button type="button" on:click={() => assetsList.startAdd()}
               class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -828,9 +831,11 @@
               </svg>
               Add
             </button>
+            {/if}
           </div>
           <ResourceList
             bind:this={assetsList}
+            readonly={!canEdit}
             bind:items={assets}
             fields={[
               { key: 'name', label: 'Name' },
@@ -842,7 +847,7 @@
             onDelete={(id) => deleteAsset(params.id, id)}
             emptyLabel="No assets yet."
           />
-          <EntityComments items={assets} modelId={params.id} entityType="asset" commentCounts={assetCommentCounts} />
+          <EntityComments items={assets} modelId={params.id} entityType="asset" commentCounts={assetCommentCounts} readonly={archived} />
         </div>
 
         <div class="card p-4">
@@ -850,6 +855,7 @@
             <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
               Data Flows {#if flows.length > 0}<span class="normal-case font-mono text-c-muted">({flows.length})</span>{/if}
             </h3>
+            {#if canEdit}
             <button type="button" on:click={() => flowsList.startAdd()}
               class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -857,9 +863,11 @@
               </svg>
               Add
             </button>
+            {/if}
           </div>
           <ResourceList
             bind:this={flowsList}
+            readonly={!canEdit}
             bind:items={flows}
             fields={[
               { key: 'source_entity', label: 'Source', linkKey: 'source_asset_id' },
@@ -872,7 +880,7 @@
             onDelete={(id) => deleteFlow(params.id, id)}
             emptyLabel="No data flows yet."
           />
-          <EntityComments items={flows} modelId={params.id} entityType="flow" commentCounts={flowCommentCounts} />
+          <EntityComments items={flows} modelId={params.id} entityType="flow" commentCounts={flowCommentCounts} readonly={archived} />
         </div>
 
         <div class="card p-4">
@@ -880,6 +888,7 @@
             <h3 class="text-[10px] font-semibold text-c-faint uppercase tracking-wide">
               Trust Boundaries {#if trustBoundaries.length > 0}<span class="normal-case font-mono text-c-muted">({trustBoundaries.length})</span>{/if}
             </h3>
+            {#if canEdit}
             <button type="button" on:click={() => boundariesList.startAdd()}
               class="flex items-center gap-0.5 text-xs text-c-accent hover:text-c-accent/80 font-medium">
               <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -887,9 +896,11 @@
               </svg>
               Add
             </button>
+            {/if}
           </div>
           <ResourceList
             bind:this={boundariesList}
+            readonly={!canEdit}
             bind:items={trustBoundaries}
             fields={[
               { key: 'source_entity', label: 'Source', linkKey: 'source_asset_id' },
@@ -905,6 +916,6 @@
       </div>
     {/if}
 
-    <Comments modelId={params.id} />
+    <Comments modelId={params.id} readonly={archived} />
   {/if}
 </div>

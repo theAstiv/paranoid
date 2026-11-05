@@ -218,18 +218,20 @@ export function initials(name) {
 
 /**
  * Whether the user may change things in a project: an admin, an owner or an
- * editor. Hides a control only when the role is known and too low: an unknown
- * role (not loaded yet, or auth off) keeps it, and the server still refuses
- * what the role can't do.
- * @param {{ id?: string, member_role?: string } | null | undefined} project the active project
+ * editor, and never while the project is archived (read-only, BB-50). Hides a
+ * control only when the role is known and too low: an unknown role (not
+ * loaded yet, or auth off) keeps it, and the server still refuses what the
+ * role can't do.
+ * @param {{ id?: string, member_role?: string, is_archived?: number|boolean } | null | undefined} project the active project
  * @param {{ is_admin?: boolean } | null | undefined} user the signed-in user
  * @param {string} [projectId] the project the thing being edited belongs to;
  *   when it isn't the active project, the active project's role says nothing about it
  * @returns {boolean}
  */
 export function canEditProject(project, user, projectId = project?.id) {
-  if (user?.is_admin) return true
   if (!project || projectId !== project.id) return true
+  if (project.is_archived) return false
+  if (user?.is_admin) return true
   const role = project.member_role
   return !role || role === 'owner' || role === 'editor'
 }

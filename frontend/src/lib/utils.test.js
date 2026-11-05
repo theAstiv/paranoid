@@ -29,6 +29,11 @@ describe('canEditProject', () => {
   it("ignores the active project's role for another project's model", () => {
     expect(canEditProject(project('viewer'), user, 'p2')).toBe(true)
   })
+  it('refuses everyone, admins included, in an archived project (BB-50)', () => {
+    const archived = { id: 'p1', member_role: 'owner', is_archived: 1 }
+    expect(canEditProject(archived, user)).toBe(false)
+    expect(canEditProject(archived, { is_admin: true })).toBe(false)
+  })
 })
 
 describe('dreadBand (BB-128: one set of bands for badges and bulk buttons)', () => {

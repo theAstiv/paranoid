@@ -34,7 +34,7 @@ Each **model card** shows: title, framework badge (STRIDE/MAESTRO), total threat
 - Click to open Results
 - **Compare** button — diff this model against another (see Model Diff)
 
-**Status workflow:** `pending → in_progress → completed → in_review → approved → archived`
+**Status workflow:** `pending → in_progress → completed → in_review → approved → archived`. (A model's `archived` status is separate from archiving a *project*: an archived project, set under Project Settings → Archive, is read-only until an owner restores it there, and shows an `archived` chip in the project switcher.)
 
 ---
 

@@ -299,7 +299,11 @@ A new model with no explicit model uses the project's default model only when it
 
 ### `DELETE /api/projects/{id}`
 
-Delete a project and all its models. Owner or admin only.
+Archive a project (nothing is deleted). Owner or admin only. An archived project is read-only for everyone, admins and auth-off mode included: every non-GET route on its models, threats, assets, flows, boundaries, comments, assignees, sources and runs, `PATCH /api/projects/{id}` and new invitations return `403` ("This project is archived."). Members can still be managed. It drops out of members' `GET /api/projects` unless they pass `?include_archived=true`; admins always see it.
+
+### `POST /api/projects/{id}/unarchive`
+
+Restore an archived project. Owner or admin only. Returns the project.
 
 ### `GET /api/projects/{id}/members`
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.auth.dependencies import (
     check_pat_scope,
     get_current_user,
+    require_active_project,
     require_admin,
     require_unscoped,
 )
@@ -61,11 +62,16 @@ async def create_project(
 @router.get("/projects")
 async def list_projects(
     user: Annotated[dict, Depends(get_current_user)],
+    include_archived: bool = False,
 ) -> list[dict]:
+    """Projects the caller can see. include_archived adds a member's archived
+    projects (so an owner can find one to restore); admins always get all."""
     projects = (
         await crud_projects.list_all_projects()
         if user.get("is_admin")
-        else await crud_projects.list_projects_for_user(user["id"])
+        else await crud_projects.list_projects_for_user(
+            user["id"], include_archived=include_archived
+        )
     )
     scope = user.get("pat_project_id")
     if scope:
@@ -92,6 +98,7 @@ async def update_project(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
+    await _require_not_archived(project_id)
     # exclude_unset, not exclude_none: a null default_* resets it to inherit (BB-132).
     updates = body.model_dump(exclude_unset=True, mode="json")
     project = await crud_projects.update_project(project_id, **updates)
@@ -122,6 +129,26 @@ async def archive_project(
         entity_id=project_id,
         action="archived",
     )
+
+
+@router.post("/projects/{project_id}/unarchive")
+async def unarchive_project(
+    project_id: str,
+    user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Restore an archived project (owner): it becomes editable and listed again."""
+    await _require_owner(project_id, user)
+    if await crud_projects.get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await crud_projects.archive_project(project_id, archived=False)
+    await crud_activity.safe_log_activity(
+        project_id=project_id,
+        user_id=user["id"],
+        entity_type="project",
+        entity_id=project_id,
+        action="unarchived",
+    )
+    return await crud_projects.get_project(project_id)
 
 
 @router.get("/projects/{project_id}/activity")
@@ -229,6 +256,7 @@ async def create_invitation(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     await _require_owner(project_id, user)
+    await _require_not_archived(project_id)
     try:
         invitation = await crud_projects.create_invitation(
             project_id=project_id,
@@ -363,6 +391,11 @@ async def _require_member(project_id: str, user: dict) -> None:
     role = await crud_projects.get_user_role_in_project(project_id, user["id"])
     if role is None:
         raise HTTPException(status_code=403, detail="Not a member of this project")
+
+
+async def _require_not_archived(project_id: str) -> None:
+    """Settings and invitations wait for unarchive; members can still be managed."""
+    require_active_project(await crud_projects.get_project(project_id))
 
 
 async def _require_owner(project_id: str, user: dict) -> None:

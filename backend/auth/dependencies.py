@@ -313,17 +313,36 @@ def require_role(min_role: str, entity_param: str, entity_type: str):
     ) -> None:
         from backend.config import settings
 
-        if not settings.paranoid_require_auth:
-            return  # anon admin — full access
-
         entity_id = request.path_params.get(entity_param)
         if not entity_id:
             raise HTTPException(status_code=400, detail=f"Missing path param: {entity_param}")
 
-        project_id = await resolve_project_id(entity_type, entity_id)
-        await check_project_role(user, project_id, min_role)
+        if settings.paranoid_require_auth:
+            project_id = await resolve_project_id(entity_type, entity_id)
+            await check_project_role(user, project_id, min_role)
+        # After the membership check, so a non-member still gets that 403 and
+        # learns nothing about the project; with auth off too (anon admin).
+        if request.method not in _READ_METHODS:
+            await refuse_archived_entity(entity_type, entity_id)
 
     return _dep
+
+
+# An archived project is read-only (BB-50): every other method on one of its
+# entities is refused, whatever the caller's role.
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+async def refuse_archived_entity(entity_type: str, entity_id: str) -> None:
+    """403 if the entity's project is archived. An entity that doesn't resolve is
+    left to the route, which answers 404 in its own words."""
+    from backend.db.crud_projects import get_project
+
+    try:
+        project_id = await resolve_project_id(entity_type, entity_id)
+    except HTTPException:
+        return
+    require_active_project(await get_project(project_id))
 
 
 def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:

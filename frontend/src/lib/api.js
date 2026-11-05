@@ -687,8 +687,9 @@ export function subscribeToSourceEvents(sourceId, onEvent, onError, onDone) {
 
 // ── Projects (Phase 2) ───────────────────────────────────────────────────────
 
+/** Includes the caller's archived projects (flagged `is_archived`), so an owner can restore one. */
 export function listProjects() {
-  return request('GET', '/projects')
+  return request('GET', '/projects?include_archived=true')
 }
 
 /** @param {{ name: string, description?: string }} body */
@@ -712,6 +713,11 @@ export function updateProject(id, body) {
 /** @param {string} id */
 export function archiveProject(id) {
   return request('DELETE', `/projects/${id}`)
+}
+
+/** @param {string} id */
+export function unarchiveProject(id) {
+  return request('POST', `/projects/${id}/unarchive`)
 }
 
 // ── Project members ───────────────────────────────────────────────────────────

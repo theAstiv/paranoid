@@ -112,7 +112,7 @@ export function notify(type, message) {
 
 /**
  * The currently-active project context, or null before Phase 2 backend ships.
- * Shape: { id, name, org, role } | null
+ * Shape: { id, name, member_role, is_archived, ... } (a projects row) | null
  * @type {import('svelte/store').Writable<object|null>}
  */
 export const currentProject = writable(null)
@@ -136,7 +136,8 @@ export function pickInitialProject(list) {
   if (!list.length) return null
   let storedId = null
   try { storedId = localStorage.getItem(_PROJECT_KEY) } catch { /* ignore */ }
-  return list.find(p => p.id === storedId) ?? list[0]
+  // An archived project only when it was the last one picked, or the only kind there is.
+  return list.find(p => p.id === storedId) ?? list.find(p => !p.is_archived) ?? list[0]
 }
 
 /**

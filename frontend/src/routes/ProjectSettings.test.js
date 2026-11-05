@@ -6,6 +6,8 @@ import ProjectSettings from './ProjectSettings.svelte'
 vi.mock('../lib/api.js', () => ({
   getProject: vi.fn(),
   updateProject: vi.fn(),
+  archiveProject: vi.fn(),
+  unarchiveProject: vi.fn(),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -13,7 +15,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { getProject, updateProject } from '../lib/api.js'
+import { getProject, updateProject, archiveProject, unarchiveProject } from '../lib/api.js'
 import { notify, currentProject, currentUser } from '../lib/stores.js'
 
 const projectDefaults = {
@@ -157,5 +159,52 @@ describe('ProjectSettings — form', () => {
     await fireEvent.click(screen.getAllByText('Save')[0])
 
     await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('forbidden')))
+  })
+})
+
+describe('ProjectSettings — archive (BB-135)', () => {
+  beforeEach(() => {
+    currentUser.set({ is_admin: false })
+  })
+
+  it('archives after a confirm and marks the project archived', async () => {
+    currentProject.set({ id: 'p1', name: 'Proj', member_role: 'owner', is_archived: 0 })
+    archiveProject.mockResolvedValue(null)
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByText('Archive')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Archive'))
+
+    await waitFor(() => expect(archiveProject).toHaveBeenCalledWith('p1'))
+    expect(get(currentProject).is_archived).toBe(1)
+    await waitFor(() => expect(screen.getByTestId('archived-banner')).toBeInTheDocument())
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing when the confirm is dismissed', async () => {
+    currentProject.set({ id: 'p1', name: 'Proj', member_role: 'owner', is_archived: 0 })
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByText('Archive')).toBeInTheDocument())
+
+    await fireEvent.click(screen.getByText('Archive'))
+
+    expect(archiveProject).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows an archived project as read-only, with Unarchive', async () => {
+    currentProject.set({ id: 'p1', name: 'Proj', member_role: 'owner', is_archived: 1 })
+    unarchiveProject.mockResolvedValue({ id: 'p1', name: 'Proj', is_archived: 0 })
+    render(ProjectSettings)
+    await waitFor(() => expect(screen.getByTestId('archived-banner')).toBeInTheDocument())
+    for (const save of screen.getAllByText('Save')) expect(save).toBeDisabled()
+
+    await fireEvent.click(screen.getByText('Unarchive'))
+
+    await waitFor(() => expect(unarchiveProject).toHaveBeenCalledWith('p1'))
+    expect(get(currentProject).is_archived).toBe(0)
+    expect(get(currentProject).member_role).toBe('owner')
   })
 })

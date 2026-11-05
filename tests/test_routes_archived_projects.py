@@ -101,14 +101,6 @@ async def test_a_non_member_still_gets_the_membership_403_not_a_leak_of_archived
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 24, BB-50 root cause): POST /api/models/{id}/run only "
-        "checks the editor role, which ignores is_archived, so a model in an archived "
-        "project can still be re-run (its data is cleared and rewritten)."
-    ),
-)
 async def test_running_a_model_in_an_archived_project_is_refused(test_db, monkeypatch):
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     w = await build_world()
@@ -134,14 +126,6 @@ async def test_running_a_model_in_an_archived_project_is_refused(test_db, monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash finding (item 24, BB-50 root cause): PATCH /api/sources/{id} checks the "
-        "editor role on the target project but not is_archived, so a source can be moved "
-        "into an archived project, where no list shows it."
-    ),
-)
 async def test_moving_a_source_into_an_archived_project_is_refused(test_db, monkeypatch):
     monkeypatch.setattr(settings, "paranoid_require_auth", True)
     w = await build_world()

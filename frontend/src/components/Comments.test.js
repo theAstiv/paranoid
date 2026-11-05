@@ -240,3 +240,30 @@ describe('Comments — accessibility (BB-101, BB-100)', () => {
     await waitFor(() => expect(document.activeElement).toBe(replyButton))
   })
 })
+
+describe('Comments — read-only in an archived project (PR 9)', () => {
+  it('shows comments but no Post, Reply, Edit or Delete', async () => {
+    currentUser.set({ id: 'u1' })
+    listComments.mockResolvedValue([rootComment, replyComment])
+    render(Comments, { props: { modelId: 'm1', readonly: true } })
+
+    await waitFor(() => expect(screen.getByText('First comment')).toBeInTheDocument())
+    expect(screen.getByText('A reply')).toBeInTheDocument()
+    expect(screen.queryByText('Post')).toBeNull()
+    expect(screen.queryByText('Reply')).toBeNull()
+    expect(screen.queryByText('Edit')).toBeNull()
+    expect(screen.queryByText('Delete')).toBeNull()
+    expect(screen.getByText(/comments are read-only/)).toBeInTheDocument()
+  })
+
+  it('keeps the controls otherwise', async () => {
+    currentUser.set({ id: 'u1' })
+    listComments.mockResolvedValue([rootComment])
+    render(Comments, { props: { modelId: 'm1' } })
+
+    await waitFor(() => expect(screen.getByText('First comment')).toBeInTheDocument())
+    expect(screen.getByText('Post')).toBeInTheDocument()
+    expect(screen.getByText('Reply')).toBeInTheDocument()
+    expect(screen.getByText('Edit')).toBeInTheDocument()
+  })
+})
