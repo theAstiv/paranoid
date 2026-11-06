@@ -12,6 +12,7 @@ from backend.export._common import (
     attack_techniques_display,
     cvss_display,
     dependency_findings_rows,
+    dependency_location,
 )
 
 
@@ -238,21 +239,30 @@ def export_markdown(
 
             lines.append(f"#### {global_idx}. {name}")
             lines.append("")
+            # A list, one item per line: consecutive plain lines rendered as a
+            # single run-on paragraph (BB-67).
             lines.append(
-                f"**Target:** {target} | **Likelihood:** {likelihood} | **Impact:** {impact}"
+                f"- **Target:** {target} | **Likelihood:** {likelihood} | **Impact:** {impact}"
             )
 
             dread_line = _dread_display(t)
             if dread_line:
-                lines.append(dread_line)
+                lines.append(f"- {dread_line}")
 
             cvss_value = cvss_display(t)
             if cvss_value:
-                lines.append(f"**CVSS:** {cvss_value}")
+                lines.append(f"- **CVSS:** {cvss_value}")
 
             techniques_line = attack_techniques_display(t)
             if techniques_line:
-                lines.append(f"**ATT&CK/ATLAS:** {techniques_line}")
+                lines.append(f"- **ATT&CK/ATLAS:** {techniques_line}")
+
+            location = dependency_location(t)
+            if location:
+                # Untrusted (a third-party package's file path): a code span,
+                # with backticks and pipes neutralised as for package names above.
+                safe = location.replace("\\", "/").replace("`", "'").replace("|", "\\|")
+                lines.append(f"- **Dependency:** `{safe}`")
 
             lines.append("")
 

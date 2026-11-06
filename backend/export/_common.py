@@ -114,6 +114,25 @@ def attack_techniques_display(threat: dict[str, Any]) -> str | None:
     return " ".join(parts) if parts else None
 
 
+def dependency_location(row: dict[str, Any]) -> str | None:
+    """ "lodash@4.17.21 — lib/template.js:42" for a dependency-sourced threat,
+    or None for any other. Unescaped plain text: shared by markdown.py and
+    pdf.py, which escape it their own way (the file path comes from a
+    third-party package tree, so it is untrusted). Accepts the decoded dict
+    (DB rows and model_dump both carry `dependency_ref` as a dict).
+    """
+    ref = row.get("dependency_ref")
+    if not isinstance(ref, dict) or not ref.get("package"):
+        return None
+    label = dependency_display_name(str(ref["package"]), str(ref.get("version") or ""))
+    file = ref.get("file")
+    if not file:
+        return label
+    file = " ".join(str(file).split())
+    line = ref.get("line")
+    return f"{label} — {file}:{line}" if line else f"{label} — {file}"
+
+
 def cvss_display(row: dict[str, Any]) -> str | None:
     """ "7.5 (High) AV:N/AC:L/..." plain-text value for a threat's CVSS
     score, or None if it has none. Shared by markdown.py and pdf.py —

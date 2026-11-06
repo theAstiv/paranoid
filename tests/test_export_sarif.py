@@ -3,6 +3,10 @@
 Uses fixture threats from tests/fixtures/pipeline.py — no API tokens needed.
 """
 
+import json
+from pathlib import Path
+
+import jsonschema
 import pytest
 
 from backend.export.sarif import (
@@ -757,3 +761,56 @@ def test_threat_from_row_parses_cvss_vector_and_ignores_malformed():
     assert good.cvss.attack_vector == "N"
     bad = threat_from_row(_row(cvss_vector="not-a-vector"))
     assert getattr(bad, "cvss", None) is None
+
+
+# ---------------------------------------------------------------------------
+# BB-70: the output is valid against the OASIS SARIF 2.1.0 schema
+# ---------------------------------------------------------------------------
+
+# Vendored from https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/
+# (JSON Schema draft-04). Tests run offline, so it is a fixture, not a download.
+_SARIF_SCHEMA = Path(__file__).parent / "fixtures" / "sarif-schema-2.1.0.json"
+
+
+def _validate(sarif: dict) -> None:
+    schema = json.loads(_SARIF_SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft4Validator(schema).validate(sarif)
+
+
+def test_sarif_output_validates_against_the_oasis_schema(sarif_output):
+    """Mitigations as `fixes` without `artifactChanges` (required, minItems 1)
+    made every result with a mitigation invalid."""
+    _validate(sarif_output)
+
+
+def test_sarif_with_dependency_and_cvss_threats_validates():
+    threats = make_stride_threats()
+    sarif = export_sarif(
+        threats=ThreatsList(threats=[*threats.threats, _dependency_threat()]),
+        model_id="test-model-001",
+        framework="STRIDE",
+    )
+    _validate(sarif)
+
+
+def test_sarif_mitigations_are_typed_properties(sarif_output):
+    result = next(
+        r for r in sarif_output["runs"][0]["results"] if r["properties"].get("mitigations")
+    )
+    assert "fixes" not in result
+    for mitigation in result["properties"]["mitigations"]:
+        assert set(mitigation) == {"type", "text"}
+        assert mitigation["type"] in {"Preventive", "Detective", "Containment", "Mitigation"}
+        assert not mitigation["text"].startswith("[")
+
+
+def test_sarif_guid_is_only_set_for_a_real_uuid():
+    threats = make_stride_threats()
+    model_id = "6f1c2b8e-3d4a-4b5c-9e7f-1a2b3c4d5e6f"
+    with_uuid = export_sarif(threats=threats, model_id=model_id, framework="STRIDE")
+    plain = export_sarif(threats=threats, model_id="cli-run", framework="STRIDE")
+
+    assert with_uuid["runs"][0]["automationDetails"] == {"id": model_id, "guid": model_id}
+    assert plain["runs"][0]["automationDetails"] == {"id": "cli-run"}
+    _validate(with_uuid)
+    _validate(plain)

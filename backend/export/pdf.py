@@ -28,6 +28,7 @@ from backend.export._common import (
     attack_techniques_display,
     cvss_display,
     dependency_findings_rows,
+    dependency_location,
 )
 
 
@@ -607,6 +608,10 @@ def _threat_flowables(
         meta_line += (
             f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>ATT&amp;CK/ATLAS:</b> {_escape_pdf_text(techniques_line)}"
         )
+    location = dependency_location(t)
+    if location:
+        # Untrusted (a third-party package's file path); Paragraph text is markup.
+        meta_line += f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>Dependency:</b> {_escape_pdf_text(location)}"
     parts.append(Paragraph(meta_line, styles["body"]))
 
     if description:

@@ -665,3 +665,48 @@ def test_mermaid_description_stays_unescaped_inside_its_fence():
     src = 'graph TD; A["<b>x</b>"]-->B'
     md = export_markdown([], model_id="abcdef1234567890", framework="STRIDE", description=src)
     assert f"```mermaid\n{src}\n```" in md
+
+
+# ---------------------------------------------------------------------------
+# BB-67 / BB-68: metadata lines and the dependency location
+# ---------------------------------------------------------------------------
+
+
+def _detail_block(md: str) -> str:
+    return md.split("## Threats", 1)[1]
+
+
+def test_threat_metadata_is_one_list_item_per_line() -> None:
+    """Consecutive plain lines rendered as one run-on paragraph (BB-67)."""
+    md = export_markdown([_STRIDE_THREAT_WITH_CVSS], "test-model-id", "STRIDE")
+    block = _detail_block(md)
+    assert "\n- **Target:**" in block
+    assert "\n- **CVSS:**" in block
+    for line in block.splitlines():
+        if line.startswith(("**CVSS:**", "**DREAD", "**ATT&CK")):
+            raise AssertionError(f"metadata line is not a list item: {line!r}")
+
+
+def test_a_dependency_threat_shows_its_file_and_line() -> None:
+    threat = {
+        **_STRIDE_THREAT_FLAT,
+        "source": "dependency",
+        "dependency_ref": {
+            "package": "evil-pkg",
+            "version": "1.0.0",
+            "file": "lib/index.js",
+            "line": 12,
+        },
+    }
+    md = export_markdown([threat], "mid", "STRIDE")
+    assert "- **Dependency:** `evil-pkg@1.0.0 — lib/index.js:12`" in md
+
+
+def test_a_hostile_dependency_path_cannot_break_out_of_its_code_span() -> None:
+    threat = {
+        **_STRIDE_THREAT_FLAT,
+        "dependency_ref": {"package": "p", "version": "1", "file": "a`b|c\\d", "line": 1},
+    }
+    md = export_markdown([threat], "mid", "STRIDE")
+    line = next(ln for ln in md.splitlines() if ln.startswith("- **Dependency:**"))
+    assert line == "- **Dependency:** `p@1 — a'b\\|c/d:1`"

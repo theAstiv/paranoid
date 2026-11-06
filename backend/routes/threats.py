@@ -3,6 +3,7 @@
 import logging
 from typing import Annotated
 
+import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -18,6 +19,7 @@ from backend.db.component_links import relink_threat
 from backend.models.api import BulkStatusRequest, UpdateThreatRequest
 from backend.pipeline.runner import PipelineConfig, PipelineRunner
 from backend.providers.base import ProviderError, ProviderRefusalError, create_provider
+from backend.providers.usage import build_run_usage, merge_extra_usage
 from backend.routes._helpers import (
     bedrock_kwargs,
     effort_kwargs,
@@ -270,6 +272,31 @@ async def _remove_threat_vector(threat_id: str) -> None:
         logger.warning(f"Failed to remove vector for threat {threat_id}: {exc}")
 
 
+async def _record_enrichment_usage(model_id: str, runner: PipelineRunner) -> None:
+    """Add this call's tokens and refusals to the model's usage_summary (BB-78).
+
+    Runs in a ``finally``: a refused generation was still billed. A model with
+    no summary yet (never completed a run) gets one of its own. Best-effort:
+    a DB error is logged, the generated result is still returned.
+    """
+    steps, refusals, fast_disabled = runner.usage_steps()
+    if not (steps or refusals):
+        return
+
+    def merge(current: dict | None) -> dict:
+        if current is not None:
+            return merge_extra_usage(current, steps, refusals, fast_disabled)
+        fresh = build_run_usage(steps)
+        fresh.refusal_count = refusals
+        fresh.fast_routing_disabled = fast_disabled
+        return fresh.model_dump()
+
+    try:
+        await crud.update_usage_summary(model_id, merge)
+    except aiosqlite.Error:
+        logger.warning("Failed to record enrichment usage for model %s", model_id, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Attack trees
 # ---------------------------------------------------------------------------
@@ -294,29 +321,32 @@ async def generate_attack_tree(
         raise HTTPException(status_code=422, detail=str(exc))
 
     try:
-        async with runner.provider:
-            attack_tree = await runner.generate_attack_tree_for_threat(
-                threat_id=threat_id,
-                threat_name=threat["name"],
-                threat_description=threat["description"],
-                target=threat["target"],
-                stride_category=threat.get("stride_category"),
-                maestro_category=threat.get("maestro_category"),
-                mitigations=threat["mitigations"],
+        try:
+            async with runner.provider:
+                attack_tree = await runner.generate_attack_tree_for_threat(
+                    threat_id=threat_id,
+                    threat_name=threat["name"],
+                    threat_description=threat["description"],
+                    target=threat["target"],
+                    stride_category=threat.get("stride_category"),
+                    maestro_category=threat.get("maestro_category"),
+                    mitigations=threat["mitigations"],
+                )
+        except ProviderRefusalError as exc:
+            # Not an outage: retrying the same request won't help, so don't send a 503.
+            logger.warning("Provider refused attack tree for %s: %s", threat_id, exc)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The model's safety filter declined to generate an attack tree for this "
+                    "threat. Try another model, or edit the threat's wording."
+                ),
             )
-    except ProviderRefusalError as exc:
-        # Not an outage: retrying the same request won't help, so don't send a 503.
-        logger.warning("Provider refused attack tree for %s: %s", threat_id, exc)
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The model's safety filter declined to generate an attack tree for this "
-                "threat. Try another model, or edit the threat's wording."
-            ),
-        )
-    except ProviderError as exc:
-        logger.error("Provider error generating attack tree for %s: %s", threat_id, exc)
-        raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
+        except ProviderError as exc:
+            logger.error("Provider error generating attack tree for %s: %s", threat_id, exc)
+            raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
+    finally:
+        await _record_enrichment_usage(model_id, runner)
 
     tree_id = await crud.create_attack_tree(
         threat_id=threat_id,
@@ -364,26 +394,29 @@ async def generate_test_cases(
         raise HTTPException(status_code=422, detail=str(exc))
 
     try:
-        async with runner.provider:
-            test_suite = await runner.generate_test_cases_for_threat(
-                threat_id=threat_id,
-                threat_name=threat["name"],
-                threat_description=threat["description"],
-                target=threat["target"],
-                mitigations=threat["mitigations"],
+        try:
+            async with runner.provider:
+                test_suite = await runner.generate_test_cases_for_threat(
+                    threat_id=threat_id,
+                    threat_name=threat["name"],
+                    threat_description=threat["description"],
+                    target=threat["target"],
+                    mitigations=threat["mitigations"],
+                )
+        except ProviderRefusalError as exc:
+            logger.warning("Provider refused test cases for %s: %s", threat_id, exc)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The model's safety filter declined to generate test cases for this "
+                    "threat. Try another model, or edit the threat's wording."
+                ),
             )
-    except ProviderRefusalError as exc:
-        logger.warning("Provider refused test cases for %s: %s", threat_id, exc)
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The model's safety filter declined to generate test cases for this "
-                "threat. Try another model, or edit the threat's wording."
-            ),
-        )
-    except ProviderError as exc:
-        logger.error("Provider error generating test cases for %s: %s", threat_id, exc)
-        raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
+        except ProviderError as exc:
+            logger.error("Provider error generating test cases for %s: %s", threat_id, exc)
+            raise HTTPException(status_code=503, detail=f"LLM provider error: {exc.message}")
+    finally:
+        await _record_enrichment_usage(model_id, runner)
 
     case_id = await crud.create_test_case(
         threat_id=threat_id,

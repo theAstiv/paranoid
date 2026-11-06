@@ -25,7 +25,7 @@ from backend.models.api import AnalyzeBundleResponse
 from backend.models.enums import Framework
 from backend.models.extended import AttackTree, CodeContext, DiagramData, TestSuite
 from backend.models.state import AssetsList, FlowsList, ThreatsList
-from backend.models.usage import CoverageGuardReport, StepRun
+from backend.models.usage import StepRun
 from backend.pipeline.pre_flight import analyze_bundle
 from backend.pipeline.runner import (
     PipelineConfig,
@@ -41,7 +41,8 @@ from backend.providers import (
     create_provider,
 )
 from backend.providers.base import LLMProvider, ProviderRefusalError
-from backend.providers.usage import build_run_usage, collect_usage, summarize_usage
+from backend.providers.usage import collect_usage, summarize_usage
+from backend.providers.usage import merge_extra_usage as _merge_extra_usage
 from backend.routes._helpers import FAST_MODEL_FIELDS, build_fast_provider, effort_kwargs
 from cli.async_runner import run_async
 from cli.context import DEFAULT_ANTHROPIC_MODEL, config_exists, default_model_for, load_config
@@ -314,43 +315,6 @@ async def _run_pre_flight(
         usage=summarize_usage(records),
     )
     return bundle, step
-
-
-def _merge_extra_usage(
-    run_usage: dict | None,
-    extra_steps: list[StepRun],
-    extra_refusals: int = 0,
-    fast_disabled: bool = False,
-    *,
-    prepend: bool = False,
-) -> dict | None:
-    """Fold calls made outside the pipeline into a run's usage summary.
-
-    Used for the pre-flight gap check (before the pipeline, so ``prepend``)
-    and for ``--enrich`` (after it, on a separate PipelineRunner).
-    ``run_usage`` is the COMPLETE event's serialized ``RunUsage`` dict (or None
-    if the run never reached completion). Rebuilding via ``build_run_usage()``
-    recomputes ``by_model``/``total_tokens``/``fast_model_share`` so they
-    account for every call the run actually made, not just the pipeline's own
-    steps; ``build_run_usage()`` doesn't set ``fast_routing_disabled`` or the
-    refusal count, so they're carried over (OR'd / summed) explicitly. A no-op
-    when there's nothing to add, or no completed run to attach it to.
-    """
-    if run_usage is None or not (extra_steps or extra_refusals or fast_disabled):
-        return run_usage
-    pipeline_steps = [StepRun(**s) for s in run_usage["steps"]]
-    rebuilt = build_run_usage(
-        [*extra_steps, *pipeline_steps] if prepend else [*pipeline_steps, *extra_steps],
-        fast_model=run_usage.get("fast_model"),
-    )
-    # Fields build_run_usage() doesn't compute must survive the rebuild.
-    rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False) or fast_disabled
-    rebuilt.refusal_count = run_usage.get("refusal_count", 0) + extra_refusals
-    rebuilt.effort = run_usage.get("effort")
-    rebuilt.stopped_reason = run_usage.get("stopped_reason")
-    guard = run_usage.get("coverage_guard")
-    rebuilt.coverage_guard = CoverageGuardReport(**guard) if guard else None
-    return rebuilt.model_dump()
 
 
 def _enrichment_summary(trees: int, suites: int, tree_refusals: int, suite_refusals: int) -> str:

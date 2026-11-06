@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from backend.models.usage import ModelUsage, RunUsage, StepRun, UsageRecord
+from backend.models.usage import CoverageGuardReport, ModelUsage, RunUsage, StepRun, UsageRecord
 
 
 _collector: ContextVar[list[UsageRecord] | None] = ContextVar("llm_usage_collector", default=None)
@@ -98,3 +98,41 @@ def build_run_usage(steps: list[StepRun], fast_model: str | None = None) -> RunU
         fast_model_tokens=fast_tokens,
         fast_model_share=round(fast_tokens / total, 4) if total else None,
     )
+
+
+def merge_extra_usage(
+    run_usage: dict | None,
+    extra_steps: list[StepRun],
+    extra_refusals: int = 0,
+    fast_disabled: bool = False,
+    *,
+    prepend: bool = False,
+) -> dict | None:
+    """Fold calls made outside the pipeline into a run's usage summary.
+
+    Used by the CLI for the pre-flight gap check (before the pipeline, so
+    ``prepend``) and ``--enrich`` (after it, on a separate PipelineRunner),
+    and by the web attack-tree / test-case routes (BB-78).
+    ``run_usage`` is the COMPLETE event's serialized ``RunUsage`` dict (or None
+    if the run never reached completion). Rebuilding via ``build_run_usage()``
+    recomputes ``by_model``/``total_tokens``/``fast_model_share`` so they
+    account for every call the run actually made, not just the pipeline's own
+    steps; ``build_run_usage()`` doesn't set ``fast_routing_disabled`` or the
+    refusal count, so they're carried over (OR'd / summed) explicitly. A no-op
+    when there's nothing to add, or no completed run to attach it to.
+    """
+    if run_usage is None or not (extra_steps or extra_refusals or fast_disabled):
+        return run_usage
+    pipeline_steps = [StepRun(**s) for s in run_usage["steps"]]
+    rebuilt = build_run_usage(
+        [*extra_steps, *pipeline_steps] if prepend else [*pipeline_steps, *extra_steps],
+        fast_model=run_usage.get("fast_model"),
+    )
+    # Fields build_run_usage() doesn't compute must survive the rebuild.
+    rebuilt.fast_routing_disabled = run_usage.get("fast_routing_disabled", False) or fast_disabled
+    rebuilt.refusal_count = run_usage.get("refusal_count", 0) + extra_refusals
+    rebuilt.effort = run_usage.get("effort")
+    rebuilt.stopped_reason = run_usage.get("stopped_reason")
+    guard = run_usage.get("coverage_guard")
+    rebuilt.coverage_guard = CoverageGuardReport(**guard) if guard else None
+    return rebuilt.model_dump()

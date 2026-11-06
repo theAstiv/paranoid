@@ -5,6 +5,7 @@ Attack tree / test case generation endpoints require a live LLM provider
 and are not tested here (covered by pipeline integration tests).
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +13,9 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.db import crud
 from backend.main import app
+from backend.models.usage import ModelUsage, StepRun
 from backend.providers.base import ProviderError, ProviderRefusalError
+from backend.providers.usage import build_run_usage
 
 
 @pytest.fixture
@@ -404,6 +407,7 @@ def _refusing_runner(method: str, error: Exception) -> MagicMock:
     runner.provider.__aenter__ = AsyncMock(return_value=runner.provider)
     runner.provider.__aexit__ = AsyncMock(return_value=False)
     setattr(runner, method, AsyncMock(side_effect=error))
+    runner.usage_steps.return_value = ([], 0, False)
     return runner
 
 
@@ -436,3 +440,110 @@ async def test_generation_route_still_returns_503_for_other_provider_errors(clie
     with patch("backend.routes.threats._default_runner", return_value=runner):
         resp = await client.post(f"/api/threats/{saved_threat['id']}/attack-tree")
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# BB-78: Generate adds its usage to the model's usage_summary
+# ---------------------------------------------------------------------------
+
+
+def _step(name: str, tokens: int) -> StepRun:
+    return StepRun(
+        step=name,
+        iteration=0,
+        status="completed",
+        provider="anthropic",
+        model="claude-mock",
+        duration_ms=10,
+        input_hash="",
+        output_hash="",
+        usage=[
+            ModelUsage(
+                provider="anthropic",
+                model="claude-mock",
+                calls=1,
+                input_tokens=tokens,
+                output_tokens=0,
+                total_tokens=tokens,
+            )
+        ],
+    )
+
+
+def _generating_runner(method: str, result, steps: list[StepRun], refusals: int = 0):
+    runner = _refusing_runner(method, None)
+    setattr(runner, method, AsyncMock(return_value=result))
+    runner.usage_steps.return_value = (steps, refusals, False)
+    return runner
+
+
+async def _usage(model_id: str) -> dict | None:
+    record = await crud.get_threat_model(model_id)
+    raw = record.get("usage_summary")
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+@pytest.mark.asyncio
+async def test_an_attack_tree_adds_its_tokens_to_the_existing_summary(client, saved_threat):
+    model_id = saved_threat["model_id"]
+    existing = build_run_usage([_step("generate_threats", 1000)]).model_dump()
+    await crud.update_threat_model(model_id, usage_summary=json.dumps(existing))
+    tree = MagicMock(mermaid_source="graph TD; A-->B")
+    runner = _generating_runner(
+        "generate_attack_tree_for_threat", tree, [_step("generate_attack_tree", 250)]
+    )
+
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        resp = await client.post(f"/api/threats/{saved_threat['id']}/attack-tree")
+
+    assert resp.status_code == 201
+    usage = await _usage(model_id)
+    assert [s["step"] for s in usage["steps"]] == ["generate_threats", "generate_attack_tree"]
+    assert usage["total_tokens"] == 1250
+
+
+@pytest.mark.asyncio
+async def test_a_refused_generation_still_counts_its_tokens_and_refusal(client, saved_threat):
+    """A refusal was billed; it raised before anything was recorded."""
+    model_id = saved_threat["model_id"]
+    runner = _refusing_runner(
+        "generate_test_cases_for_threat",
+        ProviderRefusalError(provider="bedrock", message="stopReason='content_filtered'"),
+    )
+    runner.usage_steps.return_value = ([_step("generate_test_cases", 80)], 1, False)
+
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        resp = await client.post(f"/api/threats/{saved_threat['id']}/test-cases")
+
+    assert resp.status_code == 422
+    usage = await _usage(model_id)
+    assert usage["refusal_count"] == 1
+    assert usage["total_tokens"] == 80
+
+
+@pytest.mark.asyncio
+async def test_a_model_with_no_summary_gets_one(client, saved_threat):
+    model_id = saved_threat["model_id"]
+    suite = MagicMock(gherkin_source="Feature: x")
+    runner = _generating_runner(
+        "generate_test_cases_for_threat", suite, [_step("generate_test_cases", 40)]
+    )
+
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        resp = await client.post(f"/api/threats/{saved_threat['id']}/test-cases")
+
+    assert resp.status_code == 201
+    usage = await _usage(model_id)
+    assert [s["step"] for s in usage["steps"]] == ["generate_test_cases"]
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_recorded_without_steps_or_refusals(client, saved_threat):
+    model_id = saved_threat["model_id"]
+    tree = MagicMock(mermaid_source="graph TD; A-->B")
+    runner = _generating_runner("generate_attack_tree_for_threat", tree, [])
+
+    with patch("backend.routes.threats._default_runner", return_value=runner):
+        await client.post(f"/api/threats/{saved_threat['id']}/attack-tree")
+
+    assert await _usage(model_id) is None
