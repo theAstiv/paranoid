@@ -47,3 +47,31 @@ def test_silent_for_tls_localhost_or_auth_off(monkeypatch, caplog, auth, origins
     with caplog.at_level(logging.WARNING, logger="backend.main"):
         main._warn_if_refresh_cookie_is_dropped(origins)
     assert "refresh cookie" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_db_directory_exits_1_without_a_traceback(monkeypatch):
+    """BB-141: Docker printed the one-line fix, then Starlette's whole traceback."""
+    from unittest.mock import AsyncMock
+
+    from backend.db.connection import DatabaseDirectoryError
+
+    class _ExitedError(Exception):
+        pass
+
+    codes: list[int] = []
+
+    def fake_exit(code: int) -> None:
+        codes.append(code)
+        raise _ExitedError
+
+    monkeypatch.setattr(main.os, "_exit", fake_exit)
+    monkeypatch.setattr(
+        main.db, "initialize", AsyncMock(side_effect=DatabaseDirectoryError("data/ not writable"))
+    )
+
+    with pytest.raises(_ExitedError):
+        async with main.lifespan(main.app):
+            pass
+
+    assert codes == [1]

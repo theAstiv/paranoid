@@ -31,11 +31,12 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,bedrock]"
+          pip install -c constraints.txt -e ".[dev,bedrock]"
 
       - name: Ruff check
         run: ruff check backend/ cli/ tests/
@@ -55,17 +56,30 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,bedrock]"
+          pip install -c constraints.txt -e ".[dev,bedrock]"
 
-      - name: Install Semgrep
-        run: pip install semgrep
+      - name: Install Semgrep (pinned, own venv)
+        # The version the Docker image ships (one source of truth: the
+        # Dockerfile's ARG). Its own venv, as in the image, so semgrep's pins
+        # (opentelemetry, click, jsonschema, ...) can't change the app's env.
+        run: |
+          SEMGREP_VERSION=$(grep -oP 'ARG SEMGREP_VERSION=\K[0-9.]+' Dockerfile)
+          echo "Semgrep ${SEMGREP_VERSION}"
+          python -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/pip" install --quiet "semgrep==${SEMGREP_VERSION}"
+          echo "SEMGREP_BINARY=$RUNNER_TEMP/semgrep-venv/bin/semgrep" >> "$GITHUB_ENV"
 
       - name: Semgrep rule pack precision test
-        run: semgrep --test --metrics=off backend/deps/rules/js
+        run: '"$SEMGREP_BINARY" --test --metrics=off backend/deps/rules/js'
+
+      - name: Assert the tests will find Semgrep
+        # The scanner tests skip, not fail, without a binary; make that loud here.
+        run: python -c "from backend.deps.scanner import resolve_semgrep_binary as r; b = r(); print(b); assert b"
 
       - name: Run tests
         # test_pipeline_e2e.py requires a live LLM provider (ANTHROPIC_API_KEY)
@@ -90,6 +104,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: constraints.txt
 
       - name: Install build dependencies
         run: |
@@ -216,6 +231,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: constraints.txt
 
       - name: Build local wheel (CI path — avoids PyPI dependency on version-bump PRs)
         run: |

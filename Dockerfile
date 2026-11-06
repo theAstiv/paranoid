@@ -72,11 +72,12 @@ WORKDIR /app
 # directory at install time — if backend/, cli/, and seeds/ aren't present
 # yet, zero packages get registered and `paranoid` (entry point) fails with
 # ModuleNotFoundError at runtime.
-COPY pyproject.toml ./
+COPY pyproject.toml constraints.txt ./
 COPY backend/ ./backend/
 COPY seeds/   ./seeds/
 COPY cli/     ./cli/
-RUN pip install --no-cache-dir -e .
+# constraints.txt pins every runtime dependency to the versions CI tested (BB-86).
+RUN pip install --no-cache-dir -c constraints.txt -e .
 
 # Semgrep powers the dependency capability scanner (backend/deps/scanner.py).
 # Not a pyproject.toml dependency (see SEMGREP_BINARY in config.py) so it can

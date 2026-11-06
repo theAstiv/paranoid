@@ -6,9 +6,11 @@
 
 ```bash
 git clone https://github.com/theAstiv/paranoid && cd paranoid
-pip install -e ".[dev]"
+pip install -c constraints.txt -e ".[dev]"   # the exact versions CI tests
 uvicorn backend.main:app --reload   # http://localhost:8000
 ```
+
+`constraints.txt` pins every dependency to the versions CI, Docker and the release binaries use. After changing a dependency in `pyproject.toml`, regenerate it with [uv](https://docs.astral.sh/uv/) (the command is in its header) and run the CI checklist. The dependency engine's tests need Semgrep at the version in the `Dockerfile` (`ARG SEMGREP_VERSION`), on `PATH` or via `SEMGREP_BINARY`; ideally in its own venv, since its pins can clash with the app's.
 
 **Frontend:**
 
