@@ -45,6 +45,10 @@ classifiers = [
     "Environment :: Console",
     "Typing :: Typed",
 ]
+# python-multipart, Pillow, cryptography and PyJWT have had CVEs: their floors
+# are versions CI tests (BB-86), so upgrading an old env moves it off the
+# vulnerable ones. No upper bounds, so PyPI users keep getting fixes;
+# constraints.txt pins exact versions for Docker, CI and the release binaries.
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -57,14 +61,14 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "fastembed>=0.4.2",
     "reportlab>=4.2.5",
-    "python-multipart>=0.0.19",
+    "python-multipart>=0.0.33",
     "mcp>=1.3.1",
-    "Pillow>=10.0.0",
+    "Pillow>=13.0.0",
     "aiofiles>=24.1.0",
     "click>=8.1.7",
-    "cryptography>=42.0",
+    "cryptography>=50.0",
     "argon2-cffi>=23.1.0",
-    "PyJWT>=2.10.0",
+    "PyJWT>=2.15.0",
 ]
 
 [project.urls]
