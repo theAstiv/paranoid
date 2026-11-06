@@ -4,6 +4,7 @@ SARIF (Static Analysis Results Interchange Format) is the standard format
 for security findings in GitHub, GitLab, VS Code, and most CI systems.
 """
 
+import uuid
 from datetime import UTC, datetime
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -144,10 +145,7 @@ def export_sarif(
                     }
                 },
                 "results": results,
-                "automationDetails": {
-                    "id": model_id,
-                    "guid": model_id,
-                },
+                "automationDetails": _automation_details(model_id),
                 "columnKind": "utf16CodeUnits",
                 "properties": {
                     "framework": framework,
@@ -401,9 +399,11 @@ def _generate_results(
                 "severity": getattr(threat, "cvss_severity", None),
             }
 
-        # Add mitigations as fixes
+        # Mitigations are prose, not edits: SARIF's `fixes` requires
+        # artifactChanges with concrete replacements, so they go in
+        # properties instead (BB-70).
         if threat.mitigations:
-            result["fixes"] = _build_fixes(threat.mitigations)
+            result["properties"]["mitigations"] = _mitigation_properties(threat.mitigations)
 
         results.append(result)
 
@@ -532,13 +532,25 @@ def _build_locations(
     return locations
 
 
-def _build_fixes(mitigations: list[str]) -> list[dict[str, Any]]:
-    """Convert mitigations to SARIF fixes.
+def _automation_details(model_id: str) -> dict[str, str]:
+    """``id`` is any string; ``guid`` must be a real GUID per the SARIF schema."""
+    details = {"id": model_id}
+    try:
+        if uuid.UUID(model_id).version in (1, 2, 3, 4, 5):
+            details["guid"] = model_id
+    except ValueError:
+        pass
+    return details
 
-    Each mitigation becomes a fix suggestion.
+
+def _mitigation_properties(mitigations: list[str]) -> list[dict[str, str]]:
+    """Mitigations as ``{"type", "text"}`` entries for ``result.properties``.
+
+    The type comes from a leading tag ("[P]" Preventive, "[D]" Detective,
+    "[C]" Containment); untagged ones are "Mitigation".
     """
-    fixes = []
-    for idx, mitigation in enumerate(mitigations, start=1):
+    entries = []
+    for mitigation in mitigations:
         # Extract mitigation type if tagged (e.g., "[P]", "[D]", "[C]")
         mitigation_type = "Mitigation"
         clean_text = mitigation
@@ -552,14 +564,9 @@ def _build_fixes(mitigations: list[str]) -> list[dict[str, Any]]:
             mitigation_type = "Containment"
             clean_text = mitigation[3:].strip()
 
-        fix = {
-            "description": {
-                "text": f"{mitigation_type} {idx}: {clean_text}",
-            },
-        }
-        fixes.append(fix)
+        entries.append({"type": mitigation_type, "text": clean_text})
 
-    return fixes
+    return entries
 
 
 def _score_to_level(score: float) -> str:

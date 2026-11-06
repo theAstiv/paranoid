@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -812,6 +813,32 @@ async def delete_asset(asset_id: str) -> None:
     await conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     await conn.commit()
     logger.info(f"Deleted asset {asset_id}")
+
+
+async def update_usage_summary(
+    model_id: str, transform: Callable[[dict[str, Any] | None], dict[str, Any] | None]
+) -> None:
+    """Replace a model's usage_summary with ``transform(current)``.
+
+    One db.writer() transaction, so two enrichment calls finishing together
+    can't both read the old summary and drop the other's tokens. A None from
+    ``transform`` leaves the row as it was.
+    """
+    async with db.writer() as conn:
+        async with conn.execute(
+            "SELECT usage_summary FROM threat_models WHERE id = ?", (model_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return
+        current = json.loads(row[0]) if row[0] else None
+        updated = transform(current)
+        if updated is None:
+            return
+        await conn.execute(
+            "UPDATE threat_models SET usage_summary = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(updated), now_iso(), model_id),
+        )
 
 
 async def delete_threat_model(model_id: str) -> None:

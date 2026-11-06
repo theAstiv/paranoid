@@ -5,6 +5,7 @@ from backend.export._common import (
     dependency_category_set,
     dependency_findings_rows,
     dependency_flags,
+    dependency_location,
 )
 
 
@@ -162,3 +163,24 @@ def test_dependency_findings_rows_summary_row_sorts_last() -> None:
     rows = dependency_findings_rows(scans)
     assert rows[-1][0] == "+5 more skipped"
     assert rows[0][0] == "apple@1.0.0"
+
+
+def test_dependency_location_formats_package_file_and_line() -> None:
+    ref = {"package": "lodash", "version": "4.17.21", "file": "lib/template.js", "line": 42}
+    assert dependency_location({"dependency_ref": ref}) == "lodash@4.17.21 — lib/template.js:42"
+
+
+def test_dependency_location_without_file_or_line() -> None:
+    assert dependency_location({"dependency_ref": {"package": "x", "version": "1"}}) == "x@1"
+    ref = {"package": "x", "version": "1", "file": "a.js"}
+    assert dependency_location({"dependency_ref": ref}) == "x@1 — a.js"
+
+
+def test_dependency_location_is_none_for_other_threats() -> None:
+    assert dependency_location({"dependency_ref": None}) is None
+    assert dependency_location({}) is None
+
+
+def test_dependency_location_collapses_newlines_in_a_hostile_path() -> None:
+    ref = {"package": "x", "version": "1", "file": "a\n# injected\n.js", "line": 1}
+    assert "\n" not in dependency_location({"dependency_ref": ref})

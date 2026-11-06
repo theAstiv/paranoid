@@ -615,3 +615,24 @@ def test_pdf_title_image_tag_is_never_fetched(monkeypatch) -> None:
 
     assert result[:4] == b"%PDF"
     assert opened == []
+
+
+def test_pdf_shows_a_dependency_threats_file_and_line() -> None:
+    """BB-68: only SARIF carried a dependency threat's file:line."""
+    import io
+
+    from pypdf import PdfReader
+
+    threat = {
+        **_STRIDE_FLAT,
+        "dependency_ref": {
+            "package": "evil-pkg",
+            "version": "1.0.0",
+            "file": "lib/<i>.js",
+            "line": 7,
+        },
+    }
+    pdf = export_pdf([threat], "test-model-id", "STRIDE", title="Deps")
+    text = " ".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf)).pages)
+    assert "evil-pkg@1.0.0" in text
+    assert "lib/<i>.js:7" in text

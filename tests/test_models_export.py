@@ -139,10 +139,11 @@ async def test_sarif_export_stride_threats(test_db, tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0]["partialFingerprints"]["threatName"] == "SQL Injection"
 
-    # Mitigations flow through as fixes
-    fixes = results[0]["fixes"]
-    assert len(fixes) == 2
-    assert "parameterized queries" in fixes[0]["description"]["text"]
+    # Mitigations flow through as properties, not SARIF fixes (BB-70)
+    assert "fixes" not in results[0]
+    mitigations = results[0]["properties"]["mitigations"]
+    assert len(mitigations) == 2
+    assert "parameterized queries" in mitigations[0]["text"]
 
     # P7: without --source-file, every result still gets a physical first
     # location (the default anchor), not just a logical one — GitHub's
@@ -368,7 +369,8 @@ async def test_sarif_export_none_mitigations_does_not_crash(test_db, tmp_path: P
     sarif = json.loads(out.read_text(encoding="utf-8"))
     results = sarif["runs"][0]["results"]
     assert len(results) == 1
-    assert "fixes" not in results[0]  # no fixes key when mitigations is empty
+    assert "fixes" not in results[0]
+    assert "mitigations" not in results[0]["properties"]  # none when mitigations is empty
 
 
 # ---------------------------------------------------------------------------
