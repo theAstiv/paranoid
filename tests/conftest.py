@@ -1,6 +1,5 @@
 """Shared test fixtures for the paranoid test suite."""
 
-import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -12,6 +11,7 @@ import backend.security.rate_limit as _rl
 from backend.db.connection import db
 from backend.db.schema import init_database_with_connection
 from backend.models.enums import Framework
+from tests.fixtures.db import close_reader_pool, open_reader_pool
 from tests.fixtures.pipeline import make_stride_threats
 from tests.mock_provider import MockProvider
 
@@ -21,7 +21,8 @@ async def test_db():
     """Create a fresh temporary database per test via connection manager.
 
     Opens a real aiosqlite connection with foreign keys enabled and tables
-    created, but skips sqlite-vec extension loading (not available in CI).
+    created, plus a pool of read-only readers, but skips sqlite-vec extension
+    loading (tests/test_vectors_project_scope.py has its own fixture for it).
     Sets the singleton ConnectionManager state directly.
     """
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -47,18 +48,17 @@ async def test_db():
     await conn.commit()
     await init_database_with_connection(conn)
 
-    # Set manager state manually. db.reader() requires a non-None pool — reuse
-    # the same connection for both writer and reader roles since sqlite-vec
-    # (needed for a real read-only pool) isn't available in CI.
+    # Set manager state manually, with real read-only readers so a read through
+    # db.reader() only sees committed rows, as in the app.
     db._connection = conn
     db._db_path = db_path
     db._initialized = True
-    db._reader_pool = asyncio.Queue()
-    db._reader_pool.put_nowait(conn)
+    db._reader_pool = await open_reader_pool(db_path)
 
     yield db_path
 
     # Cleanup
+    await close_reader_pool(db._reader_pool)
     for leftover in (db._connection, db._tx_connection):
         if leftover is not None:
             await leftover.close()

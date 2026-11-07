@@ -10,7 +10,6 @@ Embeddings are a constant unit vector: every row is equally similar, so the proj
 filter is the only thing deciding what comes back. No LLM, no network.
 """
 
-import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -27,6 +26,7 @@ from backend.db.schema import init_database_with_connection
 from backend.db.vectors import bulk_insert_seed_vectors, search_similar_threats
 from backend.main import app
 from backend.rules.engine import fetch_rag_context
+from tests.fixtures.db import close_reader_pool, open_reader_pool
 
 
 _DIM = 384
@@ -52,6 +52,8 @@ async def vec_db():
         await conn.close()
         Path(db_path).unlink(missing_ok=True)
         pytest.skip(f"sqlite-vec extension can't load here: {exc}")
+    await conn.execute("PRAGMA journal_mode = WAL;")
+    await conn.execute("PRAGMA busy_timeout = 5000;")
     await conn.execute("PRAGMA foreign_keys = ON;")
     await conn.commit()
     await init_database_with_connection(conn)
@@ -59,17 +61,21 @@ async def vec_db():
     db._connection = conn
     db._db_path = db_path
     db._initialized = True
-    db._reader_pool = asyncio.Queue()
-    db._reader_pool.put_nowait(conn)
+    db._reader_pool = await open_reader_pool(db_path, sqlite_vec.loadable_path())
     with patch("backend.db.vectors.embed_text", _constant_embedding):
         yield db_path
 
-    await conn.close()
+    await close_reader_pool(db._reader_pool)
+    for leftover in (conn, db._tx_connection):
+        if leftover is not None:
+            await leftover.close()
     db._connection = None
+    db._tx_connection = None
     db._initialized = False
     db._db_path = None
     db._reader_pool = None
-    Path(db_path).unlink(missing_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        Path(db_path + suffix).unlink(missing_ok=True)
 
 
 async def _threat(model_id: str, name: str) -> str:
