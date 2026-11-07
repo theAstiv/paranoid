@@ -121,7 +121,7 @@ Key tables (all have `id TEXT PRIMARY KEY`, `created_at`, `updated_at`):
 | `comments` | Threaded comments on models, threats, and entities |
 | `notifications` | Per-user notification queue |
 | `sources` | Code source registrations (git URL, status, encrypted PAT) |
-| `schema_migrations` | Migration ledger (authoritative — not `schema.py` version) |
+| `schema_migrations` | Migration ledger: which migrations have run (the only schema version) |
 
 Schema changes: drop a file in `backend/db/migrations/NNNN_description.py` and implement `async def up(conn)`. The runner applies migrations at startup in filename order.
 
@@ -137,7 +137,7 @@ backend/
                 install_hooks.py, references.py, analyze.py, threats.py
   scoring/      cvss31.py (CVSS v3.1 base-score calculator)
   auth/         passwords.py (argon2), tokens.py (JWT/PAT), dependencies.py
-  db/           schema.py, crud.py, crud_auth.py, crud_projects.py,
+  db/           schema.py (init entry point), crud.py, crud_auth.py, crud_projects.py,
                 crud_comments.py, crud_activity.py, crud_staleness.py,
                 vectors.py, migrations/
   mcp/          client.py (context-link subprocess lifecycle)

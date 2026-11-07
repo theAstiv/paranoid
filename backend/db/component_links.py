@@ -150,9 +150,9 @@ async def backfill_component_links() -> None:
     try:
         if await crud.get_config_value(_BACKFILL_FLAG) == _BACKFILL_VERSION:
             return
-        conn = await db.get()
-        async with conn.execute("SELECT DISTINCT model_id FROM assets") as cur:
-            model_ids = [row["model_id"] for row in await cur.fetchall()]
+        async with db.reader() as conn:
+            async with conn.execute("SELECT DISTINCT model_id FROM assets") as cur:
+                model_ids = [row["model_id"] for row in await cur.fetchall()]
         linked = 0
         for model_id in model_ids:
             linked += (await link_model_components(model_id))["linked"]

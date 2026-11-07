@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-step database writes are atomic under concurrency** (review C4) — `db.writer()`'s `BEGIN IMMEDIATE` ran on the connection every other query shares, so any other request committing in the middle of the block committed half of it (a diagram set's delete without its inserts), and two such blocks at once failed with "cannot start a transaction within a transaction". It now runs on its own connection behind a lock. Saving a run's threats, assets and flows is one transaction per step instead of a commit per row (review P1)
 - **`PATCH /api/config` checks what it stores** (BB-133) — it accepted a blank model, a `file://` Ollama URL and a path-like AWS region, after which runs fell back to rules-only. These are now `422` with nothing applied; re-sending the current Ollama URL (as Settings does on every save) is always accepted. `test-provider` applies the same URL check
 
+### Changed
+
+- **Reads use the read-only connection pool** (review A1) — the pool of read-only connections was opened at startup but most reads skipped it: 52 read-only queries (models, threats, context, projects, comments, code sources, RAG search) ran on the one connection every write shares, so a read could see another request's uncommitted write. They now run on the pool and see committed rows only. A read inside `db.writer()` or inside another read is refused at once instead of reading stale rows or waiting forever for a free connection. The test database now uses real read-only connections too, so a test can catch a read that depends on uncommitted state
+- **`backend/db/schema.py` holds only the init entry point** (review A2) — the 22 `CREATE TABLE` strings, the index list, `SCHEMA_VERSION` and `get/set_schema_version` were a second copy of the schema that nothing used since the migrations took over; the `schema_migrations` table is the only schema version
+
 ## [1.6.1-rc1] - 2026-11-03
 
 Release candidate for 1.6.1: the security and data-loss fixes from the 2026-11-02 code review. A pre-release, so `pip install paranoid-cli` still installs 1.6.0; use `pip install --pre paranoid-cli` or `paranoid-cli==1.6.1rc1` to try it, and `theAstiv/paranoid@v1.6.1-rc1` for the GitHub Action (`@v1` stays on 1.6.0). No database migrations.

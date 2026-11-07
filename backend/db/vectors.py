@@ -311,19 +311,19 @@ async def get_vector_stats() -> dict[str, Any]:
     Returns:
         Dictionary with vector counts by source
     """
-    conn = await db.get()
-    async with conn.execute("""
-        SELECT
-            source,
-            COUNT(*) as count
-        FROM threat_metadata
-        GROUP BY source
-    """) as cursor:
-        rows = await cursor.fetchall()
-        stats = {row[0]: row[1] for row in rows}
+    async with db.reader() as conn:
+        async with conn.execute("""
+            SELECT
+                source,
+                COUNT(*) as count
+            FROM threat_metadata
+            GROUP BY source
+        """) as cursor:
+            rows = await cursor.fetchall()
+            stats = {row[0]: row[1] for row in rows}
 
-    async with conn.execute("SELECT COUNT(*) FROM threat_metadata") as cursor:
-        total = await cursor.fetchone()
-        stats["total"] = total[0] if total else 0
+        async with conn.execute("SELECT COUNT(*) FROM threat_metadata") as cursor:
+            total = await cursor.fetchone()
+            stats["total"] = total[0] if total else 0
 
     return stats

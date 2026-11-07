@@ -32,18 +32,20 @@ def parse_categories(raw: str | None) -> list[str] | None:
 
 async def get_model_coverage(model_id: str) -> dict:
     """MAESTRO coverage for a model, computed on read from its tags and threats."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT maestro_categories FROM assets WHERE model_id = ?", (model_id,)
-    ) as cur:
-        asset_tags = [parse_categories(row["maestro_categories"]) for row in await cur.fetchall()]
-    async with conn.execute(
-        "SELECT maestro_category, COUNT(*) AS n FROM threats "
-        "WHERE model_id = ? AND maestro_category IS NOT NULL AND status != 'rejected' "
-        "GROUP BY maestro_category",
-        (model_id,),
-    ) as cur:
-        counts = {row["maestro_category"]: row["n"] for row in await cur.fetchall()}
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT maestro_categories FROM assets WHERE model_id = ?", (model_id,)
+        ) as cur:
+            asset_tags = [
+                parse_categories(row["maestro_categories"]) for row in await cur.fetchall()
+            ]
+        async with conn.execute(
+            "SELECT maestro_category, COUNT(*) AS n FROM threats "
+            "WHERE model_id = ? AND maestro_category IS NOT NULL AND status != 'rejected' "
+            "GROUP BY maestro_category",
+            (model_id,),
+        ) as cur:
+            counts = {row["maestro_category"]: row["n"] for row in await cur.fetchall()}
     return maestro_coverage(asset_tags, counts)
 
 
@@ -88,9 +90,9 @@ async def backfill_maestro_tags() -> None:
         version = rules_version()
         if await crud.get_config_value(_BACKFILL_FLAG) == version:
             return
-        conn = await db.get()
-        async with conn.execute("SELECT DISTINCT model_id FROM assets") as cur:
-            model_ids = [row["model_id"] for row in await cur.fetchall()]
+        async with db.reader() as conn:
+            async with conn.execute("SELECT DISTINCT model_id FROM assets") as cur:
+                model_ids = [row["model_id"] for row in await cur.fetchall()]
         changed = 0
         for model_id in model_ids:
             changed += await tag_model_assets(model_id)

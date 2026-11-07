@@ -35,15 +35,15 @@ async def create_comment(
 
 
 async def get_comment(comment_id: str) -> dict | None:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT c.*, u.username, u.display_name
-           FROM comments c
-           LEFT JOIN users u ON u.id = c.user_id
-           WHERE c.id = ?""",
-        (comment_id,),
-    ) as cur:
-        return _row(await cur.fetchone())
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT c.*, u.username, u.display_name
+               FROM comments c
+               LEFT JOIN users u ON u.id = c.user_id
+               WHERE c.id = ?""",
+            (comment_id,),
+        ) as cur:
+            return _row(await cur.fetchone())
 
 
 async def list_comments(
@@ -65,20 +65,20 @@ async def list_comments(
 
     base += " ORDER BY c.created_at ASC"
 
-    conn = await db.get()
-    async with conn.execute(base, params) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(base, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def count_comments_by_entity(threat_model_id: str) -> list[dict]:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT entity_type, entity_id, COUNT(*) as count
-           FROM comments WHERE threat_model_id = ?
-           GROUP BY entity_type, entity_id""",
-        (threat_model_id,),
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT entity_type, entity_id, COUNT(*) as count
+               FROM comments WHERE threat_model_id = ?
+               GROUP BY entity_type, entity_id""",
+            (threat_model_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def delete_entity_comments(entity_type: str, entity_id: str) -> None:
@@ -113,12 +113,12 @@ async def delete_comment(comment_id: str) -> None:
 
 
 async def get_assignee(threat_model_id: str, user_id: str) -> dict | None:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM threat_model_assignees WHERE threat_model_id = ? AND user_id = ?",
-        (threat_model_id, user_id),
-    ) as cur:
-        return _row(await cur.fetchone())
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM threat_model_assignees WHERE threat_model_id = ? AND user_id = ?",
+            (threat_model_id, user_id),
+        ) as cur:
+            return _row(await cur.fetchone())
 
 
 async def add_assignee(threat_model_id: str, user_id: str, assigned_by: str | None) -> dict:
@@ -145,13 +145,13 @@ async def remove_assignee(threat_model_id: str, user_id: str) -> None:
 
 
 async def list_assignees(threat_model_id: str) -> list[dict]:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT a.*, u.username, u.email, u.display_name
-           FROM threat_model_assignees a
-           JOIN users u ON u.id = a.user_id
-           WHERE a.threat_model_id = ?
-           ORDER BY a.created_at""",
-        (threat_model_id,),
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT a.*, u.username, u.email, u.display_name
+               FROM threat_model_assignees a
+               JOIN users u ON u.id = a.user_id
+               WHERE a.threat_model_id = ?
+               ORDER BY a.created_at""",
+            (threat_model_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]

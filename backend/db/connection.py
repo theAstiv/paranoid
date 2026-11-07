@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 # locked". Refusing it at once turns that into an obvious bug.
 _in_writer: ContextVar[bool] = ContextVar("_in_writer", default=False)
 
+# Set while the current task holds a reader. A reader() inside another holds
+# two pool slots: with every slot held by an outer one, all of them wait
+# forever. reader() inside writer() would read the rows as they were before
+# the block's uncommitted writes. Both are refused at once.
+_in_reader: ContextVar[bool] = ContextVar("_in_reader", default=False)
+
 # Number of pre-warmed read-only connections in the pool.
 # WAL mode lets all readers run concurrently against the single writer,
 # so a pool of 4 covers the typical multi-user concurrency burst without
@@ -204,7 +210,17 @@ class ConnectionManager:
 
         Yields:
             A read-only aiosqlite Connection with sqlite-vec loaded.
+
+        Raises:
+            RuntimeError: If called inside another reader() or inside
+                db.writer() (see _in_reader).
         """
+        if _in_writer.get():
+            msg = "db.reader() inside db.writer(): use the connection writer() yields"
+            raise RuntimeError(msg)
+        if _in_reader.get():
+            msg = "db.reader() inside db.reader(): reuse the connection it yields"
+            raise RuntimeError(msg)
         if not self._initialized:
             from backend.config import settings
 
@@ -215,9 +231,11 @@ class ConnectionManager:
             raise RuntimeError(msg)
 
         conn = await self._reader_pool.get()
+        token = _in_reader.set(True)
         try:
             yield conn
         finally:
+            _in_reader.reset(token)
             self._reader_pool.put_nowait(conn)
 
     def _writer_lock(self) -> asyncio.Lock:
