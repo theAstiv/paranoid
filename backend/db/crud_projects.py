@@ -44,30 +44,30 @@ async def create_project(
 
 
 async def get_project(project_id: str) -> dict | None:
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)) as cur:
-        return _row(await cur.fetchone())
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)) as cur:
+            return _row(await cur.fetchone())
 
 
 async def list_projects_for_user(user_id: str, include_archived: bool = False) -> list[dict]:
     """Return the projects the user is a member of; archived ones only on request."""
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT p.*, pm.role AS member_role
-           FROM projects p
-           JOIN project_members pm ON pm.project_id = p.id
-           WHERE pm.user_id = ? AND (p.is_archived = 0 OR ?)
-           ORDER BY p.created_at DESC""",
-        (user_id, int(include_archived)),
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT p.*, pm.role AS member_role
+               FROM projects p
+               JOIN project_members pm ON pm.project_id = p.id
+               WHERE pm.user_id = ? AND (p.is_archived = 0 OR ?)
+               ORDER BY p.created_at DESC""",
+            (user_id, int(include_archived)),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def list_all_projects() -> list[dict]:
     """Admin-only: return all projects including archived."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM projects ORDER BY created_at DESC") as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM projects ORDER BY created_at DESC") as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def update_project(project_id: str, **fields) -> dict | None:
@@ -112,25 +112,25 @@ async def archive_project(project_id: str, archived: bool = True) -> None:
 
 
 async def get_member(project_id: str, user_id: str) -> dict | None:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM project_members WHERE project_id = ? AND user_id = ?",
-        (project_id, user_id),
-    ) as cur:
-        return _row(await cur.fetchone())
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM project_members WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        ) as cur:
+            return _row(await cur.fetchone())
 
 
 async def list_members(project_id: str) -> list[dict]:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT pm.*, u.username, u.email, u.display_name
-           FROM project_members pm
-           JOIN users u ON u.id = pm.user_id
-           WHERE pm.project_id = ?
-           ORDER BY pm.created_at""",
-        (project_id,),
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT pm.*, u.username, u.email, u.display_name
+               FROM project_members pm
+               JOIN users u ON u.id = pm.user_id
+               WHERE pm.project_id = ?
+               ORDER BY pm.created_at""",
+            (project_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 class LastOwnerError(ValueError):
@@ -254,20 +254,20 @@ async def create_invitation(
 
 
 async def get_invitation(invitation_id: str) -> dict | None:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM project_invitations WHERE id = ?", (invitation_id,)
-    ) as cur:
-        return _row(await cur.fetchone())
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM project_invitations WHERE id = ?", (invitation_id,)
+        ) as cur:
+            return _row(await cur.fetchone())
 
 
 async def list_invitations(project_id: str) -> list[dict]:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM project_invitations WHERE project_id = ? ORDER BY created_at DESC",
-        (project_id,),
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM project_invitations WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def accept_invitation(invitation_id: str, user_id: str, user_email: str) -> dict:
@@ -334,66 +334,66 @@ async def get_user_role_in_project(project_id: str, user_id: str) -> str | None:
 
 
 async def resolve_project_id_from_model(model_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT project_id FROM threat_models WHERE id = ?", (model_id,)
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT project_id FROM threat_models WHERE id = ?", (model_id,)
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None
 
 
 async def resolve_project_id_from_threat(threat_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT tm.project_id FROM threats t
-           JOIN threat_models tm ON tm.id = t.model_id
-           WHERE t.id = ?""",
-        (threat_id,),
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT tm.project_id FROM threats t
+               JOIN threat_models tm ON tm.id = t.model_id
+               WHERE t.id = ?""",
+            (threat_id,),
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None
 
 
 async def resolve_project_id_from_source(source_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT project_id FROM code_sources WHERE id = ?", (source_id,)
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT project_id FROM code_sources WHERE id = ?", (source_id,)
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None
 
 
 async def resolve_project_id_from_asset(asset_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT tm.project_id FROM assets a
-           JOIN threat_models tm ON tm.id = a.model_id
-           WHERE a.id = ?""",
-        (asset_id,),
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT tm.project_id FROM assets a
+               JOIN threat_models tm ON tm.id = a.model_id
+               WHERE a.id = ?""",
+            (asset_id,),
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None
 
 
 async def resolve_project_id_from_flow(flow_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT tm.project_id FROM flows f
-           JOIN threat_models tm ON tm.id = f.model_id
-           WHERE f.id = ?""",
-        (flow_id,),
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT tm.project_id FROM flows f
+               JOIN threat_models tm ON tm.id = f.model_id
+               WHERE f.id = ?""",
+            (flow_id,),
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None
 
 
 async def resolve_project_id_from_comment(comment_id: str) -> str | None:
-    conn = await db.get()
-    async with conn.execute(
-        """SELECT tm.project_id FROM comments c
-           JOIN threat_models tm ON tm.id = c.threat_model_id
-           WHERE c.id = ?""",
-        (comment_id,),
-    ) as cur:
-        row = await cur.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            """SELECT tm.project_id FROM comments c
+               JOIN threat_models tm ON tm.id = c.threat_model_id
+               WHERE c.id = ?""",
+            (comment_id,),
+        ) as cur:
+            row = await cur.fetchone()
     return row[0] if row else None

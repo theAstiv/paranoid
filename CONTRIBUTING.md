@@ -141,7 +141,7 @@ Add entries to the appropriate file in `seeds/`. Embeddings regenerate on next s
 2. Implement `async def up(conn: aiosqlite.Connection) -> None`
 3. Use idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`) — migrations may run against partially-applied state
 4. Do **not** call `BEGIN` or `COMMIT` — the runner owns the transaction
-5. Do **not** edit `backend/db/schema.py` directly
+5. Do **not** edit `backend/db/schema.py`: it only calls the migration runner
 
 ---
 

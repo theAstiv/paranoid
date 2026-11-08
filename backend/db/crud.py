@@ -86,10 +86,10 @@ async def create_threat_model(
 
 async def get_threat_model(model_id: str) -> dict[str, Any] | None:
     """Get a threat model by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM threat_models WHERE id = ?", (model_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM threat_models WHERE id = ?", (model_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def update_threat_model_status(model_id: str, status: str) -> None:
@@ -255,23 +255,23 @@ async def list_threat_models(
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.append(limit)
 
-    conn = await db.get()
-    async with conn.execute(
-        f"""
-        SELECT
-            tm.*,
-            COUNT(t.id) AS threat_count
-        FROM threat_models tm
-        LEFT JOIN threats t ON t.model_id = tm.id
-        {where}
-        GROUP BY tm.id
-        ORDER BY tm.created_at DESC
-        LIMIT ?
-        """,
-        params,
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            f"""
+            SELECT
+                tm.*,
+                COUNT(t.id) AS threat_count
+            FROM threat_models tm
+            LEFT JOIN threats t ON t.model_id = tm.id
+            {where}
+            GROUP BY tm.id
+            ORDER BY tm.created_at DESC
+            LIMIT ?
+            """,
+            params,
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def find_threat_model_by_prefix(prefix: str) -> dict[str, Any] | None:
@@ -280,12 +280,12 @@ async def find_threat_model_by_prefix(prefix: str) -> dict[str, Any] | None:
     Returns the first match if the prefix is unambiguous, or None if no match.
     Raises ValueError if the prefix matches more than one model.
     """
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM threat_models WHERE id LIKE ? ORDER BY created_at DESC",
-        (f"{prefix}%",),
-    ) as cursor:
-        rows = await cursor.fetchall()
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM threat_models WHERE id LIKE ? ORDER BY created_at DESC",
+            (f"{prefix}%",),
+        ) as cursor:
+            rows = await cursor.fetchall()
 
     if not rows:
         return None
@@ -392,43 +392,42 @@ async def create_threat(
 
 async def get_threat(threat_id: str) -> dict[str, Any] | None:
     """Get a threat by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM threats WHERE id = ?", (threat_id,)) as cursor:
-        row = await cursor.fetchone()
-        if row:
-            threat = dict(row)
-            threat["mitigations"] = json.loads(threat["mitigations"])
-            if threat.get("dependency_ref"):
-                threat["dependency_ref"] = json.loads(threat["dependency_ref"])
-            if threat.get("attack_techniques"):
-                threat["attack_techniques"] = json.loads(threat["attack_techniques"])
-            return threat
-        return None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM threats WHERE id = ?", (threat_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                threat = dict(row)
+                threat["mitigations"] = json.loads(threat["mitigations"])
+                if threat.get("dependency_ref"):
+                    threat["dependency_ref"] = json.loads(threat["dependency_ref"])
+                if threat.get("attack_techniques"):
+                    threat["attack_techniques"] = json.loads(threat["attack_techniques"])
+                return threat
+            return None
 
 
 async def list_threats(model_id: str, status: str | None = None) -> list[dict[str, Any]]:
     """List threats for a model, optionally filtered by status."""
-    conn = await db.get()
+    async with db.reader() as conn:
+        if status:
+            query = "SELECT * FROM threats WHERE model_id = ? AND status = ? ORDER BY created_at"
+            params = (model_id, status)
+        else:
+            query = "SELECT * FROM threats WHERE model_id = ? ORDER BY created_at"
+            params = (model_id,)
 
-    if status:
-        query = "SELECT * FROM threats WHERE model_id = ? AND status = ? ORDER BY created_at"
-        params = (model_id, status)
-    else:
-        query = "SELECT * FROM threats WHERE model_id = ? ORDER BY created_at"
-        params = (model_id,)
-
-    async with conn.execute(query, params) as cursor:
-        rows = await cursor.fetchall()
-        threats = []
-        for row in rows:
-            threat = dict(row)
-            threat["mitigations"] = json.loads(threat["mitigations"])
-            if threat.get("dependency_ref"):
-                threat["dependency_ref"] = json.loads(threat["dependency_ref"])
-            if threat.get("attack_techniques"):
-                threat["attack_techniques"] = json.loads(threat["attack_techniques"])
-            threats.append(threat)
-        return threats
+        async with conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            threats = []
+            for row in rows:
+                threat = dict(row)
+                threat["mitigations"] = json.loads(threat["mitigations"])
+                if threat.get("dependency_ref"):
+                    threat["dependency_ref"] = json.loads(threat["dependency_ref"])
+                if threat.get("attack_techniques"):
+                    threat["attack_techniques"] = json.loads(threat["attack_techniques"])
+                threats.append(threat)
+            return threats
 
 
 async def update_threat_status(threat_id: str, status: str) -> None:
@@ -451,14 +450,14 @@ async def get_threats_by_ids(threat_ids: list[str]) -> list[dict[str, Any]]:
     """Fetch multiple threats by their IDs."""
     if not threat_ids:
         return []
-    conn = await db.get()
-    placeholders = ",".join("?" for _ in threat_ids)
-    async with conn.execute(
-        f"SELECT * FROM threats WHERE id IN ({placeholders})",
-        threat_ids,
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        placeholders = ",".join("?" for _ in threat_ids)
+        async with conn.execute(
+            f"SELECT * FROM threats WHERE id IN ({placeholders})",
+            threat_ids,
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def bulk_update_threat_status(threat_ids: list[str], status: str) -> int:
@@ -678,12 +677,12 @@ async def create_asset(
 
 async def list_assets(model_id: str) -> list[dict[str, Any]]:
     """List all assets for a model."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM assets WHERE model_id = ? ORDER BY created_at", (model_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM assets WHERE model_id = ? ORDER BY created_at", (model_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def update_asset(
@@ -781,26 +780,26 @@ async def create_dependency_scan(
 
 async def list_dependency_scans(model_id: str) -> list[dict[str, Any]]:
     """List dependency scans for a model, most recently created first."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM dependency_scans WHERE model_id = ? ORDER BY created_at DESC",
-        (model_id,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-        scans = []
-        for row in rows:
-            scan = dict(row)
-            scan["analysis"] = json.loads(scan["analysis"])
-            scans.append(scan)
-        return scans
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM dependency_scans WHERE model_id = ? ORDER BY created_at DESC",
+            (model_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            scans = []
+            for row in rows:
+                scan = dict(row)
+                scan["analysis"] = json.loads(scan["analysis"])
+                scans.append(scan)
+            return scans
 
 
 async def get_asset(asset_id: str) -> dict[str, Any] | None:
     """Get an asset by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def delete_asset(asset_id: str) -> None:
@@ -909,10 +908,10 @@ async def find_threat_models_for_prune(
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM threat_models {where} ORDER BY created_at"
 
-    conn = await db.get()
-    async with conn.execute(query, params) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def delete_threat_models_batch(model_ids: list[str]) -> int:
@@ -959,20 +958,22 @@ async def create_threat_source(
 
 async def list_threat_sources(model_id: str) -> list[dict[str, Any]]:
     """List all threat sources for a model."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM threat_sources WHERE model_id = ? ORDER BY created_at", (model_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM threat_sources WHERE model_id = ? ORDER BY created_at", (model_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def get_threat_source(source_id: str) -> dict[str, Any] | None:
     """Get a threat source by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM threat_sources WHERE id = ?", (source_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM threat_sources WHERE id = ?", (source_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def delete_threat_source(source_id: str) -> None:
@@ -1030,20 +1031,20 @@ async def create_flow(
 
 async def list_flows(model_id: str) -> list[dict[str, Any]]:
     """List all data flows for a model."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM flows WHERE model_id = ? ORDER BY created_at", (model_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM flows WHERE model_id = ? ORDER BY created_at", (model_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def get_flow(flow_id: str) -> dict[str, Any] | None:
     """Get a data flow by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM flows WHERE id = ?", (flow_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM flows WHERE id = ?", (flow_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def update_flow(
@@ -1143,22 +1144,22 @@ async def create_trust_boundary(
 
 async def get_trust_boundary(boundary_id: str) -> dict[str, Any] | None:
     """Get a trust boundary by ID."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM trust_boundaries WHERE id = ?", (boundary_id,)
-    ) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM trust_boundaries WHERE id = ?", (boundary_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def list_trust_boundaries(model_id: str) -> list[dict[str, Any]]:
     """List all trust boundaries for a model."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM trust_boundaries WHERE model_id = ? ORDER BY created_at", (model_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM trust_boundaries WHERE model_id = ? ORDER BY created_at", (model_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def update_trust_boundary(
@@ -1359,13 +1360,13 @@ async def list_model_diagrams(
             diagram-list route to `False` once the frontend lazy-loads
             images through the single-diagram route.
     """
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM model_diagrams WHERE model_id = ? ORDER BY position ASC, created_at ASC",
-        (model_id,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-        result = [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM model_diagrams WHERE model_id = ? ORDER BY position ASC, created_at ASC",
+            (model_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = [dict(row) for row in rows]
 
     if not include_image_content:
         for row in result:
@@ -1380,10 +1381,12 @@ async def list_model_diagrams(
 
 async def get_model_diagram(diagram_id: str) -> dict[str, Any] | None:
     """Get a single diagram by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM model_diagrams WHERE id = ?", (diagram_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM model_diagrams WHERE id = ?", (diagram_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 def diagram_data_from_row(row: dict[str, Any]) -> DiagramData:
@@ -1472,20 +1475,20 @@ async def create_attack_tree(threat_id: str, mermaid_source: str) -> str:
 
 async def get_attack_tree(tree_id: str) -> dict[str, Any] | None:
     """Get an attack tree by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM attack_trees WHERE id = ?", (tree_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM attack_trees WHERE id = ?", (tree_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def list_attack_trees(threat_id: str) -> list[dict[str, Any]]:
     """List all attack trees for a threat."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM attack_trees WHERE threat_id = ? ORDER BY created_at", (threat_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM attack_trees WHERE threat_id = ? ORDER BY created_at", (threat_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def delete_attack_tree(tree_id: str) -> None:
@@ -1518,20 +1521,20 @@ async def create_test_case(threat_id: str, gherkin_source: str) -> str:
 
 async def get_test_case(case_id: str) -> dict[str, Any] | None:
     """Get a test case by ID."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM test_cases WHERE id = ?", (case_id,)) as cursor:
-        row = await cursor.fetchone()
-        return dict(row) if row else None
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM test_cases WHERE id = ?", (case_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
 
 async def list_test_cases(threat_id: str) -> list[dict[str, Any]]:
     """List all test cases for a threat."""
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM test_cases WHERE threat_id = ? ORDER BY created_at", (threat_id,)
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM test_cases WHERE threat_id = ? ORDER BY created_at", (threat_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def delete_test_case(case_id: str) -> None:
@@ -1603,28 +1606,28 @@ async def create_pipeline_run(
 
 async def get_pipeline_stats(model_id: str) -> dict[str, Any]:
     """Get pipeline execution statistics for a model."""
-    conn = await db.get()
-    async with conn.execute(
-        """
-        SELECT
-            COUNT(*) as total_steps,
-            SUM(duration_ms) as total_duration_ms,
-            SUM(tokens_used) as total_tokens,
-            AVG(duration_ms) as avg_duration_ms
-        FROM pipeline_runs
-        WHERE model_id = ?
-        """,
-        (model_id,),
-    ) as cursor:
-        row = await cursor.fetchone()
-        if row:
-            return {
-                "total_steps": row[0],
-                "total_duration_ms": row[1],
-                "total_tokens": row[2],
-                "avg_duration_ms": row[3],
-            }
-        return {}
+    async with db.reader() as conn:
+        async with conn.execute(
+            """
+            SELECT
+                COUNT(*) as total_steps,
+                SUM(duration_ms) as total_duration_ms,
+                SUM(tokens_used) as total_tokens,
+                AVG(duration_ms) as avg_duration_ms
+            FROM pipeline_runs
+            WHERE model_id = ?
+            """,
+            (model_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "total_steps": row[0],
+                    "total_duration_ms": row[1],
+                    "total_tokens": row[2],
+                    "avg_duration_ms": row[3],
+                }
+            return {}
 
 
 async def list_pipeline_runs(model_id: str) -> list[dict[str, Any]]:
@@ -1637,13 +1640,13 @@ async def list_pipeline_runs(model_id: str) -> list[dict[str, Any]]:
     the per-step detail underneath that rollup, for whoever needs it next
     (a step-level breakdown UI, a CSV export, ad-hoc debugging).
     """
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT * FROM pipeline_runs WHERE model_id = ? ORDER BY created_at ASC",
-        (model_id,),
-    ) as cursor:
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT * FROM pipeline_runs WHERE model_id = ? ORDER BY created_at ASC",
+            (model_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 # Config KV store
@@ -1667,9 +1670,11 @@ async def get_config_value(key: str) -> str | None:
     """
     from backend.security.source_key import decrypt_str
 
-    conn = await db.get()
-    async with conn.execute("SELECT value, encrypted FROM config WHERE key = ?", (key,)) as cursor:
-        row = await cursor.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT value, encrypted FROM config WHERE key = ?", (key,)
+        ) as cursor:
+            row = await cursor.fetchone()
     if row is None:
         return None
     # aiosqlite returns BLOB columns as bytes; we rely on that invariant here.
@@ -1816,9 +1821,9 @@ async def create_code_source(
 
 async def get_code_source(source_id: str) -> dict[str, Any] | None:
     """Return the public dict for a single source, or ``None`` if absent."""
-    conn = await db.get()
-    async with conn.execute("SELECT * FROM code_sources WHERE id = ?", (source_id,)) as cursor:
-        row = await cursor.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute("SELECT * FROM code_sources WHERE id = ?", (source_id,)) as cursor:
+            row = await cursor.fetchone()
     return _row_to_code_source(row) if row else None
 
 
@@ -1840,11 +1845,11 @@ async def list_code_sources(
         params.extend(project_ids)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    conn = await db.get()
-    async with conn.execute(
-        f"SELECT * FROM code_sources {where} ORDER BY created_at DESC", params
-    ) as cursor:
-        rows = await cursor.fetchall()
+    async with db.reader() as conn:
+        async with conn.execute(
+            f"SELECT * FROM code_sources {where} ORDER BY created_at DESC", params
+        ) as cursor:
+            rows = await cursor.fetchall()
     return [_row_to_code_source(r) for r in rows]
 
 
@@ -1858,11 +1863,11 @@ async def get_code_source_pat(source_id: str) -> str | None:
     """
     from backend.security.source_key import assert_pat_key_source_matches, decrypt_pat
 
-    conn = await db.get()
-    async with conn.execute(
-        "SELECT pat_ciphertext FROM code_sources WHERE id = ?", (source_id,)
-    ) as cursor:
-        row = await cursor.fetchone()
+    async with db.reader() as conn:
+        async with conn.execute(
+            "SELECT pat_ciphertext FROM code_sources WHERE id = ?", (source_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
     if row is None or row[0] is None:
         return None
     await assert_pat_key_source_matches()
