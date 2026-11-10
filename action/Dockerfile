@@ -23,7 +23,7 @@ WORKDIR /app
 
 # Pin to the version that matches the action tag.
 # Update this ARG on every release (also bump pyproject.toml).
-ARG PARANOID_VERSION=1.6.1rc1
+ARG PARANOID_VERSION=1.6.1
 
 # Copy wheel from the wheels-ctx build context.
 # In CI, wheels-ctx is overridden with dist/ (local wheel built from checkout).
