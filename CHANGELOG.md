@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.6.1] - 2026-11-10
+## [1.6.1] - 2026-11-13
 
 The rest of the fixes from the 2026-11-02 code review, on top of [1.6.1-rc1](#161-rc1---2026-11-03), whose security and data-loss fixes are listed in its own section below. Upgrading from 1.6.0 picks up both.
 
