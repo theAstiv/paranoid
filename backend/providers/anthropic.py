@@ -14,6 +14,7 @@ from anthropic import (
     BadRequestError,
     RateLimitError,
 )
+from anthropic import __version__ as anthropic_version
 from anthropic.resources.messages import Messages
 from pydantic import BaseModel, ValidationError
 
@@ -40,10 +41,14 @@ from backend.providers.usage import as_token_count, record_usage
 
 logger = logging.getLogger(__name__)
 
-# anthropic 2.1 dropped `temperature` from `messages.create`, so passing it raises
-# TypeError before any request is made. The API still takes it, so on those SDKs it
-# goes in the request body instead (BB-142).
-_SDK_TAKES_TEMPERATURE = "temperature" in inspect.signature(Messages.create).parameters
+# anthropic 2.0 sends API version 2026-10-21, which rejects `temperature` on every
+# model, in the request body too ("Extra inputs are not permitted"), and 2.1 dropped
+# the argument from `messages.create`. So it is sent only by a 0.x/1.x SDK, which
+# still sends 2023-06-01 (BB-142).
+_SEND_TEMPERATURE = (
+    int(anthropic_version.split(".")[0]) < 2
+    and "temperature" in inspect.signature(Messages.create).parameters
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -111,8 +116,12 @@ class AnthropicProvider:
     @staticmethod
     def _is_temperature_deprecated_error(e: BadRequestError) -> bool:
         message = str(e).lower()
+        # "extra inputs are not permitted" is what API version 2026-10-21 returns.
         return "temperature" in message and (
-            "deprecated" in message or "not supported" in message or "unsupported" in message
+            "deprecated" in message
+            or "not supported" in message
+            or "unsupported" in message
+            or "extra inputs are not permitted" in message
         )
 
     def _extract_text(self, response) -> str:
@@ -148,11 +157,9 @@ class AnthropicProvider:
             call = dict(kwargs)
             # What THIS call carries decides whether a rejection is retriable: another
             # in-flight call may already have flipped the flag (BB-32).
-            sent_temperature = not self._temperature_unsupported
-            if sent_temperature and _SDK_TAKES_TEMPERATURE:
+            sent_temperature = _SEND_TEMPERATURE and not self._temperature_unsupported
+            if sent_temperature:
                 call["temperature"] = temperature
-            elif sent_temperature:
-                call["extra_body"] = {**call.get("extra_body", {}), "temperature": temperature}
             sent_effort = bool(self._effort) and not self._effort_unsupported
             if sent_effort:
                 # extra_body rather than the typed `output_config` argument so

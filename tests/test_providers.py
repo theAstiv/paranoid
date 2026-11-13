@@ -24,9 +24,9 @@ from backend.providers import (
 
 @pytest.fixture(autouse=True)
 def _sdk_takes_temperature(monkeypatch):
-    """These tests describe an SDK whose `messages.create` takes `temperature`.
-    CI installs the newest SDK, which doesn't (BB-142); that path has its own tests."""
-    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", True)
+    """These tests describe a 0.x/1.x SDK, which sends `temperature`. CI installs a
+    2.x SDK, which never does (BB-142); that path has its own tests."""
+    monkeypatch.setattr("backend.providers.anthropic._SEND_TEMPERATURE", True)
 
 
 @pytest.fixture
@@ -194,15 +194,26 @@ async def test_anthropic_temperature_deprecated_retries_without_it():
         assert "temperature" not in third_call_kwargs
 
 
-# BB-142: anthropic 2.1 removed `temperature` from `messages.create` (passing it
-# raised TypeError on every call), so it goes in the request body there.
+# BB-142: anthropic 2.x sends API version 2026-10-21, which rejects `temperature` on
+# every model, as an argument or in the request body. Sending it in `extra_body` made
+# every call fail and every run fall back to rules-only.
+
+
+def test_anthropic_sdk_2_never_sends_temperature(monkeypatch):
+    """Checks the installed SDK, not a patched flag: on a 2.x SDK (what CI and
+    `constraints.txt` install) the module must decide not to send it."""
+    import anthropic
+
+    import backend.providers.anthropic as provider_module
+
+    monkeypatch.undo()  # drop the autouse fixture's override
+    expected = int(anthropic.__version__.split(".")[0]) < 2
+    assert provider_module._SEND_TEMPERATURE is expected
 
 
 @pytest.mark.asyncio
-async def test_anthropic_sends_temperature_in_the_body_when_the_sdk_takes_no_argument(
-    monkeypatch,
-):
-    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", False)
+async def test_anthropic_omits_temperature_from_the_request_on_sdk_2(monkeypatch):
+    monkeypatch.setattr("backend.providers.anthropic._SEND_TEMPERATURE", False)
     with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _text_response("ok")
@@ -213,16 +224,17 @@ async def test_anthropic_sends_temperature_in_the_body_when_the_sdk_takes_no_arg
 
     kwargs = mock_client.messages.create.call_args.kwargs
     assert "temperature" not in kwargs
-    assert kwargs["extra_body"] == {"temperature": 0.3, "output_config": {"effort": "medium"}}
+    assert kwargs["extra_body"] == {"output_config": {"effort": "medium"}}
 
 
 @pytest.mark.asyncio
-async def test_anthropic_body_temperature_rejected_by_the_model_is_dropped(monkeypatch):
-    monkeypatch.setattr("backend.providers.anthropic._SDK_TAKES_TEMPERATURE", False)
+async def test_anthropic_extra_inputs_rejection_of_temperature_retries_without_it():
+    """API version 2026-10-21's wording; seen when an SDK that still sends
+    `temperature` talks to an API that has moved on."""
     with patch("backend.providers.anthropic.Anthropic") as mock_anthropic:
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = [
-            _anthropic_400("`temperature` is deprecated for this model."),
+            _anthropic_400("temperature: Extra inputs are not permitted"),
             _text_response("ok"),
             _text_response("ok again"),
         ]
@@ -233,9 +245,9 @@ async def test_anthropic_body_temperature_rejected_by_the_model_is_dropped(monke
         assert await provider.generate(prompt="Hello again") == "ok again"
 
     calls = [c.kwargs for c in mock_client.messages.create.call_args_list]
-    assert calls[0]["extra_body"] == {"temperature": 0.0}
-    assert "extra_body" not in calls[1]
-    assert "extra_body" not in calls[2]
+    assert calls[0]["temperature"] == 0.0
+    assert "temperature" not in calls[1]
+    assert "temperature" not in calls[2]
 
 
 # BB-32: two calls in flight on one provider both carry `temperature`; the first
