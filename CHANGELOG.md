@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Direct Anthropic runs work on `anthropic` 2.x** (BB-142 follow-up) — 1.6.0's fix sent `temperature` in the request body when the SDK no longer took it as an argument, but `anthropic` 2.0 and later send API version `2026-10-21`, which rejects `temperature` on every model ("Extra inputs are not permitted"). Every LLM call failed and every run fell back to rules-only, on fresh `pip install`s, in the Action and in the Docker image (`constraints.txt` pins 2.6.0). Found in a live run on 2.8.0; the unit tests mock the client. `temperature` is now sent only by a 0.x/1.x SDK, and that error is also recognised as a temperature rejection, so a call retries without it. Current models (Sonnet, Haiku and Opus 5.5) already accept only the default temperature; older models such as Sonnet 4.6 now run at the API default on a 2.x SDK
 - **A re-index can't be scheduled twice** (review C5) — two requests arriving together both passed the in-progress check and queued two full clone + index runs; the second now gets `409`
 - **`GET /api/models?limit=` is bounded to 1–500** (review C6) — a negative limit returned every model (SQLite treats a negative `LIMIT` as unlimited)
 - **A startup warning when auth is on and `TRUSTED_PROXIES` is empty** (review A4) — behind a reverse proxy every user then shares one rate-limit bucket (10 logins and 5 pipeline runs a minute for the whole team)
