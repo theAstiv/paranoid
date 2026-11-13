@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-13
+
+The rest of the fixes from the 2026-11-02 code review, on top of [1.6.1-rc1](#161-rc1---2026-11-03), whose security and data-loss fixes are listed in its own section below. Upgrading from 1.6.0 picks up both.
+
 **Upgrading:** database migrations `0016`–`0018` run automatically at startup; back up `data/paranoid.db` first. With auth on, everyone signs in once more after the upgrade: sessions created before it have no stored token hash (BB-47), so the next refresh fails. That happens when the user's current access token expires (within 15 minutes of the upgrade), not at once; the old session rows are refused and expire on their own.
 
 ### Security
 
 - **Small hardening fixes** (review S6, S7) — the source-key file (`data/.source_key`, used when `CONFIG_SECRET` is unset) is created with mode 0600 instead of written and then chmod-ed, and two processes starting at once can't both write one; PAT hashes are compared in constant time
-- **Pinned dependencies for our own builds, raised floors for everyone else** (BB-86) — `pyproject.toml` only set minimum versions, so long-lived installs kept versions of `python-multipart`, `Pillow`, `cryptography` and `PyJWT` with known CVEs, and fresh installs could pull a breaking major (the cause of BB-142). Those four now require the versions CI tests (`python-multipart>=0.0.33`, `Pillow>=13.0`, `cryptography>=50.0`, `PyJWT>=2.15`). A new `constraints.txt` pins every dependency for Docker, CI and the release binaries; PyPI installs keep open upper bounds so they still get fixes
+- **Pinned dependencies for our own builds, raised floors for everyone else** (BB-86, review I2) — `pyproject.toml` only set minimum versions, so long-lived installs kept versions of `python-multipart`, `Pillow`, `cryptography` and `PyJWT` with known CVEs, and fresh installs could pull a breaking major (the cause of BB-142). Those four now require the versions CI tests (`python-multipart>=0.0.33`, `Pillow>=13.0`, `cryptography>=50.0`, `PyJWT>=2.15`). A new `constraints.txt` pins every dependency for Docker, CI and the release binaries; PyPI installs keep open upper bounds so they still get fixes
 - **Code-source PATs stay out of git's command line and the clone** (BB-74) — the PAT went into the clone URL, so it showed in the process list while git ran and git wrote it in clear text to the clone's `.git/config`. It now reaches git as an HTTP header in git's environment, scoped to the source's host (needs git 2.31+, which the Docker image's Debian git has)
 - **git and context-link no longer inherit the server's secrets** (review S8) — they ran with the full environment, including provider API keys, `CONFIG_SECRET` and `JWT_SECRET`. They now get a minimal environment
 - **A refresh token's secret is checked** (BB-47) — `/api/auth/refresh` looked the session up by the token's id half and never checked the random half, so `<session id>:anything` refreshed. Sessions now store a SHA-256 of the whole token (migration `0017`), compared in constant time before the reuse check, so a forged token for an old session id also can't revoke the user's other sessions. Logout and a password change's "keep this session" check it too
@@ -931,7 +935,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.1-rc1...HEAD
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/theAstiv/paranoid/compare/v1.6.1-rc1...v1.6.1
 [1.6.1-rc1]: https://github.com/theAstiv/paranoid/compare/v1.6.0...v1.6.1-rc1
 [1.6.0]: https://github.com/theAstiv/paranoid/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/theAstiv/paranoid/compare/v1.4.0...v1.5.0

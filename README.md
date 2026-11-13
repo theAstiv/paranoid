@@ -219,6 +219,8 @@ Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 ## Development Status
 
+**v1.6.1** — security, data-loss and correctness fixes from a full code review: context edits survive Re-extract and Re-run, archived projects are read-only, invite-only registration, PATs kept off git's command line, valid SARIF, direct Anthropic runs working on `anthropic` 2.x, and pinned dependencies for Docker and CI. No new features.
+
 **v1.6.0** — dependency capability engine, multi-user collaboration (accounts, projects, roles), AWS Bedrock, per-step model routing, multiple diagrams with ELK rendering, ATT&CK/ATLAS mapping and CVSS v3.1 scoring. See the [CHANGELOG](CHANGELOG.md).
 
 **v1.5.0** — Non-technical users can open the web app, paste an API key, link a Git repo, and get a threat model — no terminal required.
