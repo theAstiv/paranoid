@@ -40,6 +40,7 @@
   },
   "overrides": {
     "dompurify": "^3.4.13",
-    "picomatch": "^4.0.7"
+    "picomatch": "^4.0.7",
+    "minimatch": "^11.0.1"
   }
 }
