@@ -19,7 +19,7 @@ paranoid run <description-file> [OPTIONS]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--provider` | config default | LLM provider: `anthropic`, `openai`, `ollama`, `bedrock`. A provider other than the configured one uses its own key and model from the config file, else its built-in default model (`gpt-4.1`, `llama3.1:8b`); Bedrock needs `--model` |
-| `--model` | config default | Model name (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
+| `--model` | config default | Model name (e.g. `claude-sonnet-5-5`, `gpt-4.1`) |
 | `--fast-model` | config default | Fast model for the active provider (overrides `FAST_MODEL` / `FAST_MODEL_OPENAI` / …). `--fast-model=` (the `=` form) runs every step on the main model — a bare `--fast-model ""` loses the empty value in PowerShell |
 | `--step-model` | provider defaults | `STEP=fast\|main`, repeatable (e.g. `--step-model extract_flows=main`). Replaces `STEP_MODELS` for this run; `generate_threats` and `gap_analysis` can never be `fast` |
 | `-n`, `--iterations` | config (`DEFAULT_ITERATIONS`, `3`) | Pipeline iterations (1–15) |

@@ -22,7 +22,7 @@ docker compose up --build
 | `AWS_REGION` | — | AWS region for the Bedrock provider; empty lets boto3 resolve it via env/profile/instance metadata |
 | `AWS_PROFILE` | — | AWS named profile for Bedrock; empty uses boto3's default credential chain |
 | `DEFAULT_PROVIDER` | `anthropic` | Active provider: `anthropic`, `openai`, `ollama`, `bedrock` |
-| `DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default model name |
+| `DEFAULT_MODEL` | `claude-sonnet-5-5` | Default model name |
 | `ANTHROPIC_EFFORT` | — | Optional `low`/`medium`/`high`/`xhigh`/`max`; sent as `output_config.effort` to the **main** model only (never the fast model), on both the direct Anthropic provider and Claude-on-Bedrock. Unset keeps the model default. `claude-sonnet-5` at its default overran 4096 tokens on threat JSON; `medium` finished. Models that reject it (older Anthropic models, non-Claude Bedrock models) have it retried once without the field, then never sent again for that provider instance |
 | `OPENAI_REASONING_EFFORT` | — | Optional `none`/`low`/`medium`/`high`/`xhigh`/`max` for OpenAI models: sent as `reasoning_effort` on the direct OpenAI provider, and in `additionalModelRequestFields` for OpenAI-family models on Bedrock (matched on the model ID): nested `reasoning.effort` for GPT-6 Sol/Luna, flat `reasoning_effort` for gpt-oss. **Main model only**, never the fast model, and independent of `ANTHROPIC_EFFORT`. Unset sends nothing, which keeps `gpt-4.1`/`gpt-4o` exactly as before. GPT-6 models default to `medium` and then reject `temperature`: any level other than `none` omits `temperature`; `none` keeps it on the direct provider. On Bedrock, `temperature` is never sent to OpenAI-family models other than gpt-oss (GPT-6 there rejects it at any effort). A model that rejects `reasoning_effort`, `temperature` or `max_tokens` (some require `max_completion_tokens`) has the parameter dropped or switched after one failed call and remembered for that provider instance. GPT-6 on Bedrock rejects the flat `reasoning_effort` as an unknown parameter (probed 2026-10-15); the nested `reasoning.effort` was live-verified on both models at `none`, `low` and `max` on 2026-10-17 (`minimal` is rejected). A model that rejects the field has it dropped after one failed call, with a "rejects `effort`" warning in the log. **Which value:** direct Sol needs `low` or higher (it refuses `none`; measured at `low`); Luna takes `none`. Bedrock Sol and Luna runs before the field fix (all of the 10-16 numbers) ran at the model's default effort. See [benchmarks §1.1–§1.2](benchmarks.md#11-openai-direct-gpt-41-gpt-6-luna-and-gpt-61-sol-2026-10-13--10-15) |
 | `FAST_MODEL` | `claude-haiku-4-5-20251001` | Haiku-class model for extraction/enrichment steps when `DEFAULT_PROVIDER=anthropic`; set to `""` (or the same value as `DEFAULT_MODEL`) to disable fast routing |
@@ -45,7 +45,7 @@ The Run Summary on the Results page lists each step's model and its input / outp
 
 | Provider | Recommended | Notes |
 |----------|-------------|-------|
-| Anthropic | `claude-sonnet-4-20250514` | Best balance of quality and speed |
+| Anthropic | `claude-sonnet-5-5` | Best balance of quality and speed |
 | OpenAI | `gpt-4o` | Required for vision (`--diagram`) support |
 | Ollama | `llama3.1:8b`, `qwen2.5:14b` | Need 32K+ context window |
 | Bedrock | Anthropic Claude models via Bedrock | Uses your existing AWS credential chain — no separate API key. Retries `converse()` without `temperature` on providers that reject it. |

@@ -248,7 +248,7 @@
         <div class="grid grid-cols-3 items-center gap-4">
           <label for="cfg-model" class="{LABEL_CLASS}">Main model</label>
           <input id="cfg-model" type="text" bind:value={draft.model}
-            placeholder="e.g. claude-sonnet-4-20250514"
+            placeholder="e.g. claude-sonnet-5-5"
             class="col-span-2 {FIELD_CLASS} font-mono" />
         </div>
 
@@ -451,7 +451,7 @@
           ['OPENAI_API_KEY', 'OpenAI API key for GPT models'],
           ['OLLAMA_BASE_URL', 'Ollama server URL (default: http://host.docker.internal:11434)'],
           ['DEFAULT_PROVIDER', 'anthropic | openai | ollama'],
-          ['DEFAULT_MODEL', 'Main model identifier (e.g. claude-sonnet-4-20250514)'],
+          ['DEFAULT_MODEL', 'Main model identifier (e.g. claude-sonnet-5-5)'],
           ['FAST_MODEL', 'Anthropic fast model for extraction & enrichment (default: claude-haiku-4-5-20251001; empty = off)'],
           ['FAST_MODEL_OPENAI', 'OpenAI fast model (default: gpt-4.1-mini); also FAST_MODEL_BEDROCK, FAST_MODEL_OLLAMA'],
           ['STEP_MODELS', 'Per-step routing JSON, e.g. {"extract_flows":"main"}'],

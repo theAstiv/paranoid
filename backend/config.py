@@ -35,7 +35,7 @@ _FORBIDDEN_FAST_STEP_NAMES = {"generate_threats", "gap_analysis"}
 # The model a provider runs when one is chosen without naming a model (BB-97).
 # Bedrock has none: its model IDs depend on the account's region and access.
 DEFAULT_MODEL_BY_PROVIDER: dict[str, str] = {
-    "anthropic": "claude-sonnet-4-20250514",
+    "anthropic": "claude-sonnet-5-5",
     "openai": "gpt-4.1",
     "ollama": "llama3.1:8b",
 }

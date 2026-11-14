@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The default Anthropic model is `claude-sonnet-5-5`** — it was `claude-sonnet-4-20250514`, which the API retired on 2026-06-15. Anything without `DEFAULT_MODEL` set got a 404 on every LLM call and ran rules-only: the GitHub Action without a `model` input, `docker-compose.yml` (whose fallback was the same ID), and a fresh `pip install`. Also updated in `.env.example`, the docs and the Settings placeholders. Found in the 1.6.2 release check (0 iterations, 17 rules-only threats)
+- **The Action's `sarif-file` output works in the next step** — it was the container path (`/github/workspace/…`), which doesn't exist on the runner, so `upload-sarif` failed with "Path does not exist". It is now relative to the workspace. The docs and the example workflow use `github/codeql-action/upload-sarif@v4` (v3 is deprecated in December 2026)
+
 ## [1.6.2] - 2026-11-14
 
 Makes the GitHub Action work. Use `uses: theAstiv/paranoid/action@v1.6.2` (or `@v1`); see [docs/github-action.md](https://github.com/theAstiv/paranoid/blob/main/docs/github-action.md). Nothing changes for the CLI, the web app or the Docker image.
