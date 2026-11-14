@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-14
+
+Makes the GitHub Action work. Use `uses: theAstiv/paranoid/action@v1.6.2` (or `@v1`); see [docs/github-action.md](https://github.com/theAstiv/paranoid/blob/main/docs/github-action.md). Nothing changes for the CLI, the web app or the Docker image.
+
 ### Fixed
 
 - **The GitHub Action runs** — it failed on every real run, in every release so far, for two reasons. (1) The docs said `uses: theAstiv/paranoid@<tag>`, but the action is in `action/`: GitHub then built the repository-root `Dockerfile` (the web app), ignored the inputs and served `/health` until the job timed out. The path is `theAstiv/paranoid/action@<tag>`; the docs and the example workflow now say so. (2) GitHub passes a Docker action's inputs with the hyphen kept (`INPUT_DESCRIPTION-FILE`), which the entrypoint's `${INPUT_DESCRIPTION_FILE}` never saw, so every run stopped at "Input 'description-file' is required" and `api-key`, `sarif-output`, `fail-on-findings`, `aws-region`, `deps-source`, `scoring-method` and `fast-model` were ignored. The entrypoint now reads both forms. The tests had set the underscore names themselves and CI only built the image; CI now also runs it with GitHub's variable names. Found in the 1.6.1 release check against a real repository
@@ -940,7 +944,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/theAstiv/paranoid/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/theAstiv/paranoid/compare/v1.6.1-rc1...v1.6.1
 [1.6.1-rc1]: https://github.com/theAstiv/paranoid/compare/v1.6.0...v1.6.1-rc1
 [1.6.0]: https://github.com/theAstiv/paranoid/compare/v1.5.0...v1.6.0
