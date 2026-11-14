@@ -40,17 +40,20 @@ def action(tmp_path):
     script = tmp_path / "entrypoint.sh"
     script.write_bytes(_ENTRYPOINT.read_bytes().replace(b"\r\n", b"\n"))
 
-    def run(**inputs: str) -> tuple[subprocess.CompletedProcess, list[str], dict]:
+    def run(
+        _separator: str = "-", **inputs: str
+    ) -> tuple[subprocess.CompletedProcess, list[str], dict]:
+        """`inputs` use Python names (`deps_source`); they are sent the way GitHub
+        sends a Docker action's inputs, `INPUT_DEPS-SOURCE`, hyphen kept."""
         env = {k: v for k, v in os.environ.items() if not k.startswith("INPUT_")}
         env.update(
             PATH=f"{bin_dir}{os.pathsep}{env['PATH']}",
             ARGS_FILE=str(args_file),
             GITHUB_WORKSPACE=str(workspace),
             GITHUB_OUTPUT=str(tmp_path / "github_output"),
-            INPUT_DESCRIPTION_FILE="system.md",
-            INPUT_API_KEY="sk-test",
         )
-        env.update({f"INPUT_{k.upper()}": v for k, v in inputs.items()})
+        inputs = {"description_file": "system.md", "api_key": "sk-test", **inputs}
+        env.update({f"INPUT_{k.upper().replace('_', _separator)}": v for k, v in inputs.items()})
         if args_file.exists():
             args_file.unlink()
         result = subprocess.run(  # noqa: S603 - fixed script, test-controlled args
@@ -120,3 +123,31 @@ def test_anthropic_still_requires_an_api_key(action):
     result, _, _ = action(api_key="")
     assert result.returncode == 1
     assert "'api-key' is required" in result.stdout
+
+
+# GitHub keeps the hyphen in a Docker action's input env var (INPUT_DESCRIPTION-FILE),
+# which bash's `${...}` can't read; the script read INPUT_DESCRIPTION_FILE, so every
+# hyphenated input was lost and every real run failed "'description-file' is required".
+
+
+def test_hyphenated_inputs_reach_the_cli(action):
+    result, args, env = action(sarif_output="out/results.sarif", api_key="sk-hyphen")
+    assert "INPUT_DESCRIPTION-FILE" in env
+    assert "INPUT_DESCRIPTION_FILE" not in env
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert args[0] == "run"
+    assert args[1].endswith("/system.md")
+    assert _value(args, "--output").endswith("/out/results.sarif")
+
+
+def test_underscore_input_names_still_work(action):
+    result, args, _ = action(_separator="_", deps_source="both", manifest="apps/package.json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _value(args, "--deps-source") == "both"
+
+
+def test_missing_description_file_is_rejected(action):
+    result, args, _ = action(description_file="")
+    assert result.returncode == 1
+    assert "'description-file' is required" in result.stdout
+    assert args == []

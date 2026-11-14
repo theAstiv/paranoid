@@ -247,8 +247,37 @@ jobs:
           context: action
           build-contexts: wheels-ctx=dist
           push: false
+          load: true
+          tags: paranoid-action:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Run the image the way GitHub runs a Docker action: inputs as INPUT_<NAME>
+      # with the hyphen kept (INPUT_DESCRIPTION-FILE) and the checkout mounted at
+      # /github/workspace. Rules-only (Ollama on a dead port), so no key or cost.
+      # Building alone missed that the entrypoint couldn't read hyphenated inputs.
+      - name: Run action image (rules-only smoke test)
+        run: |
+          docker run --rm \
+            --workdir /github/workspace \
+            -v "${PWD}:/github/workspace" \
+            -e GITHUB_WORKSPACE=/github/workspace \
+            -e GITHUB_OUTPUT=/github/workspace/action-output.txt \
+            -e "INPUT_DESCRIPTION-FILE=examples/stride-example-api-gateway.md" \
+            -e "INPUT_PROVIDER=ollama" \
+            -e "INPUT_ITERATIONS=1" \
+            -e "INPUT_SARIF-OUTPUT=action-smoke.sarif" \
+            -e "INPUT_SCORING-METHOD=both" \
+            -e OLLAMA_BASE_URL=http://127.0.0.1:1 \
+            paranoid-action:ci
+          grep -q '^sarif-file=/github/workspace/action-smoke.sarif$' action-output.txt
+          python3 -c "
+          import json
+          sarif = json.load(open('action-smoke.sarif'))
+          results = sum(len(r.get('results', [])) for r in sarif['runs'])
+          print(f'{results} SARIF results')
+          assert results > 0
+          "
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Docker
