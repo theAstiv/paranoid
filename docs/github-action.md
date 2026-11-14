@@ -21,7 +21,7 @@ jobs:
 
       - name: Run Paranoid threat modeling
         id: paranoid
-        uses: theAstiv/paranoid/action@v1.6.2
+        uses: theAstiv/paranoid/action@v1.6.3
         with:
           description-file: docs/system-description.md
           provider: anthropic
@@ -36,7 +36,7 @@ jobs:
           sarif_file: ${{ steps.paranoid.outputs.sarif-file }}
 ```
 
-The action lives in the repository's `action/` directory, so the path is `theAstiv/paranoid/action@<tag>`. Without `/action`, GitHub builds the repository-root `Dockerfile` (the web app) instead: the inputs are ignored and the step runs a server until the job times out. Use **v1.6.2 or later**: in earlier releases the action couldn't read hyphenated inputs such as `description-file` and failed on every run.
+The action lives in the repository's `action/` directory, so the path is `theAstiv/paranoid/action@<tag>`. Without `/action`, GitHub builds the repository-root `Dockerfile` (the web app) instead: the inputs are ignored and the step runs a server until the job times out. Use **v1.6.3 or later**: before 1.6.2 the action couldn't read hyphenated inputs such as `description-file` and failed on every run, and before 1.6.3 its `sarif-file` output was a container path that `upload-sarif` couldn't find.
 
 ## Inputs
 
@@ -75,7 +75,7 @@ The threat count is printed as a `::notice::` in the job log. The action uses a 
 ### Strict mode — fail on description gaps
 
 ```yaml
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/system-description.md
     provider: anthropic
@@ -90,7 +90,7 @@ Exit code 2 if the description is missing critical sections (auth, trust boundar
 For high-security workflows where any new threat in a PR is a blocker:
 
 ```yaml
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/system-description.md
     provider: anthropic
@@ -101,7 +101,7 @@ For high-security workflows where any new threat in a PR is a blocker:
 ### MAESTRO for AI/ML systems
 
 ```yaml
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/ml-system.md
     provider: anthropic
@@ -113,7 +113,7 @@ For high-security workflows where any new threat in a PR is a blocker:
 ### OpenAI provider
 
 ```yaml
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/system.md
     provider: openai
@@ -126,7 +126,7 @@ For high-security workflows where any new threat in a PR is a blocker:
 The `manifest`, `lockfile`, `deps-source`, `scoring-method`, `fast-model` and `aws-region` inputs and the `bedrock` provider need **v1.6.0 or later**.
 
 ```yaml
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/system.md
     api-key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -144,7 +144,7 @@ Untested in a real workflow so far: the provider is benchmarked, but credentials
   with:
     role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
     aws-region: us-east-2
-- uses: theAstiv/paranoid/action@v1.6.2
+- uses: theAstiv/paranoid/action@v1.6.3
   with:
     description-file: docs/system.md
     provider: bedrock
@@ -171,6 +171,6 @@ Results appear in the **Security** tab under **Code scanning alerts** and as **P
 Pin to a release tag for reproducible runs, or to the floating major tag to follow the latest 1.x release. `v1` is moved to each new 1.x release by the release workflow (never to a pre-release):
 
 ```yaml
-uses: theAstiv/paranoid/action@v1.6.2   # pinned to a release
+uses: theAstiv/paranoid/action@v1.6.3   # pinned to a release
 uses: theAstiv/paranoid/action@v1        # latest 1.x
 ```
