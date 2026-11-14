@@ -219,7 +219,9 @@ Full platform matrix: [docs/deployment.md](docs/deployment.md)
 
 ## Development Status
 
-**v1.6.2** — the GitHub Action works (`uses: theAstiv/paranoid/action@v1.6.2`); every earlier release's Action failed on every run.
+**v1.6.3** — the default Anthropic model is `claude-sonnet-5-5` (the old default was retired, so unconfigured runs went rules-only), and the GitHub Action works end to end (`uses: theAstiv/paranoid/action@v1.6.3`).
+
+**v1.6.2** — the GitHub Action runs; every earlier release's Action failed on every run.
 
 **v1.6.1** — security, data-loss and correctness fixes from a full code review: context edits survive Re-extract and Re-run, archived projects are read-only, invite-only registration, PATs kept off git's command line, valid SARIF, direct Anthropic runs working on `anthropic` 2.x, and pinned dependencies for Docker and CI. No new features.
 

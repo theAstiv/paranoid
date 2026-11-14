@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-14
+
+Runs without `DEFAULT_MODEL` set used a retired model and fell back to rules-only; the default is now `claude-sonnet-5-5`. The GitHub Action's `sarif-file` output now works in the next step. Use `uses: theAstiv/paranoid/action@v1.6.3` (or `@v1`).
+
 ### Fixed
 
 - **The default Anthropic model is `claude-sonnet-5-5`** — it was `claude-sonnet-4-20250514`, which the API retired on 2026-06-15. Anything without `DEFAULT_MODEL` set got a 404 on every LLM call and ran rules-only: the GitHub Action without a `model` input, `docker-compose.yml` (whose fallback was the same ID), and a fresh `pip install`. Also updated in `.env.example`, the docs and the Settings placeholders. Found in the 1.6.2 release check (0 iterations, 17 rules-only threats)
@@ -949,7 +953,8 @@ This is a metadata-only release. The functionality is identical to v1.0.0.
 
 ---
 
-[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/theAstiv/paranoid/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/theAstiv/paranoid/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/theAstiv/paranoid/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/theAstiv/paranoid/compare/v1.6.1-rc1...v1.6.1
 [1.6.1-rc1]: https://github.com/theAstiv/paranoid/compare/v1.6.0...v1.6.1-rc1

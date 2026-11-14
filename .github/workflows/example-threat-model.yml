@@ -5,7 +5,7 @@
 ## so it only runs when you explicitly start it.
 ##
 ## To use the live action from this repo:
-##   uses: theAstiv/paranoid/action@v1.6.2
+##   uses: theAstiv/paranoid/action@v1.6.3
 
 name: Threat Model (example)
 
@@ -30,7 +30,7 @@ jobs:
 
       - name: Run Paranoid threat modeling
         id: paranoid
-        uses: theAstiv/paranoid/action@main # pin to a release tag in production, e.g. @v1.6.2
+        uses: theAstiv/paranoid/action@main # pin to a release tag in production, e.g. @v1.6.3
         with:
           description-file: ${{ github.event.inputs.description-file }}
           provider: anthropic
