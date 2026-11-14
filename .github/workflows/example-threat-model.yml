@@ -40,7 +40,7 @@ jobs:
           sarif-output: paranoid-results.sarif
 
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()                        # upload even if threat-model step fails
         with:
           sarif_file: ${{ steps.paranoid.outputs.sarif-file }}

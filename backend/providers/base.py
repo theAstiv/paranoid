@@ -238,7 +238,7 @@ async def run_sync_in_executor(func: Callable, *args: Any, **kwargs: Any) -> Any
     Example:
         result = await run_sync_in_executor(
             client.messages.create,
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-5-5",
             messages=[...],
         )
 

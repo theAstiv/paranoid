@@ -19,7 +19,7 @@ inputs:
     required: false
     default: ''
   model:
-    description: 'Model override (e.g. claude-sonnet-4-5, gpt-4o). Uses provider default when omitted.'
+    description: 'Model override (e.g. claude-opus-5-5, gpt-4.1). Uses provider default when omitted.'
     required: false
     default: ''
   framework:
@@ -69,7 +69,7 @@ inputs:
 
 outputs:
   sarif-file:
-    description: 'Absolute path to the generated SARIF file'
+    description: 'Path to the generated SARIF file, relative to the workspace when it is inside it (pass it straight to upload-sarif)'
 
 runs:
   using: 'docker'

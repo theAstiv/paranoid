@@ -124,8 +124,15 @@ echo "::group::Paranoid threat modeling"
 paranoid run "${ARGS[@]}"
 echo "::endgroup::"
 
-# Expose the SARIF file path as an action output
-echo "sarif-file=${SARIF_OUTPUT}" >> "${GITHUB_OUTPUT}"
+# Expose the SARIF file path as an action output, relative to the workspace: the
+# container sees the checkout at /github/workspace, but the next step runs on the
+# runner, where it is somewhere else, so an absolute container path doesn't exist
+# there. A relative path resolves against the checkout in both places.
+SARIF_OUTPUT_PATH="${SARIF_OUTPUT}"
+if [[ "${SARIF_OUTPUT}" == "${GITHUB_WORKSPACE}/"* ]]; then
+  SARIF_OUTPUT_PATH="${SARIF_OUTPUT#"${GITHUB_WORKSPACE}/"}"
+fi
+echo "sarif-file=${SARIF_OUTPUT_PATH}" >> "${GITHUB_OUTPUT}"
 
 # Count threats in the SARIF output and always surface the number in the job log.
 # SARIF_OUTPUT is passed via env to avoid shell-injection from user-controlled paths.

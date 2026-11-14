@@ -270,7 +270,8 @@ jobs:
             -e "INPUT_SCORING-METHOD=both" \
             -e OLLAMA_BASE_URL=http://127.0.0.1:1 \
             paranoid-action:ci
-          grep -q '^sarif-file=/github/workspace/action-smoke.sarif$' action-output.txt
+          # Relative: the absolute container path doesn't exist for the next step on the runner.
+          grep -q '^sarif-file=action-smoke.sarif$' action-output.txt
           python3 -c "
           import json
           sarif = json.load(open('action-smoke.sarif'))
@@ -336,7 +337,7 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             -e DEFAULT_PROVIDER=anthropic \
-            -e DEFAULT_MODEL=claude-sonnet-4-20250514 \
+            -e DEFAULT_MODEL=claude-sonnet-5-5 \
             paranoid:ci-smoke
           for i in $(seq 1 12); do
             if curl -sf http://127.0.0.1:8000/health; then

@@ -44,7 +44,7 @@ services:
       # above (deliberately not interpolated here — see comment).
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-anthropic}
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-claude-sonnet-4-20250514}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-claude-sonnet-5-5}
       - DEFAULT_ITERATIONS=${DEFAULT_ITERATIONS:-3}
 
       # ── Database ──────────────────────────────────────────────────────────

@@ -136,7 +136,7 @@
         <div class="grid grid-cols-3 items-center gap-4">
           <label for="proj-model" class="{LABEL_CLASS}">Model</label>
           <input id="proj-model" type="text" bind:value={draft.default_model}
-            placeholder="e.g. claude-sonnet-4-20250514"
+            placeholder="e.g. claude-sonnet-5-5"
             class="col-span-2 {FIELD_CLASS} font-mono" />
         </div>
 

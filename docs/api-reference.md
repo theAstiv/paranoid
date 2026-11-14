@@ -36,7 +36,7 @@ Create a new threat model record (without running the pipeline). Returns `403` w
   "description": "...",
   "framework": "STRIDE",
   "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-5-5",
   "iteration_count": 3,
   "project_id": "uuid",
   "scoring_method": "dread"

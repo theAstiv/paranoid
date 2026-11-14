@@ -30,7 +30,7 @@ jobs:
           iterations: 3
 
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: ${{ steps.paranoid.outputs.sarif-file }}
@@ -45,7 +45,7 @@ The action lives in the repository's `action/` directory, so the path is `theAst
 | `description-file` | Yes | — | Path to system description (`.md` or `.txt`), relative to repo root |
 | `provider` | No | `anthropic` | LLM provider: `anthropic`, `openai`, `ollama`, or `bedrock` |
 | `api-key` | No* | — | Provider API key; omit for Ollama and Bedrock |
-| `model` | No | provider default | Model override (e.g. `claude-sonnet-4-20250514`, `gpt-4o`) |
+| `model` | No | provider default | Model override (e.g. `claude-opus-5-5`, `gpt-4.1`) |
 | `framework` | No | `STRIDE` | Threat framework: `STRIDE` or `MAESTRO` |
 | `iterations` | No | `3` | Pipeline iterations (1–15) |
 | `sarif-output` | No | `paranoid-results.sarif` | SARIF output file path |
@@ -66,7 +66,7 @@ The action image ships Semgrep, which the dependency inputs need; nothing to ins
 
 | Output | Description |
 |--------|-------------|
-| `sarif-file` | Path to the generated SARIF file |
+| `sarif-file` | Path to the generated SARIF file, relative to the workspace (pass it to `upload-sarif`) |
 
 The threat count is printed as a `::notice::` in the job log. The action uses a throwaway database inside its container, so no model is saved.
 

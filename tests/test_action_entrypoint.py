@@ -146,6 +146,32 @@ def test_underscore_input_names_still_work(action):
     assert _value(args, "--deps-source") == "both"
 
 
+# The container sees the checkout at /github/workspace; the next step (upload-sarif)
+# runs on the runner, where that absolute path doesn't exist. Seen in the v1.6.2
+# release check: "Path does not exist: /github/workspace/paranoid-results.sarif".
+
+
+def _sarif_output(env: dict) -> str:
+    # GITHUB_OUTPUT is appended to, so a second run in one test adds a second line.
+    lines = Path(env["GITHUB_OUTPUT"]).read_text().splitlines()
+    return [line.split("=", 1)[1] for line in lines if line.startswith("sarif-file=")][-1]
+
+
+def test_sarif_file_output_is_relative_to_the_workspace(action):
+    result, _, env = action(sarif_output="out/results.sarif")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _sarif_output(env) == "out/results.sarif"
+
+    result, _, env = action()
+    assert _sarif_output(env) == "paranoid-results.sarif"
+
+
+def test_sarif_file_output_outside_the_workspace_stays_absolute(action):
+    result, _, env = action(sarif_output="/outside/results.sarif")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _sarif_output(env) == "/outside/results.sarif"
+
+
 def test_missing_description_file_is_rejected(action):
     result, args, _ = action(description_file="")
     assert result.returncode == 1

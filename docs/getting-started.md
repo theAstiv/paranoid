@@ -54,7 +54,7 @@ Or set environment variables directly (see [configuration.md](configuration.md) 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-api03-xxx
 export DEFAULT_PROVIDER=anthropic
-export DEFAULT_MODEL=claude-sonnet-4-20250514
+export DEFAULT_MODEL=claude-sonnet-5-5
 ```
 
 ## Run your first threat model
