@@ -319,9 +319,10 @@ def _capturing_runner_factory(captured: dict):
 def _parse_sse_events(text: str) -> list[dict]:
     events = []
     for raw_chunk in text.strip().split("\n\n"):
-        chunk = raw_chunk.strip()
-        if chunk.startswith("data: "):
-            events.append(json.loads(chunk[len("data: ") :]))
+        # Chunks may carry an "id: <seq>" line ahead of the data line.
+        data = next((ln for ln in raw_chunk.splitlines() if ln.startswith("data: ")), None)
+        if data is not None:
+            events.append(json.loads(data[len("data: ") :]))
     return events
 
 

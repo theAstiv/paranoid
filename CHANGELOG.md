@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Run state and events live in the database** (KL-10 narrowed, BB-72) — a pipeline run or context extraction is a row in the new `live_runs` table (migration 0019) with its events in `live_run_events`. Starting a second run of a model is refused by a partial unique index, so two simultaneous `POST /run` give one 202 and one 409. `GET /api/models/{id}/run/events?after=<seq>` resumes from the last event (each event carries an SSE `id:`) and, once the run has ended, replays it with its final status instead of returning 404. The UI re-attaches once after a dropped connection. A run whose process stopped heart-beating is marked interrupted and its model failed, at startup and every 60 s. `GET /api/models/{id}` returns `active_run`. One worker is still required: see KL-10
+
 ## [1.6.3] - 2026-11-14
 
 Runs without `DEFAULT_MODEL` set used a retired model and fell back to rules-only; the default is now `claude-sonnet-5-5`. The GitHub Action's `sarif-file` output now works in the next step. Use `uses: theAstiv/paranoid/action@v1.6.3` (or `@v1`).

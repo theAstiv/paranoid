@@ -288,6 +288,13 @@ function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) 
   let doneFired = false
   const fireDone = () => { if (!doneFired) { doneFired = true; onDone() } }
 
+  // Follow URL for a run/extract stream: after a dropped connection the same
+  // run is re-attached from the last event id instead of being lost.
+  const followMatch = path.match(/^(\/models\/[^/?]+)\/(?:run|extract)(?:\/events)?(?:\?|$)/)
+  const followPath = followMatch ? `${followMatch[1]}/run/events` : null
+  let lastId = 0
+
+  /** @returns {Promise<'complete' | 'dropped' | 'error'>} */
   async function _readStream(res) {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
@@ -300,25 +307,51 @@ function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) 
         const parts = buf.split('\n\n')
         buf = parts.pop()
         for (const part of parts) {
-          const dataLine = part.split('\n').find(l => l.startsWith('data:'))
+          const lines = part.split('\n')
+          const idLine = lines.find(l => l.startsWith('id:'))
+          if (idLine) lastId = Number(idLine.slice(3).trim()) || lastId
+          const dataLine = lines.find(l => l.startsWith('data:'))
           if (!dataLine) continue
           try {
             const parsed = JSON.parse(dataLine.slice(5).trim())
             onEvent(parsed)
-            if (parsed.step === 'complete') {
-              fireDone()
-              return
-            }
+            if (parsed.step === 'complete') return 'complete'
           } catch (parseErr) {
             console.warn('subscribeSSE: malformed SSE JSON', parseErr)
           }
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') onError(err)
-    } finally {
-      fireDone()
+      if (err.name === 'AbortError') return 'error'
+      if (!followPath) {
+        onError(err)
+        return 'error'
+      }
+      return 'dropped'
     }
+    return followPath ? 'dropped' : 'complete'
+  }
+
+  async function _readWithReattach(res) {
+    let outcome = await _readStream(res)
+    if (outcome === 'dropped' && !controller.signal.aborted) {
+      // One re-attach, resuming after the last event seen.
+      try {
+        const { getStoredToken } = await import('./stores.js')
+        const token = getStoredToken()
+        const again = await fetch(`${BASE}${followPath}?after=${lastId}`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          signal: controller.signal,
+        })
+        if (again.ok) outcome = await _readStream(again)
+      } catch (err) {
+        if (err.name !== 'AbortError') onError(err)
+      }
+      if (outcome === 'dropped' && !controller.signal.aborted) {
+        onError(new Error('Lost connection to the run. Reload to follow it.'))
+      }
+    }
+    fireDone()
   }
 
   ;(async () => {
@@ -375,7 +408,7 @@ function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) 
     }
 
     onOpen?.()
-    await _readStream(res)
+    await _readWithReattach(res)
   })()
 
   return () => controller.abort()

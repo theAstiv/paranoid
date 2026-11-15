@@ -120,6 +120,10 @@ Backend: `http://localhost:8000`
 
 ---
 
+## One worker only
+
+Run a single uvicorn worker and a single replica. Pipeline runs and their events are stored in the database, so a run survives a page reload and is failed correctly after a crash, but other state is still per process: rate-limit buckets, runtime configuration changes, provider-healthcheck buckets, code-source index cancel and locks, and the daily staleness job. With two workers these would diverge (limits doubled, a Settings change visible on one worker only).
+
 ## Production hardening checklist
 
 - [ ] Set `PARANOID_REQUIRE_AUTH=true`

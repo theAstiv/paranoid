@@ -101,6 +101,18 @@ async def generate_structured(
 
 All providers auto-bump `max_tokens` on truncation (up to 2× per step, max 2 retries).
 
+## Run lifecycle
+
+A pipeline run or context extraction is a background task whose state is in the database (`live_runs`, `live_run_events`; `backend/pipeline/live_runs.py`, `backend/db/crud_live_runs.py`):
+
+1. **Claim.** `start_run` inserts a `running` row. A partial unique index on `(subject_type, subject_id) WHERE status = 'running'` lets only one succeed, so a second start is a 409 with no read-then-write race.
+2. **Events.** Every SSE chunk is stored with a sequence number. Followers (the POST response, `GET /models/{id}/run/events?after=<seq>`) read from the DB, so one can attach at any time and resume from the last id.
+3. **Heartbeat.** The owning process updates `heartbeat_at` every 15 s.
+4. **End.** The row becomes `completed`, `failed` or `interrupted`. Only the latest finished run per model is kept.
+5. **Crash.** Startup marks rows owned by another process `interrupted` (and their `in_progress` models `failed`); a 60 s sweep does the same for rows whose heartbeat is older than 60 s.
+
+The asyncio task itself, and cancel at shutdown, stay in the process that started the run.
+
 ## Database schema
 
 Key tables (all have `id TEXT PRIMARY KEY`, `created_at`, `updated_at`):
