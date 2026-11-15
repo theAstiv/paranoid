@@ -5,6 +5,7 @@ A run is claimed with an INSERT: the partial unique index on
 atomically, so there is no read-then-write race.
 """
 
+import json
 import logging
 import os
 import socket
@@ -129,6 +130,19 @@ async def get_latest_run(subject_type: str, subject_id: str) -> dict[str, Any] |
             return dict(row) if row else None
 
 
+def _interrupted_event(kind: str) -> str:
+    what = "Extraction" if kind == "extract" else "Run"
+    event = {
+        "step": "complete",
+        "status": "failed",
+        "message": f"{what} interrupted: the server stopped before it finished.",
+        "iteration": None,
+        "data": None,
+        "timestamp": datetime.now(UTC).timestamp(),
+    }
+    return f"data: {json.dumps(event)}\n\n"
+
+
 async def sweep_stale_runs(older_than_seconds: float, *, foreign_only: bool = False) -> int:
     """Mark stale 'running' rows 'interrupted'; return how many.
 
@@ -159,6 +173,12 @@ async def sweep_stale_runs(older_than_seconds: float, *, foreign_only: bool = Fa
                 "UPDATE live_runs SET status = 'interrupted', finished_at = ?, updated_at = ? "
                 "WHERE id = ?",
                 (now, now, row["id"]),
+            )
+            # Followers (and a page opened later) get the reason, not just a closed stream.
+            await conn.execute(
+                "INSERT INTO live_run_events (run_id, seq, payload, created_at) "
+                "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ? FROM live_run_events WHERE run_id = ?",
+                (row["id"], _interrupted_event(row["kind"]), now, row["id"]),
             )
             if row["subject_type"] == "model" and row["kind"] == "run":
                 await conn.execute(

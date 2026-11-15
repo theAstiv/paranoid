@@ -161,6 +161,12 @@ async def test_sweep_fails_a_stale_foreign_run_and_its_model(model_id):
     assert swept == 1
     assert (await crud_live_runs.get_run_row(run_id))["status"] == "interrupted"
     assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.FAILED.value
+    # A follower is told why, not just handed a closed stream.
+    events = await crud_live_runs.list_events(run_id)
+    final = json.loads(events[-1][1].removeprefix("data: "))
+    assert final["step"] == "complete"
+    assert final["status"] == "failed"
+    assert "server stopped" in final["message"]
 
 
 @pytest.mark.asyncio

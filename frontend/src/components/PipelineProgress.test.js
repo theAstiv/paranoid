@@ -75,9 +75,9 @@ describe('PipelineProgress', () => {
     expect(screen.getByText('Iteration 2 / 3')).toBeInTheDocument()
   })
 
-  it('shows Complete label when not running', () => {
-    render(PipelineProgress, { props: { events: [], running: false } })
-    expect(screen.getByText('Complete')).toBeInTheDocument()
+  it('shows Complete label when not running and the run completed', () => {
+    render(PipelineProgress, { props: { events: [evt('complete', 'completed')], running: false } })
+    expect(screen.getAllByText('Complete')[0]).toBeInTheDocument()
   })
 
   it('renders event log entries with step labels', () => {
@@ -141,5 +141,26 @@ describe('PipelineProgress', () => {
     render(PipelineProgress, { props: { events, running: true } })
     expect(screen.getByText(/1 stored diagram skipped/)).toBeInTheDocument()
     expect(screen.getByText(/Ollama provider doesn't send images/)).toBeInTheDocument()
+  })
+
+  // A run the server lost stops "running" without ever completing.
+  it('says "Did not finish" when the stream ended without a completed event', () => {
+    const events = [evt('summarize', 'started')]
+    render(PipelineProgress, { props: { events, running: false } })
+    expect(screen.getByText('Did not finish')).toBeInTheDocument()
+    expect(screen.queryByText('Complete')).not.toBeInTheDocument()
+  })
+
+  it('says "Did not finish" after a failed complete event', () => {
+    const events = [evt('summarize', 'started'), evt('complete', 'failed')]
+    render(PipelineProgress, { props: { events, running: false } })
+    expect(screen.getByText('Did not finish')).toBeInTheDocument()
+  })
+
+  it('says "Complete" after a completed complete event', () => {
+    const events = [evt('complete', 'completed')]
+    render(PipelineProgress, { props: { events, running: false } })
+    // The event log has a "Complete" row too; the header is the first match.
+    expect(screen.getAllByText('Complete')[0]).toBeInTheDocument()
   })
 })
