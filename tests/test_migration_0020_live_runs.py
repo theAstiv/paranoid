@@ -1,6 +1,7 @@
 """Migration 0020: a database that already applied 0019 gets the new events shape."""
 
 import importlib
+import uuid
 
 import aiosqlite
 import pytest
@@ -42,7 +43,9 @@ async def test_a_database_that_applied_the_old_0019_is_rebuilt_keeping_its_event
     async with conn.execute("SELECT seq, payload, id FROM live_run_events ORDER BY seq") as cur:
         rows = [tuple(r) for r in await cur.fetchall()]
     assert [(s, p) for s, p, _ in rows] == [(1, "data: a"), (2, "data: b")]
-    assert len({i for _, _, i in rows}) == 2
+    ids = [i for _, _, i in rows]
+    assert len(set(ids)) == 2
+    assert all(str(uuid.UUID(i)) == i and uuid.UUID(i).version == 4 for i in ids)
 
 
 @pytest.mark.asyncio

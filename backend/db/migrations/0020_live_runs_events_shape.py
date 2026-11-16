@@ -36,7 +36,12 @@ async def up(conn: aiosqlite.Connection) -> None:
         await conn.execute(
             """
             INSERT INTO live_run_events (id, run_id, seq, payload, created_at, updated_at)
-            SELECT lower(hex(randomblob(16))), run_id, seq, payload, created_at, created_at
+            SELECT lower(
+                hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+                substr(hex(randomblob(2)), 2) || '-' ||
+                substr('89ab', abs(random()) % 4 + 1, 1) ||
+                substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6))
+            ), run_id, seq, payload, created_at, created_at
             FROM live_run_events_old
             """
         )

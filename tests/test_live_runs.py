@@ -366,18 +366,66 @@ async def test_a_model_with_a_run_in_progress_cannot_be_deleted(model_id):
 
 
 @pytest.mark.asyncio
-async def test_a_run_whose_row_was_deleted_finishes_without_retrying_every_event(
-    model_id, monkeypatch
+async def test_a_run_whose_row_was_deleted_warns_once_and_finishes_fast(
+    model_id, monkeypatch, caplog
 ):
-    """Deleting under a live run (e.g. through the CLI) must not flood retries."""
+    """A row removed under a live run (any path that bypasses the guard) must not
+    cost retries or a warning per event."""
     monkeypatch.setattr(live_runs, "_WRITE_RETRY_SECONDS", 5.0)
     release = asyncio.Event()
-    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+
+    async def many_after_gate():
+        yield _chunk(0)
+        await release.wait()
+        for n in range(1, 6):
+            yield _chunk(n)
+
+    run = await live_runs.start_run(model_id, many_after_gate(), _no_cancel)
     await asyncio.sleep(0.1)
-    await crud.delete_threat_model(model_id)
+    conn = await crud.db.get()
+    await conn.execute("DELETE FROM threat_models WHERE id = ?", (model_id,))
+    await conn.commit()
     release.set()
 
     await asyncio.wait_for(run.task, timeout=3)
+
+    warnings = [r for r in caplog.records if "was deleted while it ran" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_delete_itself_refuses_a_model_with_a_run_in_progress(model_id):
+    """The check is part of the DELETE statement, not a separate read."""
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+
+    assert await crud.delete_threat_model(model_id) is False
+    assert await crud.get_threat_model(model_id) is not None
+
+    release.set()
+    await asyncio.wait_for(run.task, timeout=5)
+    assert await crud.delete_threat_model(model_id) is True
+
+
+@pytest.mark.asyncio
+async def test_a_batch_delete_skips_models_with_a_run_in_progress(model_id):
+    other = await crud.create_threat_model(
+        title="Idle",
+        description="x",
+        provider="ollama",
+        model="m",
+        framework="STRIDE",
+        iteration_count=1,
+    )
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+
+    assert await crud.delete_threat_models_batch([model_id, other]) == 1
+
+    assert await crud.get_threat_model(model_id) is not None
+    assert await crud.get_threat_model(other) is None
+    release.set()
+    await asyncio.wait_for(run.task, timeout=5)
 
 
 @pytest.mark.asyncio

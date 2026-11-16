@@ -50,6 +50,8 @@ class LiveRun:
     # for a version other than N, so a change between its read and its wait
     # isn't missed.
     version: int = 0
+    # Its row was deleted under it; the run carries on without storing events.
+    orphaned: bool = False
     task: asyncio.Task | None = None
 
 
@@ -163,10 +165,6 @@ async def _retry(what: str, call: Callable[[], Awaitable[object]]) -> bool:
         try:
             await call()
             return True
-        except sqlite3.IntegrityError:
-            # The run row is gone (its model was deleted); retrying can't help.
-            logger.warning("%s skipped: the run no longer exists", what)
-            return False
         except Exception:
             logger.exception("%s failed (attempt %d/%d)", what, attempt, _WRITE_ATTEMPTS)
             if attempt < _WRITE_ATTEMPTS:
@@ -174,10 +172,24 @@ async def _retry(what: str, call: Callable[[], Awaitable[object]]) -> bool:
     return False
 
 
+async def _store_event(run: LiveRun, chunk: str) -> None:
+    try:
+        await crud_live_runs.append_event(run.run_id, chunk)
+    except sqlite3.IntegrityError:
+        # The run row is gone (its model was deleted under it): retrying can't
+        # help, and every later event would fail the same way. Say so once.
+        run.orphaned = True
+        logger.warning(
+            "Run %s was deleted while it ran; its events are no longer stored", run.run_id
+        )
+
+
 async def _publish(run: LiveRun, chunk: str) -> None:
     # A lost event must not kill the run: the generator persists the model's
     # data itself, and followers fall back to polling the model.
-    await _retry("Storing a run event", lambda: crud_live_runs.append_event(run.run_id, chunk))
+    if run.orphaned:
+        return
+    await _retry("Storing a run event", lambda: _store_event(run, chunk))
     await _bump(run)
 
 

@@ -609,13 +609,12 @@ async def delete_model(
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    # Deleting under a live run would drop its run row while the task keeps
-    # writing events to it.
-    if await crud_live_runs.get_active_run("model", model_id) is not None:
+    # The delete itself refuses a model with a run in progress (atomically):
+    # deleting under a live run would drop its row while the task keeps writing.
+    if not await crud.delete_threat_model(model_id):
         raise HTTPException(
             status_code=409, detail="This model has a run in progress. Wait for it to finish."
         )
-    await crud.delete_threat_model(model_id)
     await crud_activity.safe_log_activity(
         project_id=record.get("project_id"),
         user_id=user["id"],
