@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # Identifies this process in the row (diagnostics only; liveness is the heartbeat).
 OWNER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
+# Runs this process is driving (live_runs.py keeps it): never swept as stale,
+# even if their heartbeat writes fail or the event loop stalls.
+LOCAL_RUN_IDS: set[str] = set()
+
 # Three missed 15 s heartbeats.
 STALE_AFTER_SECONDS = 45.0
 # Finished runs (and their stored events, which include the full threat list) are
@@ -73,8 +77,8 @@ async def _interrupt_stale(
 ) -> int:
     """Inside a writer transaction: interrupt 'running' rows with a stale heartbeat.
 
-    A row of this process is never stale in practice (its heartbeat is fresh),
-    so no owner test is needed. Models of swept 'run' rows still 'in_progress'
+    Runs this process is driving are skipped whatever their heartbeat says.
+    Models of swept 'run' rows still 'in_progress'
     become 'failed'; each swept row gets a final event giving the reason.
     """
     cutoff = (datetime.now(UTC) - timedelta(seconds=older_than_seconds)).isoformat()
@@ -87,7 +91,7 @@ async def _interrupt_stale(
         query += " AND subject_type = ? AND subject_id = ?"
         params += subject
     async with conn.execute(query, params) as cursor:
-        stale = [dict(r) for r in await cursor.fetchall()]
+        stale = [dict(r) for r in await cursor.fetchall() if r["id"] not in LOCAL_RUN_IDS]
     now = now_iso()
     for row in stale:
         await conn.execute(

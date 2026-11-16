@@ -346,6 +346,108 @@ async def test_get_model_says_why_a_failed_model_failed(model_id):
 
 
 @pytest.mark.asyncio
+async def test_a_model_with_a_run_in_progress_cannot_be_deleted(model_id):
+    from fastapi import HTTPException
+
+    from backend.routes import models as models_routes
+
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await models_routes.delete_model(model_id, user={"id": "u1"}, _authz=None)
+    assert excinfo.value.status_code == 409
+    assert await crud.get_threat_model(model_id) is not None
+
+    release.set()
+    await asyncio.wait_for(run.task, timeout=5)
+    await models_routes.delete_model(model_id, user={"id": "u1"}, _authz=None)
+    assert await crud.get_threat_model(model_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_row_was_deleted_finishes_without_retrying_every_event(
+    model_id, monkeypatch
+):
+    """Deleting under a live run (e.g. through the CLI) must not flood retries."""
+    monkeypatch.setattr(live_runs, "_WRITE_RETRY_SECONDS", 5.0)
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.sleep(0.1)
+    await crud.delete_threat_model(model_id)
+    release.set()
+
+    await asyncio.wait_for(run.task, timeout=3)
+
+
+@pytest.mark.asyncio
+async def test_a_server_never_interrupts_a_run_it_is_still_driving(model_id):
+    """Stalled heartbeat writes or a blocked loop must not make it fail its own run."""
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    conn = await crud.db.get()
+    await conn.execute(
+        "UPDATE live_runs SET heartbeat_at = '2020-01-01T00:00:00+00:00' WHERE id = ?",
+        (run.run_id,),
+    )
+    await conn.commit()
+
+    assert await crud_live_runs.sweep_stale_runs() == 0
+    with pytest.raises(live_runs.RunAlreadyActiveError):
+        await live_runs.start_run(model_id, _gated(release), _no_cancel)
+
+    assert (await crud_live_runs.get_run_row(run.run_id))["status"] == "running"
+    release.set()
+    await asyncio.wait_for(run.task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_wakeup_between_the_read_and_the_wait_is_not_missed(model_id, monkeypatch):
+    """The follower reads the DB, then waits; an event landing in between must wake it."""
+    monkeypatch.setattr(live_runs, "POLL_SECONDS", 5.0)
+    gate1, gate2 = asyncio.Event(), asyncio.Event()
+
+    async def two_gates():
+        yield _chunk(0)
+        yield _chunk(1)
+        await gate1.wait()
+        yield _chunk(2)
+        await gate2.wait()
+        yield _chunk(3)
+
+    run = await live_runs.start_run(model_id, two_gates(), _no_cancel)
+    await asyncio.sleep(0.2)  # events 1 and 2 are stored; the run waits on gate1
+
+    real = crud_live_runs.list_events
+    state = {"fired": False}
+
+    async def racing(run_id: str, after_seq: int = 0):
+        result = await real(run_id, after_seq)
+        if not result and not state["fired"]:
+            # The follower has just read "nothing new"; now the run publishes.
+            state["fired"] = True
+            gate1.set()
+            await asyncio.sleep(0.3)
+        return result
+
+    monkeypatch.setattr(crud_live_runs, "list_events", racing)
+
+    async def first_three() -> list[str]:
+        out: list[str] = []
+        async for chunk in live_runs.follow_run(run.run_id):
+            out.append(chunk)
+            if len(out) == 3:
+                return out
+        return out
+
+    chunks = await asyncio.wait_for(first_three(), timeout=2)
+
+    assert _ids(chunks) == [1, 2, 3]
+    gate2.set()
+    await asyncio.wait_for(run.task, timeout=5)
+
+
+@pytest.mark.asyncio
 async def test_the_heartbeat_advances_while_a_run_is_going(model_id, monkeypatch):
     monkeypatch.setattr(live_runs, "HEARTBEAT_SECONDS", 0.05)
     release = asyncio.Event()

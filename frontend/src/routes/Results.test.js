@@ -505,6 +505,18 @@ describe('Results — opened mid-run', () => {
     expect(subscribeToRun).toHaveBeenCalled()
   })
 
+  it('does not repeat the failure when the pipeline panel already shows it', async () => {
+    const message = 'Run interrupted: the server stopped before it finished.'
+    getModel.mockResolvedValue({ ...running, status: 'failed', last_run_failure: message })
+    render(Results, { props: { params: { id: 'm1' } } })
+    // A fresh page load shows the reason in the banner...
+    await screen.findByText('This run did not finish')
+
+    // ...but a run that fails while watched already shows it in the pipeline panel.
+    pipelineEvents.set([{ step: 'complete', status: 'failed', message, timestamp: 1 }])
+    await waitFor(() => expect(screen.queryByText('This run did not finish')).toBeNull())
+  })
+
   it('does not say the pipeline did not finish while it is still polling', async () => {
     const stream = captureFollow()
     getModel.mockResolvedValue(running)

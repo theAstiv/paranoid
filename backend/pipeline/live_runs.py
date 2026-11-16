@@ -19,6 +19,7 @@ stay in process memory. Everything else about the app is still one-worker
 import asyncio
 import contextlib
 import logging
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -82,6 +83,8 @@ async def start_run(
         raise RunAlreadyActiveError(subject_id)
     run = LiveRun(run_id=run_id)
     _runs[subject_id] = run
+    # Never swept as stale, whatever its heartbeat does (a stalled event loop).
+    crud_live_runs.LOCAL_RUN_IDS.add(run_id)
     run.task = asyncio.create_task(
         _drive(subject_id, run, events, on_cancel, kind, subject_type),
         name=f"pipeline-run-{subject_id}",
@@ -160,6 +163,10 @@ async def _retry(what: str, call: Callable[[], Awaitable[object]]) -> bool:
         try:
             await call()
             return True
+        except sqlite3.IntegrityError:
+            # The run row is gone (its model was deleted); retrying can't help.
+            logger.warning("%s skipped: the run no longer exists", what)
+            return False
         except Exception:
             logger.exception("%s failed (attempt %d/%d)", what, attempt, _WRITE_ATTEMPTS)
             if attempt < _WRITE_ATTEMPTS:
@@ -228,4 +235,5 @@ async def _drive(
             )
         if _runs.get(subject_id) is run:
             del _runs[subject_id]
+        crud_live_runs.LOCAL_RUN_IDS.discard(run.run_id)
         await _bump(run)

@@ -500,7 +500,9 @@
       </div>
     {/if}
 
-    {#if model.status === 'failed' && model.last_run_failure && !$pipelineRunning && !polling}
+    <!-- Skipped when the pipeline panel already shows the same failure message. -->
+    {#if model.status === 'failed' && model.last_run_failure && !$pipelineRunning && !polling
+      && !$pipelineEvents.some(e => e.step === 'complete' && e.message === model.last_run_failure)}
       <div class="card px-5 py-4 border-c-high/30 bg-c-high/5">
         <p class="text-sm font-medium text-c-high">This run did not finish</p>
         <p class="text-xs text-c-muted mt-0.5">{model.last_run_failure} Re-run to try again.</p>
