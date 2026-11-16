@@ -109,16 +109,23 @@ async def update_threat_model_status(model_id: str, status: str) -> None:
 
 
 async def fail_interrupted_runs() -> int:
-    """Mark every 'in_progress' model 'failed'; returns how many.
+    """Mark 'in_progress' models that have no live run row 'failed'; returns how many.
 
-    Called once at startup. Live runs are in-process tasks
-    (backend/pipeline/live_runs.py), so a model still 'in_progress' when the
-    server starts lost its run to a stop or crash and would otherwise show as
+    Called once at startup, after the stale-run sweep. A model with a 'running'
+    row is left alone: its run may belong to another server on this database.
+    One with no row at all lost its run to a stop or crash before runs were
+    recorded (backend/pipeline/live_runs.py) and would otherwise show as
     running forever.
     """
     conn = await db.get()
     cursor = await conn.execute(
-        "UPDATE threat_models SET status = 'failed', updated_at = ? WHERE status = 'in_progress'",
+        """
+        UPDATE threat_models SET status = 'failed', updated_at = ?
+        WHERE status = 'in_progress' AND id NOT IN (
+            SELECT subject_id FROM live_runs
+            WHERE subject_type = 'model' AND kind = 'run' AND status = 'running'
+        )
+        """,
         (now_iso(),),
     )
     await conn.commit()

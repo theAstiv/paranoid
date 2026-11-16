@@ -539,6 +539,13 @@ async def get_model(
     record["active_run"] = (
         {"kind": active["kind"], "started_at": active["started_at"]} if active else None
     )
+    # Why a failed model failed, for a page opened after the run ended (the
+    # run's final event carries it; the model row doesn't).
+    record["last_run_failure"] = None
+    if active is None and record.get("status") == ModelStatus.FAILED.value:
+        latest = await crud_live_runs.get_latest_run("model", model_id)
+        if latest is not None and latest["status"] in ("failed", "interrupted"):
+            record["last_run_failure"] = await crud_live_runs.get_last_failure_message(latest["id"])
     return JSONResponse(content=record)
 
 

@@ -73,7 +73,6 @@
   let pollTimer = null
   // 'in_progress' with no run behind it on the server: it was stopped by a
   // restart, or stuck before runs outlived their page (BB-71).
-  let interrupted = false
   let stopFollowing = null
 
   $: stoppedReason = $pipelineEvents.find(e => e.step === 'complete')?.data?.stopped_reason ?? ''
@@ -146,7 +145,6 @@
   function resetForModel() {
     stopPolling()
     if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
-    interrupted = false
     followingWizardRun = false
     model = null
     loading = true
@@ -197,7 +195,6 @@
   // The run is a background task on the server, so a page opened mid-run (after
   // a reload, or after leaving and coming back) picks up its live events.
   function attachToRun(id) {
-    let failure = null
     let stopped = false
     pipelineEvents.set([])
     pipelineRunning.set(true)
@@ -207,7 +204,7 @@
         pipelineEvents.update(es => [...es, evt])
         if (evt.step === 'complete' && evt.data?.threats?.threats) threats.set(evt.data.threats.threats)
       },
-      err => { failure = err },
+      () => { /* a lost stream falls back to polling in onDone */ },
       async () => {
         if (stopped) return
         pipelineRunning.set(false)
@@ -226,7 +223,6 @@
           currentModel.set(refreshed)
           threats.set(refreshed.threats ?? [])
           if (refreshed.status !== 'in_progress') await loadSupplementary()
-          else if (failure?.status === 404) interrupted = true
           else startPolling(id)
         } finally {
           if (stopFollowing === stop) stopFollowing = null
@@ -417,7 +413,6 @@
     // flag the model's last run stored. With nothing else sent, the server also
     // reuses the stored context and dependency analysis.
     fd.append('assumptions', JSON.stringify(storedAssumptions(model)))
-    interrupted = false
     pipelineEvents.set([])
     pipelineRunning.set(true)
     threats.set([])
@@ -468,7 +463,7 @@
             Edit Context
           </a>
         {/if}
-        {#if canEdit && (model.status === 'completed' || model.status === 'failed' || interrupted)}
+        {#if canEdit && (model.status === 'completed' || model.status === 'failed')}
           <button type="button" on:click={rerun} disabled={$pipelineRunning}
             title="Re-run threats on the current context and dependency analysis (Edit Context → Re-extract regenerates the context)"
             class="btn-ghost text-xs px-3 py-1.5 disabled:opacity-50">
@@ -505,10 +500,10 @@
       </div>
     {/if}
 
-    {#if interrupted}
+    {#if model.status === 'failed' && model.last_run_failure && !$pipelineRunning && !polling}
       <div class="card px-5 py-4 border-c-high/30 bg-c-high/5">
-        <p class="text-sm font-medium text-c-high">This run was interrupted</p>
-        <p class="text-xs text-c-muted mt-0.5">The server stopped before it finished, so it has no results. Re-run to try again.</p>
+        <p class="text-sm font-medium text-c-high">This run did not finish</p>
+        <p class="text-xs text-c-muted mt-0.5">{model.last_run_failure} Re-run to try again.</p>
       </div>
     {/if}
 
@@ -518,7 +513,7 @@
         <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide mb-4">Pipeline</h2>
         <PipelineProgress
           events={$pipelineEvents}
-          running={$pipelineRunning}
+          running={$pipelineRunning || polling}
           {stoppedReason}
           totalIterations={model.iteration_count ?? 3}
         />

@@ -108,8 +108,8 @@ A pipeline run or context extraction is a background task whose state is in the 
 1. **Claim.** `start_run` inserts a `running` row. A partial unique index on `(subject_type, subject_id) WHERE status = 'running'` lets only one succeed, so a second start is a 409 with no read-then-write race.
 2. **Events.** Every SSE chunk is stored with a sequence number. Followers (the POST response, `GET /models/{id}/run/events?after=<seq>`) read from the DB, so one can attach at any time and resume from the last id.
 3. **Heartbeat.** The owning process updates `heartbeat_at` every 15 s.
-4. **End.** The row becomes `completed`, `failed` or `interrupted`. Only the latest finished run per model is kept.
-5. **Crash.** Startup marks rows owned by another process `interrupted` (and their `in_progress` models `failed`); a 60 s sweep does the same for rows whose heartbeat is older than 60 s.
+4. **End.** The row becomes `completed`, `failed` or `interrupted`. Only the latest finished run per model is kept, for 7 days; deleting a model removes its runs and events (a trigger).
+5. **Crash.** Liveness is the heartbeat, never the owner: a `running` row whose heartbeat is older than 45 s is marked `interrupted`, with a final "the server stopped" event, and its `in_progress` model `failed`. That happens at startup, every 30 s, and when a new run is claimed for the same model, so a quick Re-run after a crash isn't refused. A run of another live server on the same database keeps its heartbeat and is left alone. A write that fails is retried; a run that dies still leaves its model `failed`. `GET /models/{id}` returns `last_run_failure`, the reason, for a failed model.
 
 The asyncio task itself, and cancel at shutdown, stay in the process that started the run.
 

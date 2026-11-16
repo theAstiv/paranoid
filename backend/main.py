@@ -176,10 +176,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             handler.flush()
         os._exit(1)
 
-    # Run rows owned by another process are leftovers of a stop or crash (their
-    # task is gone): fail them and their models. The fallback below also covers
-    # models left 'in_progress' by a pre-0019 database.
-    stale_runs = await sweep_stale_runs(0, foreign_only=True)
+    # Run rows whose heartbeat stopped are leftovers of a stop or crash (their
+    # task is gone): fail them and their models. A run of another live server on
+    # this database keeps its heartbeat and is left alone, and so is its model.
+    # The fallback below covers models left 'in_progress' with no run row at all
+    # (a database from before 0019).
+    stale_runs = await sweep_stale_runs()
     if stale_runs:
         logger.warning("Marked %d run(s) interrupted: the server stopped under them", stale_runs)
     interrupted = await fail_interrupted_runs()

@@ -28,9 +28,11 @@ from backend.db import crud_live_runs
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_SECONDS = 15.0
-# A foreign run whose heartbeat is older than this is presumed dead.
-STALE_AFTER_SECONDS = 60.0
-SWEEP_INTERVAL_SECONDS = 60.0
+SWEEP_INTERVAL_SECONDS = 30.0
+# Database writes for a run's bookkeeping are retried this many times (a busy
+# database is the usual reason one fails).
+_WRITE_ATTEMPTS = 3
+_WRITE_RETRY_SECONDS = 0.5
 # How often a follower re-reads the DB when nothing wakes it.
 POLL_SECONDS = 1.0
 
@@ -43,6 +45,10 @@ class RunAlreadyActiveError(RuntimeError):
 class LiveRun:
     run_id: str
     changed: asyncio.Condition = field(default_factory=asyncio.Condition)
+    # Bumped on every change; a follower that read the DB at version N waits
+    # for a version other than N, so a change between its read and its wait
+    # isn't missed.
+    version: int = 0
     task: asyncio.Task | None = None
 
 
@@ -77,7 +83,8 @@ async def start_run(
     run = LiveRun(run_id=run_id)
     _runs[subject_id] = run
     run.task = asyncio.create_task(
-        _drive(subject_id, run, events, on_cancel), name=f"pipeline-run-{subject_id}"
+        _drive(subject_id, run, events, on_cancel, kind, subject_type),
+        name=f"pipeline-run-{subject_id}",
     )
     return run
 
@@ -91,6 +98,8 @@ async def follow_run(run_id: str, after_seq: int = 0) -> AsyncIterator[str]:
     """
     cursor = after_seq
     while True:
+        local = next((r for r in _runs.values() if r.run_id == run_id), None)
+        seen = local.version if local is not None else 0
         events = await crud_live_runs.list_events(run_id, cursor)
         for seq, payload in events:
             yield f"id: {seq}\n{payload}"
@@ -106,13 +115,15 @@ async def follow_run(run_id: str, after_seq: int = 0) -> AsyncIterator[str]:
             for seq, payload in tail:
                 yield f"id: {seq}\n{payload}"
             return
-        local = next((r for r in _runs.values() if r.run_id == run_id), None)
         if local is None:
             await asyncio.sleep(POLL_SECONDS)
             continue
         async with local.changed:
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(local.changed.wait(), POLL_SECONDS)
+                await asyncio.wait_for(
+                    local.changed.wait_for(lambda run=local, v=seen: run.version != v),
+                    POLL_SECONDS,
+                )
 
 
 async def cancel_all_runs() -> None:
@@ -128,7 +139,8 @@ async def sweep_loop() -> None:
     while True:
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
         try:
-            swept = await crud_live_runs.sweep_stale_runs(STALE_AFTER_SECONDS)
+            swept = await crud_live_runs.sweep_stale_runs()
+            await crud_live_runs.prune_finished_runs()
         except Exception:
             logger.exception("Stale-run sweep failed")
             continue
@@ -136,10 +148,30 @@ async def sweep_loop() -> None:
             logger.warning("Marked %d run(s) interrupted: their owner stopped responding", swept)
 
 
-async def _publish(run: LiveRun, chunk: str) -> None:
-    await crud_live_runs.append_event(run.run_id, chunk)
+async def _bump(run: LiveRun) -> None:
     async with run.changed:
+        run.version += 1
         run.changed.notify_all()
+
+
+async def _retry(what: str, call: Callable[[], Awaitable[object]]) -> bool:
+    """Run a bookkeeping DB write, retrying a few times; False if it never succeeded."""
+    for attempt in range(1, _WRITE_ATTEMPTS + 1):
+        try:
+            await call()
+            return True
+        except Exception:
+            logger.exception("%s failed (attempt %d/%d)", what, attempt, _WRITE_ATTEMPTS)
+            if attempt < _WRITE_ATTEMPTS:
+                await asyncio.sleep(_WRITE_RETRY_SECONDS)
+    return False
+
+
+async def _publish(run: LiveRun, chunk: str) -> None:
+    # A lost event must not kill the run: the generator persists the model's
+    # data itself, and followers fall back to polling the model.
+    await _retry("Storing a run event", lambda: crud_live_runs.append_event(run.run_id, chunk))
+    await _bump(run)
 
 
 async def _heartbeat(run_id: str) -> None:
@@ -156,6 +188,8 @@ async def _drive(
     run: LiveRun,
     events: AsyncIterator[str],
     on_cancel: Callable[[], Awaitable[str]],
+    kind: str,
+    subject_type: str,
 ) -> None:
     status = "completed"
     beat = asyncio.create_task(_heartbeat(run.run_id))
@@ -179,12 +213,19 @@ async def _drive(
     finally:
         beat.cancel()
         # Unregister before waking followers, so one that sees the run end and
-        # immediately re-runs the model isn't refused.
-        try:
-            await crud_live_runs.finish_run(run.run_id, status)
-        except Exception:
-            logger.exception("Could not record the end of run %s", run.run_id)
+        # immediately re-runs the model isn't refused. If the end can't be
+        # recorded the row stays 'running' with a dead heartbeat, which the
+        # next claim or sweep interrupts.
+        await _retry(
+            "Recording the end of a run", lambda: crud_live_runs.finish_run(run.run_id, status)
+        )
+        if status != "completed" and subject_type == "model" and kind == "run":
+            # The generator normally marks the model failed itself; this covers a
+            # run that died without doing so (e.g. a database error mid-run).
+            await _retry(
+                "Failing the model of a dead run",
+                lambda: crud_live_runs.fail_model_if_in_progress(subject_id),
+            )
         if _runs.get(subject_id) is run:
             del _runs[subject_id]
-        async with run.changed:
-            run.changed.notify_all()
+        await _bump(run)

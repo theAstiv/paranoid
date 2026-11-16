@@ -77,7 +77,7 @@ describe('PipelineProgress', () => {
 
   it('shows Complete label when not running and the run completed', () => {
     render(PipelineProgress, { props: { events: [evt('complete', 'completed')], running: false } })
-    expect(screen.getAllByText('Complete')[0]).toBeInTheDocument()
+    expect(screen.getByText('100%').previousElementSibling).toHaveTextContent(/^Complete$/)
   })
 
   it('renders event log entries with step labels', () => {
@@ -160,7 +160,8 @@ describe('PipelineProgress', () => {
   it('says "Complete" after a completed complete event', () => {
     const events = [evt('complete', 'completed')]
     render(PipelineProgress, { props: { events, running: false } })
-    // The event log has a "Complete" row too; the header is the first match.
-    expect(screen.getAllByText('Complete')[0]).toBeInTheDocument()
+    // The event log has a "Complete" row too, so read the header beside the percentage.
+    expect(screen.getByText('100%').previousElementSibling).toHaveTextContent(/^Complete$/)
+    expect(screen.queryByText('Did not finish')).not.toBeInTheDocument()
   })
 })

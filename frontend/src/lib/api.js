@@ -332,47 +332,19 @@ function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) 
     return followPath ? 'dropped' : 'complete'
   }
 
-  async function _readWithReattach(res) {
-    let outcome = await _readStream(res)
-    if (outcome === 'dropped' && !controller.signal.aborted) {
-      // One re-attach, resuming after the last event seen.
-      try {
-        const { getStoredToken } = await import('./stores.js')
-        const token = getStoredToken()
-        const again = await fetch(`${BASE}${followPath}?after=${lastId}`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-          signal: controller.signal,
-        })
-        if (again.ok) outcome = await _readStream(again)
-      } catch (err) {
-        if (err.name !== 'AbortError') onError(err)
-      }
-      if (outcome === 'dropped' && !controller.signal.aborted) {
-        onError(new Error('Lost connection to the run. Reload to follow it.'))
-      }
-    }
-    fireDone()
-  }
-
-  ;(async () => {
+  /**
+   * fetch with the stored token; on a 401, refresh it once and retry. Used for
+   * the first connection and for the re-attach (a long run outlives the token).
+   * Rejects on a network error.
+   */
+  async function _fetchWithAuth(url, opts) {
     const { getStoredToken, setStoredToken } = await import('./stores.js')
-    let token = getStoredToken()
-    let authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {}
-
-    let res
-    try {
-      res = await fetch(`${BASE}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), ...authHeaders },
-        signal: controller.signal,
-      })
-    } catch (err) {
-      if (err.name !== 'AbortError') onError(err)
-      fireDone()
-      return
-    }
-
-    // On 401: attempt a single token refresh and retry the SSE connection
+    const withToken = tok => ({
+      ...opts,
+      headers: { ...(opts.headers || {}), ...(tok ? { 'Authorization': `Bearer ${tok}` } : {}) },
+      signal: controller.signal,
+    })
+    let res = await fetch(url, withToken(getStoredToken()))
     if (res.status === 401) {
       try {
         if (!_refreshPromise) _refreshPromise = _doRefresh()
@@ -380,22 +352,45 @@ function subscribeSSE(path, init, onEvent, onError, onDone, onOpen = undefined) 
         _refreshPromise = null
         if (newToken) {
           setStoredToken(newToken)
-          authHeaders = { 'Authorization': `Bearer ${newToken}` }
-          try {
-            res = await fetch(`${BASE}${path}`, {
-              ...init,
-              headers: { ...(init.headers || {}), ...authHeaders },
-              signal: controller.signal,
-            })
-          } catch (retryErr) {
-            if (retryErr.name !== 'AbortError') onError(retryErr)
-            fireDone()
-            return
-          }
+          res = await fetch(url, withToken(newToken))
         }
-      } catch {
+      } catch (err) {
         _refreshPromise = null
+        if (err.name === 'AbortError') throw err
       }
+    }
+    return res
+  }
+
+  async function _readWithReattach(res) {
+    let outcome = await _readStream(res)
+    if (outcome === 'dropped' && !controller.signal.aborted) {
+      // One re-attach, resuming after the last event seen. Exactly one error
+      // is reported if it fails.
+      let failure = null
+      try {
+        const again = await _fetchWithAuth(`${BASE}${followPath}?after=${lastId}`, {})
+        if (again.ok) outcome = await _readStream(again)
+        else failure = new Error('Lost connection to the run. Reload to follow it.')
+      } catch (err) {
+        if (err.name !== 'AbortError') failure = err
+      }
+      if (!failure && outcome === 'dropped') {
+        failure = new Error('Lost connection to the run. Reload to follow it.')
+      }
+      if (failure && !controller.signal.aborted) onError(failure)
+    }
+    fireDone()
+  }
+
+  ;(async () => {
+    let res
+    try {
+      res = await _fetchWithAuth(`${BASE}${path}`, init)
+    } catch (err) {
+      if (err.name !== 'AbortError') onError(err)
+      fireDone()
+      return
     }
 
     if (!res.ok) {

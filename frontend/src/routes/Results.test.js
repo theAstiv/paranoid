@@ -490,19 +490,33 @@ describe('Results — opened mid-run', () => {
     expect(screen.queryByText(/Polling for completion/)).toBeNull()
   })
 
-  it('offers Re-run when the server has no run behind an in-progress model', async () => {
+  it('shows why a failed model failed and offers Re-run', async () => {
+    getModel.mockResolvedValue({
+      ...running,
+      status: 'failed',
+      last_run_failure: 'Run interrupted: the server stopped before it finished.',
+    })
+    render(Results, { props: { params: { id: 'm1' } } })
+
+    await screen.findByText('This run did not finish')
+    expect(screen.getByText(/the server stopped before it finished/)).toBeInTheDocument()
+    expect(followRun).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByText('Re-run'))
+    expect(subscribeToRun).toHaveBeenCalled()
+  })
+
+  it('does not say the pipeline did not finish while it is still polling', async () => {
     const stream = captureFollow()
     getModel.mockResolvedValue(running)
     render(Results, { props: { params: { id: 'm1' } } })
     await waitFor(() => expect(followRun).toHaveBeenCalled())
 
-    stream.onError(Object.assign(new Error('This model has no run in progress.'), { status: 404 }))
+    stream.onEvent({ step: 'summarize', status: 'started', message: 'go', timestamp: 1 })
+    stream.onError(new Error('Failed to fetch'))
     await stream.onDone()
 
-    await screen.findByText('This run was interrupted')
-    await fireEvent.click(screen.getByText('Re-run'))
-    expect(subscribeToRun).toHaveBeenCalled()
-    expect(screen.queryByText('This run was interrupted')).toBeNull()
+    await screen.findByText(/Polling for completion/)
+    expect(screen.queryByText('Did not finish')).toBeNull()
   })
 
   it('falls back to polling when the live stream fails for another reason', async () => {

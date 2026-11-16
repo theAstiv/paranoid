@@ -178,26 +178,171 @@ async def test_sweep_leaves_a_fresh_foreign_run_alone(model_id):
 
 
 @pytest.mark.asyncio
-async def test_startup_sweep_takes_a_foreign_run_but_not_this_processs_own(model_id):
+async def test_startup_leaves_a_live_run_of_another_server_and_its_model_alone(model_id):
+    """A second server on the same database keeps its heartbeat fresh."""
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+    run_id = await _insert_foreign_run(model_id, crud.now_iso())
+
+    assert await crud_live_runs.sweep_stale_runs() == 0
+    assert await crud.fail_interrupted_runs() == 0
+
+    assert (await crud_live_runs.get_run_row(run_id))["status"] == "running"
+    assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.IN_PROGRESS.value
+    # ...and the unique index still refuses a second run of that model.
+    with pytest.raises(live_runs.RunAlreadyActiveError):
+        await live_runs.start_run(model_id, _gated(asyncio.Event()), _no_cancel)
+
+
+@pytest.mark.asyncio
+async def test_startup_still_fails_an_in_progress_model_that_has_no_run_row(model_id):
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+
+    assert await crud.fail_interrupted_runs() == 1
+    assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_a_dead_run_does_not_block_a_new_claim(model_id):
+    """A crash then a quick Re-run must not wait for the next sweep."""
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+    dead = await _insert_foreign_run(model_id, "2020-01-01T00:00:00+00:00")
     release = asyncio.Event()
-    mine = await live_runs.start_run(model_id, _gated(release), _no_cancel)
-    other_model = await crud.create_threat_model(
-        title="Other",
-        description="x",
-        provider="ollama",
-        model="m",
-        framework="STRIDE",
-        iteration_count=1,
-    )
-    foreign = await _insert_foreign_run(other_model, crud.now_iso())
-
-    swept = await crud_live_runs.sweep_stale_runs(0, foreign_only=True)
-
-    assert swept == 1
-    assert (await crud_live_runs.get_run_row(foreign))["status"] == "interrupted"
-    assert (await crud_live_runs.get_run_row(mine.run_id))["status"] == "running"
     release.set()
-    await asyncio.wait_for(mine.task, timeout=5)
+
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+
+    assert (await crud_live_runs.get_run_row(dead)) is None or (
+        await crud_live_runs.get_run_row(dead)
+    )["status"] == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_event_write_does_not_kill_the_run(model_id, monkeypatch):
+    monkeypatch.setattr(live_runs, "_WRITE_RETRY_SECONDS", 0)
+    real = crud_live_runs.append_event
+    calls = {"n": 0}
+
+    async def flaky(run_id: str, payload: str) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        return await real(run_id, payload)
+
+    monkeypatch.setattr(crud_live_runs, "append_event", flaky)
+    release = asyncio.Event()
+    release.set()
+
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+
+    assert (await crud_live_runs.get_run_row(run.run_id))["status"] == "completed"
+    assert len(await crud_live_runs.list_events(run.run_id)) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_dies_leaves_its_model_failed_not_in_progress(model_id):
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+
+    async def boom():
+        yield _chunk(0)
+        raise RuntimeError("generator crashed before marking the model")
+
+    run = await live_runs.start_run(model_id, boom(), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+
+    assert (await crud.get_threat_model(model_id))["status"] == ModelStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_a_finish_that_cannot_be_recorded_does_not_block_the_model_forever(
+    model_id, monkeypatch
+):
+    monkeypatch.setattr(live_runs, "_WRITE_RETRY_SECONDS", 0)
+
+    async def broken(run_id: str, status: str) -> None:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(crud_live_runs, "finish_run", broken)
+    release = asyncio.Event()
+    release.set()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+    monkeypatch.undo()
+
+    # The row is still 'running', but its heartbeat has stopped; age it.
+    conn = await crud.db.get()
+    await conn.execute(
+        "UPDATE live_runs SET heartbeat_at = '2020-01-01T00:00:00+00:00' WHERE id = ?",
+        (run.run_id,),
+    )
+    await conn.commit()
+
+    again = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(again.task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_model_removes_its_runs_and_events(model_id):
+    release = asyncio.Event()
+    release.set()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+    assert await crud_live_runs.list_events(run.run_id)
+
+    await crud.delete_threat_model(model_id)
+
+    assert await crud_live_runs.get_run_row(run.run_id) is None
+    assert await crud_live_runs.list_events(run.run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_prune_deletes_old_finished_runs_but_not_recent_or_running_ones(model_id):
+    release = asyncio.Event()
+    release.set()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    await asyncio.wait_for(run.task, timeout=5)
+
+    assert await crud_live_runs.prune_finished_runs(7) == 0
+
+    conn = await crud.db.get()
+    await conn.execute(
+        "UPDATE live_runs SET finished_at = '2020-01-01T00:00:00+00:00' WHERE id = ?",
+        (run.run_id,),
+    )
+    await conn.commit()
+    assert await crud_live_runs.prune_finished_runs(7) == 1
+    assert await crud_live_runs.list_events(run.run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_follower_is_woken_promptly_not_after_the_poll_interval(model_id, monkeypatch):
+    monkeypatch.setattr(live_runs, "POLL_SECONDS", 5.0)
+    release = asyncio.Event()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)
+    follower = asyncio.create_task(_collect(run.run_id))
+    await asyncio.sleep(0.2)
+
+    release.set()
+
+    chunks = await asyncio.wait_for(follower, timeout=2)
+    assert _ids(chunks) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_get_model_says_why_a_failed_model_failed(model_id):
+    from backend.routes import models as models_routes
+
+    await crud.update_threat_model_status(model_id, ModelStatus.IN_PROGRESS.value)
+    await _insert_foreign_run(model_id, "2020-01-01T00:00:00+00:00")
+    await crud_live_runs.sweep_stale_runs()
+
+    resp = await models_routes.get_model(model_id, _authz=None)
+    body = json.loads(resp.body)
+
+    assert body["status"] == "failed"
+    assert body["active_run"] is None
+    assert "server stopped" in body["last_run_failure"]
 
 
 @pytest.mark.asyncio
