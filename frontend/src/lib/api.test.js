@@ -388,6 +388,32 @@ describe('subscribeToRun() — SSE parsing', () => {
     expect(onError.mock.calls[0][0].status).toBe(404)
   })
 
+  // BB-72: a dropped stream re-attaches once, after the last event id seen.
+  it('followRun() re-attaches after a dropped stream, resuming after the last event id', async () => {
+    const enc = new TextEncoder()
+    const dropped = new Response(new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode('id: 1\ndata: {"step":"summarize","status":"started"}\n\n'))
+        c.close()
+      },
+    }))
+    const resumed = new Response(
+      'id: 2\ndata: {"step":"complete","status":"completed"}\n\n'
+    )
+    const fetchMock = vi.fn().mockResolvedValueOnce(dropped).mockResolvedValueOnce(resumed)
+    vi.stubGlobal('fetch', fetchMock)
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+    const onDone = vi.fn()
+
+    followRun('m1', onEvent, onError, onDone)
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[1][0]).toMatch(/\/models\/m1\/run\/events\?after=1$/)
+    expect(onEvent.mock.calls.map(c => c[0].step)).toEqual(['summarize', 'complete'])
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('returns an abort function that aborts the underlying fetch', async () => {
     const fetchMock = vi.fn((url, opts) => {
       return new Promise((_, reject) => {

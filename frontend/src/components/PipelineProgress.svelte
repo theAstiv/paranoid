@@ -93,6 +93,9 @@
     timeout:          { chip: 'chip-amber',  label: 'Pipeline timed out' },
     provider_offline: { chip: 'chip-red',    label: 'Provider offline — rule engine only results' },
   }
+  // Not running is not the same as done: a run the server lost ends without a
+  // completed 'complete' event.
+  $: finished = events.some(e => e.step === 'complete' && e.status === 'completed')
 </script>
 
 <div class="space-y-4">
@@ -106,15 +109,17 @@
           {:else}
             Running…
           {/if}
-        {:else}
+        {:else if finished}
           Complete
+        {:else}
+          Did not finish
         {/if}
       </span>
       <span>{progress}%</span>
     </div>
     <div class="w-full bg-c-border rounded-full h-1.5 overflow-hidden">
       <div
-        class="h-1.5 rounded-full transition-all duration-500 {running ? 'bg-c-accent' : 'bg-c-green'}"
+        class="h-1.5 rounded-full transition-all duration-500 {running ? 'bg-c-accent' : finished ? 'bg-c-green' : 'bg-c-high'}"
         style="width: {progress}%"
       ></div>
     </div>

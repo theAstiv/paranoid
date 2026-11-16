@@ -19,6 +19,7 @@ from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import DatabaseDirectoryError, db
 from backend.db.crud import delete_config_value, fail_interrupted_runs, get_config_value
 from backend.db.crud_activity import safe_notify_users
+from backend.db.crud_live_runs import sweep_stale_runs
 from backend.db.crud_projects import list_members as list_project_members
 from backend.db.crud_staleness import find_stale_models, get_recently_notified_model_ids
 from backend.db.seed import load_all_seeds
@@ -175,8 +176,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             handler.flush()
         os._exit(1)
 
-    # Runs live in this process only (KL-10): one still 'in_progress' now was
-    # cut off by a stop or crash and has no task to finish it.
+    # Run rows whose heartbeat stopped are leftovers of a stop or crash (their
+    # task is gone): fail them and their models. A run of another live server on
+    # this database keeps its heartbeat and is left alone, and so is its model.
+    # The fallback below covers models left 'in_progress' with no run row at all
+    # (a database from before 0019).
+    stale_runs = await sweep_stale_runs()
+    if stale_runs:
+        logger.warning("Marked %d run(s) interrupted: the server stopped under them", stale_runs)
     interrupted = await fail_interrupted_runs()
     if interrupted:
         logger.warning(
@@ -263,8 +270,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _staleness_task = asyncio.create_task(_staleness_check_loop())
 
+    from backend.pipeline.live_runs import sweep_loop
+
+    _sweep_task = asyncio.create_task(sweep_loop())
+
     yield
 
+    _sweep_task.cancel()
+    try:
+        await _sweep_task
+    except asyncio.CancelledError:
+        pass
     _staleness_task.cancel()
     try:
         await _staleness_task

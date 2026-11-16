@@ -675,7 +675,11 @@ async def _delete_model_async(model_id: str, yes: bool) -> None:
             click.echo()
             return
 
-    await crud.delete_threat_model(model["id"])
+    if not await crud.delete_threat_model(model["id"]):
+        click.echo()
+        click.secho(f"  ✗ Model {short_id} has a run in progress; wait for it to finish.", fg="red")
+        click.echo()
+        raise SystemExit(1)
 
     click.echo()
     click.secho(f"  ✓ Deleted model {short_id} ({len(threats)} threat(s) removed).", fg="green")
@@ -787,4 +791,6 @@ async def _prune_models_async(
 
     click.echo()
     click.secho(f"  ✓ Deleted {deleted} model(s).", fg="green")
+    if deleted < len(candidates):
+        click.secho(f"  {len(candidates) - deleted} skipped: a run is in progress.", fg="yellow")
     click.echo()

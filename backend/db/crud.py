@@ -30,6 +30,13 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# Appended to a DELETE FROM threat_models: leaves models with a run in progress alone.
+_NO_RUN_IN_PROGRESS = (
+    "NOT EXISTS (SELECT 1 FROM live_runs WHERE subject_type = 'model' "
+    "AND subject_id = threat_models.id AND status = 'running')"
+)
+
+
 # Threat Models CRUD
 
 
@@ -109,16 +116,23 @@ async def update_threat_model_status(model_id: str, status: str) -> None:
 
 
 async def fail_interrupted_runs() -> int:
-    """Mark every 'in_progress' model 'failed'; returns how many.
+    """Mark 'in_progress' models that have no live run row 'failed'; returns how many.
 
-    Called once at startup. Live runs are in-process tasks
-    (backend/pipeline/live_runs.py), so a model still 'in_progress' when the
-    server starts lost its run to a stop or crash and would otherwise show as
+    Called once at startup, after the stale-run sweep. A model with a 'running'
+    row is left alone: its run may belong to another server on this database.
+    One with no row at all lost its run to a stop or crash before runs were
+    recorded (backend/pipeline/live_runs.py) and would otherwise show as
     running forever.
     """
     conn = await db.get()
     cursor = await conn.execute(
-        "UPDATE threat_models SET status = 'failed', updated_at = ? WHERE status = 'in_progress'",
+        """
+        UPDATE threat_models SET status = 'failed', updated_at = ?
+        WHERE status = 'in_progress' AND id NOT IN (
+            SELECT subject_id FROM live_runs
+            WHERE subject_type = 'model' AND kind = 'run' AND status = 'running'
+        )
+        """,
         (now_iso(),),
     )
     await conn.commit()
@@ -840,20 +854,32 @@ async def update_usage_summary(
         )
 
 
-async def delete_threat_model(model_id: str) -> None:
+async def delete_threat_model(model_id: str) -> bool:
     """
-    Delete a threat model and all associated data.
+    Delete a threat model and all associated data, unless it has a run in progress.
+
+    The run check is part of the DELETE, so a run that starts between a
+    separate check and the delete can't be deleted under.
 
     Args:
         model_id: ID of threat model to delete
+
+    Returns:
+        True if deleted; False if the model has a run in progress (or doesn't exist).
     """
     conn = await db.get()
 
-    # Delete model (CASCADE will handle all related records)
-    await conn.execute("DELETE FROM threat_models WHERE id = ?", (model_id,))
+    # CASCADE handles all related records.
+    cursor = await conn.execute(
+        f"DELETE FROM threat_models WHERE id = ? AND {_NO_RUN_IN_PROGRESS}",
+        (model_id,),
+    )
     await conn.commit()
 
-    logger.info(f"Deleted threat model {model_id}")
+    deleted = cursor.rowcount > 0
+    if deleted:
+        logger.info(f"Deleted threat model {model_id}")
+    return deleted
 
 
 async def delete_unrun_threat_model(model_id: str) -> bool:
@@ -915,14 +941,19 @@ async def find_threat_models_for_prune(
 
 
 async def delete_threat_models_batch(model_ids: list[str]) -> int:
-    """Delete a batch of threat models by ID list. Returns count deleted."""
+    """Delete a batch of threat models by ID list. Returns count deleted.
+
+    Models with a run in progress are skipped, so the count can be lower than
+    ``len(model_ids)``.
+    """
     if not model_ids:
         return 0
 
     placeholders = ",".join("?" * len(model_ids))
     conn = await db.get()
     cursor = await conn.execute(
-        f"DELETE FROM threat_models WHERE id IN ({placeholders})", model_ids
+        f"DELETE FROM threat_models WHERE id IN ({placeholders}) AND {_NO_RUN_IN_PROGRESS}",
+        model_ids,
     )
     await conn.commit()
     deleted = cursor.rowcount

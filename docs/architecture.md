@@ -101,6 +101,18 @@ async def generate_structured(
 
 All providers auto-bump `max_tokens` on truncation (up to 2× per step, max 2 retries).
 
+## Run lifecycle
+
+A pipeline run or context extraction is a background task whose state is in the database (`live_runs`, `live_run_events`; `backend/pipeline/live_runs.py`, `backend/db/crud_live_runs.py`):
+
+1. **Claim.** `start_run` inserts a `running` row. A partial unique index on `(subject_type, subject_id) WHERE status = 'running'` lets only one succeed, so a second start is a 409 with no read-then-write race.
+2. **Events.** Every SSE chunk is stored with a sequence number. Followers (the POST response, `GET /models/{id}/run/events?after=<seq>`) read from the DB, so one can attach at any time and resume from the last id.
+3. **Heartbeat.** The owning process updates `heartbeat_at` every 15 s.
+4. **End.** The row becomes `completed`, `failed` or `interrupted`. Only the latest finished run per model is kept, for 7 days; deleting a model removes its runs and events (a trigger, migration 0020), and `DELETE /models/{id}` returns 409 while a run is in progress.
+5. **Crash.** Liveness is the heartbeat, never the owner: a `running` row whose heartbeat is older than 45 s is marked `interrupted`, with a final "the server stopped" event, and its `in_progress` model `failed`. That happens at startup, every 30 s, and when a new run is claimed for the same model, so a quick Re-run after a crash isn't refused. A run of another live server on the same database keeps its heartbeat and is left alone, and a server never interrupts a run it is still driving itself. After a crash the reason can take up to about 75 s to appear. A write that fails is retried; a run that dies still leaves its model `failed`. `GET /models/{id}` returns `last_run_failure`, the reason, for a failed model.
+
+The asyncio task itself, and cancel at shutdown, stay in the process that started the run.
+
 ## Database schema
 
 Key tables (all have `id TEXT PRIMARY KEY`, `created_at`, `updated_at`):

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import aiosqlite
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
@@ -23,7 +23,7 @@ from backend.auth.dependencies import (
     visible_project_ids,
 )
 from backend.config import settings
-from backend.db import crud, crud_activity, crud_projects, kept_context
+from backend.db import crud, crud_activity, crud_live_runs, crud_projects, kept_context
 from backend.db.component_links import (
     relink_boundary,
     relink_flow,
@@ -535,6 +535,17 @@ async def get_model(
     # frontend reads the same shape here as from the live SSE event's
     # data.usage — see Results.svelte's runUsage fallback.
     record["usage"] = _decode_json_field(record.get("usage_summary"))
+    active = await crud_live_runs.get_active_run("model", model_id)
+    record["active_run"] = (
+        {"kind": active["kind"], "started_at": active["started_at"]} if active else None
+    )
+    # Why a failed model failed, for a page opened after the run ended (the
+    # run's final event carries it; the model row doesn't).
+    record["last_run_failure"] = None
+    if active is None and record.get("status") == ModelStatus.FAILED.value:
+        latest = await crud_live_runs.get_latest_run("model", model_id)
+        if latest is not None and latest["status"] in ("failed", "interrupted"):
+            record["last_run_failure"] = await crud_live_runs.get_last_failure_message(latest["id"])
     return JSONResponse(content=record)
 
 
@@ -598,7 +609,12 @@ async def delete_model(
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    await crud.delete_threat_model(model_id)
+    # The delete itself refuses a model with a run in progress (atomically):
+    # deleting under a live run would drop its row while the task keeps writing.
+    if not await crud.delete_threat_model(model_id):
+        raise HTTPException(
+            status_code=409, detail="This model has a run in progress. Wait for it to finish."
+        )
     await crud_activity.safe_log_activity(
         project_id=record.get("project_id"),
         user_id=user["id"],
@@ -1266,32 +1282,35 @@ async def run_pipeline(
         ).to_sse_format()
 
     try:
-        run = live_runs.start_run(model_id, run_events(), mark_interrupted)
+        run = await live_runs.start_run(model_id, run_events(), mark_interrupted)
     except live_runs.RunAlreadyActiveError:
         raise HTTPException(status_code=409, detail="This model already has a run in progress.")
 
-    return _follow_run_response(run)
+    return _follow_run_response(run.run_id)
 
 
 @router.get("/{model_id}/run/events")
 async def follow_run(
     model_id: str,
+    after: Annotated[int, Query(ge=0)] = 0,
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID", ge=0)] = None,
     _authz: None = Depends(require_role("viewer", "model_id", "model")),
 ) -> StreamingResponse:
-    """Stream the model's in-progress run as SSE, replaying its events from the start.
+    """Stream the model's run as SSE, replaying its events after ``after``.
 
-    For a page opened (or reopened) while a run is going. 404 when the model
-    has no run in progress: it finished, or the server restarted under it.
+    Serves the run in progress, or else the latest finished one (events and
+    final status), so a page opened just after the end still sees how it
+    ended. 404 only when the model has never run since the last cleanup.
     """
-    run = live_runs.get_run(model_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="This model has no run in progress.")
-    return _follow_run_response(run)
+    row = await crud_live_runs.get_latest_run("model", model_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="This model has no run to follow.")
+    return _follow_run_response(row["id"], max(after, last_event_id or 0))
 
 
-def _follow_run_response(run: live_runs.LiveRun) -> StreamingResponse:
+def _follow_run_response(run_id: str, after_seq: int = 0) -> StreamingResponse:
     return StreamingResponse(
-        live_runs.follow_run(run),
+        live_runs.follow_run(run_id, after_seq),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1792,8 +1811,10 @@ async def extract_model_context(
         ).to_sse_format()
 
     try:
-        run = live_runs.start_run(model_id, extract_events(), mark_extract_interrupted)
+        run = await live_runs.start_run(
+            model_id, extract_events(), mark_extract_interrupted, kind="extract"
+        )
     except live_runs.RunAlreadyActiveError:
         raise HTTPException(status_code=409, detail="This model already has a run in progress.")
 
-    return _follow_run_response(run)
+    return _follow_run_response(run.run_id)

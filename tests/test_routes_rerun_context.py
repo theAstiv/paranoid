@@ -108,7 +108,7 @@ async def _rerun(model_id: str) -> dict:
 
 
 async def _drain(resp) -> list[dict]:
-    return [json.loads(c.removeprefix("data: ").strip()) async for c in resp.body_iterator]
+    return [json.loads(c.split("data: ", 1)[1].strip()) async for c in resp.body_iterator]
 
 
 async def _seed_context(model_id: str) -> dict[str, str]:

@@ -92,7 +92,8 @@ def _gated_runner(release: asyncio.Event, started: asyncio.Event | None = None):
 
 
 def _sse_payloads(chunks: list[str]) -> list[dict]:
-    return [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    # Followed chunks carry an "id: <seq>" line ahead of the data line.
+    return [json.loads(c.split("data: ", 1)[1].strip()) for c in chunks]
 
 
 async def _drain(resp) -> list[dict]:
