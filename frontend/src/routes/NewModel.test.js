@@ -3,10 +3,14 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
 import { get } from 'svelte/store'
 import NewModel from './NewModel.svelte'
 
-vi.mock('svelte-spa-router', () => ({
-  link: () => ({ destroy: () => {} }),
-  push: vi.fn(),
-}))
+vi.mock('svelte-spa-router', async () => {
+  const { writable } = await import('svelte/store')
+  return {
+    link: () => ({ destroy: () => {} }),
+    push: vi.fn(),
+    querystring: writable(''),
+  }
+})
 
 vi.mock('../lib/api.js', () => ({
   createModel: vi.fn(),
@@ -24,7 +28,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { push } from 'svelte-spa-router'
+import { push, querystring } from 'svelte-spa-router'
 import { createModel, subscribeToRun, listCodeSources } from '../lib/api.js'
 import { checkMermaidSource } from '../lib/mermaid_check.js'
 import { notify, config, currentProject, currentUser, pipelineRunning } from '../lib/stores.js'
@@ -37,6 +41,8 @@ async function goToStep(n) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  sessionStorage.clear()
+  querystring.set('')
   config.set(null)
   currentProject.set(null)
   pipelineRunning.set(false)
@@ -535,7 +541,7 @@ describe('NewModel — step 8 (review & submit)', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith(
       'error', 'Run not started: diagrams.0: file is not a valid PNG'
     ))
-    expect(push).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalledWith(expect.stringMatching(/^\/models\/(?!new)/))
     expect(screen.getByText('My System')).toBeInTheDocument()
     expect(screen.getByText('Create & Run')).not.toBeDisabled()
     expect(get(pipelineRunning)).toBe(false)
@@ -552,7 +558,7 @@ describe('NewModel — step 8 (review & submit)', () => {
     await fireEvent.click(screen.getByText('Create & Run'))
 
     await waitFor(() => expect(screen.getByText('Create & Run')).not.toBeDisabled())
-    expect(push).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalledWith(expect.stringMatching(/^\/models\/(?!new)/))
   })
 
   it('defaults scoring_method to dread when creating the model', async () => {
@@ -623,5 +629,189 @@ describe('NewModel — step 8 (review & submit)', () => {
     expect(fd.get('dependency_manifest')).toBe(file)
     expect(fd.get('deps_source_mode')).toBe('both')
     expect(fd.get('dependency_lockfile')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// BB-124: a refresh, or Back out of the wizard and in again, kept nothing
+// ---------------------------------------------------------------------------
+
+describe('NewModel — draft, history and leaving (BB-124)', () => {
+  const DRAFT_KEY = 'paranoid:new-model-draft:v1'
+  const LONG_ENOUGH = 'A web app with an API and a Postgres database.'
+
+  function storedDraft() {
+    return JSON.parse(sessionStorage.getItem(DRAFT_KEY) ?? 'null')
+  }
+
+  function seedDraft(draft) {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+  }
+
+  it('saves what is typed in this tab', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Payments' } })
+
+    await waitFor(() => expect(storedDraft()?.title).toBe('Payments'))
+    expect(storedDraft().framework).toBe('STRIDE')
+  })
+
+  it('keeps no draft while nothing has been entered', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'x' } })
+    await waitFor(() => expect(storedDraft()).not.toBeNull())
+
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: '' } })
+
+    await waitFor(() => expect(storedDraft()).toBeNull())
+  })
+
+  it('restores a draft on mount, on the step it was left at, and says so', async () => {
+    seedDraft({ title: 'Payments', description: LONG_ENOUGH, framework: 'MAESTRO', assumptions: ['TLS everywhere'], step: 5 })
+    render(NewModel)
+
+    expect(screen.getByText('Restored your unsaved draft from this tab.')).toBeInTheDocument()
+    expect(screen.getByText('TLS everywhere')).toBeInTheDocument() // step 5: assumptions
+    for (let i = 0; i < 4; i++) await fireEvent.click(screen.getByText('Back'))
+    expect(screen.getByLabelText('System description')).toHaveValue(LONG_ENOUGH)
+  })
+
+  it('asks for the files it could not keep', async () => {
+    seedDraft({ title: 'P', description: LONG_ENOUGH, step: 2, files: { diagrams: ['arch', 'flow'], manifest: 'package.json' } })
+    render(NewModel)
+
+    expect(screen.getByText(/Re-attach your diagrams/)).toHaveTextContent('arch, flow')
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), {
+      target: { files: [new File([new Uint8Array(10)], 'new.png')] },
+    })
+    expect(screen.queryByText(/Re-attach your diagrams/)).toBeNull()
+
+    await fireEvent.click(screen.getByText('Next')) // 3
+    await fireEvent.click(screen.getByText('Next')) // 4: dependencies
+    expect(screen.getByText(/Re-attach your package.json/)).toHaveTextContent('package.json')
+  })
+
+  it('records each step in the URL so the browser can go back to it', async () => {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+
+    await fireEvent.click(screen.getByText('Next'))
+
+    expect(push).toHaveBeenCalledWith('/models/new?step=1')
+    expect(screen.getByLabelText('System description')).toBeInTheDocument()
+  })
+
+  it('follows the browser Back and Forward through ?step=', async () => {
+    seedDraft({ title: 'Sys', description: LONG_ENOUGH })
+    querystring.set('step=3')
+    render(NewModel)
+    expect(screen.getByText(/Code context/)).toBeInTheDocument()
+
+    querystring.set('step=1')
+
+    await waitFor(() => expect(screen.getByLabelText('System description')).toBeInTheDocument())
+  })
+
+  it('does not jump past a step the input does not allow yet', () => {
+    querystring.set('step=6') // typed by hand, with no title
+    render(NewModel)
+    expect(screen.getByLabelText('Model title')).toBeInTheDocument()
+  })
+
+  it('clamps a hand-typed step to the furthest one the draft allows', () => {
+    seedDraft({ title: 'Sys' }) // a title but no description: step 1 at most
+    querystring.set('step=6')
+    render(NewModel)
+    expect(screen.getByLabelText('System description')).toBeInTheDocument()
+  })
+
+  it('warns before the page unloads while there is unsaved input, and not otherwise', async () => {
+    render(NewModel)
+    const clean = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(clean)
+    expect(clean.defaultPrevented).toBe(false)
+
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    const dirty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirty)
+    expect(dirty.defaultPrevented).toBe(true)
+  })
+
+  it('discards the draft and starts over', async () => {
+    seedDraft({ title: 'Payments', description: LONG_ENOUGH, step: 1 })
+    render(NewModel)
+
+    await fireEvent.click(screen.getByText('Discard draft'))
+
+    expect(screen.getByLabelText('Model title')).toHaveValue('')
+    expect(screen.queryByText(/Restored your unsaved draft/)).toBeNull()
+    expect(storedDraft()).toBeNull()
+  })
+
+  it('forgets the draft once the run starts, and keeps it when the run is refused', async () => {
+    createModel.mockResolvedValue({ id: 'model-9' })
+    seedDraft({ title: 'Payments', description: LONG_ENOUGH, step: 8 })
+    subscribeToRun.mockImplementationOnce((id, fd, onEvent, onError, onDone) => {
+      onError(new Error('bad diagram')); onDone(); return vi.fn()
+    })
+    render(NewModel)
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('bad diagram')))
+    expect(storedDraft()?.title).toBe('Payments')
+
+    await fireEvent.click(screen.getByText('Create & Run'))
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/models/model-9'))
+    expect(storedDraft()).toBeNull()
+    const leaving = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leaving)
+    expect(leaving.defaultPrevented).toBe(false)
+  })
+
+  it('restores a code source only in the project it belongs to', async () => {
+    currentProject.set({ id: 'p2', name: 'Other' })
+    seedDraft({ title: 'Sys', description: LONG_ENOUGH, selectedCodeSourceId: 'src-1', projectId: 'p1', step: 8 })
+    render(NewModel)
+    await waitFor(() => expect(storedDraft()?.projectId).toBe('p2'))
+    expect(storedDraft().selectedCodeSourceId).toBeNull()
+  })
+
+  it('ignores a damaged draft', () => {
+    sessionStorage.setItem(DRAFT_KEY, '{not json')
+    render(NewModel)
+    expect(screen.getByLabelText('Model title')).toHaveValue('')
+    expect(screen.queryByText(/Restored your unsaved draft/)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// BB-126: no cap on the description (2 MB accepted)
+// ---------------------------------------------------------------------------
+
+describe('NewModel — description length (BB-126)', () => {
+  async function toDescription() {
+    render(NewModel)
+    await fireEvent.input(screen.getByLabelText('Model title'), { target: { value: 'Sys' } })
+    await fireEvent.click(screen.getByText('Next'))
+  }
+
+  it('caps the textarea at 50,000 characters and counts them', async () => {
+    await toDescription()
+    const textarea = screen.getByLabelText('System description')
+    expect(textarea).toHaveAttribute('maxlength', '50000')
+
+    await fireEvent.input(textarea, { target: { value: 'x'.repeat(1234) } })
+
+    expect(screen.getByText('1,234 / 50,000 chars (min 10)')).toBeInTheDocument()
+  })
+
+  it('disables Next for a description over the limit', async () => {
+    await toDescription()
+    // maxlength stops typing, not a value set by script (or a restored draft).
+    await fireEvent.input(screen.getByLabelText('System description'), { target: { value: 'x'.repeat(50_001) } })
+    expect(screen.getByText('Next')).toBeDisabled()
+
+    await fireEvent.input(screen.getByLabelText('System description'), { target: { value: 'x'.repeat(50_000) } })
+    expect(screen.getByText('Next')).not.toBeDisabled()
   })
 })

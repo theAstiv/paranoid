@@ -22,6 +22,9 @@ from backend.scoring.cvss31 import Cvss31Error, parse_vector, to_vector_string
 
 
 _MIN_DESCRIPTION_CHARS = 10
+# The longest system description accepted anywhere: the API, the wizard and the
+# CLI (BB-126; 2 MB used to be stored and then sent to the LLM on every step).
+MAX_DESCRIPTION_CHARS = 50_000
 
 
 def _require_visible_chars(value: str | None, field: str, minimum: int) -> str | None:
@@ -37,7 +40,9 @@ class CreateModelRequest(BaseModel):
     """Request body for POST /api/models."""
 
     title: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(..., min_length=_MIN_DESCRIPTION_CHARS)
+    description: str = Field(
+        ..., min_length=_MIN_DESCRIPTION_CHARS, max_length=MAX_DESCRIPTION_CHARS
+    )
     framework: Framework = Framework.STRIDE
     provider: Provider | None = None  # None → project default → settings.default_provider
     model: str | None = None  # None → project default → settings.default_model
@@ -62,7 +67,7 @@ class UpdateModelRequest(BaseModel):
     a field that is sent gets the same checks as on create."""
 
     title: str | None = Field(default=None, max_length=200)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=MAX_DESCRIPTION_CHARS)
     framework: Framework | None = None
     status: ModelStatus | None = None
 
@@ -329,7 +334,7 @@ class AnalyzeAssumptionsResponse(BaseModel):
 class AnalyzeBundleRequest(BaseModel):
     """Request body for POST /api/analyze/."""
 
-    description: str = Field(..., min_length=1, max_length=50_000)
+    description: str = Field(..., min_length=1, max_length=MAX_DESCRIPTION_CHARS)
     assumptions: list[str] = Field(default_factory=list, max_length=200)
     framework: Framework = Framework.STRIDE
     has_ai_components: bool = False

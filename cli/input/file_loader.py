@@ -6,6 +6,7 @@ Loads .txt and .md files, validates size and content, detects structured templat
 import logging
 from pathlib import Path
 
+from backend.models.api import MAX_DESCRIPTION_CHARS
 from backend.models.enums import Framework
 
 
@@ -82,6 +83,16 @@ def load_input_file(file_path: Path) -> str:
         raise InputFileError(
             f"Input file contains only whitespace: {file_path}\n\n"
             f"Please provide a file with meaningful content."
+        )
+
+    # The file is stored as the model's description, which the API caps (BB-126);
+    # the 1 MB byte check above still allowed 20 times that.
+    if len(content) > MAX_DESCRIPTION_CHARS:
+        raise InputFileError(
+            f"Input file too long: {len(content):,} characters "
+            f"(max: {MAX_DESCRIPTION_CHARS:,})\n\n"
+            f"The description is sent to the model on every step. Shorten it, or "
+            f"split the system into several threat models."
         )
 
     return content

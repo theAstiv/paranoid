@@ -26,6 +26,18 @@
 
   const isLast = $derived(currentStep === steps.length - 1)
   const isFirst = $derived(currentStep === 0)
+
+  // After a step change, focus goes to the new step's heading (BB-111, BB-99).
+  // Next and Create & Run used to be one button whose label changed under the
+  // focus, so a second Enter on "Next" started the run.
+  /** @type {HTMLHeadingElement | undefined} */
+  let heading = $state()
+  let shownStep = -1
+  $effect(() => {
+    const stepNow = currentStep
+    if (shownStep !== -1 && stepNow !== shownStep) heading?.focus()
+    shownStep = stepNow
+  })
 </script>
 
 <div class="card overflow-hidden">
@@ -60,10 +72,14 @@
 
   <!-- Step content -->
   <div class="p-6">
+    <h2 bind:this={heading} tabindex="-1" class="text-sm font-semibold text-c-text mb-4 focus:outline-none">
+      <span class="font-mono text-c-faint mr-1.5">{currentStep + 1}/{steps.length}</span>{steps[currentStep] ?? ''}
+    </h2>
     {@render children?.()}
   </div>
 
-  <!-- Navigation -->
+  <!-- Navigation. Next and Create & Run are different buttons, so the focus
+       never sits on a button that turns into the one that starts the run. -->
   <div class="border-t border-c-border px-6 py-4 flex justify-between">
     <button
       type="button"
@@ -72,15 +88,25 @@
       class="px-4 py-2 text-sm font-medium text-c-muted hover:text-c-text hover:bg-c-well rounded-panel disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
       Back
     </button>
-    <button
-      type="button"
-      onclick={() => isLast ? onsubmit?.() : onnext?.()}
-      disabled={nextDisabled || submitting}
-      class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
-      {#if submitting}
-        <div class="w-3.5 h-3.5 border-2 border-[#04141A] border-t-transparent rounded-full animate-spin-slow"></div>
-      {/if}
-      {isLast ? 'Create & Run' : 'Next'}
-    </button>
+    {#if isLast}
+      <button
+        type="button"
+        onclick={() => onsubmit?.()}
+        disabled={nextDisabled || submitting}
+        class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
+        {#if submitting}
+          <div class="w-3.5 h-3.5 border-2 border-[#04141A] border-t-transparent rounded-full animate-spin-slow"></div>
+        {/if}
+        Create & Run
+      </button>
+    {:else}
+      <button
+        type="button"
+        onclick={() => onnext?.()}
+        disabled={nextDisabled || submitting}
+        class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none">
+        Next
+      </button>
+    {/if}
   </div>
 </div>
