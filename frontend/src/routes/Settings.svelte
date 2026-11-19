@@ -1,14 +1,17 @@
 <script>
   import { onMount, tick } from 'svelte'
   import { getConfig, updateConfig, getHealth, testProvider } from '../lib/api.js'
-  import { config, notify } from '../lib/stores.js'
+  import { config, currentUser, notify } from '../lib/stores.js'
   import McpConfig from '../components/McpConfig.svelte'
 
+  // Only an instance admin can change these (PATCH /config 403s otherwise);
+  // everyone else sees them read-only (BB-136). Auth off makes everyone admin.
+  $: readOnly = Boolean($currentUser) && !$currentUser.is_admin
   $: firstRun = $config?.first_run === true
   let providerSelect
   let autoFocusedOnce = false
 
-  $: if (!loading && firstRun && !autoFocusedOnce) {
+  $: if (!loading && firstRun && !readOnly && !autoFocusedOnce) {
     autoFocusedOnce = true
     tick().then(() => providerSelect?.focus())
   }
@@ -182,7 +185,16 @@
 <div class="max-w-[760px] mx-auto space-y-5">
   <h1 class="text-xl font-semibold text-c-text">Settings</h1>
 
-  {#if firstRun && !loading}
+  {#if readOnly && !loading}
+    <div role="status" class="card border-c-border p-4 text-sm">
+      <p class="font-semibold text-c-text2">Managed by your instance admin</p>
+      <p class="mt-1 text-c-muted">
+        {firstRun
+          ? 'No provider is configured yet. Ask an instance admin to set one up before creating threat models.'
+          : 'You can see the instance configuration here, but only an instance admin can change it.'}
+      </p>
+    </div>
+  {:else if firstRun && !loading}
     <div role="status" aria-live="polite"
       class="card border-c-high/40 bg-c-high/5 p-4 text-sm">
       <p class="font-semibold text-c-high">Welcome — let's get you connected.</p>
@@ -229,11 +241,15 @@
       <div class="flex items-center justify-between mb-5">
         <h2 class="text-xs font-semibold text-c-muted uppercase tracking-wide">Configuration</h2>
         <span class="text-xs text-c-faint">
-          {configLoaded ? 'Changes take effect immediately' : 'Could not load current settings — saving is disabled'}
+          {#if readOnly}Read-only
+          {:else}{configLoaded ? 'Changes take effect immediately' : 'Could not load current settings — saving is disabled'}{/if}
         </span>
       </div>
 
-      <form on:submit|preventDefault={save} class="space-y-4">
+      <form on:submit|preventDefault={save}>
+      <!-- A disabled fieldset disables every input and button in it, Test included:
+           a non-admin's probe of a changed URL or profile 403s too. -->
+      <fieldset disabled={readOnly} class="space-y-4 min-w-0">
         <div class="grid grid-cols-3 items-center gap-4">
           <label for="cfg-provider" class="{LABEL_CLASS}">Provider</label>
           <select id="cfg-provider" bind:this={providerSelect} bind:value={draft.default_provider}
@@ -419,7 +435,7 @@
           </div>
         {/each}
 
-        {#if configSecretRequired}
+        {#if configSecretRequired && !readOnly}
           <div class="grid grid-cols-3 items-center gap-4">
             <label for="cfg-secret" class="{LABEL_CLASS}">
               Config secret
@@ -431,14 +447,17 @@
           </div>
         {/if}
 
-        <div class="flex items-center justify-end gap-3 pt-2 border-t border-c-border">
-          <button type="button" on:click={reset}
-            class="btn-ghost text-xs px-3 py-1.5">Reset</button>
-          <button type="submit" disabled={saving || !configLoaded}
-            class="btn-primary text-xs px-4 py-1.5 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+        {#if !readOnly}
+          <div class="flex items-center justify-end gap-3 pt-2 border-t border-c-border">
+            <button type="button" on:click={reset}
+              class="btn-ghost text-xs px-3 py-1.5">Reset</button>
+            <button type="submit" disabled={saving || !configLoaded}
+              class="btn-primary text-xs px-4 py-1.5 disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        {/if}
+      </fieldset>
       </form>
     </div>
 

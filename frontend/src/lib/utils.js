@@ -229,11 +229,27 @@ export function initials(name) {
  * @returns {boolean}
  */
 export function canEditProject(project, user, projectId = project?.id) {
+  return _hasProjectRole(project, user, projectId, ['owner', 'editor'])
+}
+
+/**
+ * Like canEditProject, but for owner-only actions such as deleting a model
+ * (BB-138: editors and viewers saw Delete and got a 403).
+ * @param {{ id?: string, member_role?: string, is_archived?: number|boolean } | null | undefined} project
+ * @param {{ is_admin?: boolean } | null | undefined} user
+ * @param {string} [projectId]
+ * @returns {boolean}
+ */
+export function canOwnProject(project, user, projectId = project?.id) {
+  return _hasProjectRole(project, user, projectId, ['owner'])
+}
+
+function _hasProjectRole(project, user, projectId, roles) {
   if (!project || projectId !== project.id) return true
   if (project.is_archived) return false
   if (user?.is_admin) return true
   const role = project.member_role
-  return !role || role === 'owner' || role === 'editor'
+  return !role || roles.includes(role)
 }
 
 /**

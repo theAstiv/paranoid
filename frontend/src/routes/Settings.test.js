@@ -15,7 +15,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 })
 
 import { getConfig, updateConfig, getHealth, testProvider } from '../lib/api.js'
-import { notify, config } from '../lib/stores.js'
+import { notify, config, currentUser } from '../lib/stores.js'
 
 const baseConfig = {
   default_provider: 'anthropic',
@@ -35,6 +35,7 @@ const baseConfig = {
 beforeEach(() => {
   vi.clearAllMocks()
   config.set(null)
+  currentUser.set(null)
   getConfig.mockResolvedValue({ ...baseConfig })
   getHealth.mockResolvedValue({ status: 'healthy', version: '1.0.0', provider: 'anthropic', model: 'claude-sonnet-4' })
 })
@@ -406,6 +407,41 @@ describe('Settings — env var reference and McpConfig', () => {
   it('renders the McpConfig panel', async () => {
     render(Settings)
     await waitFor(() => expect(screen.getByText('Code Context via context-link')).toBeInTheDocument())
+  })
+})
+
+describe('Settings — read-only for a non-admin (BB-136)', () => {
+  it('shows the configuration disabled, with no Save, Reset or Test', async () => {
+    currentUser.set({ id: 'u-2', username: 'ed', is_admin: false })
+    getConfig.mockResolvedValue({ ...baseConfig, ollama_base_url: 'http://localhost:11434', anthropic_api_key_set: true, anthropic_api_key_source: 'db' })
+    render(Settings)
+    await waitFor(() => expect(screen.getByText('Managed by your instance admin')).toBeInTheDocument())
+
+    expect(screen.getByLabelText('Provider')).toBeDisabled()
+    expect(screen.getByLabelText('Default iterations')).toBeDisabled()
+    expect(screen.getByDisplayValue('claude-sonnet-4-20250514')).toBeDisabled()
+    expect(screen.queryByText('Save')).toBeNull()
+    expect(screen.queryByText('Reset')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Test Ollama connection' })).toBeDisabled()
+    expect(screen.getByText('Replace').closest('button')).toBeDisabled()
+  })
+
+  it('hides the config secret field and the first-run setup prompt', async () => {
+    currentUser.set({ id: 'u-2', username: 'ed', is_admin: false })
+    getConfig.mockResolvedValue({ ...baseConfig, first_run: true, config_secret_required: true })
+    render(Settings)
+    await waitFor(() => expect(screen.getByText(/Ask an instance admin/)).toBeInTheDocument())
+    expect(screen.queryByText(/let's get you connected/)).toBeNull()
+    expect(screen.queryByLabelText(/Config secret/)).toBeNull()
+  })
+
+  it('stays editable for an admin', async () => {
+    currentUser.set({ id: 'u-1', username: 'root', is_admin: true })
+    render(Settings)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeInTheDocument())
+    expect(screen.queryByText('Managed by your instance admin')).toBeNull()
+    expect(screen.getByLabelText('Provider')).not.toBeDisabled()
+    expect(screen.getByText('Save').closest('button')).not.toBeDisabled()
   })
 })
 

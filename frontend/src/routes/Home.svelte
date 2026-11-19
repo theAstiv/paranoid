@@ -3,11 +3,13 @@
   import { link } from 'svelte-spa-router'
   import { listModels, deleteModel } from '../lib/api.js'
   import { models, notify, currentProject, currentUser } from '../lib/stores.js'
-  import { canEditProject } from '../lib/utils.js'
+  import { canEditProject, canOwnProject } from '../lib/utils.js'
   import ModelCard from '../components/ModelCard.svelte'
 
   // Creating a model needs editor; a viewer would get a 403.
   $: canCreate = canEditProject($currentProject, $currentUser)
+  // Deleting one needs owner (BB-138).
+  const canDelete = (model, project, user) => canOwnProject(project, user, model.project_id ?? project?.id)
 
   let loading = true
 
@@ -164,7 +166,7 @@
       {#each filtered as model (model.id)}
         <ModelCard
           {model}
-          onDelete={() => handleDelete(model)}
+          onDelete={canDelete(model, $currentProject, $currentUser) ? () => handleDelete(model) : null}
         />
       {/each}
     </div>

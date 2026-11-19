@@ -49,11 +49,18 @@ async def get_project(project_id: str) -> dict | None:
             return _row(await cur.fetchone())
 
 
+# Both lists carry last_activity_at: when a model in the project last changed,
+# or NULL with no models. A fresh browser opens on the most recently active
+# project (BB-145).
+
+
 async def list_projects_for_user(user_id: str, include_archived: bool = False) -> list[dict]:
     """Return the projects the user is a member of; archived ones only on request."""
     async with db.reader() as conn:
         async with conn.execute(
-            """SELECT p.*, pm.role AS member_role
+            """SELECT p.*, pm.role AS member_role,
+                      (SELECT MAX(tm.updated_at) FROM threat_models tm
+                       WHERE tm.project_id = p.id) AS last_activity_at
                FROM projects p
                JOIN project_members pm ON pm.project_id = p.id
                WHERE pm.user_id = ? AND (p.is_archived = 0 OR ?)
@@ -66,7 +73,12 @@ async def list_projects_for_user(user_id: str, include_archived: bool = False) -
 async def list_all_projects() -> list[dict]:
     """Admin-only: return all projects including archived."""
     async with db.reader() as conn:
-        async with conn.execute("SELECT * FROM projects ORDER BY created_at DESC") as cur:
+        async with conn.execute(
+            """SELECT p.*,
+                      (SELECT MAX(tm.updated_at) FROM threat_models tm
+                       WHERE tm.project_id = p.id) AS last_activity_at
+               FROM projects p ORDER BY p.created_at DESC"""
+        ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
 

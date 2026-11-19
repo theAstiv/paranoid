@@ -156,6 +156,30 @@ describe('App — New project under admin-only registration', () => {
   })
 })
 
+describe('App — instance Settings links are admin-only (BB-136)', () => {
+  async function signIn(user) {
+    fetchMe.mockImplementation(async () => { currentUser.set(user); return user })
+    render(App)
+    await waitFor(() => expect(getConfig).toHaveBeenCalled())
+    await tick()
+  }
+
+  it('hides the Settings nav and menu link from a non-admin', async () => {
+    await signIn({ id: 'u-1', username: 'alice', is_admin: false })
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'User menu' }))
+    expect(screen.queryByRole('link', { name: 'Instance settings' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('shows both to an admin', async () => {
+    await signIn({ id: 'u-1', username: 'root', is_admin: true })
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: 'User menu' }))
+    expect(screen.getByRole('link', { name: 'Instance settings' })).toBeInTheDocument()
+  })
+})
+
 describe('App — unknown routes and titles (BB-113, BB-109)', () => {
   it('shows a not-found page with a link home for an unknown hash', async () => {
     window.location.hash = '#/no/such/page'

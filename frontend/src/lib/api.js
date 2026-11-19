@@ -124,9 +124,13 @@ export function getAuthOptions() {
  * @returns {Promise<{ access_token: string, user: object }>}
  */
 export async function login(body) {
-  const { setStoredToken, currentUser } = await import('./stores.js')
+  const { setStoredToken, currentUser, clearAuthState } = await import('./stores.js')
   const data = await request('POST', '/auth/login', body)
   if (data?.access_token) {
+    // Signing in over another session: drop that user's project, menus and
+    // toast first, or the next page loads with their project and 403s (BB-42).
+    // Only on success, so a wrong password leaves the signed-in user as is.
+    clearAuthState()
     setStoredToken(data.access_token)
     currentUser.set(data.user)
   }
