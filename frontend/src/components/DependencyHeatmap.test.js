@@ -75,6 +75,25 @@ describe('DependencyHeatmap', () => {
     expect(screen.getByText('Failed: no resolvable version')).toBeInTheDocument()
   })
 
+  it('flags a lockfile pin outside the manifest range and explains it when expanded (BB-54)', async () => {
+    const s = scan({
+      package: 'chalk', version: '2.4.2',
+      analysis: { ...scan().analysis, ref: { name: 'chalk', version: '2.4.2' }, lockfile_out_of_range: '^5.3.0' },
+    })
+    render(DependencyHeatmap, { props: { scans: [s] } })
+    expect(screen.getByText('lock-mismatch').className).toContain('chip-amber')
+
+    await fireEvent.click(screen.getByText('chalk@2.4.2'))
+    expect(screen.getByText(/The lockfile pins 2\.4\.2, outside the manifest range/)).toBeInTheDocument()
+    expect(screen.getByText('^5.3.0')).toBeInTheDocument()
+  })
+
+  it('shows no lockfile line for a pin inside the range', async () => {
+    render(DependencyHeatmap, { props: { scans: [scan()] } })
+    await fireEvent.click(screen.getByText('lodash@4.17.21'))
+    expect(screen.queryByText(/The lockfile pins/)).toBeNull()
+  })
+
   it('shows a gray "skipped" flag and "Not analyzed" for a dependency dropped before analysis ran', async () => {
     const s = scan({
       package: 'too-many-deps', version: '',

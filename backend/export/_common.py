@@ -60,6 +60,9 @@ def dependency_flags(analysis: dict[str, Any] | None) -> list[str]:
         flags.append("skipped")
     if analysis.get("error"):
         flags.append("error")
+    # The lockfile pins a version outside the manifest's range (BB-54).
+    if analysis.get("lockfile_out_of_range"):
+        flags.append("lock-mismatch")
     drift = analysis.get("drift") or {}
     if drift.get("signal"):
         flags.append("drift")

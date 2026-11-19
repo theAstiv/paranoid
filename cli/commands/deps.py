@@ -587,7 +587,10 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
     results: dict[str, dict] = {}
     for pa in context.packages:
         if pa.error:
-            results[pa.ref.name] = {"error": pa.error}
+            results[pa.ref.name] = {
+                "error": pa.error,
+                "lockfile_out_of_range": pa.lockfile_out_of_range,
+            }
             continue
         results[pa.ref.name] = {
             "version": pa.resolved.version,
@@ -596,6 +599,7 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
             "drift": pa.drift.model_dump(mode="json") if pa.drift is not None else None,
             "error": None,
             "resolved_from_cache": pa.resolved_from_cache,
+            "lockfile_out_of_range": pa.lockfile_out_of_range,
         }
     skipped = sorted(context.skipped)
 
@@ -625,6 +629,12 @@ def scan_manifest(manifest: Path, source: str, output_format: str, output: Path 
             click.secho(f"{pkg_name}: FAILED: {entry['error']}", fg="red")
             continue
         click.secho(f"{pkg_name}@{entry['version']}", fg="cyan", bold=True)
+        if entry["lockfile_out_of_range"]:
+            click.secho(
+                f"  lockfile pins {entry['version']}, outside the manifest range "
+                f"{entry['lockfile_out_of_range']!r}",
+                fg="yellow",
+            )
         if entry["resolved_from_cache"]:
             click.secho("  registry unreachable: using cached registry metadata", fg="yellow")
         npm_profile = CapabilityProfile.model_validate(entry["npm"]) if entry["npm"] else None

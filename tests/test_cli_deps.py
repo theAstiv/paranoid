@@ -590,6 +590,41 @@ def test_scan_manifest_v3_lockfile(runner, monkeypatch, tmp_path):
     assert data["skipped"] == []
 
 
+@pytest.mark.parametrize("output_format", ["json", "console"])
+def test_scan_manifest_warns_on_a_lockfile_pin_outside_the_range(
+    runner, monkeypatch, tmp_path, output_format
+):
+    """BB-54: the pinned version is scanned, with the range it misses reported."""
+    manifest = tmp_path / "package.json"
+    manifest.write_text(json.dumps({"dependencies": {"chalk": "^5.3.0"}}))
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text(json.dumps({"packages": {"node_modules/chalk": {"version": "2.4.2"}}}))
+
+    async def fake_resolve_npm(name, version, client):
+        return _resolved(name="chalk", version=version)
+
+    async def fake_fetch_source(r, kind, client):
+        return FetchResult(path=tmp_path / "npm")
+
+    async def fake_scan_source(path, kind, *, name, version):
+        return _profile(name="chalk", version=version)
+
+    monkeypatch.setattr(deps_analyze, "resolve_npm", fake_resolve_npm)
+    monkeypatch.setattr(deps_analyze, "fetch_source", fake_fetch_source)
+    monkeypatch.setattr(deps_analyze, "scan_source", fake_scan_source)
+    monkeypatch.setattr(deps_cli, "resolve_semgrep_binary", lambda: "/usr/bin/semgrep")
+
+    result = runner.invoke(
+        deps_cli.deps, ["scan-manifest", str(manifest), "--format", output_format]
+    )
+    assert result.exit_code == 0, result.output
+    if output_format == "json":
+        entry = json.loads(result.output)["scanned"]["chalk"]
+        assert (entry["version"], entry["lockfile_out_of_range"]) == ("2.4.2", "^5.3.0")
+    else:
+        assert "lockfile pins 2.4.2, outside the manifest range '^5.3.0'" in result.output
+
+
 def test_scan_manifest_v1_lockfile(runner, monkeypatch, tmp_path):
     manifest = tmp_path / "package.json"
     manifest.write_text(json.dumps({"dependencies": {"chalk": "^5.3.0"}}))

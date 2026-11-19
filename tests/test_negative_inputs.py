@@ -293,13 +293,10 @@ async def test_lockfile_entries_not_in_the_manifest_are_ignored():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: a lockfile pin that doesn't satisfy the manifest range (a lockfile "
-    "from another project or an out-of-sync one) is analyzed silently, with no skip "
-    "reason or warning",
-)
 async def test_lockfile_pin_outside_the_manifest_range_is_flagged():
+    """BB-54: a lockfile pin that doesn't satisfy the manifest range (a lockfile
+    from another project or an out-of-sync one) was analysed silently. It is
+    still analysed (it is what gets installed) but now carries a warning."""
     seen: list[str] = []
 
     async def fake_analyze(name, version, *_args):
@@ -309,7 +306,8 @@ async def test_lockfile_pin_outside_the_manifest_range_is_flagged():
     lockfile = {"packages": {"node_modules/chalk": {"version": "2.4.2"}}}
     with patch.object(analyze, "analyze_package", new=fake_analyze):
         context = await analyze.analyze_manifest({"dependencies": {"chalk": "^5.3.0"}}, lockfile)
-    assert "chalk" in context.skipped or seen != ["chalk@2.4.2"]
+    assert seen == ["chalk@2.4.2"]
+    assert [pa.lockfile_out_of_range for pa in context.packages] == ["^5.3.0"]
 
 
 # ---------------------------------------------------------------------------

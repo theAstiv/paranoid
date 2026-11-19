@@ -23,6 +23,7 @@ from backend.deps.fetcher import FetchError, cache_dir_for, fetch_source, is_cac
 from backend.deps.resolved_cache import load_cached_resolved, save_resolved
 from backend.deps.resolver import resolve_github_ref, resolve_npm
 from backend.deps.scanner import scan_source
+from backend.deps.semver import satisfies
 from backend.models.dependencies import (
     CapabilityProfile,
     DependencyContext,
@@ -369,12 +370,25 @@ async def analyze_manifest(
 
     targets: dict[str, str] = {}
     skipped: dict[str, str] = {}
+    out_of_range: dict[str, str] = {}
     for pkg_name, range_str in direct.items():
-        pinned = lockfile_versions.get(pkg_name) or pin_from_range(range_str)
+        locked = lockfile_versions.get(pkg_name)
+        pinned = locked or pin_from_range(range_str)
         if pinned is None:
             skipped[pkg_name] = "unresolvable_version_range"
-        else:
-            targets[pkg_name] = pinned
+            continue
+        targets[pkg_name] = pinned
+        # A stale lockfile can pin a version the manifest no longer allows
+        # (BB-54). Only a definite miss counts; a range the checker can't
+        # read (git/url specs, aliases) is not a warning.
+        if locked and satisfies(locked, range_str) is False:
+            out_of_range[pkg_name] = range_str
+            logger.warning(
+                "lockfile pins %s@%s, outside the manifest range %r",
+                pkg_name,
+                locked,
+                range_str,
+            )
 
     if max_direct_dependencies is not None and len(targets) > max_direct_dependencies:
         overflow = sorted(targets)[max_direct_dependencies:]
@@ -422,6 +436,12 @@ async def analyze_manifest(
         async with httpx.AsyncClient() as owned_client:
             await asyncio.gather(*(_one(n, v, owned_client) for n, v in targets.items()))
 
+    packages = [
+        pa.model_copy(update={"lockfile_out_of_range": out_of_range[pa.ref.name]})
+        if pa.ref.name in out_of_range
+        else pa
+        for pa in packages
+    ]
     packages.sort(key=lambda pa: pa.ref.name)
     return DependencyContext(packages=packages, skipped=skipped, source_mode=source_mode)
 

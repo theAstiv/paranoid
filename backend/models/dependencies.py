@@ -278,6 +278,9 @@ class PackageAnalysis(BaseModel):
     # The registry was unreachable, so `resolved` is the metadata saved by the
     # last online run (backend.deps.resolved_cache), not a fresh lookup.
     resolved_from_cache: bool = False
+    # The manifest's range when the lockfile pins a version outside it (BB-54).
+    # The pinned version is still the one analysed: it is what gets installed.
+    lockfile_out_of_range: str | None = None
 
 
 class DependencyContext(BaseModel):
