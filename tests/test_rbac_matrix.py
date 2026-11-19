@@ -255,8 +255,12 @@ def stub_llm(monkeypatch):
 
     monkeypatch.setattr("backend.routes.models.analyze_description_gaps", _description)
     monkeypatch.setattr("backend.routes.analyze.analyze_bundle", _bundle)
+
     # An allowed source create/reindex must not start a real git clone.
-    monkeypatch.setattr("backend.sources.manager.schedule_clone_and_index", lambda _sid: None)
+    async def _no_schedule(_sid: str, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr("backend.sources.manager.schedule_clone_and_index", _no_schedule)
 
 
 @pytest.mark.parametrize("route", ROUTES, ids=lambda r: r.id)

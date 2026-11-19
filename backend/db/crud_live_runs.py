@@ -40,7 +40,34 @@ STALE_AFTER_SECONDS = 45.0
 FINISHED_RETENTION_DAYS = 7
 
 
-def _interrupted_event(kind: str) -> str:
+# Recorded on a source whose indexing died with its server.
+SOURCE_INTERRUPTED_MESSAGE = "Indexing interrupted: the server stopped before it finished."
+_SOURCE_BUSY_STATUSES = ("queued", "cloning", "indexing")
+
+
+def source_event_chunk(source_id: str, status: str, phase: str, message: str, **extra: Any) -> str:
+    """An SSE chunk in the shape the source indexer emits (manager.SourceEvent)."""
+    event = {
+        "source_id": source_id,
+        "status": status,
+        "phase": phase,
+        "message": message,
+        "timestamp": datetime.now(UTC).isoformat(),
+        **{k: v for k, v in extra.items() if v is not None},
+    }
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _interrupted_event(kind: str, subject_id: str) -> str:
+    if kind == "index":
+        # The sources page reads status/message/error, not step.
+        return source_event_chunk(
+            subject_id,
+            "failed",
+            "interrupted",
+            SOURCE_INTERRUPTED_MESSAGE,
+            error=SOURCE_INTERRUPTED_MESSAGE,
+        )
     what = "Extraction" if kind == "extract" else "Run"
     event = {
         "step": "complete",
@@ -78,8 +105,9 @@ async def _interrupt_stale(
     """Inside a writer transaction: interrupt 'running' rows with a stale heartbeat.
 
     Runs this process is driving are skipped whatever their heartbeat says.
-    Models of swept 'run' rows still 'in_progress'
-    become 'failed'; each swept row gets a final event giving the reason.
+    Models of swept 'run' rows still 'in_progress', and sources of swept
+    'index' rows still queued/cloning/indexing, become 'failed'; each swept
+    row gets a final event giving the reason.
     """
     cutoff = (datetime.now(UTC) - timedelta(seconds=older_than_seconds)).isoformat()
     query = (
@@ -99,14 +127,45 @@ async def _interrupt_stale(
             "WHERE id = ?",
             (now, now, row["id"]),
         )
-        await _insert_event(conn, row["id"], _interrupted_event(row["kind"]))
+        await _insert_event(conn, row["id"], _interrupted_event(row["kind"], row["subject_id"]))
         if row["subject_type"] == "model" and row["kind"] == "run":
             await conn.execute(
                 "UPDATE threat_models SET status = 'failed', updated_at = ? "
                 "WHERE id = ? AND status = 'in_progress'",
                 (now, row["subject_id"]),
             )
+        elif row["subject_type"] == "code_source":
+            await _fail_busy_sources(conn, now, "AND id = ?", (row["subject_id"],))
     return len(stale)
+
+
+async def _fail_busy_sources(
+    conn: aiosqlite.Connection, now: str, where: str, params: tuple[str, ...]
+) -> int:
+    cursor = await conn.execute(
+        "UPDATE code_sources SET last_index_status = 'failed', last_index_error = ?, "
+        "updated_at = ? WHERE last_index_status IN (?, ?, ?) " + where,
+        (SOURCE_INTERRUPTED_MESSAGE, now, *_SOURCE_BUSY_STATUSES, *params),
+    )
+    return cursor.rowcount
+
+
+async def fail_interrupted_sources() -> int:
+    """Fail sources stuck queued/cloning/indexing with no running index row.
+
+    Called once at startup, after the stale-run sweep. Before source indexing
+    was recorded in live_runs nothing reset these, so a restart mid-clone left
+    the source "Cloning…" forever (review A5). A source with a 'running' row is
+    left alone: another server on this database may be indexing it.
+    """
+    async with db.writer() as conn:
+        return await _fail_busy_sources(
+            conn,
+            now_iso(),
+            "AND id NOT IN (SELECT subject_id FROM live_runs "
+            "WHERE subject_type = 'code_source' AND status = 'running')",
+            (),
+        )
 
 
 async def claim_run(subject_type: str, subject_id: str, kind: str) -> str | None:

@@ -13,8 +13,9 @@ from httpx import ASGITransport, AsyncClient
 
 from backend import main
 from backend.config import settings
-from backend.db import crud
+from backend.db import crud, crud_live_runs
 from backend.main import app
+from backend.pipeline import live_runs
 from backend.security import source_key
 from backend.sources import manager as mgr
 
@@ -81,30 +82,42 @@ async def client(test_db):
 
 @pytest.mark.asyncio
 async def test_two_reindex_requests_at_once_schedule_one_run(client, monkeypatch):
-    scheduled: list[str] = []
-    monkeypatch.setattr(mgr, "schedule_clone_and_index", scheduled.append)
+    """Since A2 the guard is the live-run claim (one INSERT), not a per-process set."""
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def work(source_id, cancel_event, start):
+        started.append(source_id)
+        await release.wait()
+
+    monkeypatch.setattr(mgr, "_do_clone_and_index", work)
     source_id = await crud.create_code_source(
         name="r", git_url="https://github.com/o/r.git", ref=None, pat=None
     )
-    real_update = crud.update_code_source_status
+    real_claim = crud_live_runs.claim_run
 
-    async def slow_update(*args, **kwargs):
-        await asyncio.sleep(0.05)  # both requests are past the check before either schedules
-        return await real_update(*args, **kwargs)
+    async def slow_claim(*args, **kwargs):
+        await asyncio.sleep(0.05)  # both requests are past the route's check before either claims
+        return await real_claim(*args, **kwargs)
 
-    with patch("backend.routes.sources.crud.update_code_source_status", slow_update):
+    with patch("backend.pipeline.live_runs.crud_live_runs.claim_run", slow_claim):
         first, second = await asyncio.gather(
             client.post(f"/api/sources/{source_id}/reindex"),
             client.post(f"/api/sources/{source_id}/reindex"),
         )
 
     assert sorted([first.status_code, second.status_code]) == [202, 409]
-    assert scheduled == [source_id]
+    release.set()
+    await asyncio.wait_for(live_runs.get_run(source_id).task, timeout=5)
+    assert started == [source_id]
 
 
 @pytest.mark.asyncio
 async def test_a_reindex_is_refused_while_the_task_runs(client, monkeypatch):
-    monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda sid: None)
+    async def _no_schedule(_sid: str, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(mgr, "schedule_clone_and_index", _no_schedule)
     monkeypatch.setattr(mgr, "is_task_active", lambda sid: True)
     source_id = await crud.create_code_source(
         name="r", git_url="https://github.com/o/r.git", ref=None, pat=None

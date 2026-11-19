@@ -71,11 +71,15 @@ async def start_run(
     *,
     kind: str = "run",
     subject_type: str = "model",
+    on_claimed: Callable[[], Awaitable[None]] | None = None,
 ) -> LiveRun:
     """Claim the subject, drive ``events`` in a background task, return the run.
 
     ``on_cancel`` runs if the task is cancelled (server shutdown): it must
     leave the model in a final state and return the SSE chunk that says so.
+    ``on_claimed`` runs after a successful claim and before the task starts,
+    for state that must only change once the run is ours (a source re-index
+    resets its status to 'queued'); if it raises, the run is recorded failed.
     Raises ``RunAlreadyActiveError`` if the subject already has a run in
     progress — two runs of one model each clear its data and then add their
     own threats.
@@ -83,13 +87,22 @@ async def start_run(
     run_id = await crud_live_runs.claim_run(subject_type, subject_id, kind)
     if run_id is None:
         raise RunAlreadyActiveError(subject_id)
+    if on_claimed is not None:
+        try:
+            await on_claimed()
+        except Exception:
+            await _retry(
+                "Recording a run that failed to start",
+                lambda: crud_live_runs.finish_run(run_id, "failed"),
+            )
+            raise
     run = LiveRun(run_id=run_id)
     _runs[subject_id] = run
     # Never swept as stale, whatever its heartbeat does (a stalled event loop).
     crud_live_runs.LOCAL_RUN_IDS.add(run_id)
     run.task = asyncio.create_task(
         _drive(subject_id, run, events, on_cancel, kind, subject_type),
-        name=f"pipeline-run-{subject_id}",
+        name=f"live-{kind}-{subject_id}",
     )
     return run
 
@@ -202,6 +215,17 @@ async def _heartbeat(run_id: str) -> None:
             logger.exception("Heartbeat for run %s failed", run_id)
 
 
+async def _close_events(events: AsyncIterator[str], subject_id: str) -> None:
+    """Close the event generator if it is still open (a no-op once it has finished)."""
+    aclose = getattr(events, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:
+        logger.exception("Closing the event stream of %s failed", subject_id)
+
+
 async def _drive(
     subject_id: str,
     run: LiveRun,
@@ -219,6 +243,10 @@ async def _drive(
         # Nothing but shutdown cancels a run; without this the model would
         # stay 'in_progress' with no task behind it.
         status = "interrupted"
+        # A cancel that lands while a chunk is being stored leaves the generator
+        # paused at its yield: close it first, so its own cleanup (a source
+        # index stops its subprocess) runs before the subject is marked.
+        await _close_events(events, subject_id)
         try:
             await _publish(run, await on_cancel())
         except Exception:
@@ -231,6 +259,7 @@ async def _drive(
         logger.exception("Run for %s failed", subject_id)
     finally:
         beat.cancel()
+        await _close_events(events, subject_id)
         # Unregister before waking followers, so one that sees the run end and
         # immediately re-runs the model isn't refused. If the end can't be
         # recorded the row stays 'running' with a dead heartbeat, which the

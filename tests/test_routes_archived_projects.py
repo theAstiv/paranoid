@@ -18,7 +18,10 @@ from tests._rbac_world import World, build_world
 
 @pytest.fixture(autouse=True)
 def _no_clone(monkeypatch):
-    monkeypatch.setattr(mgr, "schedule_clone_and_index", lambda _sid: None)
+    async def _no_schedule(_sid: str, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(mgr, "schedule_clone_and_index", _no_schedule)
 
 
 def _client() -> AsyncClient:

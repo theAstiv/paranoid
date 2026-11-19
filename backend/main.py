@@ -19,7 +19,7 @@ from backend.config import API_KEY_FIELDS, VERSION, settings
 from backend.db.connection import DatabaseDirectoryError, db
 from backend.db.crud import delete_config_value, fail_interrupted_runs, get_config_value
 from backend.db.crud_activity import safe_notify_users
-from backend.db.crud_live_runs import sweep_stale_runs
+from backend.db.crud_live_runs import fail_interrupted_sources, sweep_stale_runs
 from backend.db.crud_projects import list_members as list_project_members
 from backend.db.crud_staleness import find_stale_models, get_recently_notified_model_ids
 from backend.db.seed import load_all_seeds
@@ -189,6 +189,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning(
             "Marked %d model(s) failed: their run was still in progress when the server stopped",
             interrupted,
+        )
+    # The same for code sources left queued/cloning/indexing (review A5).
+    stuck_sources = await fail_interrupted_sources()
+    if stuck_sources:
+        logger.warning(
+            "Marked %d code source(s) failed: indexing was in progress when the server stopped",
+            stuck_sources,
         )
 
     # Hydrate API keys from the config table into settings, but only for

@@ -289,9 +289,13 @@ class ConnectionManager:
             if self._tx_connection is None:
                 self._tx_connection = await self._open_tx_connection()
             conn = self._tx_connection
-            await conn.execute("BEGIN IMMEDIATE")
             token = _in_writer.set(True)
             try:
+                # Inside the try: a task cancelled while BEGIN is in flight still
+                # has it run on aiosqlite's thread, and without the rollback below
+                # the transaction stayed open, failing every later write. The
+                # thread runs calls in order, so the rollback comes after BEGIN.
+                await conn.execute("BEGIN IMMEDIATE")
                 yield conn
                 await conn.commit()
             except BaseException:
