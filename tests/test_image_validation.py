@@ -285,3 +285,76 @@ def test_diagram_data_explicit_name_not_overridden():
         name="My Diagram",
     )
     assert d.name == "My Diagram"
+
+
+# BB-125 — a Mermaid upload must start with a diagram type.
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "graph TD\n  A-->B",
+        "graph LR; A-->B",
+        "flowchart TB\n  A-->B",
+        "flowchart-elk TD\n  A-->B",
+        "sequenceDiagram\n  A->>B: hi",
+        "classDiagram-v2\n  class A",
+        "stateDiagram-v2\n  [*] --> A",
+        "erDiagram\n  A ||--o{ B : has",
+        "gantt\n  title x",
+        'pie showData\n  "a": 1',
+        "mindmap\n  root",
+        "journey\n  title x",
+        "gitGraph\n  commit",
+        "C4Context\n  title x",
+        "timeline\n  title x",
+        "architecture-beta\n  group api(cloud)[API]",
+        "info",
+        'treemap-beta\n  "a": 1',
+        "requirement\n  x",
+        "requirementDiagram\n  x",
+        "ishikawa-beta\n  x",
+        "swimlane-beta\n  x",
+        "treeView-beta\n  x",
+        "eventmodeling\n  x",
+        "venn-beta\n  x",
+        "wardley-beta\n  x",
+        "cynefin-beta\n  x",
+        "railroad-beta\n  x",
+        "railroad-diagram\n  x",
+        "kanban\n  x",
+        "\n\n  graph TD\n  A-->B",
+        "%% a comment\ngraph TD\n  A-->B",
+        "%%{init: {'theme': 'dark'}}%%\ngraph TD\n  A-->B",
+        "%%{\n  init: {'theme': 'dark'}\n}%%\ngraph TD\n  A-->B",
+        "---\ntitle: Architecture\n---\nflowchart LR\n  A-->B",
+        "\ufeffgraph TD\n  A-->B",
+        "graph TD\r\n  A-->B",
+        "```mermaid\ngraph TD\n  A-->B\n```",
+    ],
+)
+def test_validate_diagram_bytes_mermaid_accepts_real_diagram_types(source):
+    assert validate_diagram_bytes("d.mmd", source.encode()) == DiagramFormat.MERMAID
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "This is the architecture of our payment system.",
+        "Users log in through the API gateway.\ngraph TD\n  A-->B",
+        "grapheme TD\n  A-->B",
+        "graphs\n  A-->B",
+        "# Architecture\n\ngraph TD",
+        "%% only a comment",
+        "%%{init: {}}%%",
+        "---\ntitle: x\n---",
+    ],
+)
+def test_validate_diagram_bytes_mermaid_rejects_non_diagrams(source):
+    with pytest.raises(DiagramValidationError, match="doesn't look like a Mermaid diagram"):
+        validate_diagram_bytes("notes.txt", source.encode())
+
+
+def test_validate_diagram_bytes_mermaid_rejection_names_the_first_line():
+    with pytest.raises(DiagramValidationError, match="Users log in"):
+        validate_diagram_bytes("notes.txt", b"Users log in through the gateway.\nMore text.")

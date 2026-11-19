@@ -15,6 +15,7 @@
 
 <script>
   import { sanitizeMermaidDetailed } from '../lib/mermaid_sanitize.js'
+  import { isChunkLoadError } from '../lib/chunk_reload.js'
   import { diagramInitConfig, diagramThemeVariables } from '../lib/diagram_theme.js'
 
   /** @type {'mermaid'|'png'|'jpeg'} */
@@ -31,6 +32,9 @@
   let renderError = null
   // Retrying a rejected or blank source renders the same input and fails the same way.
   let retryable = true
+  // A failed chunk download is cached by the browser for the page's lifetime, so a
+  // re-render fails again with no new request; only a page reload recovers (BB-58).
+  let needsReload = false
   let showRawSource = false
 
   // Pan/zoom state — in-house, no new dependency.
@@ -75,6 +79,7 @@
     const seq = ++renderSeq
     renderError = null
     retryable = true
+    needsReload = false
     resetView()
     const { text: cleaned, removedUnsafe } = sanitizeMermaidDetailed(source)
     if (!cleaned) {
@@ -118,7 +123,11 @@
       elkRegisterPromise = null
       if (seq !== renderSeq || !container) return
       container.innerHTML = ''
-      if (removedUnsafe) {
+      if (isChunkLoadError(err)) {
+        // Not a verdict on the source, whatever the sanitizer removed (BB-59).
+        needsReload = true
+        renderError = 'Part of the diagram renderer failed to download. Reload the page to try again.'
+      } else if (removedUnsafe) {
         // Stripping a payload can leave source Mermaid can't parse (a label emptied
         // to `A[""]`); that is the rejection, not a syntax error worth showing (BB-39).
         retryable = false
@@ -235,7 +244,11 @@
       <p class="text-sm font-medium text-c-high">Diagram rendering failed</p>
       <p class="text-xs text-c-muted">{renderError}</p>
       <div class="flex gap-2">
-        {#if retryable}
+        {#if needsReload}
+          <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => window.location.reload()}>
+            Reload page
+          </button>
+        {:else if retryable}
           <button type="button" class="btn-ghost text-xs px-3 py-1.5" on:click={() => renderMermaid(content)}>
             Retry
           </button>

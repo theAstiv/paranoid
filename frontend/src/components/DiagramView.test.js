@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte'
 import DiagramView from './DiagramView.svelte'
 
@@ -191,6 +191,46 @@ describe('DiagramView — ELK failure and retry', () => {
     // ELK registration succeeds this time — Retry should now render normally.
     await fireEvent.click(screen.getByText('Retry'))
     await waitFor(() => expect(screen.queryByText('Diagram rendering failed')).toBeNull())
+  })
+})
+
+describe('DiagramView — chunk-load failure (BB-58, BB-59)', () => {
+  const chunkError = () => new TypeError('Failed to fetch dynamically imported module: /assets/flowDiagram-x.js')
+  let reload
+
+  beforeEach(() => {
+    reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, reload })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('offers Reload page, not a Retry that cannot work', async () => {
+    mermaidRender.mockRejectedValue(chunkError())
+    render(DiagramView, { props: { kind: 'mermaid', content: 'graph TD\nA --> B', name: 'arch' } })
+    await waitFor(() => expect(screen.getByText('Reload page')).toBeInTheDocument())
+    expect(screen.queryByText('Retry')).toBeNull()
+    expect(screen.getByText(/failed to download/i)).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByText('Reload page'))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('blames the download, not the sanitizer, when the source lost something to it', async () => {
+    mermaidRender.mockRejectedValue(chunkError())
+    render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD\nA[<img src=x>ok] --> B', name: 'arch' },
+    })
+    await waitFor(() => expect(screen.getByText('Reload page')).toBeInTheDocument())
+    expect(screen.queryByText(/rejected during safety cleaning/i)).toBeNull()
+  })
+
+  it('still reports a sanitized source that fails to parse as rejected', async () => {
+    mermaidRender.mockRejectedValue(new Error('Parse error on line 2'))
+    render(DiagramView, {
+      props: { kind: 'mermaid', content: 'graph TD\nA[<img src=x>ok] --> B', name: 'arch' },
+    })
+    await waitFor(() => expect(screen.getByText(/rejected during safety cleaning/i)).toBeInTheDocument())
+    expect(screen.queryByText('Reload page')).toBeNull()
   })
 })
 

@@ -150,18 +150,18 @@ async def test_one_bad_diagram_in_a_set_rejects_the_whole_set(model_id, pipeline
 
 
 @pytest.mark.asyncio
-async def test_non_mermaid_text_in_a_mmd_file_is_accepted_as_text(model_id, pipeline_spy):
-    """Documented behaviour, not a finding: there is no server-side Mermaid parser
-    (tech-decision-rationale.md, Decision 11); the text reaches the LLM as-is and the
-    browser shows a parse-error panel. Pinned so a change here is deliberate."""
+async def test_non_mermaid_text_in_a_mmd_file_is_rejected(model_id, pipeline_spy):
+    """BB-125: there is still no server-side Mermaid parser (Decision 11), but the first
+    line must name a diagram type, so prose in a .mmd/.txt is a 422 and no run starts."""
     async with _client() as client:
         r = await client.post(
             f"/api/models/{model_id}/run",
             data=_FORM,
             files={"diagrams": ("arch.mmd", b"this is not mermaid at all", "text/plain")},
         )
-    assert r.status_code == 200
-    assert len(pipeline_spy) == 1
+    assert r.status_code == 422
+    assert "Mermaid" in r.json()["detail"]
+    assert pipeline_spy == []
 
 
 # ---------------------------------------------------------------------------

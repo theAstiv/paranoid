@@ -12,6 +12,23 @@
 const STORAGE_KEY = 'paranoid:chunk-reload-at'
 export const RELOAD_WINDOW_MS = 10_000
 
+// A failed dynamic import, as each engine words it: Chrome "Failed to fetch dynamically
+// imported module", Firefox "error loading dynamically imported module", Safari
+// "Importing a module script failed". Mermaid loads its diagram code on demand, so
+// this can surface from `import('mermaid')` or from inside `mermaid.render()`.
+const CHUNK_ERROR = /dynamically imported module|importing a module script failed/i
+
+/**
+ * True when `err` is a failed chunk download. The browser caches a failed module
+ * for the page's lifetime, so only a page reload can recover (BB-58).
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isChunkLoadError(err) {
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  return CHUNK_ERROR.test(message)
+}
+
 /**
  * @param {{ storage?: Storage, reload?: () => void, now?: () => number }} [deps]
  * @returns {() => boolean} handler; returns true when it reloaded

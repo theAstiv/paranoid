@@ -28,10 +28,47 @@ const EVENT_NAMES = [
   'webkitanimationend', 'webkitanimationiteration', 'webkitanimationstart',
   'webkittransitionend', 'wheel',
 ]
-// No leading word boundary: the BB-12 nested payloads (`ononclick=…`) rebuild a
-// handler from the pieces around a removed one; the next pass must still see it.
+// A handler only counts at the start of a word (BB-60): label text such as
+// `connectionError = x` or `buttonOnclick = 1` ends a word in "on" + an event name
+// and must survive. The separator is captured (not a lookbehind, which old Safari
+// lacks) and put back. Nothing is lost to the boundary: the BB-12 nested payloads
+// rebuild a handler by deleting something *between* its pieces (a script block, a
+// URI scheme), and the loop re-runs every strip until the text stops changing, so
+// the rebuilt handler is seen on the next pass, now at a word start.
 const HANDLER_ATTR = new RegExp(
-  String.raw`on(?:${EVENT_NAMES.join('|')})\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]*)`,
+  String.raw`(^|[^A-Za-z0-9_])on(?:${EVENT_NAMES.join('|')})\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]*)`,
+  'gi',
+)
+
+// Tags Mermaid label text may keep (its own <br> line breaks and basic inline
+// formatting). Everything below is stripped: an <img> in a label made a same-origin
+// GET (KL-5), and the rest can load, navigate or restyle.
+//
+// Not "any <word>": diagrams legitimately hold `List<Object>` and `List<Source>`
+// (class diagrams), `<<interface>>`, `<--` arrows and `a < b`, and `A[i<a] --> B` must
+// keep its arrow. So an element name counts only when it is *used as a tag*:
+//  - ATTRIBUTE_TAGS need whitespace or `/` after the name (`<img src=x>`, `<a href=y>`,
+//    `<img/src=x>`); a generic never has that. Their closing tags (`</a>`) are removed too.
+//  - BARE_TAGS are dangerous even with no attributes (`<svg>`, `<iframe>`, `<style>`),
+//    and are not plausible type parameters.
+// Names that are common label words (map, set, data, text, line, path, time, label,
+// option, title) are in neither list. Mermaid's strict mode + DOMPurify + the CSP are
+// still the real defence.
+const ATTRIBUTE_TAGS = [
+  'a', 'animate', 'animatetransform', 'area', 'audio', 'base', 'body', 'button', 'canvas',
+  'dialog', 'div', 'embed', 'fieldset', 'form', 'frame', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'head', 'html', 'image', 'img', 'input', 'link', 'meta', 'noscript', 'object', 'p',
+  'picture', 'select', 'source', 'span', 'table', 'td', 'textarea', 'th', 'tr', 'track',
+  'use', 'video',
+]
+const BARE_TAGS = ['applet', 'foreignobject', 'frameset', 'iframe', 'math', 'style', 'svg']
+// An unterminated tag stops at the end of its line, so it can't swallow the diagram.
+const BLOCKED_TAG = new RegExp(
+  [
+    String.raw`</?(?:${BARE_TAGS.join('|')})(?![A-Za-z0-9_-])[^>\n]*>?`,
+    String.raw`<(?:${ATTRIBUTE_TAGS.join('|')})(?=[\s/])[^>\n]*>?`,
+    String.raw`</(?:${ATTRIBUTE_TAGS.join('|')})\s*>`,
+  ].join('|'),
   'gi',
 )
 
@@ -41,8 +78,8 @@ const HANDLER_ATTR = new RegExp(
 function decodeAndStrip(input) {
   let s = input
   let removedUnsafe = false
-  const strip = (re) => {
-    const next = s.replace(re, '')
+  const strip = (re, keep = '') => {
+    const next = s.replace(re, keep)
     if (next !== s) removedUnsafe = true
     s = next
   }
@@ -64,7 +101,9 @@ function decodeAndStrip(input) {
   strip(/<script[\s\S]*?<\/script[^>]*>/gi)
   strip(/<script[^>]*\/?>/gi)
   // Event handler attributes (onclick=, onload=, onerror=, …).
-  strip(HANDLER_ATTR)
+  strip(HANDLER_ATTR, '$1')
+  // HTML tags other than Mermaid's label formatting (<img>, <svg>, <iframe>, …).
+  strip(BLOCKED_TAG)
   // `---` -> `-->` inside the loop: it can supply the `>` that completes a
   // tag (`<script src=x---y`), so the next pass must see its output.
   // Bare `---` at the start of a line is YAML front-matter (legal Mermaid)
@@ -82,7 +121,7 @@ function decodeAndStrip(input) {
  * Security note: this is defence in depth. The real protection is Mermaid's
  * `securityLevel: 'strict'` (its own DOMPurify pass) plus the CSP. We still
  * strip `click` directives, `javascript:`/`vbscript:`/`data:text/html` URI
- * schemes, `<script>` tags and known event-handler attributes after entity-decoding,
+ * schemes, `<script>` tags, known event-handler attributes and non-formatting HTML tags after entity-decoding,
  * so encoded payloads (e.g. `&#106;avascript:`) are caught before matching.
  *
  * Decoding and stripping repeat until the string stops changing: a single
