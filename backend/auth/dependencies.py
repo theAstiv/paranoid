@@ -267,6 +267,29 @@ def require_active_project(project: dict[str, Any] | None) -> None:
         raise HTTPException(status_code=403, detail="This project is archived.")
 
 
+_ACTIVE_RUN_DETAIL = {
+    "run": "A re-run of this model is in progress; changes are paused until it finishes.",
+    "extract": "A context extraction is in progress; changes are paused until it finishes.",
+}
+
+
+async def require_no_active_run(model_id: str) -> None:
+    """Raise 409 while the model has a run or extraction in progress (BB-129).
+
+    A run clears and rewrites the model's threats and context, so an edit made
+    meanwhile is lost or hits a row that is about to go (Approve returned 404).
+    A check, not a lock: a run claimed just after it can still race the write.
+    """
+    from backend.db.crud_live_runs import get_active_run
+
+    active = await get_active_run("model", model_id)
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=_ACTIVE_RUN_DETAIL.get(active["kind"], _ACTIVE_RUN_DETAIL["run"]),
+        )
+
+
 async def visible_project_ids(user: dict[str, Any], project_id: str | None) -> list[str] | None:
     """Project ids a list route may show `user`, or ``None`` for no restriction.
 

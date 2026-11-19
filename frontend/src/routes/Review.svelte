@@ -4,11 +4,13 @@
   import { untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { link } from 'svelte-spa-router'
-  import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+  import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts, followRun } from '../lib/api.js'
   import { threats, currentModel, currentProject, currentUser, notify } from '../lib/stores.js'
   import { canEditProject, dreadBand } from '../lib/utils.js'
+  import { watchActiveRun } from '../lib/run_watch.js'
   import ThreatCard from '../components/ThreatCard.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
+  import ActiveRunBanner from '../components/ActiveRunBanner.svelte'
 
   /** @type {{ params?: { id: string } }} */
   let { params = {} } = $props()
@@ -217,18 +219,75 @@
       ])
       if (id !== params.id) return // another model was opened while this one loaded
       threats.set(data)
-      const counts = {}
-      for (const row of rawCounts) {
-        if (row.entity_type === 'threat' && row.entity_id) {
-          counts[row.entity_id] = row.count
-        }
-      }
-      commentCounts = counts
+      commentCounts = threatCommentCounts(rawCounts)
     } catch (err) {
       if (id === params.id) notify('error', `Failed to load threats: ${err.message}`)
     } finally {
       if (id === params.id) loading = false
     }
+  }
+
+  function threatCommentCounts(rawCounts) {
+    const counts = {}
+    for (const row of rawCounts) {
+      if (row.entity_type === 'threat' && row.entity_id) counts[row.entity_id] = row.count
+    }
+    return counts
+  }
+
+  // A run or extraction started elsewhere (BB-129): pause edits, follow it to
+  // its end, then reload — the run replaced the threats this page holds.
+  /** @type {{ kind: 'run' | 'extract', started_at: string } | null} */
+  let activeRun = $state(null)
+  let watcher = null
+  let stopFollowing = null
+
+  $effect(() => {
+    const id = params.id
+    if (!id) return
+    untrack(() => {
+      watcher = watchActiveRun(id, run => followActiveRun(id, run), { skip: () => activeRun !== null })
+    })
+    return () => {
+      watcher?.stop()
+      watcher = null
+      stopFollowing?.()
+      stopFollowing = null
+      activeRun = null
+    }
+  })
+
+  function followActiveRun(id, run) {
+    activeRun = run
+    selectedIds.clear()
+    stopFollowing = followRun(id, () => {}, () => {}, () => {
+      if (id !== params.id) return
+      stopFollowing = null
+      activeRun = null
+      reloadThreats(id)
+    })
+  }
+
+  async function reloadThreats(id) {
+    try {
+      const [data, rawCounts, model] = await Promise.all([
+        getModelThreats(id),
+        getCommentCounts(id).catch(() => []),
+        getModel(id).catch(() => null),
+      ])
+      if (id !== params.id) return
+      if (model) currentModel.set(model)
+      threats.set(data)
+      commentCounts = threatCommentCounts(rawCounts)
+    } catch (err) {
+      if (id === params.id) notify('error', `Failed to reload threats: ${err.message}`)
+    }
+  }
+
+  /** A 409 means a run started since the last check: show the banner now. */
+  function onMutationError(err, what) {
+    notify('error', `${what}: ${err.message}`)
+    if (err.status === 409) watcher?.check()
   }
 
   const scoringMethod = $derived($currentModel?.scoring_method ?? 'dread')
@@ -237,11 +296,16 @@
 
   // A viewer's approve/reject/score edits get a 403, so hide them. The model
   // may sit in another project than the active one; its role is then unknown.
-  const canEdit = $derived(canEditProject($currentProject, $currentUser, $currentModel?.project_id))
+  // While a run is going every edit is refused (409), so the controls go too.
+  const canEdit = $derived(
+    canEditProject($currentProject, $currentUser, $currentModel?.project_id) && !activeRun,
+  )
   // Comments are open to viewers, so they follow the archive flag, not canEdit.
+  // A run deletes the threats they would attach to, so they pause as well.
   const archived = $derived(
     !!$currentProject?.is_archived && $currentProject?.id === $currentModel?.project_id,
   )
+  const commentsReadonly = $derived(archived || !!activeRun)
 
   // Dependency threats only exist when the run analysed a manifest, so the
   // option only appears for models that have some.
@@ -256,7 +320,7 @@
       await updateThreat(threat.id, { status: 'approved' })
     } catch (err) {
       threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: threat.status } : t))
-      notify('error', `Failed to approve: ${err.message}`)
+      onMutationError(err, 'Failed to approve')
     }
   }
 
@@ -266,7 +330,7 @@
       await updateThreat(threat.id, { status: 'rejected' })
     } catch (err) {
       threats.update(ts => ts.map(t => t.id === threat.id ? { ...t, status: threat.status } : t))
-      notify('error', `Failed to reject: ${err.message}`)
+      onMutationError(err, 'Failed to reject')
     }
   }
 
@@ -302,7 +366,7 @@
         const orig = originals.find(o => o.id === t.id)
         return orig ? { ...t, status: orig.status } : t
       }))
-      notify('error', `Bulk ${status} failed: ${err.message}`)
+      onMutationError(err, `Bulk ${status} failed`)
     } finally {
       bulkBusy = false
     }
@@ -329,7 +393,7 @@
         const orig = originals.find(o => o.id === t.id)
         return orig ? { ...t, status: orig.status } : t
       }))
-      notify('error', `${label} failed: ${err.message}`)
+      onMutationError(err, `${label} failed`)
     } finally {
       bulkBusy = false
     }
@@ -358,6 +422,10 @@
       <a href="/models/{params.id}" use:link class="text-sm text-c-muted hover:text-c-text2">← Results</a>
     </div>
   </div>
+
+  {#if activeRun}
+    <ActiveRunBanner kind={activeRun.kind} />
+  {/if}
 
   <!-- Status filters + bulk actions -->
   <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -540,7 +608,7 @@
           {threat}
           readonly={false}
           {canEdit}
-          commentsReadonly={archived}
+          {commentsReadonly}
           selectable={canEdit}
           selected={selectedIds.has(threat.id)}
           modelId={params.id}

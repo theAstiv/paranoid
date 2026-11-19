@@ -6,9 +6,11 @@
     createAsset, updateAsset, deleteAsset,
     createFlow, updateFlow, deleteFlow,
     createTrustBoundary, updateTrustBoundary, deleteTrustBoundary,
-    subscribeToExtract,
+    subscribeToExtract, followRun,
   } from '../lib/api.js'
   import { notify } from '../lib/stores.js'
+  import { watchActiveRun } from '../lib/run_watch.js'
+  import ActiveRunBanner from '../components/ActiveRunBanner.svelte'
 
   /** @type {{ id: string }} */
   export let params = {}
@@ -22,7 +24,21 @@
   let extractLog = []
   let abortExtract = null
 
-  onDestroy(() => abortExtract?.())
+  // A run or extraction started elsewhere (BB-129), followed to its end.
+  /** @type {{ kind: 'run' | 'extract', started_at: string } | null} */
+  let activeRun = null
+  let stopFollowing = null
+  let watcher = null
+
+  // The server refuses context edits during any run, this page's own extraction too.
+  $: locked = extracting || !!activeRun
+  $: extractInFlight = extracting || activeRun?.kind === 'extract'
+
+  onDestroy(() => {
+    abortExtract?.()
+    stopFollowing?.()
+    watcher?.stop()
+  })
 
   onMount(async () => {
     try {
@@ -38,6 +54,7 @@
     } finally {
       loading = false
     }
+    watcher = watchActiveRun(params.id, followActiveRun, { skip: () => extracting || activeRun !== null })
   })
 
   async function reload() {
@@ -47,6 +64,34 @@
       getModelTrustBoundaries(params.id),
     ])
     assets = a; flows = f; boundaries = b
+  }
+
+  /** Follow a run started elsewhere instead of offering Re-extract; reload when it ends. */
+  function followActiveRun(run) {
+    activeRun = run
+    cancelEdits()
+    if (run.kind === 'extract') extractLog = []
+    stopFollowing = followRun(
+      params.id,
+      evt => { if (run.kind === 'extract') extractLog = [...extractLog, evt] },
+      () => {},
+      async () => {
+        stopFollowing = null
+        activeRun = null
+        try { await reload() } catch (e) { notify('error', `Failed to reload context: ${e.message}`) }
+      },
+    )
+  }
+
+  function cancelEdits() {
+    editingAsset = null; editingFlow = null; editingBoundary = null
+    addingAsset = false; addingFlow = false; addingBoundary = false
+  }
+
+  /** A 409 means a run started since the last check: show the banner now. */
+  function fail(what, e) {
+    notify('error', `${what}: ${e.message}`)
+    if (e.status === 409) watcher?.check()
   }
 
   function runExtract() {
@@ -87,11 +132,11 @@
       await updateAsset(params.id, a.id, assetDraft)
       assets = assets.map(x => x.id === a.id ? { ...x, ...assetDraft } : x)
       editingAsset = null
-    } catch (e) { notify('error', `Save failed: ${e.message}`) }
+    } catch (e) { fail('Save failed', e) }
   }
   async function removeAsset(id) {
     try { await deleteAsset(params.id, id); assets = assets.filter(a => a.id !== id) }
-    catch (e) { notify('error', `Delete failed: ${e.message}`) }
+    catch (e) { fail('Delete failed', e) }
   }
 
   let addingAsset = false
@@ -103,7 +148,7 @@
       assets = [...assets, created]
       addingAsset = false
       newAsset = { name: '', description: '', type: 'Asset' }
-    } catch (e) { notify('error', `Create failed: ${e.message}`) }
+    } catch (e) { fail('Create failed', e) }
   }
 
   let editingFlow = null
@@ -114,11 +159,11 @@
       await updateFlow(params.id, f.id, flowDraft)
       flows = flows.map(x => x.id === f.id ? { ...x, ...flowDraft } : x)
       editingFlow = null
-    } catch (e) { notify('error', `Save failed: ${e.message}`) }
+    } catch (e) { fail('Save failed', e) }
   }
   async function removeFlow(id) {
     try { await deleteFlow(params.id, id); flows = flows.filter(f => f.id !== id) }
-    catch (e) { notify('error', `Delete failed: ${e.message}`) }
+    catch (e) { fail('Delete failed', e) }
   }
 
   let addingFlow = false
@@ -130,7 +175,7 @@
       flows = [...flows, created]
       addingFlow = false
       newFlow = { source_entity: '', target_entity: '', flow_description: '', flow_type: 'data' }
-    } catch (e) { notify('error', `Create failed: ${e.message}`) }
+    } catch (e) { fail('Create failed', e) }
   }
 
   let editingBoundary = null
@@ -141,11 +186,11 @@
       await updateTrustBoundary(params.id, b.id, boundaryDraft)
       boundaries = boundaries.map(x => x.id === b.id ? { ...x, ...boundaryDraft } : x)
       editingBoundary = null
-    } catch (e) { notify('error', `Save failed: ${e.message}`) }
+    } catch (e) { fail('Save failed', e) }
   }
   async function removeBoundary(id) {
     try { await deleteTrustBoundary(params.id, id); boundaries = boundaries.filter(b => b.id !== id) }
-    catch (e) { notify('error', `Delete failed: ${e.message}`) }
+    catch (e) { fail('Delete failed', e) }
   }
 
   let addingBoundary = false
@@ -157,7 +202,7 @@
       boundaries = [...boundaries, created]
       addingBoundary = false
       newBoundary = { source_entity: '', target_entity: '', purpose: '' }
-    } catch (e) { notify('error', `Create failed: ${e.message}`) }
+    } catch (e) { fail('Create failed', e) }
   }
 
   const INPUT_CLASS = 'flex-1 bg-c-input border border-c-border-strong rounded px-2 py-1.5 text-xs text-c-text2 focus:outline-none focus:border-c-accent'
@@ -183,9 +228,9 @@
       <p class="text-sm text-c-muted mt-0.5">Review and edit extracted assets, flows, and trust boundaries.</p>
     </div>
     <div class="flex gap-2">
-      <button type="button" on:click={runExtract} disabled={extracting}
+      <button type="button" on:click={runExtract} disabled={locked}
         class="flex items-center gap-2 btn-primary text-sm px-4 py-2 disabled:opacity-50">
-        {#if extracting}
+        {#if extractInFlight}
           <div class="w-3.5 h-3.5 border-2 border-[#04141A] border-t-transparent rounded-full animate-spin-slow"></div>
           Extracting…
         {:else}
@@ -200,6 +245,10 @@
       </a>
     </div>
   </div>
+
+  {#if activeRun}
+    <ActiveRunBanner kind={activeRun.kind} />
+  {/if}
 
   <!-- Extract log -->
   {#if extractLog.length > 0}
@@ -217,8 +266,10 @@
         Assets & Entities
         <span class="font-mono text-c-faint font-normal ml-1">({assets.length})</span>
       </h2>
-      <button type="button" on:click={() => { addingAsset = true }}
-        class="text-xs text-c-accent hover:underline">+ Add asset</button>
+      {#if !locked}
+        <button type="button" on:click={() => { addingAsset = true }}
+          class="text-xs text-c-accent hover:underline">+ Add asset</button>
+      {/if}
     </div>
 
     {#each assets as a (a.id)}
@@ -246,6 +297,7 @@
                 <p class="text-xs text-c-faint mt-0.5 truncate">{a.description}</p>
               {/if}
             </div>
+            {#if !locked}
             <div class="flex gap-1 flex-shrink-0">
               <button type="button" on:click={() => startEditAsset(a)} aria-label="Edit asset {a.name}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
@@ -254,6 +306,7 @@
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -284,8 +337,10 @@
         Data Flows
         <span class="font-mono text-c-faint font-normal ml-1">({flows.length})</span>
       </h2>
-      <button type="button" on:click={() => { addingFlow = true }}
-        class="text-xs text-c-accent hover:underline">+ Add flow</button>
+      {#if !locked}
+        <button type="button" on:click={() => { addingFlow = true }}
+          class="text-xs text-c-accent hover:underline">+ Add flow</button>
+      {/if}
     </div>
 
     {#each flows as f (f.id)}
@@ -315,6 +370,7 @@
                 <p class="text-xs text-c-faint mt-0.5 truncate">{f.flow_description}</p>
               {/if}
             </div>
+            {#if !locked}
             <div class="flex gap-1 flex-shrink-0">
               <button type="button" on:click={() => startEditFlow(f)} aria-label="Edit flow from {f.source_entity} to {f.target_entity}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
@@ -323,6 +379,7 @@
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -352,8 +409,10 @@
         Trust Boundaries
         <span class="font-mono text-c-faint font-normal ml-1">({boundaries.length})</span>
       </h2>
-      <button type="button" on:click={() => { addingBoundary = true }}
-        class="text-xs text-c-accent hover:underline">+ Add boundary</button>
+      {#if !locked}
+        <button type="button" on:click={() => { addingBoundary = true }}
+          class="text-xs text-c-accent hover:underline">+ Add boundary</button>
+      {/if}
     </div>
 
     {#each boundaries as b (b.id)}
@@ -383,6 +442,7 @@
                 <p class="text-xs text-c-faint mt-0.5 truncate">{b.purpose}</p>
               {/if}
             </div>
+            {#if !locked}
             <div class="flex gap-1 flex-shrink-0">
               <button type="button" on:click={() => startEditBoundary(b)} aria-label="Edit trust boundary between {b.source_entity} and {b.target_entity}" class="p-1 text-c-faint hover:text-c-accent rounded transition-colors">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
@@ -391,6 +451,7 @@
                 <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
               </button>
             </div>
+            {/if}
           </div>
         {/if}
       </div>

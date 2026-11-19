@@ -83,12 +83,14 @@ export function formatErrorDetail(detail, fallback) {
   return fallback
 }
 
-/** JSON request on top of authedFetch: throws on non-2xx, null on 204. */
+/** JSON request on top of authedFetch: throws on non-2xx (the error carries `status`), null on 204. */
 async function request(method, path, body, extraHeaders = {}, signal = undefined) {
   const res = await authedFetch(method, path, { body, extraHeaders, signal })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(formatErrorDetail(err.detail, res.statusText))
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    const err = new Error(formatErrorDetail(detail.detail, res.statusText))
+    err.status = res.status
+    throw err
   }
   if (res.status === 204) return null
   return res.json()
@@ -451,6 +453,15 @@ export function followRun(modelId, onEvent, onError, onDone) {
     { method: 'GET' },
     onEvent, onError, onDone,
   )
+}
+
+/**
+ * The model's run or extraction in progress, without its threat list (BB-129).
+ * @param {string} modelId
+ * @returns {Promise<{ active_run: { kind: 'run' | 'extract', started_at: string } | null }>}
+ */
+export function getActiveRun(modelId) {
+  return request('GET', `/models/${modelId}/active-run`)
 }
 
 // ── Threats ───────────────────────────────────────────────────────────────────

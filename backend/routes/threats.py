@@ -11,6 +11,7 @@ from backend.auth.dependencies import (
     check_project_role,
     get_current_user,
     require_active_project,
+    require_no_active_run,
     require_role,
 )
 from backend.config import settings
@@ -84,6 +85,7 @@ async def update_threat(
     threat = await crud.get_threat(threat_id)
     if threat is None:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
+    await require_no_active_run(threat["model_id"])
 
     # CVSS score/severity are never accepted from the client — UpdateThreatRequest
     # doesn't even have those fields, only cvss_vector (already parsed and
@@ -185,6 +187,7 @@ async def bulk_status(
     if settings.paranoid_require_auth:
         await check_project_role(user, project_id, "editor")
     require_active_project(await crud_projects.get_project(project_id))
+    await require_no_active_run(model_id)
 
     updated = await crud.bulk_update_threat_status(body.threat_ids, body.status.value)
 
@@ -230,6 +233,7 @@ async def delete_threat(
     threat = await crud.get_threat(threat_id)
     if threat is None:
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
+    await require_no_active_run(threat["model_id"])
     # Must run before crud.delete_threat: threat_metadata cascades on threat
     # deletion, so delete_threat_vector's lookup would find nothing afterward,
     # orphaning the threat_vectors row.
@@ -314,6 +318,8 @@ async def generate_attack_tree(
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
 
     model_id = threat.get("model_id", "")
+    # A re-run deletes this threat: the result would be lost, and still billed.
+    await require_no_active_run(model_id)
 
     try:
         runner = _default_runner(model_id)
@@ -387,6 +393,8 @@ async def generate_test_cases(
         raise HTTPException(status_code=404, detail=f"Threat '{threat_id}' not found")
 
     model_id = threat.get("model_id", "")
+    # A re-run deletes this threat: the result would be lost, and still billed.
+    await require_no_active_run(model_id)
 
     try:
         runner = _default_runner(model_id)
