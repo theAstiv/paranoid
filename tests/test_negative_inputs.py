@@ -373,14 +373,18 @@ async def test_patch_cannot_blank_the_description(model_id):
 
 
 @pytest.mark.asyncio
-async def test_a_100kb_description_round_trips(test_db):
-    """No upper bound on the API (the CLI caps files at 1 MB): 100 KB is stored whole."""
-    description = ("A service that talks to a database. " * 3000)[:100_000]
+async def test_a_100kb_description_is_refused_and_50k_round_trips(test_db):
+    """BB-126: this pinned "no upper bound" (100 KB stored whole). The cap is now
+    50,000 characters; a description at the cap is still stored whole."""
+    long = ("A service that talks to a database. " * 3000)[:100_000]
+    at_cap = long[:50_000]
     async with _client() as client:
-        r = await client.post("/api/models/", json={"title": "big", "description": description})
+        refused = await client.post("/api/models/", json={"title": "big", "description": long})
+        r = await client.post("/api/models/", json={"title": "big", "description": at_cap})
         assert r.status_code == 201
         got = await client.get(f"/api/models/{r.json()['id']}")
-    assert got.json()["description"] == description
+    assert refused.status_code == 422
+    assert got.json()["description"] == at_cap
 
 
 # ---------------------------------------------------------------------------
@@ -435,8 +439,18 @@ def test_cli_empty_or_whitespace_input_fails_cleanly(monkeypatch, tmp_path, cont
     assert not called
 
 
-def test_cli_100kb_input_reaches_the_pipeline(monkeypatch, tmp_path):
+def test_cli_100kb_input_is_refused_before_the_pipeline(monkeypatch, tmp_path):
+    """BB-126: 100 KB used to reach the pipeline; the cap is 50,000 characters."""
     result, called = _invoke_cli(monkeypatch, tmp_path, "A web app with a DB. " * 5000, [])
+    assert result.exit_code != 0
+    assert "105,000 characters (max: 50,000)" in result.output
+    assert not called
+
+
+def test_cli_input_at_the_cap_reaches_the_pipeline(monkeypatch, tmp_path):
+    result, called = _invoke_cli(
+        monkeypatch, tmp_path, ("A web app with a DB. " * 5000)[:50_000], []
+    )
     assert result.exit_code == 0, result.output
     assert called
 

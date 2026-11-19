@@ -38,14 +38,14 @@ Each **model card** shows: title, framework badge (STRIDE/MAESTRO), total threat
 
 ---
 
-## New Model Wizard (`#/new`)
+## New Model Wizard (`#/models/new`)
 
 A step-by-step wizard for creating a threat model.
 
 **Steps:**
 
 1. **Title & Framework** — name your model; STRIDE, MAESTRO, or auto-detect
-2. **Description** — paste or type your system description (or use a structured template)
+2. **Description** — paste or type your system description (or use a structured template), up to 50,000 characters
 3. **Diagram** — upload up to 5 architecture diagrams at once (PNG/JPG or `.mmd`/`.txt` Mermaid), each with an editable name and a kind chip; a rejected file never drops ones already accepted (optional)
 4. **Code Source** — select a linked Git repository from the Sources page (optional)
 5. **Dependencies** — optionally upload `package.json` (+ lockfile) for dependency capability analysis
@@ -53,6 +53,8 @@ A step-by-step wizard for creating a threat model.
 7. **Iterations** — set the iteration count (1–15) for this run, and the **severity scoring**: DREAD only (default), CVSS only, or both. The LLM only proposes CVSS base metrics; scores are computed server-side
 8. **AI Components** — flag whether the system has AI/ML components (runs MAESTRO alongside STRIDE)
 9. **Review & Run** — confirm everything and start the pipeline; progress shown via live SSE events
+
+**Drafts and navigation.** Each step is in the URL (`#/models/new?step=3`), so the browser's Back and Forward move between steps. What you type and choose is kept for the tab (in `sessionStorage`) and restored after a refresh, or when you leave the wizard and come back; a note says so, with **Discard draft** to start over. Files can't be kept: after a reload the Diagram, Dependencies and Review steps name the ones you had attached, to attach again. Closing or reloading the tab with unsaved input asks first. The draft is forgotten once the run starts, and kept if the server refuses it. **Create & Run** is a separate button from **Next**, and focus moves to the step heading on every step change, so pressing Enter through the steps never starts a run by itself.
 
 ### Pre-flight gap check
 

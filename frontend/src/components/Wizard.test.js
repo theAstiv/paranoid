@@ -8,7 +8,8 @@ describe('Wizard', () => {
   it('renders all step labels', () => {
     render(Wizard, { props: { steps, currentStep: 0 } })
     for (const label of steps) {
-      expect(screen.getByText(label)).toBeInTheDocument()
+      // The current step's label also heads the step content.
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
   })
 
@@ -79,5 +80,48 @@ describe('Wizard', () => {
     // The p.6 slot div should exist
     const contentDiv = container.querySelector('.p-6')
     expect(contentDiv).not.toBeNull()
+  })
+
+  // BB-111: one button used to turn from Next into Create & Run under the focus,
+  // so a second Enter on "Next" started the run.
+  it('replaces Next with a different Create & Run button on the last step', async () => {
+    const onsubmit = vi.fn()
+    const { rerender } = render(Wizard, { props: { steps, currentStep: steps.length - 2, onsubmit } })
+    const next = screen.getByText('Next')
+
+    await rerender({ steps, currentStep: steps.length - 1, onsubmit })
+
+    const run = screen.getByText('Create & Run')
+    expect(run).not.toBe(next)
+    expect(next.isConnected).toBe(false)
+    expect(screen.queryByText('Next')).toBeNull()
+    // The old button is gone, so a click (or Enter) that lands on it can't submit.
+    await fireEvent.click(next)
+    expect(onsubmit).not.toHaveBeenCalled()
+  })
+
+  it('moves the focus to the new step heading after a step change, not on the first render', async () => {
+    const { rerender } = render(Wizard, { props: { steps, currentStep: 0 } })
+    expect(document.activeElement).toBe(document.body)
+
+    await rerender({ steps, currentStep: 1 })
+
+    expect(document.activeElement.tagName).toBe('H2')
+    expect(document.activeElement).toHaveTextContent('2/4Framework')
+    // And again on Back.
+    await rerender({ steps, currentStep: 0 })
+    expect(document.activeElement).toHaveTextContent('1/4Model Details')
+  })
+
+  it('does not take the focus when the step stays the same', async () => {
+    const { rerender } = render(Wizard, { props: { steps, currentStep: 1, nextDisabled: true } })
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    outside.focus()
+
+    await rerender({ steps, currentStep: 1, nextDisabled: false })
+
+    expect(document.activeElement).toBe(outside)
+    outside.remove()
   })
 })

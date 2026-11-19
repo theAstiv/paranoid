@@ -1,13 +1,18 @@
 <script>
-  import { push, link } from 'svelte-spa-router'
+  import { onMount } from 'svelte'
+  import { push, link, querystring } from 'svelte-spa-router'
   import Wizard from '../components/Wizard.svelte'
   import PreFlightPanel from '../components/PreFlightPanel.svelte'
   import { createModel, subscribeToRun, listCodeSources, analyzeBundle } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
   import { checkMermaidSource } from '../lib/mermaid_check.js'
+  import { loadDraft, saveDraft, clearDraft } from '../lib/wizard_draft.js'
   import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject, currentUser } from '../lib/stores.js'
 
   const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Dependencies', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
+  const LAST_STEP = STEPS.length - 1
+  // Keep in sync with MAX_DESCRIPTION_CHARS in backend/models/api.py (BB-126).
+  const MAX_DESCRIPTION_CHARS = 50_000
 
   let step = 0
   let submitting = false
@@ -124,6 +129,7 @@
       return
     }
     manifestFile = file
+    missingFiles = { ...missingFiles, manifest: null, lockfile: null }
   }
 
   function handleLockfileChange(e) {
@@ -176,7 +182,7 @@
 
   $: nextDisabled = (() => {
     if (step === 0) return !title.trim() || title.length > 200
-    if (step === 1) return description.trim().length < 10
+    if (step === 1) return description.trim().length < 10 || description.length > MAX_DESCRIPTION_CHARS
     // A signed-in user without a project can't create a model: the server would
     // refuse it (403) because the target project would be the Default Project.
     if (step === 8) return submitting || strictBlocked || providerKeyMissing || ($currentUser && !$currentProject)
@@ -236,6 +242,8 @@
     // clears and the same filename can be re-picked immediately.
     diagramInputKey++
     if (accepted.length === 0) return
+    // Attaching anything means the diagrams from before a reload were dealt with.
+    missingFiles = { ...missingFiles, diagrams: [] }
     for (const entry of accepted) {
       if (entry.kind === 'mermaid') {
         checkMermaidFile(entry.file)
@@ -278,6 +286,132 @@
     const val = newAssumption.trim()
     if (val) { assumptions = [...assumptions, val]; newAssumption = '' }
   }
+
+  // ── Draft, history and leaving (BB-124) ────────────────────────────────────
+  // Text and choices survive a refresh or a trip out of the wizard (per tab);
+  // files can't be stored, so their names are kept to ask for them again.
+
+  /** Names of files attached before a reload, to ask for them again. */
+  let missingFiles = { diagrams: [], manifest: null, lockfile: null }
+  let restored = false
+  let mounted = false
+  // Set once the run is accepted: nothing left to save or warn about.
+  let finished = false
+
+  /** The furthest step the current input allows (Next is disabled past it). */
+  function reachableStep() {
+    if (!title.trim() || title.length > 200) return 0
+    if (description.trim().length < 10 || description.length > MAX_DESCRIPTION_CHARS) return 1
+    return LAST_STEP
+  }
+
+  function stepFromQuery(qs) {
+    const n = Number.parseInt(new URLSearchParams(qs ?? '').get('step') ?? '', 10)
+    return Number.isNaN(n) ? null : n
+  }
+
+  /** Move to `n` and record it in the URL, so the browser's Back returns here.
+   * Next is disabled past what the input allows, so only the URL needs the clamp. */
+  function goToStep(n) {
+    step = Math.max(0, Math.min(n, LAST_STEP))
+    push(`/models/new?step=${step}`)
+  }
+
+  // The browser's Back/Forward changes ?step=; a hand-typed step past what the
+  // input allows lands on the furthest allowed one.
+  $: if (mounted) followQuery($querystring)
+
+  function followQuery(qs) {
+    const wanted = stepFromQuery(qs)
+    if (wanted === null) return
+    const allowed = Math.max(0, Math.min(wanted, reachableStep()))
+    if (allowed !== step) step = allowed
+  }
+
+  function applyDraft(d) {
+    if (typeof d.title === 'string') title = d.title
+    if (['STRIDE', 'MAESTRO', 'HYBRID'].includes(d.framework)) framework = d.framework
+    if (typeof d.description === 'string') description = d.description
+    if (Array.isArray(d.assumptions)) assumptions = d.assumptions.filter(a => typeof a === 'string')
+    if (typeof d.newAssumption === 'string') newAssumption = d.newAssumption
+    if (Number.isInteger(d.iterationCount) && d.iterationCount >= 1 && d.iterationCount <= 15) iterationCount = d.iterationCount
+    if (typeof d.hasAiComponents === 'boolean') hasAiComponents = d.hasAiComponents
+    if (typeof d.strictMode === 'boolean') strictMode = d.strictMode
+    if (['dread', 'cvss', 'both'].includes(d.scoringMethod)) scoringMethod = d.scoringMethod
+    if (['npm', 'both'].includes(d.depsSourceMode)) depsSourceMode = d.depsSourceMode
+    if (typeof d.useCodeSourceManifest === 'boolean') useCodeSourceManifest = d.useCodeSourceManifest
+    // A source belongs to a project: only keep the choice in the same one.
+    if (typeof d.selectedCodeSourceId === 'string' && d.projectId === ($currentProject?.id ?? null)) {
+      selectedCodeSourceId = d.selectedCodeSourceId
+    }
+    const files = d.files ?? {}
+    missingFiles = {
+      diagrams: Array.isArray(files.diagrams) ? files.diagrams.filter(n => typeof n === 'string') : [],
+      manifest: typeof files.manifest === 'string' ? files.manifest : null,
+      lockfile: typeof files.lockfile === 'string' ? files.lockfile : null,
+    }
+  }
+
+  function resetForm() {
+    title = ''; framework = 'STRIDE'; description = ''
+    assumptions = []; newAssumption = ''
+    iterationCount = 3; hasAiComponents = false; strictMode = false; scoringMethod = 'dread'
+    diagramFiles = []; diagramInputKey++
+    manifestFile = null; lockfileFile = null; depsSourceMode = 'npm'; useCodeSourceManifest = false
+    selectedCodeSourceId = null
+    missingFiles = { diagrams: [], manifest: null, lockfile: null }
+  }
+
+  function discardDraft() {
+    clearDraft()
+    resetForm()
+    restored = false
+    goToStep(0)
+  }
+
+  $: dirty = !!(
+    title.trim() || description.trim() || assumptions.length || newAssumption.trim() ||
+    diagramFiles.length || manifestFile || lockfileFile
+  )
+
+  // Saved on every change; cheap, and a reload can come at any moment.
+  $: if (mounted && !finished) {
+    if (dirty) {
+      saveDraft({
+        title, framework, description, assumptions, newAssumption, iterationCount,
+        hasAiComponents, strictMode, scoringMethod, depsSourceMode, useCodeSourceManifest,
+        selectedCodeSourceId, projectId: $currentProject?.id ?? null, step,
+        files: {
+          // Attached now, or still missing from before a reload.
+          diagrams: diagramFiles.length ? diagramFiles.map(d => d.name) : missingFiles.diagrams,
+          manifest: manifestFile?.name ?? missingFiles.manifest,
+          lockfile: lockfileFile?.name ?? missingFiles.lockfile,
+        },
+      })
+    } else {
+      clearDraft()
+    }
+  }
+
+  function warnBeforeUnload(event) {
+    if (!dirty || finished) return
+    event.preventDefault()
+    event.returnValue = '' // Chrome needs it set; the browser writes its own text.
+  }
+
+  onMount(() => {
+    const draft = loadDraft()
+    if (draft) {
+      applyDraft(draft)
+      restored = true
+    }
+    const fromUrl = stepFromQuery($querystring)
+    const wanted = fromUrl ?? (draft && Number.isInteger(draft.step) ? draft.step : 0)
+    step = Math.max(0, Math.min(wanted, reachableStep()))
+    mounted = true
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  })
 
   function removeAssumption(i) {
     assumptions = assumptions.filter((_, idx) => idx !== i)
@@ -343,10 +477,13 @@
         abortRun.set(abort)
       })
       if (rejection) {
+        // The draft stays: everything typed is still on the page and in storage.
         notify('error', `Run not started: ${rejection.message}`)
         submitting = false
         return
       }
+      finished = true
+      clearDraft()
       await push(`/models/${model.id}`)
     } catch (err) {
       notify('error', `Failed to create model: ${err.message}`)
@@ -361,13 +498,19 @@
 
 <div class="max-w-[880px] mx-auto">
   <h1 class="text-xl font-semibold text-c-text mb-4">New Threat Model</h1>
+  {#if restored}
+    <div role="status" class="card mb-4 px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-c-blue/30 bg-c-blue/5">
+      <p class="text-sm text-c-text2">Restored your unsaved draft from this tab.</p>
+      <button type="button" on:click={discardDraft} class="btn-ghost text-xs px-3 py-1">Discard draft</button>
+    </div>
+  {/if}
   <Wizard
     steps={STEPS}
     currentStep={step}
     {nextDisabled}
     {submitting}
-    onnext={() => { addAssumption(); step++ }}
-    onback={() => step--}
+    onnext={() => { addAssumption(); goToStep(step + 1) }}
+    onback={() => goToStep(step - 1)}
     onsubmit={handleSubmit}
   >
     {#if step === 0}
@@ -406,11 +549,12 @@
       <div class="space-y-3">
         <div>
           <label class="{LABEL_CLASS}" for="description">System description</label>
-          <textarea id="description" bind:value={description} rows="6"
+          <textarea id="description" bind:value={description} rows="6" maxlength={MAX_DESCRIPTION_CHARS}
+            aria-describedby="description-count"
             placeholder="Describe your system architecture, components, data flows, and trust boundaries. The more detail you provide, the more targeted the threat model will be."
             class="{INPUT_CLASS} resize-none"></textarea>
-          <p class="mt-1 font-mono text-[11px] {description.trim().length < 10 ? 'text-c-critical' : 'text-c-faint'}">
-            {description.trim().length} chars (min 10)
+          <p id="description-count" class="mt-1 font-mono text-[11px] {description.trim().length < 10 || description.length > MAX_DESCRIPTION_CHARS ? 'text-c-critical' : 'text-c-faint'}">
+            {description.length.toLocaleString('en-US')} / {MAX_DESCRIPTION_CHARS.toLocaleString('en-US')} chars (min 10)
           </p>
         </div>
 
@@ -443,6 +587,12 @@
 
     {:else if step === 2}
       <div class="space-y-4">
+        {#if missingFiles.diagrams.length > 0 && diagramFiles.length === 0}
+          <p role="status" class="rounded-panel border border-c-high/30 bg-c-high/5 px-3 py-2 text-xs text-c-text2">
+            Re-attach your diagrams: files can't be kept across a reload. Before it you had
+            <span class="font-medium">{missingFiles.diagrams.join(', ')}</span>.
+          </p>
+        {/if}
         <div>
           <label class="{LABEL_CLASS}" for="file-diagram">Architecture diagrams <span class="text-c-faint font-normal normal-case">(optional, up to {MAX_DIAGRAMS})</span></label>
           {#key diagramInputKey}
@@ -545,6 +695,12 @@
           </div>
         {:else}
         <p class="text-xs text-c-muted">Upload a package.json (and optional lockfile) to fold the dependency capability engine's findings into this model — what each package can do, and drift between the npm tarball and its GitHub source.</p>
+        {#if missingFiles.manifest && !manifestFile}
+          <p role="status" class="rounded-panel border border-c-high/30 bg-c-high/5 px-3 py-2 text-xs text-c-text2">
+            Re-attach your package.json: files can't be kept across a reload. Before it you had
+            <span class="font-medium">{missingFiles.manifest}{missingFiles.lockfile ? ` and ${missingFiles.lockfile}` : ''}</span>.
+          </p>
+        {/if}
 
         <div>
           <label class="{LABEL_CLASS}" for="file-manifest">package.json</label>
@@ -690,7 +846,13 @@
 
     {:else if step === 8}
       <div class="space-y-4">
-        <h3 class="text-sm font-semibold text-c-text">Ready to run</h3>
+        {#if (missingFiles.diagrams.length > 0 && diagramFiles.length === 0) || (missingFiles.manifest && !manifestFile)}
+          <p role="status" class="rounded-panel border border-c-high/30 bg-c-high/5 px-3 py-2 text-xs text-c-text2">
+            Files attached before the reload aren't attached any more:
+            <span class="font-medium">{[...(diagramFiles.length === 0 ? missingFiles.diagrams : []), ...(!manifestFile && missingFiles.manifest ? [missingFiles.manifest] : [])].join(', ')}</span>.
+            Go back to re-attach them, or run without them.
+          </p>
+        {/if}
 
         {#if providerKeyMissing}
           <div class="rounded-panel border border-c-high/40 bg-c-high/5 px-4 py-3 space-y-2">
