@@ -113,6 +113,8 @@ A pipeline run or context extraction is a background task whose state is in the 
 
 The asyncio task itself, and cancel at shutdown, stay in the process that started the run.
 
+**Code-source indexing** uses the same store (subject `code_source`, kind `index`; `backend/sources/manager.py`). The clone + index steps hand their events to the live run through a queue, `GET /sources/{id}/events?after=<seq>` follows the stored run (with a 30 s ping, since a long clone is silent), and a second re-index is refused by the claim. A swept index fails its source; at startup, sources left `queued`/`cloning`/`indexing` with no running row are failed too. Deleting a source deletes its runs (migration 0021). Cancel and the per-source lock stay in-process: cancelling kills the local git or context-link subprocess, at shutdown as on `DELETE /sources/{id}`.
+
 ## Database schema
 
 Key tables (all have `id TEXT PRIMARY KEY`, `created_at`, `updated_at`):

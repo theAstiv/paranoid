@@ -162,3 +162,41 @@ async def test_without_a_transaction_rows_are_saved_one_by_one(model_id):
         await _persist_pipeline_event(model_id, _complete())
 
     assert len(await crud.list_threats(model_id)) == len(make_stride_threats().threats)
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_while_begin_is_in_flight_does_not_leave_a_transaction_open(
+    scratch, monkeypatch
+):
+    """Shutdown cancels a run mid-write (Phase 2 A2). aiosqlite still runs the
+    BEGIN on its thread; it used to stay open, failing every later write with
+    "cannot start a transaction within a transaction"."""
+    async with db.writer() as conn:  # opens writer()'s own connection
+        pass
+    tx = db._tx_connection
+    real_execute = tx.execute
+    began = asyncio.Event()
+
+    async def execute_then_stall(sql, *args, **kwargs):
+        result = await real_execute(sql, *args, **kwargs)
+        if sql == "BEGIN IMMEDIATE":
+            began.set()
+            await asyncio.sleep(10)  # the cancel lands here: BEGIN has run
+        return result
+
+    async def doomed() -> None:
+        async with db.writer() as conn:
+            await conn.execute("INSERT INTO scratch VALUES ('never')")
+
+    monkeypatch.setattr(tx, "execute", execute_then_stall)
+    task = asyncio.create_task(doomed())
+    await asyncio.wait_for(began.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    monkeypatch.setattr(tx, "execute", real_execute)
+
+    async with db.writer() as conn:
+        await conn.execute("INSERT INTO scratch VALUES ('after')")
+
+    assert await _values() == ["after"]

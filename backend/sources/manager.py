@@ -3,18 +3,18 @@
 Background task orchestrates: queued → cloning → indexing → ready.
 Any step can transition to failed.
 
-The manager publishes ``SourceEvent`` objects to:
-  - A per-source ring buffer (last ``RING_BUFFER_SIZE`` events, kept
-    ``RING_BUFFER_TTL_S`` seconds after task completion for reconnecting
-    SSE clients).
-  - Each registered SSE subscriber queue (fan-out; max ``MAX_SUBSCRIBERS``
-    per source; 9th subscriber gets ``TooManySubscribersError``).
+Progress is recorded like a pipeline run (backend/pipeline/live_runs.py,
+Phase 2 A2): each index is a ``live_runs`` row (subject ``code_source``, kind
+``index``) and each ``SourceEvent`` a stored ``live_run_events`` chunk. So a
+follower can attach at any time, from any process, and replay from a sequence
+number; a second index of the same source is refused by the claim; a crashed
+server's index is found by the stale-run sweep and its source failed.
 
 Design constraints:
-  - Background task must survive client disconnect — started via
-    ``asyncio.create_task``, not tied to a request generator.
-  - Per-source ``asyncio.Lock`` prevents concurrent clone/re-index of
-    the same source.
+  - Background task must survive client disconnect — it is a live run's
+    task, not tied to a request generator.
+  - The live-run claim refuses a second index of a running source; the
+    per-source ``asyncio.Lock`` stays as an in-process backstop.
   - ``asyncio.Event`` signals cancellation for the DELETE-during-indexing
     path; the task checks it between steps and kills any running subprocess.
   - context-link binary is optional: if absent the source reaches ``ready``
@@ -31,10 +31,11 @@ import os
 import re
 import shutil
 import time
-from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from backend.config import settings
@@ -52,7 +53,19 @@ from backend.security.source_key import (
 from backend.sources.paths import clone_dir_for, index_db_for
 
 
+if TYPE_CHECKING:
+    from backend.pipeline.live_runs import LiveRun
+
 logger = logging.getLogger(__name__)
+
+
+def _live_runs() -> ModuleType:
+    # Imported on use: backend.pipeline's __init__ loads the runner, which
+    # reaches backend.deps.fetcher, which imports this module.
+    from backend.pipeline import live_runs
+
+    return live_runs
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -76,10 +89,9 @@ _SHA_REF_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _REF_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
 _MAX_REF_LENGTH = 255
 
-MAX_SUBSCRIBERS = 8
-RING_BUFFER_SIZE = 20
-RING_BUFFER_TTL_S = 60.0
 HEARTBEAT_INTERVAL_S = 10.0
+# How long a shutdown waits for an index to kill its subprocess and stop.
+_STOP_GRACE_S = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +105,6 @@ class HostNotAllowedError(ValueError):
 
 class InvalidRefError(ValueError):
     """Ref is not a valid git branch, tag or commit name."""
-
-
-class TooManySubscribersError(RuntimeError):
-    """SSE subscriber cap reached for this source."""
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +123,6 @@ class SourceEvent:
     files_scanned: int | None = None
     bytes_scanned: int | None = None
     timestamp: str = dataclasses.field(default_factory=lambda: datetime.now(UTC).isoformat())
-    seq: int = 0  # monotonically increasing per source; set by _publish
 
     def to_sse_data(self) -> str:
         d = dataclasses.asdict(self)
@@ -123,23 +130,16 @@ class SourceEvent:
 
 
 # ---------------------------------------------------------------------------
-# Module-level state (single-process FastAPI)
+# Module-level state — execution only; events and run state are in the DB
 # ---------------------------------------------------------------------------
 
 _locks: dict[str, asyncio.Lock] = {}
+# Set to stop an index: the running subprocess is killed (cancel_and_wait).
 _cancel_events: dict[str, asyncio.Event] = {}
+# The clone + index work of each running index.
 _active_tasks: dict[str, asyncio.Task] = {}
-
-# Fan-out: source_id → list of per-subscriber queues
-_subscribers: dict[str, list[asyncio.Queue]] = {}
-
-# Ring buffers: source_id → deque of SourceEvent
-_ring_buffers: dict[str, deque] = {}
-# Monotonic expiry time; set when task completes (TTL starts from completion)
-_ring_expiry: dict[str, float] = {}
-
-# Per-source event sequence counters for SSE deduplication.
-_source_seqs: dict[str, int] = {}
+# Hands the work's events to its live run, which stores them (see _index_events).
+_queues: dict[str, asyncio.Queue] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -333,65 +333,26 @@ def get_lock(source_id: str) -> asyncio.Lock:
     return _locks[source_id]
 
 
-def get_ring_buffer(source_id: str) -> list[SourceEvent]:
-    """Return the ring buffer for ``source_id``, purging if TTL has expired."""
-    expiry = _ring_expiry.get(source_id)
-    if expiry is not None and time.monotonic() > expiry:
-        _ring_buffers.pop(source_id, None)
-        _ring_expiry.pop(source_id, None)
-        return []
-    return list(_ring_buffers.get(source_id, []))
-
-
 def is_task_active(source_id: str) -> bool:
+    """True while this process is indexing the source (its work or its live run)."""
     task = _active_tasks.get(source_id)
-    return task is not None and not task.done()
-
-
-def subscriber_count(source_id: str) -> int:
-    """Return the number of active SSE subscribers for ``source_id``."""
-    return len(_subscribers.get(source_id, []))
+    if task is not None and not task.done():
+        return True
+    run = _live_runs().get_run(source_id)
+    return run is not None and run.task is not None and not run.task.done()
 
 
 def forget(source_id: str) -> None:
     """Purge all module state for a deleted source.
 
     Call after cancel_and_wait + DB delete so there is no unbounded accumulation
-    of per-UUID entries across create→delete cycles.
+    of per-UUID entries across create→delete cycles. The source's stored runs
+    and events are deleted with its row (migration 0021's trigger).
     """
     _locks.pop(source_id, None)
     _cancel_events.pop(source_id, None)
     _active_tasks.pop(source_id, None)
-    _subscribers.pop(source_id, None)
-    _ring_buffers.pop(source_id, None)
-    _ring_expiry.pop(source_id, None)
-    _source_seqs.pop(source_id, None)
-
-
-# ---------------------------------------------------------------------------
-# SSE subscription context manager
-# ---------------------------------------------------------------------------
-
-
-@contextlib.asynccontextmanager
-async def subscribe_to_source(source_id: str) -> AsyncIterator[asyncio.Queue]:
-    """Register an SSE subscriber for ``source_id``.
-
-    Raises ``TooManySubscribersError`` if the cap is reached.
-    Automatically deregisters on exit.
-    """
-    subs = _subscribers.setdefault(source_id, [])
-    if len(subs) >= MAX_SUBSCRIBERS:
-        raise TooManySubscribersError(
-            f"Max {MAX_SUBSCRIBERS} simultaneous SSE subscribers reached for source {source_id}"
-        )
-    q: asyncio.Queue = asyncio.Queue(maxsize=64)
-    subs.append(q)
-    try:
-        yield q
-    finally:
-        with contextlib.suppress(ValueError):
-            subs.remove(q)
+    _queues.pop(source_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -400,27 +361,17 @@ async def subscribe_to_source(source_id: str) -> AsyncIterator[asyncio.Queue]:
 
 
 def _publish(source_id: str, event: SourceEvent) -> None:
-    """Push ``event`` to the ring buffer and all live subscriber queues.
+    """Hand ``event`` to the source's live run, which stores it for followers.
 
-    Assigns a monotonically increasing sequence number so SSE clients can
-    deduplicate ring-buffer replay against live queue events.
+    Synchronous on purpose: the clone/index steps call it between awaits, and
+    the queue keeps their order. Without a live run (``run_clone_and_index``
+    called directly) there is nobody to store it for, and it is dropped.
     """
-    seq = _source_seqs.get(source_id, 0) + 1
-    _source_seqs[source_id] = seq
-    event.seq = seq
-    buf = _ring_buffers.setdefault(source_id, deque(maxlen=RING_BUFFER_SIZE))
-    buf.append(event)
-    for q in list(_subscribers.get(source_id, [])):
-        with contextlib.suppress(asyncio.QueueFull):
-            q.put_nowait(event)
-
-
-def _signal_done(source_id: str) -> None:
-    """Send the done sentinel (None) to all subscriber queues."""
-    for q in list(_subscribers.get(source_id, [])):
-        with contextlib.suppress(asyncio.QueueFull):
-            q.put_nowait(None)
-    _ring_expiry[source_id] = time.monotonic() + RING_BUFFER_TTL_S
+    queue = _queues.get(source_id)
+    if queue is None:
+        logger.debug("No live run for source %s; dropped event %r", source_id, event.message)
+        return
+    queue.put_nowait(event)
 
 
 def _resolve_context_link_binary() -> str | None:
@@ -796,35 +747,90 @@ async def run_clone_and_index(source_id: str) -> None:
                 source_id, SourceEvent(source_id, "failed", "error", "Internal error", error=err)
             )
         finally:
-            _signal_done(source_id)
-            _active_tasks.pop(source_id, None)
             # Clear the cancel event so a future re-index starts clean.
             cancel_event.clear()
 
 
-def schedule_clone_and_index(source_id: str) -> asyncio.Task:
-    """Schedule a background clone+index task and register it in _active_tasks."""
-    # Reset cancel event for this run.
-    ev = _cancel_events.setdefault(source_id, asyncio.Event())
-    ev.clear()
-    task = asyncio.create_task(run_clone_and_index(source_id), name=f"clone-{source_id}")
-    _active_tasks[source_id] = task
-    return task
+async def _index_events(source_id: str) -> AsyncIterator[str]:
+    """The live run's event stream: runs the clone + index, yields its events.
+
+    The work runs as its own task and hands events over through a queue, so
+    the steps stay plain awaits calling ``_publish``. If the live run is
+    cancelled (server shutdown), the work is first asked to stop through its
+    cancel event, which kills a running git or context-link subprocess, and
+    only cancelled outright if it doesn't stop in time.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    _queues[source_id] = queue
+    cancel_event = _cancel_events.setdefault(source_id, asyncio.Event())
+    cancel_event.clear()
+    work = asyncio.create_task(run_clone_and_index(source_id), name=f"clone-{source_id}")
+    _active_tasks[source_id] = work
+    work.add_done_callback(lambda _task: queue.put_nowait(None))
+    try:
+        while (event := await queue.get()) is not None:
+            yield f"data: {event.to_sse_data()}\n\n"
+    finally:
+        if not work.done():
+            cancel_event.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(work), _STOP_GRACE_S)
+            except TimeoutError:
+                work.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await work
+        if _queues.get(source_id) is queue:
+            del _queues[source_id]
+        if _active_tasks.get(source_id) is work:
+            del _active_tasks[source_id]
+
+
+async def schedule_clone_and_index(source_id: str, *, requeue: bool = False) -> "LiveRun":
+    """Claim the source and start a background clone + index; return its live run.
+
+    Raises ``backend.pipeline.live_runs.RunAlreadyActiveError`` if the source
+    is already being indexed (by this process or another on the same
+    database). ``requeue`` resets the status to 'queued' once the claim is
+    held, for a re-index; a new source starts 'queued' already.
+    """
+
+    async def set_queued() -> None:
+        await update_code_source_status(source_id, status="queued")
+
+    async def mark_interrupted() -> str:
+        message = "Indexing interrupted: the server shut down before it finished."
+        await update_code_source_status(source_id, status="failed", error=message)
+        event = SourceEvent(source_id, "failed", "interrupted", message, error=message)
+        return f"data: {event.to_sse_data()}\n\n"
+
+    return await _live_runs().start_run(
+        source_id,
+        _index_events(source_id),
+        mark_interrupted,
+        kind="index",
+        subject_type="code_source",
+        on_claimed=set_queued if requeue else None,
+    )
 
 
 async def cancel_and_wait(source_id: str, timeout: float = 5.0) -> bool:  # noqa: ASYNC109
     """Signal cancellation for ``source_id`` and wait up to ``timeout`` seconds.
 
-    Returns True if the task stopped within the timeout, False otherwise.
+    Waits for the clone/index work and for its live run (which records the
+    end). Returns True if both stopped within the timeout, False otherwise.
     """
     ev = _cancel_events.get(source_id)
     if ev:
         ev.set()
-    task = _active_tasks.get(source_id)
-    if task is None or task.done():
+    run = _live_runs().get_run(source_id)
+    tasks = {
+        t
+        for t in (_active_tasks.get(source_id), run.task if run is not None else None)
+        if t is not None and not t.done()
+    }
+    if not tasks:
         return True
-    try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        return True
-    except TimeoutError:
-        return False
+    # asyncio.wait never cancels what it waits for, so a timeout leaves the
+    # work running (the caller answers 409 and the client retries).
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    return not pending

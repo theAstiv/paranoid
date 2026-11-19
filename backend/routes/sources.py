@@ -4,13 +4,14 @@ Mounted at /api/sources from backend.main.
 """
 
 import asyncio
+import contextlib
 import logging
 import shutil
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.auth.dependencies import (
@@ -21,8 +22,9 @@ from backend.auth.dependencies import (
     visible_project_ids,
 )
 from backend.config import settings
-from backend.db import crud, crud_projects
+from backend.db import crud, crud_live_runs, crud_projects
 from backend.models.extended import CodeSource, CreateCodeSourceRequest, MoveCodeSourceRequest
+from backend.pipeline import live_runs
 from backend.security.rate_limit import write_rate_limit
 from backend.security.source_key import (
     KeySourceChangedError,
@@ -38,6 +40,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 _TERMINAL_STATUSES = frozenset({"ready", "failed"})
+# Idle time after which the events stream sends a ping.
+_KEEPALIVE_SECONDS = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +121,8 @@ async def create_source(
     except (SourceKeyUnavailableError, KeySourceChangedError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    mgr.schedule_clone_and_index(source_id)
+    # A new source has no run yet, so the claim can't be refused.
+    await mgr.schedule_clone_and_index(source_id)
 
     row = await crud.get_code_source(source_id)
     if row is None:
@@ -166,11 +171,6 @@ async def move_source(
     return _source_response(row)
 
 
-# Sources whose re-index is being scheduled (see reindex_source). Per process,
-# like the manager's locks and tasks.
-_reindex_starting: set[str] = set()
-
-
 @router.post("/{source_id}/reindex", status_code=202)
 async def reindex_source(
     source_id: str,
@@ -182,20 +182,15 @@ async def reindex_source(
     if row is None:
         raise HTTPException(status_code=404, detail="Source not found.")
 
-    lock = mgr.get_lock(source_id)
-    # The lock is only taken inside the task, so two requests arriving together
-    # both saw it free and both scheduled a full clone + index (review C5).
-    # Claim the source before the first await; once scheduled, is_task_active
-    # covers it.
-    if lock.locked() or mgr.is_task_active(source_id) or source_id in _reindex_starting:
+    if mgr.get_lock(source_id).locked() or mgr.is_task_active(source_id):
         raise HTTPException(status_code=409, detail="Indexing already in progress.")
-    _reindex_starting.add(source_id)
+    # The live-run claim is the real guard: two requests arriving together
+    # both pass the check above, and exactly one claim succeeds (review C5).
+    # The status goes back to 'queued' only once the claim is held.
     try:
-        # Reset to queued before scheduling so polling clients see the transition.
-        await crud.update_code_source_status(source_id, status="queued")
-        mgr.schedule_clone_and_index(source_id)
-    finally:
-        _reindex_starting.discard(source_id)
+        await mgr.schedule_clone_and_index(source_id, requeue=True)
+    except live_runs.RunAlreadyActiveError:
+        raise HTTPException(status_code=409, detail="Indexing already in progress.")
 
     row = await crud.get_code_source(source_id)
     if row is None:
@@ -247,82 +242,71 @@ async def delete_source(
 @router.get("/{source_id}/events")
 async def stream_source_events(
     source_id: str,
-    request: Request,
+    after: Annotated[int, Query(ge=0)] = 0,
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID", ge=0)] = None,
     _authz: None = Depends(require_role("viewer", "source_id", "source")),
 ) -> StreamingResponse:
     """SSE stream of clone/index progress events for a source.
 
-    On connect the last ~20 events are replayed from the ring buffer, then
-    live events are streamed. If the source is already in a terminal state
-    (ready/failed) and the ring buffer has expired (>60 s since completion),
-    a single status event is emitted and the stream closes.
+    Follows the source's stored index run (backend/pipeline/live_runs.py):
+    every event after ``after`` is replayed, then live ones until the run
+    ends. A source that is ready or failed replays its latest run. With no run
+    to follow (indexed before runs were stored, or pruned) a single status
+    event is sent and the stream closes.
     """
     row = await crud.get_code_source(source_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Source not found.")
 
-    already_terminal = row.get("last_index_status") in _TERMINAL_STATUSES
+    status = row.get("last_index_status")
+    run = await crud_live_runs.get_latest_run("code_source", source_id)
+    # A busy source only follows a running index: a finished one belongs to an
+    # earlier index and its "ready" would end the page's wait early.
+    if run is not None and (run["status"] == "running" or status in _TERMINAL_STATUSES):
+        chunks = live_runs.follow_run(run["id"], max(after, last_event_id or 0))
+    else:
+        chunks = _status_only(row)
+    return StreamingResponse(
+        _with_keepalive(chunks),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
-    # Snapshot ring buffer for the terminal path only (no live events possible).
-    # For non-terminal, the snapshot happens inside the generator after
-    # subscribing to eliminate the replay↔subscribe gap.
-    ring = mgr.get_ring_buffer(source_id) if already_terminal else []
 
-    # Fast-path subscriber cap check. The context manager inside event_stream
-    # is the authoritative cap guard; this early check returns a clean 503
-    # before opening the SSE response.
-    if not already_terminal and mgr.subscriber_count(source_id) >= mgr.MAX_SUBSCRIBERS:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Max {mgr.MAX_SUBSCRIBERS} simultaneous SSE subscribers reached.",
-        )
+async def _status_only(row: dict) -> AsyncGenerator[str, None]:
+    status = row.get("last_index_status")
+    event = SourceEvent(
+        source_id=row["id"],
+        status=status,
+        phase="terminal" if status in _TERMINAL_STATUSES else "status",
+        message="",
+        error=(row.get("last_index_error") or None) if status == "failed" else None,
+    )
+    yield f"data: {event.to_sse_data()}\n\n"
 
-    async def event_stream() -> AsyncGenerator[bytes, None]:
-        if already_terminal:
-            # Replay buffered events; emit a synthetic one if the buffer expired.
-            for event in ring:
-                if await request.is_disconnected():
-                    return
-                yield f"data: {event.to_sse_data()}\n\n".encode()
-            if not ring:
-                is_failed = row["last_index_status"] == "failed"
-                synthetic = SourceEvent(
-                    source_id=source_id,
-                    status=row["last_index_status"],
-                    phase="terminal",
-                    message="",
-                    error=(row.get("last_index_error") or None) if is_failed else None,
-                )
-                yield f"data: {synthetic.to_sse_data()}\n\n".encode()
-            return
 
-        # Subscribe BEFORE snapshotting the ring buffer so no events published
-        # between snapshot and subscribe are silently dropped.
-        try:
-            async with mgr.subscribe_to_source(source_id) as q:
-                live_ring = mgr.get_ring_buffer(source_id)
-                max_seq = live_ring[-1].seq if live_ring else 0
+async def _with_keepalive(chunks: AsyncGenerator[str, None]) -> AsyncGenerator[bytes, None]:
+    """Forward ``chunks``, sending a ping whenever none arrives for a while.
 
-                for event in live_ring:
-                    if await request.is_disconnected():
-                        return
-                    yield f"data: {event.to_sse_data()}\n\n".encode()
-
-                while True:
-                    if await request.is_disconnected():
-                        break
-                    try:
-                        event = await asyncio.wait_for(q.get(), timeout=30.0)
-                    except TimeoutError:
-                        # Keepalive ping.
-                        yield b"event: ping\ndata: {}\n\n"
-                        continue
-                    if event is None:
-                        break  # done sentinel
-                    if event.seq <= max_seq:
-                        continue  # already sent via ring replay
-                    yield f"data: {event.to_sse_data()}\n\n".encode()
-        except mgr.TooManySubscribersError as exc:
-            logger.warning("SSE subscriber cap hit for %s: %s", source_id, exc)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    A large clone emits nothing for minutes, and proxies close idle streams.
+    The pending read is never cancelled by a ping, only when the client goes.
+    """
+    pending = asyncio.ensure_future(anext(chunks))
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=_KEEPALIVE_SECONDS)
+            if not done:
+                yield b"event: ping\ndata: {}\n\n"
+                continue
+            try:
+                chunk = pending.result()
+            except StopAsyncIteration:
+                return
+            yield chunk.encode()
+            pending = asyncio.ensure_future(anext(chunks))
+    finally:
+        if not pending.done():
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await pending
+        await chunks.aclose()

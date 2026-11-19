@@ -1,6 +1,7 @@
 """Unit tests for backend.sources.manager (Task 5)."""
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -8,6 +9,10 @@ import subprocess
 import pytest
 
 from backend.config import settings
+from backend.db import crud_live_runs
+from backend.db.connection import db
+from backend.db.crud import get_code_source, update_code_source_status
+from backend.pipeline import live_runs
 from backend.security import source_key
 from backend.sources import manager as mgr
 
@@ -26,22 +31,17 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.delenv("ADDITIONAL_GIT_HOSTS", raising=False)
     source_key._reset_cache_for_tests()
     # Reset per-source module state between tests
-    mgr._locks.clear()
-    mgr._cancel_events.clear()
-    mgr._active_tasks.clear()
-    mgr._subscribers.clear()
-    mgr._ring_buffers.clear()
-    mgr._ring_expiry.clear()
-    mgr._source_seqs.clear()
+    _clear_manager_state()
     yield
     source_key._reset_cache_for_tests()
+    _clear_manager_state()
+
+
+def _clear_manager_state() -> None:
     mgr._locks.clear()
     mgr._cancel_events.clear()
     mgr._active_tasks.clear()
-    mgr._subscribers.clear()
-    mgr._ring_buffers.clear()
-    mgr._ring_expiry.clear()
-    mgr._source_seqs.clear()
+    mgr._queues.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -698,112 +698,221 @@ async def test_pat_expiry_detection_across_git_versions(test_db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Ring buffer / subscriber helpers
+# Live runs: the index's state and events in the DB (Phase 2 A2)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_background_task_survives_subscriber_disconnect(test_db, monkeypatch):
-    """Closing an SSE subscriber queue doesn't cancel the background clone task.
+class _PinnedProcess:
+    """A subprocess that runs until released or killed."""
 
-    This tests the key design invariant: asyncio.create_task decouples the
-    background task lifecycle from the HTTP request. A real background task is
-    scheduled; an SSE subscriber connects and immediately disconnects; the task
-    must still be running afterward.
-    """
-    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    def __init__(self, started: asyncio.Event, release: asyncio.Event, killed: list[bool]):
+        self.returncode = 0
+        self._started = started
+        self._release = release
+        self._killed = killed
 
-    started_ev = asyncio.Event()
-    release_ev = asyncio.Event()
+    async def communicate(self):
+        self._started.set()
+        await self._release.wait()
+        return b"abc1234\n", b""
 
-    class _PinnedProcess:
-        returncode = 0
+    def kill(self):
+        self._killed.append(True)
+        self._release.set()
 
-        async def communicate(self):
-            started_ev.set()
-            await release_ev.wait()
-            return b"abc1234\n", b""
+    async def wait(self):
+        return 0
 
-        def kill(self):
-            release_ev.set()
 
-        async def wait(self):
-            return 0
+def _pin_subprocesses(monkeypatch) -> tuple[asyncio.Event, asyncio.Event, list[bool]]:
+    started, release, killed = asyncio.Event(), asyncio.Event(), []
 
     async def pinned_exec(*args, **kwargs):
-        return _PinnedProcess()
+        return _PinnedProcess(started, release, killed)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", pinned_exec)
     monkeypatch.setattr(mgr, "_resolve_context_link_binary", lambda: None)
-    monkeypatch.setattr(mgr, "_publish", lambda sid, ev: None)
-
-    task = mgr.schedule_clone_and_index(source_id)
-    await asyncio.wait_for(started_ev.wait(), timeout=3.0)
-
-    # Subscribe and immediately disconnect (simulates HTTP client closing SSE).
-    async with mgr.subscribe_to_source(source_id):
-        pass
-
-    # Background task must still be alive.
-    assert not task.done(), "Background task was killed by subscriber disconnect"
-
-    # Release the subprocess so the task can complete cleanly.
-    release_ev.set()
-    await asyncio.wait_for(task, timeout=3.0)
-    assert task.done()
+    return started, release, killed
 
 
-def test_get_ring_buffer_returns_events():
-    from backend.sources.manager import SourceEvent, _publish
-
-    ev = SourceEvent("src1", "cloning", "cloning", "msg")
-    _publish("src1", ev)
-    buf = mgr.get_ring_buffer("src1")
-    assert len(buf) == 1
-    assert buf[0].status == "cloning"
+@pytest.fixture
+async def _stop_runs(test_db):
+    yield
+    await live_runs.cancel_all_runs()
 
 
-def test_get_ring_buffer_purges_after_ttl(monkeypatch):
-    import time
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_stop_runs")
+async def test_background_task_survives_follower_disconnect(test_db, monkeypatch):
+    """A follower leaving (the SSE client closing) doesn't stop the index."""
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    started, release, _ = _pin_subprocesses(monkeypatch)
 
-    from backend.sources.manager import SourceEvent, _publish, _ring_expiry
+    run = await mgr.schedule_clone_and_index(source_id)
+    await asyncio.wait_for(started.wait(), timeout=3.0)
 
-    ev = SourceEvent("src2", "ready", "ready", "done")
-    _publish("src2", ev)
-    # Expire immediately
-    _ring_expiry["src2"] = time.monotonic() - 1.0
-    buf = mgr.get_ring_buffer("src2")
-    assert buf == []
+    follower = live_runs.follow_run(run.run_id)
+    first = await asyncio.wait_for(anext(follower), timeout=3.0)
+    await follower.aclose()
+
+    assert "Cloning" in first
+    assert not run.task.done(), "Background task was killed by follower disconnect"
+    release.set()
+    await asyncio.wait_for(run.task, timeout=3.0)
+    assert (await get_code_source(source_id))["last_index_status"] == "ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_stop_runs")
+async def test_the_index_events_are_stored_in_order(test_db, monkeypatch):
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    _, release, _ = _pin_subprocesses(monkeypatch)
+    release.set()
+
+    run = await mgr.schedule_clone_and_index(source_id)
+    await asyncio.wait_for(run.task, timeout=3.0)
+
+    events = await crud_live_runs.list_events(run.run_id)
+    statuses = [json.loads(p.removeprefix("data: "))["status"] for _, p in events]
+    assert [seq for seq, _ in events] == list(range(1, len(events) + 1))
+    assert statuses == ["cloning", "indexing", "ready"]
+    assert (await crud_live_runs.get_run_row(run.run_id))["status"] == "completed"
+    assert source_id not in mgr._queues
+    assert source_id not in mgr._active_tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_stop_runs")
+async def test_a_second_index_of_a_running_source_is_refused(test_db, monkeypatch):
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    started, release, _ = _pin_subprocesses(monkeypatch)
+    run = await mgr.schedule_clone_and_index(source_id)
+    await asyncio.wait_for(started.wait(), timeout=3.0)
+
+    with pytest.raises(live_runs.RunAlreadyActiveError):
+        await mgr.schedule_clone_and_index(source_id, requeue=True)
+
+    assert (await get_code_source(source_id))["last_index_status"] == "cloning"
+    release.set()
+    await asyncio.wait_for(run.task, timeout=3.0)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_kills_the_subprocess_and_fails_the_source(test_db, monkeypatch):
+    """cancel_all_runs (server shutdown) stops the index through its cancel event,
+    so git is killed rather than orphaned, and the source says why it failed."""
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    started, _, killed = _pin_subprocesses(monkeypatch)
+    run = await mgr.schedule_clone_and_index(source_id)
+    await asyncio.wait_for(started.wait(), timeout=3.0)
+
+    await asyncio.wait_for(live_runs.cancel_all_runs(), timeout=10.0)
+
+    assert killed == [True]
+    row = await get_code_source(source_id)
+    assert row["last_index_status"] == "failed"
+    assert "interrupted" in row["last_index_error"]
+    assert (await crud_live_runs.get_run_row(run.run_id))["status"] == "interrupted"
+    _, last = (await crud_live_runs.list_events(run.run_id))[-1]
+    assert json.loads(last.removeprefix("data: "))["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_and_wait_waits_for_the_live_run_too(test_db, monkeypatch):
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    started, _, killed = _pin_subprocesses(monkeypatch)
+    run = await mgr.schedule_clone_and_index(source_id)
+    await asyncio.wait_for(started.wait(), timeout=3.0)
+
+    assert await mgr.cancel_and_wait(source_id, timeout=3.0)
+
+    assert killed == [True]
+    assert run.task.done()
+    assert not mgr.is_task_active(source_id)
+
+
+def test_publish_without_a_live_run_drops_the_event():
+    mgr._publish("no-run", mgr.SourceEvent("no-run", "cloning", "cloning", "msg"))
+    assert "no-run" not in mgr._queues
 
 
 def test_forget_clears_all_state():
     """forget() purges all module-level dicts for the given source_id."""
-    from backend.sources.manager import SourceEvent, _publish, _source_seqs
-
-    ev = SourceEvent("del-src", "cloning", "cloning", "msg")
-    _publish("del-src", ev)
     mgr._locks["del-src"] = asyncio.Lock()
     mgr._cancel_events["del-src"] = asyncio.Event()
+    mgr._queues["del-src"] = asyncio.Queue()
 
     mgr.forget("del-src")
 
     assert "del-src" not in mgr._locks
     assert "del-src" not in mgr._cancel_events
-    assert "del-src" not in mgr._ring_buffers
-    assert "del-src" not in mgr._ring_expiry
-    assert "del-src" not in _source_seqs
+    assert "del-src" not in mgr._queues
 
 
-def test_publish_assigns_monotonic_seq():
-    """Each _publish call increments the per-source seq counter."""
-    from backend.sources.manager import SourceEvent, _publish
+async def _stale_index_row(source_id: str) -> str:
+    """A 'running' index row of a server that stopped heart-beating."""
+    run_id = await crud_live_runs.claim_run("code_source", source_id, "index")
+    conn = await db.get()
+    await conn.execute(
+        "UPDATE live_runs SET heartbeat_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (run_id,)
+    )
+    await conn.commit()
+    return run_id
 
-    e1 = SourceEvent("seq-src", "cloning", "cloning", "a")
-    e2 = SourceEvent("seq-src", "indexing", "indexing", "b")
-    _publish("seq-src", e1)
-    _publish("seq-src", e2)
-    assert e1.seq < e2.seq
-    assert e2.seq > 0
+
+@pytest.mark.asyncio
+async def test_the_sweep_fails_the_source_of_a_dead_index(test_db):
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    await update_code_source_status(source_id, status="indexing")
+    run_id = await _stale_index_row(source_id)
+
+    assert await crud_live_runs.sweep_stale_runs() == 1
+
+    row = await get_code_source(source_id)
+    assert row["last_index_status"] == "failed"
+    assert row["last_index_error"] == crud_live_runs.SOURCE_INTERRUPTED_MESSAGE
+    _, last = (await crud_live_runs.list_events(run_id))[-1]
+    event = json.loads(last.removeprefix("data: "))
+    # Source-shaped, so the sources page shows it (it reads status, not step).
+    assert event["status"] == "failed"
+    assert event["source_id"] == source_id
+    assert "step" not in event
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_leaves_a_finished_source_alone(test_db):
+    source_id = await _create_source("https://github.com/o/r.git", None, None)
+    await _stale_index_row(source_id)
+    await update_code_source_status(source_id, status="ready")
+
+    await crud_live_runs.sweep_stale_runs()
+
+    assert (await get_code_source(source_id))["last_index_status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_startup_fails_sources_stuck_with_no_running_index(test_db):
+    """Before A2 nothing reset these: a restart mid-clone left 'Cloning…' forever."""
+    stuck = {}
+    for status in ("queued", "cloning", "indexing"):
+        stuck[status] = await _create_source(f"https://github.com/o/{status}.git", None, None)
+        await update_code_source_status(stuck[status], status=status)
+    ready = await _create_source("https://github.com/o/ready.git", None, None)
+    await update_code_source_status(ready, status="ready")
+    # Another live server is indexing this one: its row keeps a fresh heartbeat.
+    elsewhere = await _create_source("https://github.com/o/elsewhere.git", None, None)
+    await update_code_source_status(elsewhere, status="cloning")
+    other_run = await crud_live_runs.claim_run("code_source", elsewhere, "index")
+
+    assert await crud_live_runs.fail_interrupted_sources() == 3
+
+    for source_id in stuck.values():
+        row = await get_code_source(source_id)
+        assert row["last_index_status"] == "failed"
+        assert row["last_index_error"] == crud_live_runs.SOURCE_INTERRUPTED_MESSAGE
+    assert (await get_code_source(ready))["last_index_status"] == "ready"
+    assert (await get_code_source(elsewhere))["last_index_status"] == "cloning"
+    await crud_live_runs.finish_run(other_run, "completed")
 
 
 # ---------------------------------------------------------------------------

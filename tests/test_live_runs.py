@@ -522,3 +522,77 @@ async def test_cancel_marks_the_run_interrupted_and_records_the_cancel_event(mod
     assert row["status"] == "interrupted"
     events = await crud_live_runs.list_events(run.run_id)
     assert events[-1][1] == _chunk(-1)
+
+
+@pytest.mark.asyncio
+async def test_on_claimed_runs_after_the_claim_and_before_the_task(model_id):
+    seen: list[str] = []
+
+    async def on_claimed() -> None:
+        active = await crud_live_runs.get_active_run("model", model_id)
+        seen.append(active["status"] if active else "none")
+        assert live_runs.get_run(model_id) is None  # the task isn't started yet
+
+    release = asyncio.Event()
+    release.set()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel, on_claimed=on_claimed)
+    await asyncio.wait_for(run.task, timeout=5)
+
+    assert seen == ["running"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_on_claimed_records_the_run_failed_and_frees_the_subject(model_id):
+    async def on_claimed() -> None:
+        raise RuntimeError("database is locked")
+
+    with pytest.raises(RuntimeError):
+        await live_runs.start_run(
+            model_id, _gated(asyncio.Event()), _no_cancel, on_claimed=on_claimed
+        )
+
+    latest = await crud_live_runs.get_latest_run("model", model_id)
+    assert latest["status"] == "failed"
+    assert live_runs.get_run(model_id) is None
+    release = asyncio.Event()
+    release.set()
+    run = await live_runs.start_run(model_id, _gated(release), _no_cancel)  # not refused
+    await asyncio.wait_for(run.task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_while_an_event_is_stored_closes_the_stream_before_marking(
+    model_id, monkeypatch
+):
+    """The generator is paused at its yield, not inside it, so a cancel never
+    reaches it: _drive must close it, or its cleanup (a source index killing
+    git) never runs and the work outlives the run."""
+    order: list[str] = []
+
+    async def events():
+        try:
+            yield _chunk(0)
+            await asyncio.Event().wait()
+        finally:
+            order.append("closed")
+
+    async def on_cancel() -> str:
+        order.append("marked")
+        return _chunk(-1)
+
+    storing = asyncio.Event()
+    real_append = crud_live_runs.append_event
+
+    async def stalled_append(run_id: str, payload: str) -> int:
+        storing.set()
+        await asyncio.sleep(10)
+        return 0
+
+    monkeypatch.setattr(crud_live_runs, "append_event", stalled_append)
+    await live_runs.start_run(model_id, events(), on_cancel)
+    await asyncio.wait_for(storing.wait(), timeout=5)
+    monkeypatch.setattr(crud_live_runs, "append_event", real_append)
+
+    await live_runs.cancel_all_runs()
+
+    assert order == ["closed", "marked"]
