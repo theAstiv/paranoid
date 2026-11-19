@@ -14,6 +14,8 @@ vi.mock('../lib/api.js', () => ({
   bulkUpdateThreatStatus: vi.fn(),
   getCommentCounts: vi.fn(),
   exportUrl: vi.fn(() => '/api/export/x'),
+  getActiveRun: vi.fn(),
+  followRun: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -21,7 +23,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
   return { ...actual, notify: vi.fn() }
 })
 
-import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts } from '../lib/api.js'
+import { getModel, getModelThreats, updateThreat, bulkUpdateThreatStatus, getCommentCounts, getActiveRun, followRun } from '../lib/api.js'
 import { notify, threats, currentModel, currentProject, currentUser } from '../lib/stores.js'
 
 function threat(overrides = {}) {
@@ -46,6 +48,8 @@ beforeEach(() => {
   updateThreat.mockResolvedValue({})
   bulkUpdateThreatStatus.mockResolvedValue({ updated: 0 })
   getCommentCounts.mockResolvedValue([])
+  getActiveRun.mockResolvedValue({ active_run: null })
+  followRun.mockReturnValue(vi.fn())
 })
 
 describe('Review — loading', () => {
@@ -968,5 +972,82 @@ describe('Review — accessible names (BB-101)', () => {
     ]) {
       expect(screen.getByRole('spinbutton', { name })).toBeInTheDocument()
     }
+  })
+})
+
+describe('Review — a run in progress (BB-129)', () => {
+  /** Resolve getActiveRun with a run and capture followRun's onDone. */
+  function runInProgress(kind = 'run') {
+    const follow = {}
+    getActiveRun.mockResolvedValue({ active_run: { kind, started_at: '2026-11-19T10:00:00Z' } })
+    followRun.mockImplementation((id, onEvent, onError, onDone) => {
+      follow.modelId = id
+      follow.done = onDone
+      return vi.fn()
+    })
+    return follow
+  }
+
+  it('shows the banner and hides every edit while a run is going', async () => {
+    getModelThreats.mockResolvedValue([threat()])
+    runInProgress()
+    render(Review, { props: { params: { id: 'm1' } } })
+
+    await waitFor(() => expect(screen.getByText(/A re-run is in progress/)).toBeInTheDocument())
+    expect(followRun).toHaveBeenCalledWith('m1', expect.any(Function), expect.any(Function), expect.any(Function))
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Reject')).toBeNull()
+    expect(screen.queryByText(/Approve all/)).toBeNull()
+    expect(screen.queryByText(/Select all/)).toBeNull()
+  })
+
+  it('reloads the threats when the run ends and lets edits back', async () => {
+    getModelThreats.mockResolvedValue([threat()])
+    const follow = runInProgress()
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(follow.done).toBeTypeOf('function'))
+    getActiveRun.mockResolvedValue({ active_run: null })
+    getModelThreats.mockResolvedValue([threat({ id: 't2', name: 'Replayed session token' })])
+
+    follow.done()
+
+    await waitFor(() => expect(screen.getByText('Replayed session token')).toBeInTheDocument())
+    expect(screen.queryByText(/A re-run is in progress/)).toBeNull()
+    expect(screen.getByText('Approve')).toBeInTheDocument()
+    expect(getModelThreats).toHaveBeenCalledTimes(2)
+  })
+
+  it('names an extraction in the banner', async () => {
+    runInProgress('extract')
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText(/A context extraction is in progress/)).toBeInTheDocument())
+  })
+
+  it('checks at once when an edit is refused with 409', async () => {
+    getModelThreats.mockResolvedValue([threat()])
+    const refused = Object.assign(new Error('A re-run of this model is in progress'), { status: 409 })
+    updateThreat.mockRejectedValue(refused)
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('SQL Injection')).toBeInTheDocument())
+    await waitFor(() => expect(getActiveRun).toHaveBeenCalledTimes(1))
+    runInProgress()
+
+    await fireEvent.click(screen.getByText('Approve'))
+
+    await waitFor(() => expect(screen.getByText(/A re-run is in progress/)).toBeInTheDocument())
+    expect(get(threats)[0].status).toBe('pending')
+  })
+
+  it('does not check again for a refusal that is not a 409', async () => {
+    getModelThreats.mockResolvedValue([threat()])
+    updateThreat.mockRejectedValue(Object.assign(new Error('nope'), { status: 403 }))
+    render(Review, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('SQL Injection')).toBeInTheDocument())
+    await waitFor(() => expect(getActiveRun).toHaveBeenCalledTimes(1))
+
+    await fireEvent.click(screen.getByText('Approve'))
+
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('nope')))
+    expect(getActiveRun).toHaveBeenCalledTimes(1)
   })
 })

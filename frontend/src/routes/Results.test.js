@@ -25,6 +25,7 @@ vi.mock('../lib/api.js', () => ({
   deleteTrustBoundary: vi.fn(),
   subscribeToRun: vi.fn(() => vi.fn()),
   followRun: vi.fn(() => vi.fn()),
+  getActiveRun: vi.fn(),
   exportUrl: vi.fn(() => '/api/export/x'),
   // Transitively required by child components (Assignees, Comments)
   listAssignees: vi.fn().mockResolvedValue([]),
@@ -56,6 +57,7 @@ vi.mock('@mermaid-js/layout-elk', () => ({ default: [] }))
 import {
   getModel, updateModel, getModelAssets, getModelFlows, getModelTrustBoundaries, subscribeToRun,
   followRun, getModelDependencies, listModelDiagrams, getModelDiagram, getMaestroCoverage,
+  getActiveRun,
 } from '../lib/api.js'
 import {
   notify, currentModel, threats, pipelineEvents, pipelineRunning, abortRun, config, currentUser,
@@ -90,6 +92,7 @@ beforeEach(() => {
   getModelDependencies.mockResolvedValue([])
   listModelDiagrams.mockResolvedValue([])
   getMaestroCoverage.mockResolvedValue(null)
+  getActiveRun.mockResolvedValue({ active_run: null })
 })
 
 describe('Results — loading', () => {
@@ -1046,5 +1049,46 @@ describe('Results — run summary panel', () => {
     await waitFor(() => expect(screen.getByText('Run Summary')).toBeInTheDocument())
     expect(screen.getByText('live-model')).toBeInTheDocument()
     expect(screen.queryByText('stale-model')).toBeNull()
+  })
+})
+
+// BB-129: a run or extraction started elsewhere, or one the status doesn't show.
+describe('Results — a run it did not start', () => {
+  const extracting = { kind: 'extract', started_at: '2026-11-19T10:00:00Z' }
+
+  it('follows an extraction in flight although the model says completed', async () => {
+    getModel.mockResolvedValue({ ...baseModel, threats: [{ id: 't1', name: 'Old threat' }], active_run: extracting })
+    render(Results, { props: { params: { id: 'm1' } } })
+
+    await waitFor(() => expect(followRun).toHaveBeenCalledWith('m1', expect.any(Function), expect.any(Function), expect.any(Function)))
+    expect(get(pipelineRunning)).toBe(true)
+    // The progress panel replaces the threat summary and its stale count.
+    expect(screen.getByText('Pipeline')).toBeInTheDocument()
+    expect(screen.queryByText('1 Threats')).toBeNull()
+  })
+
+  it('attaches when a check finds a run started elsewhere', async () => {
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+    expect(followRun).not.toHaveBeenCalled()
+    getActiveRun.mockResolvedValue({ active_run: { kind: 'run', started_at: '2026-11-19T10:00:00Z' } })
+
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    await waitFor(() => expect(followRun).toHaveBeenCalledTimes(1))
+    expect(get(pipelineRunning)).toBe(true)
+  })
+
+  it('does not check while it is already following a run', async () => {
+    getModel.mockResolvedValue({ ...baseModel, status: 'in_progress' })
+    render(Results, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(followRun).toHaveBeenCalledTimes(1))
+    getActiveRun.mockResolvedValue({ active_run: { kind: 'run', started_at: '2026-11-19T10:00:00Z' } })
+
+    document.dispatchEvent(new Event('visibilitychange'))
+    await tick()
+
+    expect(getActiveRun).not.toHaveBeenCalled()
+    expect(followRun).toHaveBeenCalledTimes(1)
   })
 })

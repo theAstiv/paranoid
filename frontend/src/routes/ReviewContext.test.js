@@ -21,6 +21,8 @@ vi.mock('../lib/api.js', () => ({
   updateTrustBoundary: vi.fn(),
   deleteTrustBoundary: vi.fn(),
   subscribeToExtract: vi.fn(() => vi.fn()),
+  getActiveRun: vi.fn(),
+  followRun: vi.fn(() => vi.fn()),
 }))
 
 vi.mock('../lib/stores.js', async (importOriginal) => {
@@ -33,7 +35,7 @@ import {
   createAsset, updateAsset, deleteAsset,
   createFlow, deleteFlow,
   createTrustBoundary, deleteTrustBoundary,
-  subscribeToExtract,
+  subscribeToExtract, getActiveRun, followRun,
 } from '../lib/api.js'
 import { notify } from '../lib/stores.js'
 
@@ -49,6 +51,8 @@ beforeEach(() => {
   getModelFlows.mockResolvedValue([])
   getModelTrustBoundaries.mockResolvedValue([])
   subscribeToExtract.mockReturnValue(vi.fn())
+  getActiveRun.mockResolvedValue({ active_run: null })
+  followRun.mockReturnValue(vi.fn())
 })
 
 describe('ReviewContext — loading', () => {
@@ -269,5 +273,91 @@ describe('ReviewContext — trust boundaries CRUD', () => {
 
     await waitFor(() => expect(deleteTrustBoundary).toHaveBeenCalledWith('m1', 'b1'))
     await waitFor(() => expect(screen.queryByText('Perimeter')).toBeNull())
+  })
+})
+
+describe('ReviewContext — a run in progress (BB-129)', () => {
+  function runInProgress(kind) {
+    const follow = {}
+    getActiveRun.mockResolvedValue({ active_run: { kind, started_at: '2026-11-19T10:00:00Z' } })
+    followRun.mockImplementation((id, onEvent, onError, onDone) => {
+      follow.event = onEvent
+      follow.done = onDone
+      return vi.fn()
+    })
+    return follow
+  }
+
+  it('follows an extraction in flight instead of offering Re-extract', async () => {
+    getModelAssets.mockResolvedValue([assetA])
+    const follow = runInProgress('extract')
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+
+    await waitFor(() => expect(screen.getByText(/A context extraction is in progress/)).toBeInTheDocument())
+    const button = screen.getByRole('button', { name: /Extracting/ })
+    expect(button).toBeDisabled()
+    expect(screen.queryByText('+ Add asset')).toBeNull()
+    expect(screen.queryByLabelText('Edit asset User DB')).toBeNull()
+    expect(screen.queryByLabelText('Delete asset User DB')).toBeNull()
+
+    follow.event({ step: 'extract_assets', message: 'Found 4 assets' })
+    await waitFor(() => expect(screen.getByText('[extract_assets] Found 4 assets')).toBeInTheDocument())
+  })
+
+  it('reloads the context when the run ends and lets edits back', async () => {
+    const follow = runInProgress('extract')
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(follow.done).toBeTypeOf('function'))
+    getActiveRun.mockResolvedValue({ active_run: null })
+    getModelAssets.mockResolvedValue([assetA])
+
+    await follow.done()
+
+    await waitFor(() => expect(screen.getByText('User DB')).toBeInTheDocument())
+    expect(screen.queryByText(/is in progress/)).toBeNull()
+    expect(screen.getByRole('button', { name: /Re-extract from description/ })).not.toBeDisabled()
+    expect(screen.getByText('+ Add asset')).toBeInTheDocument()
+    expect(getModelAssets).toHaveBeenCalledTimes(2)
+  })
+
+  it('pauses edits during a re-run without showing an extract log', async () => {
+    const follow = runInProgress('run')
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+
+    await waitFor(() => expect(screen.getByText(/A re-run is in progress/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Re-extract from description/ })).toBeDisabled()
+    follow.event({ step: 'generate_threats', message: 'Iteration 1' })
+    await Promise.resolve()
+    expect(screen.queryByText(/generate_threats/)).toBeNull()
+  })
+
+  it('does not follow its own extraction a second time', async () => {
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('Payments Service')).toBeInTheDocument())
+    await waitFor(() => expect(getActiveRun).toHaveBeenCalledTimes(1))
+    await fireEvent.click(screen.getByRole('button', { name: /Re-extract from description/ }))
+    expect(subscribeToExtract).toHaveBeenCalled()
+    runInProgress('extract')
+
+    // The tab coming back into view triggers a check; the page's own stream covers it.
+    document.dispatchEvent(new Event('visibilitychange'))
+    await Promise.resolve()
+
+    expect(getActiveRun).toHaveBeenCalledTimes(1)
+    expect(followRun).not.toHaveBeenCalled()
+  })
+
+  it('checks at once when an edit is refused with 409', async () => {
+    getModelAssets.mockResolvedValue([assetA])
+    deleteAsset.mockRejectedValue(Object.assign(new Error('in progress'), { status: 409 }))
+    render(ReviewContext, { props: { params: { id: 'm1' } } })
+    await waitFor(() => expect(screen.getByText('User DB')).toBeInTheDocument())
+    await waitFor(() => expect(getActiveRun).toHaveBeenCalledTimes(1))
+    runInProgress('run')
+
+    await fireEvent.click(screen.getByLabelText('Delete asset User DB'))
+
+    await waitFor(() => expect(screen.getByText(/A re-run is in progress/)).toBeInTheDocument())
+    expect(screen.getByText('User DB')).toBeInTheDocument()
   })
 })

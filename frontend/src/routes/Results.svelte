@@ -15,6 +15,7 @@
     currentProject, currentUser,
   } from '../lib/stores.js'
   import { canEditProject } from '../lib/utils.js'
+  import { watchActiveRun } from '../lib/run_watch.js'
   import PipelineProgress from '../components/PipelineProgress.svelte'
   import ExportMenu from '../components/ExportMenu.svelte'
   import ResourceList from '../components/ResourceList.svelte'
@@ -142,7 +143,22 @@
   let loadedId = null
   $: if (params.id && params.id !== loadedId) switchModel(params.id)
 
+  // Notices a run or extraction started elsewhere while this page sits idle
+  // (BB-129): without it the page kept showing the replaced threats, or none.
+  let watcher = null
+
+  function startWatching(id) {
+    watcher?.stop()
+    watcher = watchActiveRun(
+      id,
+      () => { if (id === params.id) attachToRun(id) },
+      { immediate: false, skip: () => get(pipelineRunning) || polling || stopFollowing !== null },
+    )
+  }
+
   function resetForModel() {
+    watcher?.stop()
+    watcher = null
     stopPolling()
     if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
     followingWizardRun = false
@@ -177,6 +193,7 @@
     currentModel.set(model)
     threats.set(model.threats ?? [])
     loading = false
+    startWatching(id)
     if (alreadyRunning) {
       // The run may have ended while the model was loading.
       // The wizard opens this page as soon as it starts the run, so the
@@ -185,7 +202,8 @@
       else if (['pending', 'in_progress'].includes(model.status)) followingWizardRun = true
       return
     }
-    if (model.status === 'in_progress') {
+    // active_run also covers an extraction, which never sets 'in_progress'.
+    if (model.status === 'in_progress' || model.active_run) {
       attachToRun(id)
     } else if (model.status === 'completed' || model.status === 'failed') {
       await loadSupplementary()
@@ -253,6 +271,7 @@
 
   // Leaving the page only stops following the run; the run itself carries on.
   onDestroy(() => {
+    watcher?.stop()
     stopPolling()
     if (stopFollowing) { stopFollowing(); pipelineRunning.set(false) }
     const abort = get(abortRun)

@@ -19,6 +19,7 @@ from backend.auth.dependencies import (
     check_project_role,
     get_current_user,
     require_active_project,
+    require_no_active_run,
     require_role,
     visible_project_ids,
 )
@@ -517,6 +518,26 @@ async def list_models(
     return JSONResponse(content=rows)
 
 
+def _active_run_summary(active: dict | None) -> dict | None:
+    return {"kind": active["kind"], "started_at": active["started_at"]} if active else None
+
+
+@router.get("/{model_id}/active-run")
+async def get_model_active_run(
+    model_id: str,
+    _authz: None = Depends(require_role("viewer", "model_id", "model")),
+) -> JSONResponse:
+    """The model's run or extraction in progress, if any (BB-129).
+
+    Polled every few seconds by pages that show the model, so it returns the
+    same summary as ``GET /models/{id}`` without the threat list.
+    """
+    if await crud.get_threat_model(model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    active = await crud_live_runs.get_active_run("model", model_id)
+    return JSONResponse(content={"active_run": _active_run_summary(active)})
+
+
 @router.get("/{model_id}")
 async def get_model(
     model_id: str,
@@ -536,9 +557,7 @@ async def get_model(
     # data.usage — see Results.svelte's runUsage fallback.
     record["usage"] = _decode_json_field(record.get("usage_summary"))
     active = await crud_live_runs.get_active_run("model", model_id)
-    record["active_run"] = (
-        {"kind": active["kind"], "started_at": active["started_at"]} if active else None
-    )
+    record["active_run"] = _active_run_summary(active)
     # Why a failed model failed, for a page opened after the run ended (the
     # run's final event carries it; the model row doesn't).
     record["last_run_failure"] = None
@@ -1478,6 +1497,7 @@ async def create_asset(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Add an asset to a model."""
+    await require_no_active_run(model_id)
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -1503,6 +1523,7 @@ async def update_asset(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Update an asset."""
+    await require_no_active_run(model_id)
     asset = await crud.get_asset(asset_id)
     if asset is None or asset.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found")
@@ -1526,6 +1547,7 @@ async def delete_asset(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> None:
     """Delete an asset."""
+    await require_no_active_run(model_id)
     asset = await crud.get_asset(asset_id)
     if asset is None or asset.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found")
@@ -1546,6 +1568,7 @@ async def create_flow(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Add a data flow to a model."""
+    await require_no_active_run(model_id)
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -1570,6 +1593,7 @@ async def update_flow(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Update a data flow."""
+    await require_no_active_run(model_id)
     flow = await crud.get_flow(flow_id)
     if flow is None or flow.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
@@ -1592,6 +1616,7 @@ async def delete_flow(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> None:
     """Delete a data flow."""
+    await require_no_active_run(model_id)
     flow = await crud.get_flow(flow_id)
     if flow is None or flow.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
@@ -1610,6 +1635,7 @@ async def create_trust_boundary(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Add a trust boundary to a model."""
+    await require_no_active_run(model_id)
     record = await crud.get_threat_model(model_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
@@ -1633,6 +1659,7 @@ async def update_trust_boundary(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> JSONResponse:
     """Update a trust boundary."""
+    await require_no_active_run(model_id)
     boundary = await crud.get_trust_boundary(boundary_id)
     if boundary is None or boundary.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Trust boundary '{boundary_id}' not found")
@@ -1654,6 +1681,7 @@ async def delete_trust_boundary(
     _authz: None = Depends(require_role("editor", "model_id", "model")),
 ) -> None:
     """Delete a trust boundary."""
+    await require_no_active_run(model_id)
     boundary = await crud.get_trust_boundary(boundary_id)
     if boundary is None or boundary.get("model_id") != model_id:
         raise HTTPException(status_code=404, detail=f"Trust boundary '{boundary_id}' not found")

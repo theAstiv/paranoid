@@ -47,7 +47,13 @@ Create a new threat model record (without running the pipeline). Returns `403` w
 
 ### `GET /api/models/{id}`
 
-Get a threat model with its threats, assets, flows, and trust boundaries.
+Get a threat model with its threats, assets, flows, and trust boundaries. `active_run` is `{kind, started_at}` while a run (`kind: "run"`) or extraction (`"extract"`) is in progress, else `null`; `last_run_failure` says why a failed model's last run failed.
+
+### `GET /api/models/{id}/active-run`
+
+`{"active_run": {kind, started_at} | null}`: the same field as above without the threat list. The web pages poll it every 5 s while visible, to notice a run started elsewhere. Viewer.
+
+**Edits during a run.** While a model has a run or extraction in progress, every route that changes its threats or context returns `409` with the reason: `PATCH`/`DELETE /api/threats/{id}`, `POST /api/threats/bulk-status`, attack-tree and test-case generation, and `POST`/`PATCH`/`DELETE` on its assets, flows and trust boundaries. The run replaces those rows, so an edit made meanwhile would be lost or hit a row about to go. It is a check before the write, not a lock: a run started in the same instant can still race it.
 
 ### `PATCH /api/models/{id}`
 
