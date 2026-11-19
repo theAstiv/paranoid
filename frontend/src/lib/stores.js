@@ -126,9 +126,15 @@ currentProject.subscribe(p => {
   try { localStorage.setItem(_PROJECT_KEY, p.id) } catch { /* ignore */ }
 })
 
+/** Mirrors backend.db.crud_projects.DEFAULT_PROJECT_ID; CLI runs land there. */
+export const DEFAULT_PROJECT_ID = '00000000-0000-0000-0000-000000000000'
+
 /**
  * The project to activate on page load: the remembered one if the user is
- * still a member of it, otherwise the first in the list.
+ * still a member of it. Otherwise (a fresh browser) the active project whose
+ * models changed most recently, then the Default Project, then the first
+ * active one (BB-145: it opened the newest project, often an empty one, while
+ * CLI runs landed in Default Project).
  * @param {object[]} list
  * @returns {object|null}
  */
@@ -136,8 +142,17 @@ export function pickInitialProject(list) {
   if (!list.length) return null
   let storedId = null
   try { storedId = localStorage.getItem(_PROJECT_KEY) } catch { /* ignore */ }
+  const remembered = list.find(p => p.id === storedId)
+  if (remembered) return remembered
   // An archived project only when it was the last one picked, or the only kind there is.
-  return list.find(p => p.id === storedId) ?? list.find(p => !p.is_archived) ?? list[0]
+  const active = list.filter(p => !p.is_archived)
+  const busiest = active
+    .filter(p => p.last_activity_at)
+    .reduce((best, p) => (!best || p.last_activity_at > best.last_activity_at ? p : best), null)
+  return busiest
+    ?? active.find(p => p.id === DEFAULT_PROJECT_ID)
+    ?? active[0]
+    ?? list[0]
 }
 
 /**

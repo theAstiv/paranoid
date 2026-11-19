@@ -214,3 +214,41 @@ describe('Home — role gating (BB-44)', () => {
     expect(screen.getByText('New Model')).toBeInTheDocument()
   })
 })
+
+describe('Home — model Delete is owner-only (BB-138)', () => {
+  const inP1 = { ...modelA, project_id: 'p1' }
+
+  it.each(['viewer', 'editor'])('hides Delete from an %s', async role => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: role })
+    listModels.mockResolvedValue([inP1])
+    render(Home)
+    await waitFor(() => expect(screen.getByText('API Gateway')).toBeInTheDocument())
+    expect(screen.queryByTitle('Delete threat model')).toBeNull()
+  })
+
+  it('shows Delete to an owner', async () => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: 'owner' })
+    listModels.mockResolvedValue([inP1])
+    render(Home)
+    await waitFor(() => expect(screen.getByTitle('Delete threat model')).toBeInTheDocument())
+  })
+
+  it('shows Delete to an admin who is only a viewer', async () => {
+    currentUser.set({ id: 'u1', is_admin: true })
+    currentProject.set({ id: 'p1', name: 'P', member_role: 'viewer' })
+    listModels.mockResolvedValue([inP1])
+    render(Home)
+    await waitFor(() => expect(screen.getByTitle('Delete threat model')).toBeInTheDocument())
+  })
+
+  it('hides Delete from an owner of an archived project', async () => {
+    currentUser.set({ id: 'u1', is_admin: false })
+    currentProject.set({ id: 'p1', name: 'P', member_role: 'owner', is_archived: 1 })
+    listModels.mockResolvedValue([inP1])
+    render(Home)
+    await waitFor(() => expect(screen.getByText('API Gateway')).toBeInTheDocument())
+    expect(screen.queryByTitle('Delete threat model')).toBeNull()
+  })
+})

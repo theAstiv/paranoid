@@ -250,6 +250,44 @@ describe('login()', () => {
     expect(get(currentUser)).toEqual({ id: 'u1', username: 'a' })
   })
 
+  it('drops the previous user\'s project, menu and toast when signing in over a session (BB-42)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ access_token: 'b-tok', user: { id: 'u2', username: 'b' } }))
+    )
+    const { currentProject, projects, menuOpen, notification, currentUser } = await import('./stores.js')
+    const { get } = await import('svelte/store')
+    currentUser.set({ id: 'u1', username: 'a' })
+    currentProject.set({ id: 'p-a', member_role: 'owner' })
+    projects.set([{ id: 'p-a' }])
+    menuOpen.set('user')
+    notification.set({ type: 'error', message: 'old' })
+
+    await login({ username: 'b', password: 'pw' })
+
+    expect(get(currentProject)).toBeNull()
+    expect(get(projects)).toEqual([])
+    expect(get(menuOpen)).toBeNull()
+    expect(get(notification)).toBeNull()
+    expect(get(currentUser)).toEqual({ id: 'u2', username: 'b' })
+  })
+
+  it('keeps the signed-in user\'s state when a sign-in fails (BB-42)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Invalid credentials' }), { status: 401 }))
+    )
+    const { currentProject, currentUser } = await import('./stores.js')
+    const { get } = await import('svelte/store')
+    currentUser.set({ id: 'u1', username: 'a' })
+    currentProject.set({ id: 'p-a', member_role: 'owner' })
+
+    await expect(login({ username: 'b', password: 'wrong' })).rejects.toThrow()
+
+    expect(get(currentProject)).toEqual({ id: 'p-a', member_role: 'owner' })
+    expect(get(currentUser)).toEqual({ id: 'u1', username: 'a' })
+  })
+
   it('rejects a wrong password with the server detail and no refresh (BB-112)', async () => {
     setStoredToken('old-tok')
     window.location.hash = '#/login'

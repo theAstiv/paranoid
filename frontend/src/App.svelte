@@ -443,6 +443,8 @@
                 </a>
               </li>
             {/if}
+            <!-- Instance settings: admin only; others get a read-only page by URL (BB-136) -->
+            {#if $currentUser?.is_admin}
             <li>
               <a href="#/settings" use:link
                 class="flex items-center gap-2.5 px-2.5 py-2 rounded-panel text-[13px] transition-colors
@@ -460,6 +462,7 @@
                 Settings
               </a>
             </li>
+            {/if}
           </ul>
         </div>
 
@@ -548,6 +551,7 @@
                 {$currentUser?.email || ''}
               </p>
             </div>
+            {#if $currentUser?.is_admin}
             <div class="py-1">
               <a
                 href="#/settings"
@@ -559,10 +563,11 @@
                   <circle cx="10" cy="10" r="2"/>
                   <path stroke-linecap="round" d="M10 2v2M10 16v2M2 10h2M16 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4"/>
                 </svg>
-                Account &amp; tokens
+                Instance settings
               </a>
             </div>
-            <div class="border-t border-c-divider py-1">
+            {/if}
+            <div class="py-1 {$currentUser?.is_admin ? 'border-t border-c-divider' : ''}">
               <button
                 on:click={handleLogout}
                 class="flex items-center gap-2.5 w-full px-4 py-2 text-[13px] text-c-critical hover:bg-c-critical/10 transition-colors text-left"

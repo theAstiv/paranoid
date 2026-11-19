@@ -49,8 +49,9 @@
     use:link
     class="card block p-5 hover:border-c-accent-deep transition-all group"
   >
-    <!-- Header row: title + framework chip -->
-    <div class="flex items-start justify-between gap-3 mb-3">
+    <!-- Header row: title + framework chip. With a delete button, the row
+         leaves a slot for it so it never covers the chip (BB-140). -->
+    <div class="flex items-start justify-between gap-3 mb-3 {onDelete ? 'pr-7' : ''}" data-testid="card-header">
       <h2 class="text-c-text text-[15px] font-medium leading-snug line-clamp-2 flex-1 group-hover:text-c-accent transition-colors">
         {model.title}
       </h2>
@@ -84,13 +85,13 @@
     </div>
   </a>
 
-  <!-- Delete button — top-right overlay on card hover -->
+  <!-- Delete button — in the header's reserved slot, shown on card hover -->
   {#if onDelete}
     <button
       type="button"
       on:click|preventDefault|stopPropagation={onDelete}
       title="Delete threat model"
-      class="absolute top-3 right-8 p-1.5 rounded-panel text-c-faint2 opacity-0 group-hover/card:opacity-100
+      class="absolute top-4 right-3 p-1.5 rounded-panel text-c-faint2 opacity-0 group-hover/card:opacity-100
              group-focus-within/card:opacity-100 focus-visible:opacity-100
              hover:bg-c-critical/10 hover:text-c-critical transition-all z-10"
     >

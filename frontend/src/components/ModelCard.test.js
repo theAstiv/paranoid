@@ -82,6 +82,22 @@ describe('ModelCard', () => {
     expect(screen.queryByTitle('Delete threat model')).toBeNull()
   })
 
+  // jsdom has no layout, so this pins the geometry by class: the header
+  // reserves pr-7 (28px) past the card's p-5, and the 26px button sits at
+  // right-3 (12px), so it ends at 38px, short of the chip's 48px (BB-140).
+  it('reserves a header slot for the delete button so it does not cover the chip (BB-140)', () => {
+    render(ModelCard, { props: { model: baseModel, onDelete: vi.fn() } })
+    expect(screen.getByTestId('card-header').className).toContain('pr-7')
+    const button = screen.getByTitle('Delete threat model')
+    expect(button.className).toContain('right-3')
+    expect(button.className).not.toContain('right-8')
+  })
+
+  it('reserves no slot without a delete button', () => {
+    render(ModelCard, { props: { model: baseModel } })
+    expect(screen.getByTestId('card-header').className).not.toContain('pr-7')
+  })
+
   it('renders a delete button and calls onDelete when clicked', async () => {
     const onDelete = vi.fn()
     render(ModelCard, { props: { model: baseModel, onDelete } })

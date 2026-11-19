@@ -16,6 +16,7 @@ import {
   currentProject,
   pickInitialProject,
   reconcileProject,
+  DEFAULT_PROJECT_ID,
 } from './stores.js'
 
 beforeEach(() => {
@@ -161,6 +162,37 @@ describe('active project persistence', () => {
 
   it('reconcile gives null when the new user has no projects', () => {
     expect(reconcileProject({ id: 'demo' }, [])).toBeNull()
+  })
+
+  it('opens a fresh browser on the project with the latest model activity (BB-145)', () => {
+    const projs = [
+      { id: 'newest-empty', last_activity_at: null },
+      { id: DEFAULT_PROJECT_ID, last_activity_at: '2026-11-01T10:00:00+00:00' },
+      { id: 'demo', last_activity_at: '2026-11-18T09:00:00+00:00' },
+    ]
+    expect(pickInitialProject(projs).id).toBe('demo')
+  })
+
+  it('skips an archived project even when it is the most active', () => {
+    const projs = [
+      { id: 'live', last_activity_at: '2026-01-01T00:00:00+00:00' },
+      { id: 'old', is_archived: 1, last_activity_at: '2026-11-18T00:00:00+00:00' },
+    ]
+    expect(pickInitialProject(projs).id).toBe('live')
+  })
+
+  it('falls back to the Default Project when no project has models', () => {
+    const projs = [{ id: 'newest-empty' }, { id: DEFAULT_PROJECT_ID }]
+    expect(pickInitialProject(projs).id).toBe(DEFAULT_PROJECT_ID)
+  })
+
+  it('still prefers the remembered project over the most active one', () => {
+    localStorage.setItem('paranoid_active_project', 'quiet')
+    const projs = [
+      { id: 'busy', last_activity_at: '2026-11-18T00:00:00+00:00' },
+      { id: 'quiet', last_activity_at: null },
+    ]
+    expect(pickInitialProject(projs).id).toBe('quiet')
   })
 
   it('does not forget the selection when the store is cleared', () => {
