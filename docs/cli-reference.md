@@ -145,12 +145,16 @@ Partial IDs work — first 8 characters are enough.
 ### `paranoid models export`
 
 ```bash
-paranoid models export <model-id> --format <fmt> [-o <output>] [--source-file <path>]
+paranoid models export <model-id> --format <fmt> [-o <output>] [--source-file <path>] [--manifest-path <path>]
 ```
 
 Run once, export many times. Supported formats: `simple`, `full` (both JSON), `sarif`, `markdown`, `pdf`. Without `-o` the file is written to the current directory as `<id-prefix>_<format><ext>`; missing parent directories in an `-o` path are created.
 
+`markdown` and `pdf` are the same report the web export gives: the description and assumptions, the uploaded diagrams plus a context diagram generated from the assets, flows and trust boundaries, those three tables, dependency findings, gap analysis, and each threat with its attack tree and test cases.
+
 `--source-file` (SARIF only) sets the repo-relative path GitHub code scanning anchors non-dependency results to — point it at your description file in the repo. Without it, results fall back to a fixed anchor (`threat-model.md`) rather than a logical-only location, which GitHub's code-scanning upload rejects the whole run over.
+
+`--manifest-path` (SARIF only) sets the repo-relative path of the `package.json` that dependency findings anchor to, as `run --manifest` does. Defaults to `package.json`. Both paths must be relative, with no `..` segment or URL scheme.
 
 ### `paranoid models delete`
 

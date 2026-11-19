@@ -187,6 +187,8 @@ Export a saved model.
 
 **Response:** File download with appropriate `Content-Type`.
 
+**Diagrams.** Markdown and PDF have a *Diagrams* section: each uploaded diagram (Mermaid as a fenced block in Markdown and as source text in the PDF; PNG/JPEG as an embedded image, a `data:` URI in Markdown), then a context diagram generated from the assets, flows and trust boundaries. In the generated diagram, a trust boundary is a dotted, amber link between its two ends, since a boundary here is a pair of components rather than a group of them. JSON carries `diagrams` (the stored rows, images as base64) and `context_diagram` (the generated Mermaid source, or `null` with no context).
+
 ---
 
 ## Scoring

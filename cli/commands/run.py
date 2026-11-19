@@ -8,6 +8,7 @@ import json
 import os
 from contextlib import AsyncExitStack
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -1047,6 +1048,30 @@ async def _run_pipeline_async(
         )
 
 
+def _report_context(json_writer: JSONWriter, diagrams: list[DiagramData]) -> dict[str, Any]:
+    """The run's context, dependencies and diagrams in the row shape the
+    Markdown/PDF exporters take, so `run -o x.md` matches `models export` (B1)."""
+    from backend.db.crud import diagram_data_to_row
+    from backend.deps.analyze import dependency_scan_rows
+
+    def dump(items: list) -> list[dict[str, Any]] | None:
+        return [item.model_dump(mode="json") for item in items] or None
+
+    scans = None
+    if json_writer.dependency_context:
+        scans = [
+            {"package": package, "version": version, "analysis": analysis}
+            for package, version, analysis in dependency_scan_rows(json_writer.dependency_context)
+        ] or None
+    return {
+        "assets": dump(json_writer.assets.assets) if json_writer.assets else None,
+        "flows": dump(json_writer.flows.data_flows) if json_writer.flows else None,
+        "trust_boundaries": dump(json_writer.flows.trust_boundaries) if json_writer.flows else None,
+        "dependency_scans": scans,
+        "diagrams": [diagram_data_to_row(d) for d in diagrams] or None,
+    }
+
+
 async def _load_cli_diagrams(diagram_paths: tuple[Path, ...], *, quiet: bool) -> list[DiagramData]:
     """Load, name-sanitize, and set-validate the --diagram/-d paths.
 
@@ -1442,6 +1467,7 @@ async def _run_pipeline_inside_provider(
                         attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
                         test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
                         gap_summaries=json_writer.gap_summaries or None,
+                        **_report_context(json_writer, diagrams_data),
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(output_path, "w", encoding="utf-8") as f:
@@ -1469,6 +1495,7 @@ async def _run_pipeline_inside_provider(
                         attack_trees={k: v.model_dump() for k, v in attack_trees.items()} or None,
                         test_suites={k: v.model_dump() for k, v in test_suites.items()} or None,
                         gap_summaries=json_writer.gap_summaries or None,
+                        **_report_context(json_writer, diagrams_data),
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_bytes(pdf_bytes)

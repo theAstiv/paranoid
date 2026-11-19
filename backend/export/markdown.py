@@ -4,6 +4,7 @@ Produces clean Markdown suitable for PRs, Confluence, Notion, and security revie
 """
 
 import html
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +15,12 @@ from backend.export._common import (
     dependency_findings_rows,
     dependency_location,
 )
+from backend.export.context_diagram import context_to_mermaid
+
+
+# The media type comes from the diagram's kind, never from stored text.
+_IMAGE_MEDIA_TYPES = {"png": "image/png", "jpeg": "image/jpeg"}
+_BASE64_RE = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 
 
 def export_markdown(
@@ -32,6 +39,7 @@ def export_markdown(
     test_suites: dict[str, dict[str, Any]] | None = None,
     gap_summaries: list[str] | None = None,
     dependency_scans: list[dict[str, Any]] | None = None,
+    diagrams: list[dict[str, Any]] | None = None,
 ) -> str:
     """Export threats to Markdown format.
 
@@ -53,6 +61,9 @@ def export_markdown(
         test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
         dependency_scans: Optional list of dependency_scans DB rows (see
                           backend.db.crud.list_dependency_scans).
+        diagrams: Optional list of model_diagrams rows (name, kind, content) —
+                  the uploaded architecture diagrams. A context diagram is
+                  generated from assets/flows/trust_boundaries either way.
 
     Returns:
         Markdown string ready to write to a .md file.
@@ -99,6 +110,9 @@ def export_markdown(
         lines.append("")
         lines.append("---")
         lines.append("")
+
+    # Diagrams: the uploaded ones, then one generated from the context (BB-69)
+    _append_diagram_section(lines, diagrams, context_to_mermaid(assets, flows, trust_boundaries))
 
     # Assets
     if assets:
@@ -310,6 +324,62 @@ def export_markdown(
             global_idx += 1
 
     return "\n".join(lines)
+
+
+def _append_diagram_section(
+    lines: list[str], diagrams: list[dict[str, Any]] | None, context_source: str
+) -> None:
+    """Append the uploaded diagrams and the generated context diagram, if any."""
+    if not diagrams and not context_source:
+        return
+    lines.append("## Diagrams")
+    lines.append("")
+    for diagram in diagrams or []:
+        name = _esc(" ".join(str(diagram.get("name") or "Diagram").split()))
+        kind = diagram.get("kind")
+        content = diagram.get("content") or ""
+        lines.append(f"### {name}")
+        lines.append("")
+        if kind == "mermaid":
+            source = content.strip()
+            if source:
+                fence = _fence_for(source)
+                lines.append(f"{fence}mermaid")
+                lines.append(source)
+                lines.append(fence)
+            else:
+                lines.append("*(Empty diagram.)*")
+        elif kind in _IMAGE_MEDIA_TYPES:
+            data = "".join(content.split())
+            # Validated so a stored value can't close the link and add markup.
+            if data and _BASE64_RE.fullmatch(data):
+                alt = name.replace("[", "(").replace("]", ")")
+                lines.append(f"![{alt}](data:{_IMAGE_MEDIA_TYPES[kind]};base64,{data})")
+            else:
+                lines.append("*(This image could not be included.)*")
+        else:
+            lines.append("*(Unsupported diagram type.)*")
+        lines.append("")
+    if context_source:
+        lines.append("### Context diagram (generated)")
+        lines.append("")
+        lines.append(
+            "*Drawn from the assets, data flows and trust boundaries below. "
+            "Dotted links are trust boundaries.*"
+        )
+        lines.append("")
+        lines.append("```mermaid")
+        lines.append(context_source.rstrip())
+        lines.append("```")
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+
+
+def _fence_for(source: str) -> str:
+    """A backtick fence longer than any backtick run in ``source``, so it can't close early."""
+    longest = max((len(run) for run in re.findall(r"`+", source)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def _append_gap_section(lines: list[str], gap_summaries: list[str]) -> None:

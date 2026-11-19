@@ -4,18 +4,24 @@ Produces a structured PDF suitable for sharing, archiving, and security review s
 Uses reportlab platypus for layout — no external binaries required.
 """
 
+import base64
+import binascii
+import logging
 import re
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
 
+from PIL import Image as PILImage
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     HRFlowable,
+    Image,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -30,6 +36,13 @@ from backend.export._common import (
     dependency_findings_rows,
     dependency_location,
 )
+from backend.export.context_diagram import context_to_mermaid
+
+
+logger = logging.getLogger(__name__)
+
+# A diagram image never takes more than this much of a page's height.
+_MAX_IMAGE_HEIGHT = 6.5 * inch
 
 
 def export_pdf(
@@ -47,6 +60,7 @@ def export_pdf(
     test_suites: dict[str, dict[str, Any]] | None = None,
     gap_summaries: list[str] | None = None,
     dependency_scans: list[dict[str, Any]] | None = None,
+    diagrams: list[dict[str, Any]] | None = None,
 ) -> bytes:
     """Export threats to PDF format.
 
@@ -66,6 +80,10 @@ def export_pdf(
         test_suites: Optional mapping of threat_id -> TestSuite.model_dump().
         dependency_scans: Optional list of dependency_scans DB rows (see
                           backend.db.crud.list_dependency_scans).
+        diagrams: Optional list of model_diagrams rows (name, kind, content).
+                  Images are embedded; Mermaid is shown as source (no renderer
+                  here, see Decision 11). A context diagram generated from
+                  assets/flows/trust_boundaries follows them.
 
     Returns:
         PDF content as bytes, ready to write to a .pdf file.
@@ -141,6 +159,29 @@ def export_pdf(
         for a in assumptions:
             story.append(Paragraph(f"• {_escape_pdf_text(a)}", bullet_style))
         story.append(Spacer(1, 14))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
+        story.append(Spacer(1, 10))
+
+    # --- Diagrams: the uploaded ones, then one generated from the context (BB-69) ---
+    context_source = context_to_mermaid(assets, flows, trust_boundaries)
+    if diagrams or context_source:
+        story.append(Paragraph("Diagrams", styles["h2"]))
+        story.append(Spacer(1, 6))
+        for diagram in diagrams or []:
+            story.extend(_diagram_flowables(diagram, styles, doc.width))
+        if context_source:
+            story.append(Paragraph("Context diagram (generated, Mermaid)", styles["h3"]))
+            story.append(
+                Paragraph(
+                    "Drawn from the assets, data flows and trust boundaries below. "
+                    "Dotted links are trust boundaries.",
+                    styles["body"],
+                )
+            )
+            story.append(Spacer(1, 3))
+            story.extend(_code_lines(context_source, styles))
+            story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#9ca3af")))
         story.append(Spacer(1, 10))
 
@@ -662,6 +703,60 @@ def _threat_flowables(
 
     parts.append(Spacer(1, 6))
     return parts
+
+
+def _code_lines(source: str, styles: dict[str, ParagraphStyle]) -> list[Any]:
+    """One preformatted Paragraph per line, markup-escaped."""
+    return [
+        Paragraph(_escape_pdf_text(line) or "&nbsp;", styles["code"])
+        for line in source.strip().splitlines()
+    ]
+
+
+def _diagram_flowables(
+    diagram: dict[str, Any], styles: dict[str, ParagraphStyle], max_width: float
+) -> list[Any]:
+    """Heading plus the diagram: an image scaled to fit, or Mermaid source as text."""
+    name = " ".join(str(diagram.get("name") or "Diagram").split())
+    kind = diagram.get("kind")
+    content = diagram.get("content") or ""
+    parts: list[Any] = []
+    if kind == "mermaid":
+        parts.append(Paragraph(f"{_escape_pdf_text(name)} (Mermaid)", styles["h3"]))
+        parts.extend(
+            _code_lines(content, styles) or [Paragraph("(Empty diagram.)", styles["body"])]
+        )
+    elif kind in ("png", "jpeg"):
+        parts.append(Paragraph(_escape_pdf_text(name), styles["h3"]))
+        image = _image_flowable(content, max_width)
+        parts.append(
+            image
+            if image is not None
+            else Paragraph("(This image could not be included.)", styles["body"])
+        )
+    else:
+        parts.append(Paragraph(_escape_pdf_text(name), styles["h3"]))
+        parts.append(Paragraph("(Unsupported diagram type.)", styles["body"]))
+    parts.append(Spacer(1, 8))
+    return parts
+
+
+def _image_flowable(content: str, max_width: float) -> Image | None:
+    """Decode a stored base64 PNG/JPEG and scale it to the frame; None if unreadable.
+
+    Uploads were validated with Pillow when stored, but a row can predate that
+    or be damaged, and one bad image must not fail the whole report.
+    """
+    try:
+        raw = base64.b64decode("".join(content.split()), validate=True)
+        width, height = ImageReader(BytesIO(raw)).getSize()
+    except (binascii.Error, ValueError, OSError, PILImage.DecompressionBombError) as exc:
+        logger.warning("Skipping an unreadable diagram image in the PDF export: %s", exc)
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    scale = min(max_width / width, _MAX_IMAGE_HEIGHT / height, 1.0)
+    return Image(BytesIO(raw), width=width * scale, height=height * scale)
 
 
 def _gap_analysis_flowables(text: str, styles: dict[str, ParagraphStyle]) -> list[Any]:

@@ -313,8 +313,21 @@ _FORMAT_EXTENSIONS = {
         "the repo. Defaults to 'threat-model.md' when not given."
     ),
 )
+@click.option(
+    "--manifest-path",
+    "manifest_path",
+    default=None,
+    help=(
+        "SARIF only: repo-relative path of the package.json that dependency "
+        "findings anchor to (as `run --manifest` sets it). Defaults to 'package.json'."
+    ),
+)
 def export_model(
-    model_id: str, output_format: str, output: Path | None, source_file: str | None
+    model_id: str,
+    output_format: str,
+    output: Path | None,
+    source_file: str | None,
+    manifest_path: str | None,
 ) -> None:
     """Export a saved threat model to a file.
 
@@ -326,6 +339,7 @@ def export_model(
         paranoid models export a1b2c3d4 --format markdown -o report.md
         paranoid models export a1b2c3d4 --format pdf -o report.pdf
         paranoid models export a1b2c3d4 --format sarif -o findings.sarif --source-file docs/threat-model.md
+        paranoid models export a1b2c3d4 --format sarif --manifest-path web/package.json
         paranoid models export a1b2c3d4 --format simple -o threats.json
         paranoid models export a1b2c3d4 --format full
     """
@@ -336,6 +350,7 @@ def export_model(
                 output_format=output_format,
                 output=output,
                 source_file=source_file,
+                manifest_path=manifest_path,
             )
         )
     except CLIError as e:
@@ -351,15 +366,17 @@ async def _export_model_async(
     output_format: str,
     output: Path | None,
     source_file: str | None = None,
+    manifest_path: str | None = None,
 ) -> None:
     from backend.db import crud
     from backend.export.sarif import sanitize_source_file
 
-    if source_file is not None and sanitize_source_file(source_file) is None:
-        raise CLIError(
-            "Invalid --source-file: must be a relative path with no '..' segment, "
-            "URL scheme, or leading '/', and no longer than 1024 characters"
-        )
+    for flag, value in (("--source-file", source_file), ("--manifest-path", manifest_path)):
+        if value is not None and sanitize_source_file(value) is None:
+            raise CLIError(
+                f"Invalid {flag}: must be a relative path with no '..' segment, "
+                "URL scheme, or leading '/', and no longer than 1024 characters"
+            )
 
     # Resolve full UUID or prefix
     if len(model_id) == 36:
@@ -389,41 +406,20 @@ async def _export_model_async(
     # As `run -o` does (BB-119): `-o out/new/dir/f.sarif` failed on the missing dirs.
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Decode JSON-encoded list columns shared by markdown + PDF exports
-    from backend.db.gap_utils import decode_gap_summaries
-
-    _description: str | None = model.get("description") or None
-    _assumptions: list[str] | None = decode_gap_summaries(model.get("assumptions")) or None
-    _gap_summaries: list[str] | None = decode_gap_summaries(model.get("gap_summaries")) or None
-
-    # Dispatch to export function
+    # Markdown and PDF load their inputs exactly as GET /export does (B1): the
+    # report used to leave out the context, enrichment, dependencies and diagrams.
     if output_format == "markdown":
         from backend.export.markdown import export_markdown
+        from backend.export.report_inputs import gather_report_inputs
 
-        md = export_markdown(
-            threats=threats,
-            model_id=model["id"],
-            framework=model.get("framework", "STRIDE"),
-            title=model.get("title"),
-            description=_description,
-            assumptions=_assumptions,
-            gap_summaries=_gap_summaries,
-        )
+        md = export_markdown(**await gather_report_inputs(model))
         output_path.write_text(md, encoding="utf-8")
 
     elif output_format == "pdf":
         from backend.export.pdf import export_pdf
+        from backend.export.report_inputs import gather_report_inputs
 
-        pdf_bytes = export_pdf(
-            threats=threats,
-            model_id=model["id"],
-            framework=model.get("framework", "STRIDE"),
-            title=model.get("title"),
-            description=_description,
-            assumptions=_assumptions,
-            gap_summaries=_gap_summaries,
-        )
-        output_path.write_bytes(pdf_bytes)
+        output_path.write_bytes(export_pdf(**await gather_report_inputs(model)))
 
     elif output_format == "sarif":
         from backend.export.sarif import export_sarif, threat_from_row
@@ -450,6 +446,7 @@ async def _export_model_async(
             model_id=model["id"],
             framework=model.get("framework", "STRIDE"),
             source_file=source_file,
+            **({"dependency_manifest_path": manifest_path} if manifest_path else {}),
         )
         output_path.write_text(json.dumps(sarif_data, indent=2), encoding="utf-8")
 
