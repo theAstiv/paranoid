@@ -23,6 +23,35 @@ MERMAID_DIAGRAM_PREFIXES = (
 )
 
 
+# Characters that end or change a quoted Mermaid label, as numeric entity codes.
+# "#" goes first: every replacement below introduces one.
+_MERMAID_LABEL_ESCAPES = (
+    ("#", "#35;"),
+    ('"', "#34;"),
+    ("<", "#60;"),
+    (">", "#62;"),
+    ("|", "#124;"),
+    ("`", "#96;"),
+)
+
+
+def mermaid_label(text: str, max_length: int = 80) -> str:
+    """Make ``text`` safe inside a quoted Mermaid label (``n1["..."]``, ``-->|"..."|``).
+
+    Whitespace (newlines too) collapses to single spaces, the text is cut to
+    ``max_length`` characters with an ellipsis, and the characters that would
+    end the label, open an edge label or start HTML become entity codes, which
+    Mermaid renders back as the character. LLM- and user-written names go
+    through here, so a name can't close its node and inject diagram syntax.
+    """
+    clean = " ".join(str(text).split())
+    if len(clean) > max_length:
+        clean = clean[: max_length - 1].rstrip() + "…"
+    for char, code in _MERMAID_LABEL_ESCAPES:
+        clean = clean.replace(char, code)
+    return clean
+
+
 def dependency_category_set(profile: dict[str, Any] | None) -> set[str]:
     """Categories a `CapabilityProfile` dict shows shipped-path evidence for.
 

@@ -10,10 +10,11 @@ from fastapi.responses import JSONResponse, Response
 
 from backend.auth.dependencies import require_role
 from backend.db import crud
-from backend.db.gap_utils import decode_gap_summaries
 from backend.db.maestro_tags import get_model_coverage, parse_categories
+from backend.export.context_diagram import context_to_mermaid
 from backend.export.markdown import export_markdown
 from backend.export.pdf import export_pdf
+from backend.export.report_inputs import gather_report_inputs
 from backend.export.sarif import export_sarif, sanitize_source_file, threat_from_row
 from backend.models.api import ExportFormat
 from backend.models.state import ThreatsList
@@ -79,88 +80,27 @@ async def export_model(
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
-    threats = await crud.list_threats(model_id, status=status_filter)
-    assets = await crud.list_assets(model_id)
-    flows = await crud.list_flows(model_id)
-    trust_boundaries = await crud.list_trust_boundaries(model_id)
-    dependency_scans = (
-        await crud.list_dependency_scans(model_id) if export_format in ("markdown", "pdf") else []
-    )
-
-    title = model.get("title")
     framework = model.get("framework", "STRIDE")
-    gap_summaries = decode_gap_summaries(model.get("gap_summaries"))
-    description: str | None = model.get("description") or None
-    assumptions: list[str] | None = decode_gap_summaries(model.get("assumptions")) or None
     # Strip characters that would break Content-Disposition or filesystem paths.
-    raw = title or model_id[:8]
+    raw = model.get("title") or model_id[:8]
     safe_title = re.sub(r"[^\w\-]", "_", raw).lower().strip("_") or "export"
 
-    # Collect enrichment data (attack trees, test cases) per threat.
-    # The export functions render them only when present — no-op when not enriched.
-    attack_trees: dict = {}
-    test_suites: dict = {}
     if export_format in ("markdown", "pdf"):
-        for t in threats:
-            tid = t.get("id") or ""
-            if not tid:
-                continue
-            trees = await crud.list_attack_trees(tid)
-            if trees:
-                attack_trees[tid] = trees[-1]  # most recent tree per threat
-            cases = await crud.list_test_cases(tid)
-            if cases:
-                gherkin = "\n\n".join(c["gherkin_source"] for c in cases if c.get("gherkin_source"))
-                if gherkin:
-                    test_suites[tid] = {"gherkin_source": gherkin}
-
-    if export_format == "markdown":
-        content = export_markdown(
-            threats=threats,
-            model_id=model_id,
-            framework=framework,
-            title=title,
-            description=description,
-            assumptions=assumptions,
-            assets=assets,
-            flows=flows,
-            trust_boundaries=trust_boundaries,
-            attack_trees=attack_trees or None,
-            test_suites=test_suites or None,
-            gap_summaries=gap_summaries or None,
-            dependency_scans=dependency_scans or None,
-        )
+        # The same loader as the CLI's `models export`, so both reports match.
+        report = await gather_report_inputs(model, status=status_filter)
+        if export_format == "markdown":
+            return Response(
+                content=export_markdown(**report),
+                media_type="text/markdown",
+                headers={"Content-Disposition": f'attachment; filename="{safe_title}.md"'},
+            )
         return Response(
-            content=content,
-            media_type="text/markdown",
-            headers={
-                "Content-Disposition": f'attachment; filename="{safe_title}.md"',
-            },
-        )
-
-    if export_format == "pdf":
-        pdf_bytes = export_pdf(
-            threats=threats,
-            model_id=model_id,
-            framework=framework,
-            title=title,
-            description=description,
-            assumptions=assumptions,
-            assets=assets,
-            flows=flows,
-            trust_boundaries=trust_boundaries,
-            attack_trees=attack_trees or None,
-            test_suites=test_suites or None,
-            gap_summaries=gap_summaries or None,
-            dependency_scans=dependency_scans or None,
-        )
-        return Response(
-            content=pdf_bytes,
+            content=export_pdf(**report),
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{safe_title}.pdf"',
-            },
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
         )
+
+    threats = await crud.list_threats(model_id, status=status_filter)
 
     if export_format == "sarif":
         threats_list = _build_threats_list(threats)
@@ -179,6 +119,9 @@ async def export_model(
         )
 
     # format == "json"
+    assets = await crud.list_assets(model_id)
+    flows = await crud.list_flows(model_id)
+    trust_boundaries = await crud.list_trust_boundaries(model_id)
     return JSONResponse(
         content={
             "model": model,
@@ -190,8 +133,16 @@ async def export_model(
             "flows": flows,
             "trust_boundaries": trust_boundaries,
             "maestro_coverage": await get_model_coverage(model_id),
+            # Uploaded diagrams (images as base64) and the one drawn from the context.
+            "diagrams": [_diagram_json(d) for d in await crud.list_model_diagrams(model_id)],
+            "context_diagram": context_to_mermaid(assets, flows, trust_boundaries) or None,
         },
         headers={
             "Content-Disposition": f'attachment; filename="{safe_title}.json"',
         },
     )
+
+
+def _diagram_json(row: dict) -> dict:
+    keys = ("id", "name", "kind", "media_type", "size_bytes", "position", "content", "created_at")
+    return {k: row.get(k) for k in keys}
