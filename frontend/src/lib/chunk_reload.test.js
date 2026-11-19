@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createChunkErrorHandler, RELOAD_WINDOW_MS } from './chunk_reload.js'
+import { createChunkErrorHandler, isChunkLoadError, RELOAD_WINDOW_MS } from './chunk_reload.js'
 
 describe('createChunkErrorHandler (BB-57)', () => {
   let reload
@@ -50,5 +50,25 @@ describe('createChunkErrorHandler (BB-57)', () => {
     const onError = createChunkErrorHandler({ storage: broken, reload, now: () => clock })
     expect(onError()).toBe(false)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+describe('isChunkLoadError (BB-58)', () => {
+  it.each([
+    'Failed to fetch dynamically imported module: https://x/assets/flowDiagram-1a2b.js',
+    'error loading dynamically imported module: https://x/assets/elk-1a2b.js',
+    'Importing a module script failed.',
+  ])('recognises %s', (message) => {
+    expect(isChunkLoadError(new TypeError(message))).toBe(true)
+  })
+
+  it.each([
+    new Error('Parse error on line 2'),
+    new Error('chunk load failed'),
+    new Error(''),
+    null,
+    undefined,
+  ])('ignores %s', (err) => {
+    expect(isChunkLoadError(err)).toBe(false)
   })
 })

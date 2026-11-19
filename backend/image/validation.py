@@ -74,6 +74,67 @@ def _validate_mermaid_bytes(raw: bytes) -> None:
         raise DiagramValidationError(f"Mermaid file is not valid UTF-8: {e}") from e
     if not text.strip():
         raise DiagramValidationError("Mermaid file is empty")
+    first_line = _first_mermaid_line(text)
+    if first_line is None or not _MERMAID_DIAGRAM_START.match(first_line):
+        shown = (first_line or "")[:60]
+        raise DiagramValidationError(
+            "This doesn't look like a Mermaid diagram: the first line should name a "
+            "diagram type such as 'graph TD', 'flowchart LR' or 'sequenceDiagram'"
+            + (f" (it starts with: {shown!r})." if shown else ".")
+        )
+
+
+# Every diagram type Mermaid parses, matched as the first word. Wider than
+# `export._common.MERMAID_DIAGRAM_PREFIXES` on purpose: that tuple decides whether
+# a *description* is diagram source, so it avoids prose-like words ("block",
+# "timeline"); this one rejects uploads, where a false reject of a real diagram is
+# the worse error and an extra accepted word costs nothing.
+_MERMAID_DIAGRAM_START = re.compile(
+    r"(?:graph|flowchart(?:-elk)?|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?"
+    r"|erDiagram|gantt|pie|mindmap|journey|gitGraph|C4(?:Context|Container|Component|Dynamic|Deployment)"
+    r"|timeline|quadrantChart|requirement(?:Diagram)?|zenuml|kanban|info"
+    # Newer types, with or without the "-beta" suffix Mermaid gives them while experimental.
+    r"|(?:sankey|xychart|block|packet|architecture|radar|treemap|ishikawa|swimlane|treeView|venn|wardley|cynefin)(?:-beta)?"
+    r"|eventmodeling(?:-beta)?|railroad(?:-[A-Za-z0-9]+)*)"
+    r"(?![A-Za-z0-9_-])"
+)
+
+
+def _first_mermaid_line(text: str) -> str | None:
+    """First line that carries diagram content, or None if there is none.
+
+    Skips what Mermaid allows before the diagram type: blank lines, `%%`
+    comments, `%%{ ... }%%` directives (which may span lines) and a leading
+    `---` YAML front-matter block.
+    """
+    lines = text.lstrip("\ufeff").splitlines()
+    in_directive = False
+    in_front_matter = False
+    seen_content = False
+    for raw in lines:
+        line = raw.strip()
+        if in_front_matter:
+            in_front_matter = line != "---"
+            continue
+        if in_directive:
+            in_directive = "}%%" not in line
+            continue
+        if not line:
+            continue
+        if line == "---" and not seen_content:
+            in_front_matter = True
+            seen_content = True
+            continue
+        if line.startswith("%%{"):
+            seen_content = True
+            in_directive = "}%%" not in line
+            continue
+        if line.startswith("%%") or line.startswith("```"):
+            # A markdown fence is tolerated: the viewer strips it, as it does for
+            # LLM output, so a fenced .mmd renders today.
+            continue
+        return line
+    return None
 
 
 def _validate_image_bytes(raw: bytes, diagram_format: DiagramFormat) -> None:

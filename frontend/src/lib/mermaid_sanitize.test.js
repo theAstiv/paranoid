@@ -222,6 +222,97 @@ describe('sanitizeMermaid', () => {
     })
   })
 
+  // BB-60 — a handler name only counts at the start of a word.
+  describe('on* handler strip keeps camelCase label text (BB-60)', () => {
+    it.each([
+      'connectionError = x', 'buttonOnclick = 1', 'regionLoad=ok', 'sessionEnd = "now"',
+      'optionChange=1', 'versionSelect = 2', 'transactionInput=y', 'emotionPlay = 3',
+    ])('keeps: %s', (text) => {
+      const raw = `graph TD\nA[${text}] --> B`
+      expect(sanitizeMermaid(raw)).toBe(raw)
+    })
+
+    it('still strips a handler after punctuation, a quote or the start of the text', () => {
+      for (const raw of [
+        'graph TD\nA[x;onclick=alert(1)] --> B',
+        'graph TD\nA["x"onclick=alert(1)] --> B',
+        'graph TD\nA[(onclick=alert(1))] --> B',
+        'onclick=alert(1)\ngraph TD\nA --> B',
+      ]) {
+        expect(sanitizeMermaid(raw)).not.toMatch(/onclick\s*=/i)
+      }
+    })
+
+    it('strips two handlers with no separator between them', () => {
+      const cleaned = sanitizeMermaid('graph TD\nA[x onclick="a"onload=b] --> B')
+      expect(cleaned).not.toMatch(/on(click|load)\s*=/i)
+    })
+  })
+
+  // KL-5 — HTML tags other than Mermaid's label formatting are removed.
+  describe('HTML tags (KL-5)', () => {
+    it.each([
+      '<img src=x>', '<img src="/api/x">', '<IMG SRC=x>', '<img/src=x>', '<svg onload=alert(1)>',
+      '<svg><script>alert(1)</script></svg>', '<iframe src="/x"></iframe>', '<object data=x>',
+      '<embed src=x>', '<a href="/x">', '<div style="x">', '<video src=x>', '<input autofocus>',
+      '<link rel=stylesheet href=x>', '<style>a{}</style>', '<form action=x>',
+    ])('strips %s from a label, keeping the text around it', (tag) => {
+      const cleaned = sanitizeMermaid(`graph TD\nA[before ${tag} after] --> B`)
+      expect(cleaned).not.toMatch(/<\/?(img|svg|iframe|object|embed|a|div|video|input|link|style|form)\b/i)
+      expect(cleaned).toContain('before')
+      expect(cleaned).toContain('--> B')
+    })
+
+    it('strips a tag rebuilt around a removed tag', () => {
+      const cleaned = sanitizeMermaid('graph TD\nA[<im<style></style>g src=x>] --> B')
+      expect(cleaned).not.toMatch(/<img/i)
+    })
+
+    it('strips an entity-encoded tag', () => {
+      const cleaned = sanitizeMermaid('graph TD\nA[&lt;img src=x&gt;] --> B')
+      expect(cleaned).not.toMatch(/<img/i)
+    })
+
+    it('stops an unterminated tag at the end of its line', () => {
+      const cleaned = sanitizeMermaid('graph TD\nA[<img src=x\nB --> C')
+      expect(cleaned).toContain('B --> C')
+      expect(cleaned).not.toMatch(/<img/i)
+    })
+
+    it.each([
+      'A[line one<br>line two]', 'A[line one<br/>line two]', 'A[<b>bold</b> and <i>it</i>]',
+      'A[<u>u</u> x<sub>2</sub> y<sup>3</sup>]', 'A[a < b]', 'A[a<b]', 'A <--> B', 'A <-- B',
+      'A[List<String>]', 'A[Map<K, V>]', 'A[Set<Tag>]',
+      'A[List<Object>]', 'A[List<Source>]', 'A[List<Link>]', 'A[List<Image>]', 'A[Optional<Input>]',
+      'A[i<a]', 'A[x<p]', 'A[x<a]', 'A[a<table]', 'A[img<span]',
+    ])('keeps %s', (node) => {
+      const raw = `graph TD\n${node} --> C`
+      expect(sanitizeMermaid(raw)).toBe(raw)
+    })
+
+    it('keeps class-diagram stereotypes and arrows', () => {
+      const raw = 'classDiagram\nclass Shape {\n  <<interface>>\n}\nShape <|-- Circle\nclass Box~List~'
+      expect(sanitizeMermaid(raw)).toBe(raw)
+    })
+
+    it('keeps generics in sequence and class diagrams', () => {
+      const seq = 'sequenceDiagram\nA->>B: returns List<Source>\nB-->>A: Map<Object, Link>'
+      expect(sanitizeMermaid(seq)).toBe(seq)
+      const cls = 'classDiagram\nclass Repo {\n  +find() List<Link>\n  +all() Set<Object>\n}'
+      expect(sanitizeMermaid(cls)).toBe(cls)
+    })
+
+    it('keeps sequence-diagram arrows', () => {
+      const raw = 'sequenceDiagram\nA->>B: hi <- there\nB-->>A: ok'
+      expect(sanitizeMermaid(raw)).toBe(raw)
+    })
+
+    it('reports a stripped tag as removed unsafe content', () => {
+      expect(sanitizeMermaidDetailed('graph TD\nA[<img src=x>] --> B').removedUnsafe).toBe(true)
+      expect(sanitizeMermaidDetailed('graph TD\nA[x<br>y] --> B').removedUnsafe).toBe(false)
+    })
+  })
+
   // BB-12 — single-pass strips can rebuild the very thing they remove, and
   // decoding &amp; before &lt;/&gt; double-decodes. Output must be a fixed point.
   describe('nested / split payloads (BB-12)', () => {
@@ -236,7 +327,9 @@ describe('sanitizeMermaid', () => {
       'double-encoded scheme': 'graph TD\nA[&amp;#106;avascript:alert(1)] --> B',
       'nested vbscript scheme': 'graph TD\nA[vbvbscript:script:x] --> B',
       'nested data scheme': 'graph TD\nA[data:text/data:text/htmlhtml,x] --> B',
-      'nested handler': 'graph TD\nA[x ononclick=1click=alert(1)] --> B',
+      'handler rebuilt by a removed script block': 'graph TD\nA[x on<script></script>click=alert(1)] --> B',
+      'handler rebuilt by a removed scheme': 'graph TD\nA[x onjavascript:click=alert(1)] --> B',
+      'handler rebuilt by a removed tag': 'graph TD\nA[x on<img src=x>click=alert(1)] --> B',
     }
     const dangerous = [
       /<script/i,
@@ -244,6 +337,7 @@ describe('sanitizeMermaid', () => {
       /vbscript\s*:/i,
       /data\s*:\s*text\/html/i,
       /\bon\w+\s*=/i,
+      /<\/?(img|svg|iframe|object|embed)\b/i,
       /&#\d+;|&#x[0-9a-f]+;/i,
     ]
 

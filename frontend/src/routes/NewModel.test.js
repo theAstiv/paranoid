@@ -17,6 +17,8 @@ vi.mock('../lib/api.js', () => ({
   getModel: vi.fn(),
 }))
 
+vi.mock('../lib/mermaid_check.js', () => ({ checkMermaidSource: vi.fn() }))
+
 vi.mock('../lib/stores.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, notify: vi.fn() }
@@ -24,6 +26,7 @@ vi.mock('../lib/stores.js', async (importOriginal) => {
 
 import { push } from 'svelte-spa-router'
 import { createModel, subscribeToRun, listCodeSources } from '../lib/api.js'
+import { checkMermaidSource } from '../lib/mermaid_check.js'
 import { notify, config, currentProject, currentUser, pipelineRunning } from '../lib/stores.js'
 
 async function goToStep(n) {
@@ -38,6 +41,7 @@ beforeEach(() => {
   currentProject.set(null)
   pipelineRunning.set(false)
   listCodeSources.mockResolvedValue([])
+  checkMermaidSource.mockResolvedValue(null)
 })
 
 describe('NewModel — step 0 (title & framework)', () => {
@@ -130,6 +134,26 @@ describe('NewModel — step 2 (diagram)', () => {
 
     expect(screen.getByLabelText('Diagram name: a')).toBeInTheDocument()
     expect(screen.getByLabelText('Diagram name: b')).toBeInTheDocument()
+  })
+
+  // BB-125: a Mermaid file that doesn't parse is flagged in its row at upload.
+  it('flags a Mermaid file that does not parse, and not one that does', async () => {
+    await toStep2()
+    checkMermaidSource.mockImplementation(async (text) => (text.startsWith('graph') ? null : 'No diagram type detected'))
+    const good = new File(['graph TD\nA --> B'], 'good.mmd')
+    const bad = new File(['just some prose'], 'bad.txt')
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [good, bad] } })
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Mermaid can't parse this file: No diagram type detected"))
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByLabelText('Diagram name: good')).toBeInTheDocument()
+    expect(screen.getByLabelText('Diagram name: bad')).toBeInTheDocument()
+  })
+
+  it('does not check images', async () => {
+    await toStep2()
+    await fireEvent.change(screen.getByLabelText(/Architecture diagrams/), { target: { files: [mkFile('a.png', 64)] } })
+    expect(checkMermaidSource).not.toHaveBeenCalled()
   })
 
   it('rejects an oversize file without dropping an already-accepted one', async () => {

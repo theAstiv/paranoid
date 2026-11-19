@@ -4,6 +4,7 @@
   import PreFlightPanel from '../components/PreFlightPanel.svelte'
   import { createModel, subscribeToRun, listCodeSources, analyzeBundle } from '../lib/api.js'
   import { getModel } from '../lib/api.js'
+  import { checkMermaidSource } from '../lib/mermaid_check.js'
   import { notify, pipelineEvents, pipelineRunning, threats, currentModel, abortRun, config, currentProject, currentUser } from '../lib/stores.js'
 
   const STEPS = ['Title & Framework', 'Description', 'Diagram', 'Code Source', 'Dependencies', 'Assumptions', 'Iterations', 'AI Components', 'Review & Run']
@@ -14,7 +15,7 @@
   let title = ''
   let framework = 'STRIDE'
   let description = ''
-  /** @typedef {{ file: File, name: string, kind: 'png'|'jpeg'|'mermaid', size: number, preview: string|null }} DiagramFileEntry */
+  /** @typedef {{ file: File, name: string, kind: 'png'|'jpeg'|'mermaid', size: number, preview: string|null, parseError?: string|null }} DiagramFileEntry */
   /** @type {DiagramFileEntry[]} */
   let diagramFiles = []
   let diagramInputKey = 0
@@ -236,7 +237,9 @@
     diagramInputKey++
     if (accepted.length === 0) return
     for (const entry of accepted) {
-      if (entry.kind !== 'mermaid') {
+      if (entry.kind === 'mermaid') {
+        checkMermaidFile(entry.file)
+      } else {
         const reader = new FileReader()
         reader.onload = (ev) => {
           // Look up by File identity, not the captured `entry` object — a
@@ -248,6 +251,19 @@
       }
     }
     diagramFiles = [...diagramFiles, ...accepted]
+  }
+
+  // Flags a file Mermaid can't parse right in its row (BB-125). Informational: the
+  // file is still sent, and the server rejects what is plainly not a diagram.
+  async function checkMermaidFile(file) {
+    let parseError = null
+    try {
+      parseError = await checkMermaidSource(await file.text())
+    } catch {
+      return
+    }
+    // Look up by File identity: the row may have been renamed or removed meanwhile.
+    diagramFiles = diagramFiles.map(d => d.file === file ? { ...d, parseError } : d)
   }
 
   function removeDiagramFile(index) {
@@ -445,7 +461,7 @@
         {#if diagramFiles.length > 0}
           <ul class="space-y-2">
             {#each diagramFiles as entry, i (entry.file)}
-              <li class="flex items-center gap-3 bg-c-well border border-c-border rounded-panel px-3 py-2">
+              <li class="flex flex-wrap items-center gap-3 bg-c-well border border-c-border rounded-panel px-3 py-2">
                 {#if entry.kind !== 'mermaid' && entry.preview}
                   <img src={entry.preview} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0 border border-c-border" />
                 {:else}
@@ -465,6 +481,11 @@
                   class="text-c-faint hover:text-c-critical flex-shrink-0 transition-colors">
                   <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" d="M5 5l10 10M15 5L5 15"/></svg>
                 </button>
+                {#if entry.parseError}
+                  <p class="basis-full text-xs text-c-high" role="alert">
+                    Mermaid can't parse this file: {entry.parseError}
+                  </p>
+                {/if}
               </li>
             {/each}
           </ul>
