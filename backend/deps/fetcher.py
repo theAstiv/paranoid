@@ -20,6 +20,7 @@ import re
 import shutil
 import tarfile
 import tempfile
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -232,11 +233,43 @@ def _touch_marker(marker: Path) -> None:
         os.utime(marker, None)
 
 
+# A fetch's staging dir lives seconds to minutes (download and analysis
+# timeouts bound it), so one this old was left by a killed process (BB-83).
+_STALE_STAGING_SECONDS = 3600
+
+
+def _sweep_staging_dir(entry: Path, now: float) -> int:
+    """Delete `entry` if it is a stale staging dir; return the bytes it still
+    occupies (0 when removed, or not a dir), so a live fetch's staging dir
+    counts toward the cache budget. Its mtime changes as the fetch writes the
+    tarball and creates the extract dir; another process's fetch keeps it fresh."""
+    try:
+        if not entry.is_dir():
+            return 0
+        age = now - entry.stat().st_mtime
+    except OSError:
+        return 0
+    if age < _STALE_STAGING_SECONDS:
+        return _dir_size(entry)
+    size = _dir_size(entry)
+    shutil.rmtree(entry, ignore_errors=True)
+    logger.info(
+        "Removed stale dependency staging dir %s (%.1f MB, %.0f min old) — left by an "
+        "interrupted fetch",
+        entry,
+        size / 1024**2,
+        age / 60,
+    )
+    return _dir_size(entry) if entry.exists() else 0
+
+
 def _evict_cache_entries_over_budget() -> None:
     """Keep DEPS_CACHE_DIR under `settings.deps_cache_max_gb` by deleting the
     least-recently-used entries first (by `.complete` marker mtime, bumped on
-    every cache hit by `_touch_marker`). A no-op when the budget is 0
-    (disabled) or the cache is already under it. Never touches an entry with
+    every cache hit by `_touch_marker`). Evicts nothing when the budget is 0
+    (disabled) or the cache is already under it. Staging dirs left by an
+    interrupted fetch are removed once stale, whatever the budget, and a live
+    one counts toward it (BB-83; see `_sweep_staging_dir`). Never touches an entry with
     an in-flight fetch or a caller-marked in-use scan/drift comparison (see
     `_protected_cache_dirs`). Runs synchronously — the caller offloads it to
     a thread, matching every other blocking filesystem op in this module, and
@@ -244,18 +277,24 @@ def _evict_cache_entries_over_budget() -> None:
     (e.g. two evictions racing on the same file) must never turn a
     successful fetch into a reported error."""
     max_gb = settings.deps_cache_max_gb
-    if max_gb <= 0:
-        return
     root = Path(settings.deps_cache_dir)
     if not root.is_dir():
         return
 
     entries: list[tuple[float, Path, int]] = []
     total = 0
+    now = time.time()
     for kind_dir in root.iterdir():
         if not kind_dir.is_dir():
             continue
         for entry in kind_dir.iterdir():
+            if entry.name.startswith("."):
+                # A staging dir (see fetch_source). Garbage collection, so it
+                # runs even with the budget disabled.
+                total += _sweep_staging_dir(entry, now)
+                continue
+            if max_gb <= 0:
+                continue
             marker = entry / ".complete"
             if not entry.is_dir() or not marker.is_file():
                 continue
@@ -268,6 +307,8 @@ def _evict_cache_entries_over_budget() -> None:
                 mtime = 0.0
             entries.append((mtime, entry, size))
 
+    if max_gb <= 0:
+        return
     budget_bytes = int(max_gb * 1024**3)
     if total <= budget_bytes:
         return

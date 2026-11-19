@@ -289,6 +289,7 @@ export function dependencyCategorySet(profile) {
  *   drift?: {signal?: boolean, status?: string},
  *   error?: string,
  *   resolved_from_cache?: boolean,
+ *   lockfile_out_of_range?: string,
  * }} [analysis]
  * @returns {string[]}
  */
@@ -304,6 +305,8 @@ export function dependencyFlags(analysis) {
   if (analysis.error) flags.push('error')
   // The registry was unreachable; resolution came from the last online run.
   if (analysis.resolved_from_cache) flags.push('cached-metadata')
+  // The lockfile pins a version outside the manifest's range (BB-54).
+  if (analysis.lockfile_out_of_range) flags.push('lock-mismatch')
   if (analysis.drift?.signal) flags.push('drift')
   if (analysis.npm_profile?.install_hooks?.length) flags.push('install-hook')
   for (const profile of [analysis.npm_profile, analysis.github_profile]) {

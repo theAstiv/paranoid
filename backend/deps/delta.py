@@ -8,19 +8,10 @@ hook appearing for the first time, or a long-dormant package suddenly
 gaining a new capability.
 """
 
-import re
-
+from backend.deps.semver import parse_version
 from backend.models.dependencies import CapabilityProfile, ResolvedPackage, VersionDelta
 from backend.models.enums import CapabilityCategory, PathClass
 
-
-# packaging is PEP 440, not semver — a small local parser is used instead,
-# only ever to produce the human-facing jump label.
-_SEMVER_RE = re.compile(
-    r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
-    r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?"
-    r"(?:\+(?P<build>[0-9A-Za-z.-]+))?$"
-)
 
 # Capability categories a supply-chain compromise typically adds to gain
 # control (execute code, reach the network, or run at install time).
@@ -43,18 +34,6 @@ _INSTALL_TIME_RISKY_CATEGORIES = frozenset(
 )
 
 
-def _parse_semver(version: str) -> tuple[int, int, int, str | None] | None:
-    m = _SEMVER_RE.match(version.strip())
-    if m is None:
-        return None
-    return (
-        int(m.group("major")),
-        int(m.group("minor")),
-        int(m.group("patch")),
-        m.group("prerelease"),
-    )
-
-
 def semver_jump(previous: str, current: str) -> str:
     """Label the jump from `previous` to `current`: major/minor/patch/prerelease/unknown.
 
@@ -62,8 +41,8 @@ def semver_jump(previous: str, current: str) -> str:
     occur on npm) returns "unknown" rather than raising — this label is
     informational only and never gates a flag.
     """
-    prev = _parse_semver(previous)
-    curr = _parse_semver(current)
+    prev = parse_version(previous)
+    curr = parse_version(current)
     if prev is None or curr is None:
         return "unknown"
 

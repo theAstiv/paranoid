@@ -24,6 +24,7 @@
     error: 'chip-red',
     drift: 'chip-orange',
     'install-hook': 'chip-amber',
+    'lock-mismatch': 'chip-amber',
     skipped: 'chip-gray',
   }
   function flagChip(flag) {
@@ -162,6 +163,12 @@
                   <p class="text-xs text-c-muted mb-2">Not analyzed: {pkg.analysis.skip_reason}</p>
                 {:else if pkg.analysis.error}
                   <p class="text-xs text-c-critical mb-2">Failed: {pkg.analysis.error}</p>
+                {/if}
+                {#if pkg.analysis.lockfile_out_of_range}
+                  <p class="text-xs text-c-high mb-2">
+                    The lockfile pins {pkg.analysis.ref?.version}, outside the manifest range
+                    <span class="font-mono">{pkg.analysis.lockfile_out_of_range}</span>. This analysis is of the pinned version.
+                  </p>
                 {/if}
                 {#if pkg.evidence.length > 0}
                   <p class="font-mono text-[10px] font-semibold text-c-faint uppercase tracking-wide mb-1">Evidence</p>

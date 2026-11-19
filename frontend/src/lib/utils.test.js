@@ -331,6 +331,11 @@ describe('dependencyFlags', () => {
     expect(dependencyFlags({ resolved_from_cache: false })).toEqual([])
   })
 
+  it('flags a lockfile pin outside the manifest range (BB-54)', () => {
+    expect(dependencyFlags({ lockfile_out_of_range: '^5.3.0' })).toContain('lock-mismatch')
+    expect(dependencyFlags({ lockfile_out_of_range: null })).toEqual([])
+  })
+
   it('flags install hooks on the npm profile', () => {
     const analysis = { npm_profile: { install_hooks: ['postinstall: node setup.js'] } }
     expect(dependencyFlags(analysis)).toContain('install-hook')

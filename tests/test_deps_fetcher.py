@@ -12,6 +12,7 @@ import io
 import json
 import os
 import tarfile
+import time
 from pathlib import Path
 
 import httpx
@@ -1344,6 +1345,55 @@ def test_evict_cache_entries_uses_marker_total_bytes_without_walking(monkeypatch
     assert small_by_marker.exists()
 
 
+def _make_staging_dir(
+    kind: SourceKind, name: str, version: str, size_bytes: int, age_s: float
+) -> Path:
+    """A staging dir as fetch_source makes it (`.<name>@<version>.<random>`)."""
+    final = fetcher.cache_dir_for(kind, name, version)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    staging = final.parent / f".{final.name}.abc123"
+    staging.mkdir()
+    (staging / "source.tar.gz").write_bytes(b"x" * size_bytes)
+    when = time.time() - age_s
+    os.utime(staging, (when, when))
+    return staging
+
+
+@pytest.mark.parametrize("budget_gb", [0, 10])
+def test_eviction_removes_a_stale_staging_dir_whatever_the_budget(monkeypatch, budget_gb):
+    """BB-83: a crashed fetch's staging dir is garbage, even with eviction off."""
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", budget_gb)
+    stale = _make_staging_dir(SourceKind.NPM_TARBALL, "pkg", "1.0.0", 1024, age_s=2 * 3600)
+    kept = _make_cache_entry(SourceKind.NPM_TARBALL, "pkg", "1.0.0", 1024)
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert not stale.exists()
+    assert kept.exists()
+
+
+def test_eviction_keeps_a_live_staging_dir(monkeypatch):
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 10)
+    live = _make_staging_dir(SourceKind.GITHUB, "pkg", "1.0.0", 1024, age_s=60)
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert live.exists()
+
+
+def test_a_live_staging_dir_counts_toward_the_budget(monkeypatch):
+    """BB-83: an in-flight fetch's bytes are on disk too, so they push older
+    cache entries out; the staging dir itself is never evicted."""
+    monkeypatch.setattr(fetcher.settings, "deps_cache_max_gb", 1 / 1024)  # 1 MiB budget
+    entry = _make_cache_entry(SourceKind.NPM_TARBALL, "cached", "1.0.0", 600 * 1024)
+    live = _make_staging_dir(SourceKind.NPM_TARBALL, "fetching", "1.0.0", 600 * 1024, age_s=10)
+
+    fetcher._evict_cache_entries_over_budget()
+
+    assert live.exists()
+    assert not entry.exists()
+
+
 @pytest.mark.asyncio
 async def test_mark_in_use_protects_path_for_the_block_duration():
     path = Path("some/cache/dir")
@@ -1468,17 +1518,9 @@ async def test_decompression_bomb_is_refused_before_it_is_written(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug-bash carry-over S3 (item 25): a fetch killed mid-download leaves its "
-        "`.name@version.xxxxxxxx` staging dir in the cache (reproduced 10-19 by killing "
-        "the server), and nothing removes it: eviction skips entries with no .complete "
-        "marker, so it never counts toward DEPS_CACHE_MAX_GB either. The cleanup could "
-        "equally live at startup; adjust this test to wherever the fix puts it."
-    ),
-)
 async def test_staging_dir_left_by_a_crash_is_cleaned_up(tmp_path):
+    """BB-83 (bug-bash S3 item 25): a fetch killed mid-download left its
+    staging dir forever; the next successful fetch's eviction pass removes it."""
     orphan = tmp_path / SourceKind.NPM_TARBALL.value / ".other@2.0.0.abcd1234"
     (orphan / "extracted").mkdir(parents=True)
     (orphan / "source.tar.gz").write_bytes(b"x" * 1024)
